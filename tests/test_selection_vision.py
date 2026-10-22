@@ -70,6 +70,28 @@ class SelectionVisionTest(unittest.TestCase):
             "選出できません：画像の自軍6匹と登録構築が一致しません。",
         )
 
+    def test_ambiguous_species_form_is_not_guessed(self):
+        base=assets()
+        rows=dict(base.matrix_index)
+        rows["ライチュウ（通常のすがた）"]="normal|matrix"
+        rows["ライチュウ（アローラのすがた）"]="alolan|matrix"
+        two_forms=FrozenMatchAssets(
+            contents=base.contents,sha256=base.sha256,
+            matrix_index=MappingProxyType(rows),
+            lookup_index=base.lookup_index,own_team=base.own_team,
+            frozen_at=base.frozen_at,
+        )
+        obs=observation()
+        obs["opponent_six"][0]="Raichu"
+        result=SelectionPlanner(clock=lambda:8.0).choose(
+            obs,two_forms,lambda *_:None,started_at=0.0)
+        self.assertEqual(result.reason,"OPPONENT_FORM_AMBIGUOUS")
+        self.assertEqual(result.selected_three,())
+        # A visually identified specific form can be matched exactly.
+        obs["opponent_six"][0]="Alolan Raichu"
+        self.assertEqual(verify_selection_observation(obs,two_forms)[0],
+                         "ライチュウ（アローラのすがた）")
+
     def test_unknown_english_species_remains_blocked(self):
         obs=observation()
         obs["our_six"][0]="UnrecognizedCreature"
