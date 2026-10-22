@@ -172,6 +172,30 @@ class Phase8SettingsTestCase(unittest.TestCase):
         )
         self.assertEqual(blocked.status, "WINDOW_MINIMIZED")
 
+    def test_save_preview_uses_selected_roi_and_never_overwrites(self) -> None:
+        import cv2
+        from champions_assist.capture_settings import CapturePreviewResult
+
+        image = np.zeros((100, 200, 3), dtype=np.uint8)
+        image[20:80, 40:160] = (255, 60, 20)
+        preview = CapturePreviewResult("CAPTURED_READ_ONLY_UNVERIFIED_CONTENT", "test", image=image)
+        target = self.root / "capture" / "cropped.png"
+        service = CapturePreviewService()
+        service.save_explicit_frame(preview, target, roi=(0.2, 0.2, 0.8, 0.8))
+        saved = cv2.imread(str(target))
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved.shape[:2], (60, 120))
+        self.assertEqual(image.shape[:2], (100, 200))  # original unchanged
+        with self.assertRaisesRegex(ValueError, "overwrite"):
+            service.save_explicit_frame(preview, target, roi=(0.2, 0.2, 0.8, 0.8))
+
+    def test_save_preview_rejects_invalid_roi(self) -> None:
+        from champions_assist.capture_settings import CapturePreviewResult
+        preview = CapturePreviewResult("CAPTURED_READ_ONLY_UNVERIFIED_CONTENT", "test", image=np.zeros((100, 200, 3), dtype=np.uint8))
+        with self.assertRaisesRegex(ValueError, "invalid game viewport ROI"):
+            CapturePreviewService.save_explicit_frame(preview, self.root / "invalid.png", roi=(0.5, 0.5, 0.5, 0.8))
+        self.assertFalse((self.root / "invalid.png").exists())
+
     def test_team_import_round_trip_and_deferred_switch_feed_the_next_preload_only(self) -> None:
         initial = self.service.import_team(PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv", match_active=False)
         self.assertEqual(len((Path(initial.csv_path)).read_text(encoding="utf-8").splitlines()), 8)
