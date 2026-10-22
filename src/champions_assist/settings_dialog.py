@@ -578,7 +578,8 @@ class SettingsDialog(QDialog):
             except ConfigurationError:
                 team_path = None
         self._vision_benchmark_dialog = VisionBenchmarkDialog(
-            parent=self, master_directory=self.service.master_directory, team_path=team_path)
+            parent=self, master_directory=self.service.master_directory, team_path=team_path,
+            capture_config=self.service.settings.capture)
         self._vision_benchmark_dialog.show()
 
     def _open_calibration(self) -> None:

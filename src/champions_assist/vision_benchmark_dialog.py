@@ -50,7 +50,7 @@ class _Worker(QObject):
 
 
 class VisionBenchmarkDialog(QDialog):
-    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None):
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
         super().__init__(parent)
         self.setWindowTitle("ChatGPTでログイン・画像認識実測")
         self.setMinimumSize(760,540)
@@ -59,9 +59,11 @@ class VisionBenchmarkDialog(QDialog):
         self._pending_model_refresh=False
         self.master_directory=str(master_directory or "")
         self.team_path=str(team_path or "")
+        self.capture_config=capture_config
         self._thread=None
         self._worker=None
         self._report=None
+        self._match_replay_dialog=None
         form=QVBoxLayout(self)
         form.addWidget(QLabel("ChatGPT Plus等の利用可能なモデルで画像認識を実測します。キー入力・従量APIキー不要。\n"
                               "ログインと画像送信は各ボタンの明示操作時のみ。プラン利用可否はログイン後に確認します。"))
@@ -98,6 +100,9 @@ class VisionBenchmarkDialog(QDialog):
         self.save.clicked.connect(self._save_report)
         row.addWidget(self.send);row.addWidget(self.save);form.addLayout(row)
         form.addWidget(self.selection_button)
+        self.replay_button=QPushButton("マッチングから対戦終了までのAI再現テスト")
+        self.replay_button.clicked.connect(self._open_replay)
+        form.addWidget(self.replay_button)
         self.output=QPlainTextEdit();self.output.setReadOnly(True);form.addWidget(self.output,1)
         if self._refresh_status():
             # Refresh the model list asynchronously after reopening the dialog.
@@ -148,6 +153,21 @@ class VisionBenchmarkDialog(QDialog):
             self.model.blockSignals(was_blocked)
         if preferred is None:
             self._remember_model(self.model.currentIndex())
+    def _open_replay(self):
+        from .match_replay_dialog import MatchReplayDialog
+        if not self.model.currentData():
+            QMessageBox.warning(self,"モデル未選択","ChatGPTのモデルを選択してください。")
+            return
+        if not self.master_directory or not self.team_path:
+            QMessageBox.warning(self,"構築未設定","次戦用の構築を先に選択してください。")
+            return
+        self._match_replay_dialog=MatchReplayDialog(
+            model=str(self.model.currentData()),
+            master_directory=self.master_directory,
+            team_path=self.team_path, capture_config=self.capture_config,
+            store_root=self.store_root,parent=self)
+        self._match_replay_dialog.show()
+
     def _choose_image(self):
         path,_=QFileDialog.getOpenFileName(self,"ゲーム領域の保存画像","","Images (*.png *.jpg *.jpeg)")
         if path:self.path.setText(path)

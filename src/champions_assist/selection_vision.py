@@ -11,6 +11,7 @@ from time import perf_counter
 from typing import Any, Callable, Mapping
 from .preload import FrozenMatchAssets
 from .species_name_aliases import selection_base_name
+from .matrix_compatibility import matrix_matches_registered_team
 
 class SelectionBlocked(ValueError):
     pass
@@ -140,7 +141,8 @@ def decision_context(assets: FrozenMatchAssets, opponents: tuple[str, ...]) -> d
     return {
         "own_team": [dict(item) for item in assets.own_team],
         "opponent_six": list(opponents),
-        "matrix_rows_six": list(assets.matrix_rows_for(opponents)),
+        "matrix_rows_six": list(assets.matrix_rows_for(opponents)) if matrix_matches_registered_team(assets) else [],
+        "matrix_compatible": matrix_matches_registered_team(assets),
         "frozen_gate": assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"],
         "instructions": "Select three members of own_team and one of them as lead. If a member role is blank, infer its situational tactical role from its confirmed four moves, ability, held item, nature and AP spread plus the opponents and six LIVE matrix rows; do not guess hidden mechanics or alter stored team roles. A manually supplied role is contextual guidance, not a fixed selection constraint. Only use the frozen Champions rules and exactly six matrix rows. Never infer another game's mechanics.",
     }
@@ -152,7 +154,8 @@ class SelectionPlanner:
 
     def choose(self, observation: Mapping[str, Any], assets: FrozenMatchAssets,
                tactical_call: Callable[[dict, float], Mapping[str, Any]],
-               *, started_at: float, max_total_seconds: float = 35.0) -> SelectionDecision:
+               *, started_at: float, max_total_seconds: float = 35.0,
+               allow_test_without_matrix: bool = False) -> SelectionDecision:
         details = _diagnostics(observation, assets)
         try:
             opponents = verify_selection_observation(observation, assets)
@@ -160,19 +163,36 @@ class SelectionPlanner:
             return SelectionDecision("BLOCKED", reason=str(exc),
                                      elapsed_ms=round((self.clock()-started_at)*1000),
                                      **details)
+        compatible = matrix_matches_registered_team(assets)
+        if not compatible and not allow_test_without_matrix:
+            return SelectionDecision("BLOCKED", opponent_six=opponents,
+                                     reason="OWN_MATRIX_MISMATCH",
+                                     elapsed_ms=round((self.clock()-started_at)*1000), **details)
         available = max_total_seconds-(self.clock()-started_at)
         if available <= 1.5:
             return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents,
                                      elapsed_ms=round((self.clock()-started_at)*1000),
                                      **details)
         try:
-            answer = tactical_call(decision_context(assets, opponents), available-1.0)
+            context = decision_context(assets, opponents)
+            if not compatible:
+                context["instructions"] = (
+                    "OFFLINE FUNCTION TEST ONLY: LIVE matrix belongs to another team; "
+                    "do not use it for matchup evaluation. Select 3 and a lead from the "
+                    "registered own_team only using its actual four moves and item; "
+                    "this is NOT validated competitive advice. No mechanics may be "
+                    "invented. This result is labelled TEST_ONLY."
+                )
+                context["frozen_gate"] = ""  # gate also references the older own six
+            answer = tactical_call(context, available-1.0)
             chosen, lead = selection_response(answer, own_names=assets.own_team_names)
             elapsed = round((self.clock()-started_at)*1000)
             if elapsed > max_total_seconds*1000:
                 return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
                                          **details)
-            return SelectionDecision("OK", chosen, lead, opponents, elapsed_ms=elapsed,
+            return SelectionDecision("OK" if compatible else "TEST_ONLY",
+                                     chosen, lead, opponents, elapsed_ms=elapsed,
+                                     reason="" if compatible else "OWN_MATRIX_MISMATCH",
                                      **details)
         except SelectionBlocked as exc:
             return SelectionDecision("BLOCKED", opponent_six=opponents, reason=str(exc),
@@ -185,6 +205,7 @@ class SelectionPlanner:
 
 _BLOCK_REASONS_JA = {
     "NOT_TEAM_SELECTION": "選出画面ではありません。",
+    "OWN_MATRIX_MISMATCH": "現在のLIVEマトリクスは登録構築用ではありません。",
     "OWN_SIX_INCOMPLETE": "自軍6匹の認識が不完全です。",
     "REGISTERED_TEAM_MISMATCH": "画像の自軍6匹と登録構築が一致しません。",
     "AMBIGUOUS_OWN_SPECIES": "自軍の名前に重複または曖昧さがあります。",
@@ -209,11 +230,12 @@ def _japanese_selection_label(name: str) -> str:
 
 def selection_summary_ja(result: Mapping[str, Any]) -> str:
     """Player-facing concise Japanese summary; raw result stays diagnostic."""
-    if result.get("status") == "OK":
+    if result.get("status") in ("OK", "TEST_ONLY"):
         picked = result.get("selected_three") or ()
         lead = result.get("lead")
         if len(picked) == 3 and isinstance(lead, str):
-            return "選出：" + " / ".join(_japanese_selection_label(n) for n in picked) + (
+            prefix = "【構築別マトリクスなし・機能試験のみ】" if result.get("status") == "TEST_ONLY" else ""
+            return prefix + "選出：" + " / ".join(_japanese_selection_label(n) for n in picked) + (
                 "　初手：" + _japanese_selection_label(lead))
     reason = str(result.get("reason", ""))
     if result.get("status") == "BLOCKED":
@@ -268,7 +290,7 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
 
 def run_selection_image(image, *, access_token: str, model: str,
                         assets: FrozenMatchAssets, total_seconds: float = 35.0,
-                        client_factory=None) -> SelectionDecision:
+                        client_factory=None, allow_test_without_matrix: bool = False) -> SelectionDecision:
     """Explicit offline image-to-selection evaluation, one total 35s budget."""
     from .vision_api_benchmark import jpeg_data_uri
     started = perf_counter()
@@ -313,7 +335,8 @@ def run_selection_image(image, *, access_token: str, model: str,
                 content=[{"type": "input_text", "text": json.dumps(context, ensure_ascii=False)}],
             )
         return planner.choose(visible, assets, choose, started_at=started,
-                              max_total_seconds=total_seconds)
+                              max_total_seconds=total_seconds,
+                              allow_test_without_matrix=allow_test_without_matrix)
     except Exception as exc:
         return SelectionDecision("ERROR", reason=type(exc).__name__,
                                  elapsed_ms=round((perf_counter()-started)*1000))
