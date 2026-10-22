@@ -50,7 +50,21 @@ class SelectionVisionTest(unittest.TestCase):
         result=SelectionPlanner(clock=lambda:10.0).choose(obs,assets(),lambda *args:calls.append(args),started_at=10.0)
         self.assertEqual(result.status,"BLOCKED")
         self.assertEqual(result.reason,"REGISTERED_TEAM_MISMATCH")
+        self.assertEqual(result.as_dict()["observed_own_six"][0],"ピカチュウ")
+        self.assertEqual(result.as_dict()["observed_opponent_six"],list(OPP))
+        self.assertEqual(result.as_dict()["only_in_image"],["ピカチュウ"])
+        self.assertEqual(result.as_dict()["only_in_registered_team"],["マスカーニャ"])
+        self.assertEqual(result.opponent_six,())  # Unverified, never promoted to trusted.
         self.assertEqual(calls,[])
+
+    def test_ocr_typo_is_explicit_in_diagnostics_not_silently_corrected(self):
+        obs=observation()
+        obs["our_six"][2]="ガブリヤス"
+        result=SelectionPlanner(clock=lambda:12.0).choose(obs,assets(),lambda *_:None,started_at=12.0)
+        self.assertEqual(result.reason,"REGISTERED_TEAM_MISMATCH")
+        self.assertIn("ガブリヤス",result.as_dict()["only_in_image"])
+        self.assertIn("ガブリアス",result.as_dict()["only_in_registered_team"])
+        self.assertEqual(result.selected_three,())
 
     def test_unreadable_opponent_blocks_without_guess(self):
         obs=observation()
