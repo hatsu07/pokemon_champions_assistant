@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Event
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
@@ -26,7 +27,8 @@ class _ReplayWorker(QObject):
     finished = Signal(object)
 
     def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
-                 capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt):
+                 capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
+                 cancel_event=None):
         super().__init__()
         self.job=job
         self.app_root=app_root
@@ -34,6 +36,7 @@ class _ReplayWorker(QObject):
         self.capture_config=capture_config
         self.capture_gate=capture_gate
         self.capture_function=capture_function
+        self.cancel_event=cancel_event
         self.assets=assets
         self.state=state
 
@@ -52,6 +55,10 @@ class _ReplayWorker(QObject):
                 from time import perf_counter
                 started=perf_counter()
                 image=self.capture_function(self.capture_config)
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    self.finished.emit({"state":self.state,
+                                        "report":{"status":"CANCELLED"}})
+                    return
                 if not self.capture_gate.accept(image):
                     self.finished.emit({"state":self.state,
                                         "report":{"status":"UNCHANGED_FRAME"}})
@@ -87,6 +94,7 @@ class MatchReplayDialog(QDialog):
         self.store_root=Path(store_root) if store_root else default_app_root()
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
+        self._cancel_event=Event()
         self._auto_running=False
         self._poll_timer=QTimer(self)
         self._poll_timer.setInterval(1000)
@@ -196,11 +204,13 @@ class MatchReplayDialog(QDialog):
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         self._auto_running=True
+        self._cancel_event.clear()
         self._capture_gate.reset()
         self._poll_timer.start()
         self._capture_next()
 
     def _stop_auto(self):
+        self._cancel_event.set()
         self._auto_running=False
         self._poll_timer.stop()
 
@@ -218,6 +228,7 @@ class MatchReplayDialog(QDialog):
             app_root=self.store_root, selected_model=self.model,
             assets=self.assets,state=self.state,job="auto_frame",
             capture_config=self.capture_config,capture_gate=self._capture_gate,
+            cancel_event=self._cancel_event,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
