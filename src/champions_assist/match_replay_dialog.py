@@ -96,6 +96,7 @@ class MatchReplayDialog(QDialog):
         self.entries=[]
         self._thread=None
         self._worker=None
+        self._active_job=None
         panel=QVBoxLayout(self)
         intro=QLabel(
             "開始を一度押すと、設定したゲーム画面を自動キャプチャしてChatGPTに送信します。\\n"
@@ -147,6 +148,9 @@ class MatchReplayDialog(QDialog):
 
     def _new_match(self):
         if self._thread is not None:return
+        if self._auto_running:
+            QMessageBox.warning(self, "停止が必要", "自動送信を停止してから新しい対戦を開始してください。")
+            return
         try:
             if not self.master_directory or not self.team_path:
                 raise ValueError("次戦用の構築を先に選択してください。")
@@ -208,6 +212,7 @@ class MatchReplayDialog(QDialog):
                 self._stop_auto()
             return
         self._set_busy(True)
+        self._active_job="auto_frame"
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
@@ -226,7 +231,7 @@ class MatchReplayDialog(QDialog):
     @Slot(object)
     def _completed(self, payload):
         report=payload["report"]
-        if not self._auto_running and report.get("status") not in ("PREP_STRUCTURE_OK","PREP_UNAVAILABLE"):
+        if self._active_job=="auto_frame" and not self._auto_running:
             return
         if report.get("status") == "UNCHANGED_FRAME":
             return
@@ -270,6 +275,7 @@ class MatchReplayDialog(QDialog):
             QMessageBox.StandardButton.No,
         )!=QMessageBox.StandardButton.Yes:return
         self._set_busy(True)
+        self._active_job="prep"
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
@@ -291,6 +297,7 @@ class MatchReplayDialog(QDialog):
     def _cleanup(self):
         self._thread=None
         self._worker=None
+        self._active_job=None
         self._set_busy(False)
 
     def _render(self, report):
