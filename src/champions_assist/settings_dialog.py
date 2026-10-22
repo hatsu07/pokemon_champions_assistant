@@ -376,6 +376,9 @@ class SettingsDialog(QDialog):
         self.save_preview_button.setEnabled(False)
         self.save_preview_button.clicked.connect(self._save_preview)
         layout.addWidget(self.save_preview_button)
+        self.calibrate_button = QPushButton("認識較正を開く（ローカル・オフライン）")
+        self.calibrate_button.clicked.connect(self._open_calibration)
+        layout.addWidget(self.calibrate_button)
         layout.addWidget(QLabel("ゲーム領域はプレビュー上でドラッグ指定します。選択は正規化ROIとして保存され、画面サイズ変更時は再較正が必要です。"))
         return tab
 
@@ -528,10 +531,33 @@ class SettingsDialog(QDialog):
 
         destination = Path(self.captures_root.text().strip()) / f"manual-preview-{int(time() * 1000)}.png"
         try:
-            saved = self.preview_service.save_explicit_frame(self._last_preview, destination)
+            roi = self.preview_label.normalized_roi
+            if roi is None:
+                QMessageBox.warning(self, "撮影を保存できません", "先にゲーム領域のROIを指定してください。")
+                return
+            saved = self.preview_service.save_explicit_frame(self._last_preview, destination, roi=roi)
             self.capture_metrics.setText(f"明示操作で保存しました: {saved.name}（内容は未検証）")
         except ConfigurationError as exc:
             QMessageBox.warning(self, "撮影を保存できません", str(exc))
+
+    def _open_calibration(self) -> None:
+        from .ui_calibration_dialog import UiCalibrationDialog
+        from .ui_calibration import LocalUiCalibration
+        current = self._last_preview
+        roi = self.preview_label.normalized_roi
+        image = None
+        if current is not None and current.image is not None and roi is not None:
+            try:
+                image = LocalUiCalibration.crop_viewport(current.image, roi)
+            except ValueError as exc:
+                QMessageBox.warning(self, "較正できません", str(exc))
+                return
+        self._calibration_dialog = UiCalibrationDialog(
+            storage_root=Path(self.captures_root.text().strip()),
+            initial_image=image,
+            parent=self,
+        )
+        self._calibration_dialog.show()
 
     def _sync_roi_fields(self) -> None:
         size = self.preview_label.image_size

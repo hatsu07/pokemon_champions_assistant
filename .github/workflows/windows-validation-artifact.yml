@@ -13,6 +13,7 @@ on:
       - "src/champions_assist/**"
       - "tests/test_phase_6.py"
       - "tests/test_phase_8_settings.py"
+      - "tests/test_phase_6r_calibration.py"
       - "pyproject.toml"
       - "masters/Pokemon_Champions_MC_usable_pokemon.csv"
       - "masters/Pokemon_Champions_MC_move_master.csv"
@@ -38,7 +39,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest tests.test_phase_6 tests.test_phase_8_settings -v
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration -v
       - name: Build portable validation harness (not MSI)
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir
