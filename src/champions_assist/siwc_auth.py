@@ -212,7 +212,7 @@ class ChatGPTSignIn:
     def status(self) -> dict:
         document = self.store.load()
         profile = document["accounts"].get(document.get("selected"))
-        return {"connected": profile is not None,
+        return {"connected": bool(profile and profile.get("access_token")),
                 "plan_enabled": bool(profile and REQUIRED_PLAN_SCOPE in profile.get("scopes", [])),
                 "email": "" if not profile else profile.get("email", ""),
                 "accounts": len(document["accounts"])}
@@ -278,7 +278,7 @@ class ChatGPTSignIn:
         document = self.store.load()
         issued = document.get("selected")
         profile = document["accounts"].get(issued)
-        if not profile:
+        if not profile or not profile.get("access_token"):
             raise SignInError("NOT_SIGNED_IN")
         if REQUIRED_PLAN_SCOPE not in profile.get("scopes", []):
             raise SignInError("PLAN_PERMISSION_NOT_GRANTED")
