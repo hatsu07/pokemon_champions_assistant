@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
     QPushButton, QFileDialog, QPlainTextEdit, QMessageBox, QWidget)
 from .vision_api_benchmark import OpenAIVisionBenchmark, read_image, SUPPORTED_UI
+from .api_credentials import get_api_key, CredentialStoreError
 
 
 class _VisionWorker(QObject):
@@ -55,7 +56,7 @@ class VisionBenchmarkDialog(QDialog):
         row.addWidget(QLabel("モデル:"))
         row.addWidget(self.model)
         form.addLayout(row)
-        form.addWidget(QLabel("APIキーは CHAMPIONS_ASSIST_OPENAI_API_KEY 環境変数で設定（画面・設定ファイルには保存しません）。"))
+        form.addWidget(QLabel("APIキーは設定 → OpenAI APIから登録可能です。キーは設定JSONに保存しません。"))
         row = QHBoxLayout()
         self.send = QPushButton("この画像をOpenAIに送信して実測")
         self.send.clicked.connect(self.start)
@@ -80,10 +81,14 @@ class VisionBenchmarkDialog(QDialog):
         if self._thread is not None:
             return
         path = self.path.text()
-        key = os.environ.get("CHAMPIONS_ASSIST_OPENAI_API_KEY", "")
+        try:
+            key = get_api_key() or ""
+        except CredentialStoreError:
+            QMessageBox.warning(self, "実測できません", "Windows資格情報を読み取れません。")
+            return
         model = self.model.text().strip()
         if not path or not Path(path).is_file() or not key or not model:
-            QMessageBox.warning(self, "実測できません", "画像、モデル、環境変数のAPIキーを確認してください。")
+            QMessageBox.warning(self, "実測できません", "画像、モデル、登録済みAPIキーを確認してください。")
             return
         confirmed = QMessageBox.question(
             self, "外部API送信の確認", "指定した画像1枚をOpenAI APIへ送信します。API利用料金が発生します。実行しますか？",
