@@ -90,13 +90,29 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         raise SelectionBlocked("OPPONENT_SIX_DUPLICATES")
     if raw.get("uncertain_slots"):
         raise SelectionBlocked("UNCERTAIN_TEAM_SLOT")
+    # Species-only names may be under a fully qualified form key in the
+    # matrix. Resolve them ONLY if there is precisely one matching candidate.
+    # e.g. Raichu with normal + Alolan forms must remain ambiguous.
+    resolved = []
+    for name in canonical_opponent:
+        if name in assets.matrix_index:
+            resolved.append(name)
+            continue
+        possible = tuple(key for key in assets.matrix_index
+                         if key.startswith(name + "（"))
+        if len(possible) == 1:
+            resolved.append(possible[0])
+        elif len(possible) > 1:
+            raise SelectionBlocked("OPPONENT_FORM_AMBIGUOUS")
+        else:
+            raise SelectionBlocked("OPPONENT_MATRIX_MISSING")
+    if len(set(resolved)) != 6:
+        raise SelectionBlocked("OPPONENT_SIX_DUPLICATES")
     try:
-        # Verify EVERY canonical name against this match's already-frozen
-        # Japanese LIVE matrix; no extra data source and no guesswork.
-        assets.matrix_rows_for(canonical_opponent)
+        assets.matrix_rows_for(tuple(resolved))
     except (ValueError, KeyError) as exc:
         raise SelectionBlocked("OPPONENT_MATRIX_MISSING") from exc
-    return canonical_opponent
+    return tuple(resolved)
 
 def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
     chosen = raw.get("selected_three")
@@ -176,6 +192,7 @@ _BLOCK_REASONS_JA = {
     "OPPONENT_SIX_DUPLICATES": "相手6匹の認識結果が重複しています。",
     "UNCERTAIN_TEAM_SLOT": "判別できなかったポケモンがいます。",
     "OPPONENT_MATRIX_MISSING": "相手の一部がLIVEマトリクスにありません。",
+    "OPPONENT_FORM_AMBIGUOUS": "相手のフォルムを特定できません。",
     "INVALID_SELECTION": "選出候補3匹が正しくありません。",
     "SELECTION_OUTSIDE_REGISTERED_TEAM": "登録構築にいないポケモンが選ばれました。",
     "LEAD_NOT_SELECTED": "初手が選出3匹に含まれていません。",
