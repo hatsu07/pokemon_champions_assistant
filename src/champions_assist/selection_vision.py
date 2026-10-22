@@ -167,6 +167,38 @@ class SelectionPlanner:
                                      elapsed_ms=round((self.clock()-started_at)*1000),
                                      **details)
 
+_BLOCK_REASONS_JA = {
+    "NOT_TEAM_SELECTION": "選出画面ではありません。",
+    "OWN_SIX_INCOMPLETE": "自軍6匹の認識が不完全です。",
+    "REGISTERED_TEAM_MISMATCH": "画像の自軍6匹と登録構築が一致しません。",
+    "AMBIGUOUS_OWN_SPECIES": "自軍の名前に重複または曖昧さがあります。",
+    "OPPONENT_SIX_INCOMPLETE": "相手6匹の認識が不完全です。",
+    "OPPONENT_SIX_DUPLICATES": "相手6匹の認識結果が重複しています。",
+    "UNCERTAIN_TEAM_SLOT": "判別できなかったポケモンがいます。",
+    "OPPONENT_MATRIX_MISSING": "相手の一部がLIVEマトリクスにありません。",
+    "INVALID_SELECTION": "選出候補3匹が正しくありません。",
+    "SELECTION_OUTSIDE_REGISTERED_TEAM": "登録構築にいないポケモンが選ばれました。",
+    "LEAD_NOT_SELECTED": "初手が選出3匹に含まれていません。",
+    "DEADLINE_EXCEEDED": "35秒の処理制限に達しました。",
+}
+
+
+def selection_summary_ja(result: Mapping[str, Any]) -> str:
+    """Player-facing concise Japanese summary; raw result stays diagnostic."""
+    if result.get("status") == "OK":
+        picked = result.get("selected_three") or ()
+        lead = result.get("lead")
+        if len(picked) == 3 and isinstance(lead, str):
+            return "選出：" + " / ".join(selection_base_name(n) for n in picked) + (
+                "　初手：" + selection_base_name(lead))
+    reason = str(result.get("reason", ""))
+    if result.get("status") == "BLOCKED":
+        return "選出できません：" + _BLOCK_REASONS_JA.get(reason, "確認が必要な情報があります。")
+    if result.get("status") == "DEADLINE_EXCEEDED":
+        return "選出できません：35秒の処理制限に達しました。"
+    return "選出結果を確定できませんでした。"
+
+
 VISION_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
