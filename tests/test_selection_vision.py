@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from types import MappingProxyType
 from champions_assist.preload import FrozenMatchAssets
-from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked
+from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked, selection_summary_ja
 
 OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
 OPP=("ピカチュウ","ドドゲザン","ゲンガー","マリルリ","ギャラドス","カイリュー")
@@ -21,6 +21,95 @@ def observation():
     return {"visual_ui":"TEAM_SELECTION","our_six":[name.split("→",1)[0].strip() for name in OWN],"opponent_six":list(OPP),"uncertain_slots":[]}
 
 class SelectionVisionTest(unittest.TestCase):
+    def test_exact_user_english_screenshot_matches_japanese_registered_team(self):
+        # Reproduce the actual observed 2026-10-22 six-on-six diagnostic.
+        english_own=("Pikachu","Kingambit","Garchomp","Azumarill","Gyarados","Gengar")
+        own=("ピカチュウ","ドドゲザン","ガブリアス","マリルリ","ギャラドス","ゲンガー")
+        english_opp=("Meowscarada","Primarina","Garchomp","Lucario","Gholdengo","Mimikyu")
+        opponent=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ","サーフゴー","ミミッキュ")
+        fixture=FrozenMatchAssets(
+            contents=MappingProxyType({"Pokemon_Champions_MC_live_decision_gate.txt":"GATE"}),
+            sha256=MappingProxyType({}),
+            matrix_index=MappingProxyType({name: name+"|matrix" for name in opponent}),
+            lookup_index=MappingProxyType({}),
+            own_team=tuple({"name":name,"role":""} for name in own),
+            frozen_at="fixture",
+        )
+        observed={"visual_ui":"TEAM_SELECTION","our_six":list(english_own),
+                  "opponent_six":list(english_opp),"uncertain_slots":[]}
+        self.assertEqual(verify_selection_observation(observed,fixture),opponent)
+        calls=[]
+        def chooser(context,seconds):
+            calls.append(context)
+            self.assertEqual(context["opponent_six"],list(opponent))
+            self.assertEqual(len(context["matrix_rows_six"]),6)
+            # Tactical model may also answer with English names.
+            return {"selected_three":["Pikachu","Kingambit","Garchomp"],"lead":"Pikachu"}
+        result=SelectionPlanner(clock=lambda:15.0).choose(observed,fixture,chooser,started_at=5.0)
+        self.assertEqual(result.status,"OK")
+        self.assertEqual(result.selected_three,own[:3])
+        self.assertEqual(result.lead,"ピカチュウ")
+        self.assertEqual(result.opponent_six,opponent)
+        self.assertEqual(result.as_dict()["observed_own_six"],list(own))
+        self.assertEqual(result.as_dict()["observed_opponent_six"],list(opponent))
+        self.assertEqual(result.as_dict()["only_in_image"],[])
+        self.assertEqual(result.as_dict()["only_in_registered_team"],[])
+        self.assertEqual(len(calls),1)
+
+    def test_japanese_player_facing_summary(self):
+        self.assertEqual(
+            selection_summary_ja({
+                "status":"OK",
+                "selected_three":["Pikachu","Kingambit","Garchomp"],
+                "lead":"Pikachu",
+            }),
+            "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ",
+        )
+        self.assertEqual(
+            selection_summary_ja({"status":"BLOCKED","reason":"REGISTERED_TEAM_MISMATCH"}),
+            "選出できません：画像の自軍6匹と登録構築が一致しません。",
+        )
+
+    def test_ambiguous_species_form_is_not_guessed(self):
+        base=assets()
+        rows=dict(base.matrix_index)
+        rows["ライチュウ（通常のすがた）"]="normal|matrix"
+        rows["ライチュウ（アローラのすがた）"]="alolan|matrix"
+        two_forms=FrozenMatchAssets(
+            contents=base.contents,sha256=base.sha256,
+            matrix_index=MappingProxyType(rows),
+            lookup_index=base.lookup_index,own_team=base.own_team,
+            frozen_at=base.frozen_at,
+        )
+        obs=observation()
+        obs["opponent_six"][0]="Raichu"
+        result=SelectionPlanner(clock=lambda:8.0).choose(
+            obs,two_forms,lambda *_:None,started_at=0.0)
+        self.assertEqual(result.reason,"OPPONENT_FORM_AMBIGUOUS")
+        self.assertEqual(result.selected_three,())
+        # A visually identified specific form can be matched exactly.
+        obs["opponent_six"][0]="Alolan Raichu"
+        self.assertEqual(verify_selection_observation(obs,two_forms)[0],
+                         "ライチュウ（アローラのすがた）")
+
+    def test_unknown_english_species_remains_blocked(self):
+        obs=observation()
+        obs["our_six"][0]="UnrecognizedCreature"
+        called=[]
+        result=SelectionPlanner(clock=lambda:5.0).choose(
+            obs,assets(),lambda *v: called.append(v),started_at=0.0)
+        self.assertEqual(result.status,"BLOCKED")
+        self.assertEqual(result.reason,"REGISTERED_TEAM_MISMATCH")
+        self.assertEqual(called,[])
+        self.assertIn("UnrecognizedCreature",result.as_dict()["only_in_image"])
+
+    def test_alias_duplicate_in_opponent_six_blocks(self):
+        obs=observation()
+        obs["opponent_six"][0]="Pikachu"
+        obs["opponent_six"][1]="ピカチュウ"
+        result=SelectionPlanner(clock=lambda:5.0).choose(obs,assets(),lambda *_:None,started_at=0.0)
+        self.assertEqual(result.reason,"OPPONENT_SIX_DUPLICATES")
+
     def test_six_matrix_rows_and_exact_three_with_lead(self):
         obs=observation()
         self.assertEqual(verify_selection_observation(obs,assets()),OPP)
