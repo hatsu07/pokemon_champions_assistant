@@ -294,6 +294,8 @@ class MatchReplayDialog(QDialog):
         try:
             image=capture_for_chatgpt(self.capture_config)
             self._latest_image=image
+            # A deliberate manual resend can restart a previously stopped session.
+            self._cancel_event.clear()
             self._manual_submission=True
             try:
                 self._queue_batch(self._turn_buffer.batch(image))
@@ -368,6 +370,11 @@ class MatchReplayDialog(QDialog):
             return
         if report.get("status") == "UNCHANGED_FRAME":
             return
+        if self._active_job=="batch" and self._pending_batch is not None:
+            # A newer command screen was observed while this AI call ran.
+            # Never display an older turn's action as the current advice.
+            report={**report,"status":"SUPERSEDED",
+                    "recommendation":"","warning":"NEWER_COMMAND_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED"):
@@ -433,7 +440,7 @@ class MatchReplayDialog(QDialog):
         self._worker=None
         self._active_job=None
         self._set_busy(False)
-        if self._auto_running:
+        if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
 
     def _render(self, report):
