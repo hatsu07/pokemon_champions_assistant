@@ -18,11 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main() -> None:
-    # New inline-settings tests reuse the same Qt singleton. Run them before
-    # the legacy dialog suite, whose tearDownClass intentionally quits Qt.
-    suite=unittest.defaultTestLoader.loadTestsFromNames(
-        ("tests.test_chatgpt_settings_inline", "tests.test_vision_preferences")
-    )
+    # Keep one legacy Qt suite in this process. Its own tearDownClass quits
+    # QApplication; combining UI suites previously made Windows exit nonzero
+    # despite every unittest assertion passing.
+    suite=unittest.defaultTestLoader.loadTestsFromName("tests.test_vision_preferences")
     result=unittest.TextTestRunner(verbosity=2).run(suite)
     sys.stdout.flush()
     sys.stderr.flush()
