@@ -11,7 +11,7 @@ def assets():
     rows={name:name+"|matrix" for name in OPP}
     return FrozenMatchAssets(
         contents=MappingProxyType({"Pokemon_Champions_MC_live_decision_gate.txt":"CHAMPIONS_GATE",
-            "Pokemon_Champions_MC_live_selection_matrix.txt":"# OWN={M:マスカーニャ,P:アシレーヌ,C:ガブリアス,L:メガルカリオZ,G:サーフゴー,K:ミミッキュ}\\n"}),
+            "Pokemon_Champions_MC_live_selection_matrix.txt":"# OWN={M:マスカーニャ,P:アシレーヌ,C:ガブリアス,L:メガルカリオZ,G:サーフゴー,K:ミミッキュ}\n"}),
         sha256=MappingProxyType({}),
         matrix_index=MappingProxyType(rows),
         lookup_index=MappingProxyType({}),
@@ -30,7 +30,7 @@ class SelectionVisionTest(unittest.TestCase):
         opponent=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ","サーフゴー","ミミッキュ")
         fixture=FrozenMatchAssets(
             contents=MappingProxyType({"Pokemon_Champions_MC_live_decision_gate.txt":"GATE",
-                "Pokemon_Champions_MC_live_selection_matrix.txt":"# OWN={P:ピカチュウ,K:ドドゲザン,C:ガブリアス,A:マリルリ,G:ギャラドス,E:ゲンガー}\\n"}),
+                "Pokemon_Champions_MC_live_selection_matrix.txt":"# OWN={P:ピカチュウ,K:ドドゲザン,C:ガブリアス,A:マリルリ,G:ギャラドス,E:ゲンガー}\n"}),
             sha256=MappingProxyType({}),
             matrix_index=MappingProxyType({name: name+"|matrix" for name in opponent}),
             lookup_index=MappingProxyType({}),
@@ -63,7 +63,7 @@ class SelectionVisionTest(unittest.TestCase):
         bad=FrozenMatchAssets(
             contents=MappingProxyType({
                 "Pokemon_Champions_MC_live_decision_gate.txt":"GATE",
-                "Pokemon_Champions_MC_live_selection_matrix.txt":"# OWN={A:ピカチュウ,B:ドドゲザン,C:ガブリアス,D:マリルリ,E:ギャラドス,F:ゲンガー}\\n",
+                "Pokemon_Champions_MC_live_selection_matrix.txt":"# OWN={A:ピカチュウ,B:ドドゲザン,C:ガブリアス,D:マリルリ,E:ギャラドス,F:ゲンガー}\n",
             }),
             sha256=original.sha256,matrix_index=original.matrix_index,
             lookup_index=original.lookup_index,own_team=original.own_team,
