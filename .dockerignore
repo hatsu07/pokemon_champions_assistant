@@ -1,0 +1,10 @@
+.git/
+.devcontainer/.cache/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+private_history/

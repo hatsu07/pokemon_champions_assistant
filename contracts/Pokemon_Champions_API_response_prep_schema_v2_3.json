@@ -1,0 +1,114 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "enum": [
+        "2.3.0"
+      ]
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "match_id": {
+      "type": "string"
+    },
+    "decision_window_id": {
+      "type": "string"
+    },
+    "tactical_state_version": {
+      "type": "integer"
+    },
+    "allowed_action_digest": {
+      "type": "string"
+    },
+    "decision_status": {
+      "type": "string",
+      "enum": [
+        "RECOMMENDED",
+        "NO_DECISION"
+      ]
+    },
+    "reason_code": {
+      "type": "string"
+    },
+    "warning": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prep_status": {
+      "type": "string",
+      "enum": [
+        "COMPLETE",
+        "INCOMPLETE"
+      ]
+    },
+    "matchups_18": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "our_pokemon": {
+            "type": "string"
+          },
+          "opponent_pokemon": {
+            "type": "string"
+          },
+          "eval_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "our_pokemon",
+          "opponent_pokemon",
+          "eval_code"
+        ]
+      }
+    },
+    "preserve": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stopper": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "closer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unfinished_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "protocol_version",
+    "request_id",
+    "match_id",
+    "decision_window_id",
+    "tactical_state_version",
+    "allowed_action_digest",
+    "decision_status",
+    "reason_code",
+    "warning",
+    "prep_status",
+    "matchups_18",
+    "preserve",
+    "stopper",
+    "closer",
+    "unfinished_reason"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "package_version": "2.7",
+  "source_copies": [
+    {
+      "path": "masters/Pokemon_Champions_MC_team_2026-09-29.csv",
+      "original_filename": "Pokemon_Champions_MC_team_2026-09-29.csv",
+      "sha256": "8d65491cd742d853399ef4c51c7f6135f52150f0984a0a2dac809643770284b1",
+      "bytes": 6983,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "masters/PROJECT_INSTRUCTION_live_matrix_addition.txt",
+      "original_filename": "PROJECT_INSTRUCTION_live_matrix_addition.txt",
+      "sha256": "f9a7fbe7fd8766e5270e94c75f4c42b1a3eb7fdb095bbd437e8d78fd7abfd488",
+      "bytes": 2853,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "knowledge/Pokemon_Champions_environment_snapshot_2026-10-21_archive.txt",
+      "original_filename": "Pokemon_Champions_environment_snapshot.txt",
+      "sha256": "a048aff7d7cda0175344ed5373ed2157b5f1a0801f03624dfe9d503e5db3dc61",
+      "bytes": 38746,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "knowledge/Pokemon_Champions_environment_data_source_policy.md",
+      "original_filename": "Pokemon_Champions_environment_data_source_policy.md",
+      "sha256": "0dab3516034bc3fbf0e01f85d9af6ae7a9dd3eb2aae0203062d47a4e6823e2ab",
+      "bytes": 3372,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "knowledge/Pokemon_Champions_Realtime_AI_System_Design_v1_0.md",
+      "original_filename": "Pokemon_Champions_Realtime_AI_System_Design_v1_0.md",
+      "sha256": "5ed38f878f00f42eb655355245c408e42115aa7bb9ae700f2c176e1eea2aad6c",
+      "bytes": 22196,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "private_history/Pokemon_Champions_battle_log.xlsx",
+      "original_filename": "Pokemon_Champions_battle_log",
+      "sha256": "ff822744a7907ceeb2c521924a58dbcd6e2fd7c3980b58854062d29ee74d0cc0",
+      "bytes": 40252,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "private_history/Pokemon_Champions_battle_data.xlsx",
+      "original_filename": "Pokemon_Champions_battle_data",
+      "sha256": "6657659fed3a4af0dccaee7a297303547c1b4b148da95953edf900658c6a3fc5",
+      "bytes": 145326,
+      "content_claim": "copied_bytes_unmodified"
+    },
+    {
+      "path": "knowledge/Pokemon_Champions_effect_rule_schema_v0_1.json",
+      "original_filename": "Pokemon_Champions_effect_rule_schema_v0_1.json",
+      "sha256": "58b11141b6cc24d76fca2f9d8ec85a3e64c4e786ba7c85cc9ec8402abce05c5e",
+      "bytes": 3573,
+      "content_claim": "copied_bytes_unmodified"
+    }
+  ],
+  "note": "The reconstructed project guidance and O/X documents are written based on provided user project context, not exports from settings."
+}

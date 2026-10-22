@@ -1,0 +1,7 @@
+jsonschema>=4.18,<5
+openai>=2.0,<3
+numpy>=2.0,<3
+opencv-python-headless>=4.10,<5
+pillow>=10,<12
+pytesseract>=0.3.10,<0.4
+PySide6-Essentials>=6.8,<7

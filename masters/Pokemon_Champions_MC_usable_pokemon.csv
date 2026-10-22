@@ -1,0 +1,351 @@
+﻿全国No.,ポケモン名,フォーム/姿,区分,姿を直接登録,分離した理由,入手・変化方法,備考,主出典URL,タイプ1,タイプ2,特性,H,A,B,C,D,S,種族値合計,基礎データ出典URL
+#0003,フシギバナ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,どく,しんりょく / ようりょくそ,80,82,83,100,100,80,525,https://pchamdb.com/pokemon/
+#0003,メガフシギバナ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,どく,あついしぼう,80,100,123,122,120,80,625,https://pchamdb.com/pokemon/
+#0006,リザードン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ひこう,もうか / サンパワー,78,84,78,109,85,100,534,https://pchamdb.com/pokemon/
+#0006,メガリザードンX,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,ドラゴン,かたいツメ,78,130,111,130,85,100,634,https://pchamdb.com/pokemon/
+#0006,メガリザードンY,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,ひこう,ひでり,78,104,78,159,115,100,634,https://pchamdb.com/pokemon/
+#0009,カメックス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,げきりゅう / あめうけざら,79,83,100,85,105,78,530,https://pchamdb.com/pokemon/
+#0009,メガカメックス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,,メガランチャー,79,103,120,135,115,78,630,https://pchamdb.com/pokemon/
+#0015,スピアー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,どく,むしのしらせ / スナイパー,65,90,40,45,80,75,395,https://pchamdb.com/pokemon/
+#0015,メガスピアー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,むし,どく,てきおうりょく,65,150,40,15,80,145,495,https://pchamdb.com/pokemon/
+#0018,ピジョット,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ひこう,するどいめ / ちどりあし / はとむね,83,80,75,70,70,101,479,https://pchamdb.com/pokemon/
+#0018,メガピジョット,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ノーマル,ひこう,ノーガード,83,80,80,135,80,121,579,https://pchamdb.com/pokemon/
+#0024,アーボック,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,,いかく / だっぴ / きんちょうかん,60,95,69,65,79,80,448,https://pchamdb.com/pokemon/
+#0025,ピカチュウ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,せいでんき / ひらいしん,35,55,40,50,50,90,320,https://pchamdb.com/pokemon/
+#0026,ライチュウ,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,せいでんき / ひらいしん,60,90,55,90,80,110,485,https://pchamdb.com/pokemon/
+#0026,ライチュウ,アローラのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,エスパー,サーフテール,60,85,50,95,85,110,485,https://pchamdb.com/pokemon/
+#0026,メガライチュウX,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,ライチュウ（通常のすがた）＋対応メガストーンから戦闘中に変化,アローラライチュウとは別フォーム。通常ライチュウ系列のメガシンカ。,https://yakkun.com/ch/zukan/n26x,でんき,,エレキメイカー,60,135,95,90,95,110,585,https://pchamdb.com/pokemon/
+#0026,メガライチュウY,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,ライチュウ（通常のすがた）＋対応メガストーンから戦闘中に変化,アローラライチュウとは別フォーム。通常ライチュウ系列のメガシンカ。,https://yakkun.com/ch/zukan/n26y,でんき,,ノーガード,60,100,55,160,80,130,585,https://pchamdb.com/pokemon/
+#0036,ピクシー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,,メロメロボディ / マジックガード / てんねん,95,70,73,95,90,60,483,https://pchamdb.com/pokemon/
+#0036,メガピクシー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,フェアリー,ひこう,マジックミラー,95,80,93,135,110,70,583,https://pchamdb.com/pokemon/
+#0038,キュウコン,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,もらいび / ひでり,73,76,75,81,100,100,505,https://pchamdb.com/pokemon/
+#0038,キュウコン,アローラのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,フェアリー,ゆきがくれ / ゆきふらし,73,67,75,81,100,109,505,https://pchamdb.com/pokemon/
+#0040,プクリン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,フェアリー,メロメロボディ / かちき / おみとおし,140,70,45,85,50,45,435,https://pchamdb.com/pokemon/
+#0045,ラフレシア,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,どく,ようりょくそ / ほうし,75,80,85,110,90,50,490,https://pchamdb.com/pokemon/
+#0053,ペルシアン,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,じゅうなん / テクニシャン / きんちょうかん,65,70,60,65,65,115,440,https://pchamdb.com/pokemon/
+#0053,ペルシアン,アローラのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,ファーコート / テクニシャン / びびり,65,60,60,75,65,115,440,https://pchamdb.com/pokemon/
+#0059,ウインディ,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,いかく / もらいび / せいぎのこころ,90,110,80,100,80,95,555,https://pchamdb.com/pokemon/
+#0059,ウインディ,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,いわ,いかく / もらいび / いしあたま,95,115,80,95,80,90,555,https://pchamdb.com/pokemon/
+#0065,フーディン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,シンクロ / せいしんりょく / マジックガード,55,50,45,135,95,120,500,https://pchamdb.com/pokemon/
+#0065,メガフーディン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,エスパー,,トレース,55,50,65,175,105,150,600,https://pchamdb.com/pokemon/
+#0068,カイリキー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,こんじょう / ノーガード / ふくつのこころ,90,130,80,65,85,55,505,https://pchamdb.com/pokemon/
+#0071,ウツボット,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,どく,ようりょくそ / くいしんぼう,80,105,65,100,70,70,490,https://pchamdb.com/pokemon/
+#0071,メガウツボット,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,どく,とびだすなかみ,80,125,85,135,95,70,590,https://pchamdb.com/pokemon/
+#0080,ヤドラン,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,エスパー,どんかん / マイペース / さいせいりょく,95,75,110,100,80,30,490,https://pchamdb.com/pokemon/
+#0080,ヤドラン,ガラルのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,エスパー,クイックドロウ / マイペース / さいせいりょく,95,100,95,100,70,30,490,https://pchamdb.com/pokemon/
+#0080,メガヤドラン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,ヤドラン（通常のすがた）＋ヤドランナイトから戦闘中に変化,ガラルヤドランとは別フォーム。通常ヤドラン系列のメガシンカ。,https://yakkun.com/ch/zukan/n80m,みず,エスパー,シェルアーマー,95,75,180,130,80,30,590,https://pchamdb.com/pokemon/
+#0083,カモネギ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ひこう,するどいめ / せいしんりょく / まけんき,52,90,55,58,62,60,377,https://pchamdb.com/pokemon/
+#0094,ゲンガー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,どく,のろわれボディ,60,65,60,130,75,110,500,https://pchamdb.com/pokemon/
+#0094,メガゲンガー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ゴースト,どく,かげふみ,60,65,80,170,95,130,600,https://pchamdb.com/pokemon/
+#0115,ガルーラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,はやおき / きもったま / せいしんりょく,105,95,80,40,80,90,490,https://pchamdb.com/pokemon/
+#0115,メガガルーラ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ノーマル,,おやこあい,105,125,100,60,100,100,590,https://pchamdb.com/pokemon/
+#0121,スターミー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,エスパー,はっこう / しぜんかいふく / アナライズ,60,75,85,100,85,115,520,https://pchamdb.com/pokemon/
+#0121,メガスターミー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,エスパー,ちからもち,60,100,105,130,105,120,620,https://pchamdb.com/pokemon/
+#0122,バリヤード,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,フェアリー,ぼうおん / フィルター / テクニシャン,40,45,65,100,120,90,460,https://pchamdb.com/pokemon/
+#0127,カイロス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,,かいりきバサミ / かたやぶり / じしんかじょう,65,125,100,55,70,85,500,https://pchamdb.com/pokemon/
+#0127,メガカイロス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,むし,ひこう,スカイスキン,65,155,120,65,90,105,600,https://pchamdb.com/pokemon/
+#0128,ケンタロス,通常,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,いかく / いかりのつぼ / ちからずく,75,100,95,40,70,110,490,https://pchamdb.com/pokemon/
+#0128,ケンタロス,パルデア・ウォーター種,フォーム,○,タイプ・種族値・特性・習得技が他の種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,みず,いかく / いかりのつぼ / はんすう,75,110,105,30,70,100,490,https://pchamdb.com/pokemon/
+#0128,ケンタロス,パルデア・コンバット種,フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,いかく / いかりのつぼ / はんすう,75,110,105,30,70,100,490,https://pchamdb.com/pokemon/
+#0128,ケンタロス,パルデア・ブレイズ種,フォーム,○,タイプ・種族値・特性・習得技が他の種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,ほのお,いかく / いかりのつぼ / はんすう,75,110,105,30,70,100,490,https://pchamdb.com/pokemon/
+#0130,ギャラドス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,ひこう,いかく / じしんかじょう,95,125,79,60,100,81,540,https://pchamdb.com/pokemon/
+#0130,メガギャラドス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,あく,かたやぶり,95,155,109,70,130,81,640,https://pchamdb.com/pokemon/
+#0132,メタモン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,じゅうなん / かわりもの,48,48,48,48,48,48,288,https://pchamdb.com/pokemon/
+#0134,シャワーズ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,ちょすい / うるおいボディ,130,65,60,110,95,65,525,https://pchamdb.com/pokemon/
+#0135,サンダース,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,ちくでん / はやあし,65,65,60,110,95,130,525,https://pchamdb.com/pokemon/
+#0136,ブースター,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,もらいび / こんじょう,65,130,60,95,110,65,525,https://pchamdb.com/pokemon/
+#0142,プテラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,ひこう,いしあたま / プレッシャー / きんちょうかん,80,105,65,60,75,130,515,https://pchamdb.com/pokemon/
+#0142,メガプテラ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,いわ,ひこう,かたいツメ,80,135,85,70,95,150,615,https://pchamdb.com/pokemon/
+#0143,カビゴン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,めんえき / あついしぼう / くいしんぼう,160,110,65,65,110,30,540,https://pchamdb.com/pokemon/
+#0149,カイリュー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,ひこう,せいしんりょく / マルチスケイル,91,134,95,100,100,80,600,https://pchamdb.com/pokemon/
+#0149,メガカイリュー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,ひこう,マルチスケイル,91,124,115,145,125,100,700,https://pchamdb.com/pokemon/
+#0154,メガニウム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,フェアリー,メガソーラー,80,92,115,143,115,80,625,https://pchamdb.com/pokemon/
+#0154,メガメガニウム,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,フェアリー,メガソーラー,80,92,115,143,115,80,625,https://pchamdb.com/pokemon/
+#0157,バクフーン,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,もうか / もらいび,78,84,78,109,85,100,534,https://pchamdb.com/pokemon/
+#0157,バクフーン,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ゴースト,もうか / おみとおし,73,84,78,119,85,95,534,https://pchamdb.com/pokemon/
+#0160,オーダイル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,げきりゅう / ちからずく,85,105,100,79,83,78,530,https://pchamdb.com/pokemon/
+#0160,メガオーダイル,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,ドラゴン,ドラゴンスキン,85,160,125,89,93,78,630,https://pchamdb.com/pokemon/
+#0168,アリアドス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,どく,むしのしらせ / ふみん / スナイパー,70,90,70,60,70,40,400,https://pchamdb.com/pokemon/
+#0181,デンリュウ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,せいでんき / プラス,90,75,85,115,90,55,510,https://pchamdb.com/pokemon/
+#0181,メガデンリュウ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,でんき,ドラゴン,かたやぶり,90,95,105,165,110,45,610,https://pchamdb.com/pokemon/
+#0184,マリルリ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,フェアリー,あついしぼう / ちからもち / そうしょく,100,50,80,60,80,50,420,https://pchamdb.com/pokemon/
+#0186,ニョロトノ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,ちょすい / しめりけ / あめふらし,90,75,75,90,100,70,500,https://pchamdb.com/pokemon/
+#0196,エーフィ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,シンクロ / マジックミラー,65,65,60,130,95,110,525,https://pchamdb.com/pokemon/
+#0197,ブラッキー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,シンクロ / せいしんりょく,95,65,110,60,130,65,525,https://pchamdb.com/pokemon/
+#0199,ヤドキング,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,エスパー,どんかん / マイペース / さいせいりょく,95,75,80,100,110,30,490,https://pchamdb.com/pokemon/
+#0199,ヤドキング,ガラルのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,エスパー,きみょうなくすり / マイペース / さいせいりょく,95,65,80,110,110,30,490,https://pchamdb.com/pokemon/
+#0205,フォレトス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,はがね,がんじょう / ぼうじん,75,90,140,60,60,40,465,https://pchamdb.com/pokemon/
+#0208,ハガネール,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,じめん,いしあたま / がんじょう / ちからずく,75,85,200,55,65,30,510,https://pchamdb.com/pokemon/
+#0208,メガハガネール,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,はがね,じめん,すなのちから,75,125,230,55,95,30,610,https://pchamdb.com/pokemon/
+#0211,ハリーセン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,どく,どくのトゲ / すいすい / いかく,65,95,85,55,55,85,440,https://pchamdb.com/pokemon/
+#0212,ハッサム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,はがね,むしのしらせ / テクニシャン / ライトメタル,70,130,100,55,80,65,500,https://pchamdb.com/pokemon/
+#0212,メガハッサム,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,むし,はがね,テクニシャン,70,150,140,65,100,75,600,https://pchamdb.com/pokemon/
+#0214,ヘラクロス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,かくとう,むしのしらせ / こんじょう / じしんかじょう,80,125,75,40,95,85,500,https://pchamdb.com/pokemon/
+#0214,メガヘラクロス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,むし,かくとう,スキルリンク,80,185,115,40,105,75,600,https://pchamdb.com/pokemon/
+#0227,エアームド,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,ひこう,するどいめ / がんじょう / くだけるよろい,65,80,140,40,70,70,465,https://pchamdb.com/pokemon/
+#0227,メガエアームド,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,はがね,ひこう,すじがねいり,65,140,110,40,100,110,565,https://pchamdb.com/pokemon/
+#0229,ヘルガー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,ほのお,はやおき / もらいび / きんちょうかん,75,90,50,110,80,95,500,https://pchamdb.com/pokemon/
+#0229,メガヘルガー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,あく,ほのお,サンパワー,75,90,90,140,90,115,600,https://pchamdb.com/pokemon/
+#0248,バンギラス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,あく,すなおこし / きんちょうかん,100,134,110,95,100,61,600,https://pchamdb.com/pokemon/
+#0248,メガバンギラス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,いわ,あく,すなおこし,100,164,150,95,120,71,700,https://pchamdb.com/pokemon/
+#0254,ジュカイン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,しんりょく / かるわざ,70,85,65,105,85,120,530,https://pchamdb.com/pokemon/
+#0254,メガジュカイン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,ドラゴン,ひらいしん,70,110,75,145,85,145,630,https://pchamdb.com/pokemon/
+#0257,バシャーモ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,かくとう,もうか / かそく,80,120,70,110,70,80,530,https://pchamdb.com/pokemon/
+#0257,メガバシャーモ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,かくとう,かそく,80,160,80,130,80,100,630,https://pchamdb.com/pokemon/
+#0260,ラグラージ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,じめん,げきりゅう / しめりけ,100,110,90,85,90,60,535,https://pchamdb.com/pokemon/
+#0260,メガラグラージ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,じめん,すいすい,100,150,110,95,110,70,635,https://pchamdb.com/pokemon/
+#0279,ペリッパー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,ひこう,するどいめ / あめふらし / あめうけざら,60,50,100,95,70,65,440,https://pchamdb.com/pokemon/
+#0282,サーナイト,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,フェアリー,シンクロ / トレース / テレパシー,68,65,65,125,115,80,518,https://pchamdb.com/pokemon/
+#0282,メガサーナイト,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,エスパー,フェアリー,フェアリースキン,68,85,65,165,135,100,618,https://pchamdb.com/pokemon/
+#0302,ヤミラミ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,ゴースト,するどいめ / あとだし / いたずらごころ,50,75,75,65,65,50,380,https://pchamdb.com/pokemon/
+#0302,メガヤミラミ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,あく,ゴースト,マジックミラー,50,85,125,85,115,20,480,https://pchamdb.com/pokemon/
+#0303,クチート,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,フェアリー,かいりきバサミ / いかく / ちからずく,50,85,85,55,55,50,380,https://pchamdb.com/pokemon/
+#0303,メガクチート,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,はがね,フェアリー,ちからもち,50,105,125,55,95,50,480,https://pchamdb.com/pokemon/
+#0306,ボスゴドラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,いわ,がんじょう / いしあたま / ヘヴィメタル,70,110,180,60,60,50,530,https://pchamdb.com/pokemon/
+#0306,メガボスゴドラ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,はがね,,フィルター,70,140,230,60,80,50,630,https://pchamdb.com/pokemon/
+#0308,チャーレム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,エスパー,ヨガパワー / テレパシー,60,60,75,60,75,80,410,https://pchamdb.com/pokemon/
+#0308,メガチャーレム,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,エスパー,ヨガパワー,60,100,85,80,85,100,510,https://pchamdb.com/pokemon/
+#0310,ライボルト,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,せいでんき / ひらいしん / マイナス,70,75,60,105,60,105,475,https://pchamdb.com/pokemon/
+#0310,メガライボルト,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,でんき,,いかく,70,75,80,135,80,135,575,https://pchamdb.com/pokemon/
+#0317,マルノーム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,,ヘドロえき / ねんちゃく / くいしんぼう,100,73,83,73,83,55,467,https://pchamdb.com/pokemon/
+#0319,サメハダー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,あく,さめはだ / かそく,70,120,40,95,40,95,460,https://pchamdb.com/pokemon/
+#0319,メガサメハダー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,あく,がんじょうあご,70,140,70,110,65,105,560,https://pchamdb.com/pokemon/
+#0323,バクーダ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,じめん,マグマのよろい / ハードロック / いかりのつぼ,70,100,70,105,75,40,460,https://pchamdb.com/pokemon/
+#0323,メガバクーダ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,じめん,ちからずく,70,120,100,145,105,20,560,https://pchamdb.com/pokemon/
+#0324,コータス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,しろいけむり / ひでり / シェルアーマー,70,85,140,85,70,20,470,https://pchamdb.com/pokemon/
+#0334,チルタリス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,ひこう,しぜんかいふく / ノーてんき,75,70,90,70,105,80,490,https://pchamdb.com/pokemon/
+#0334,メガチルタリス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,フェアリー,フェアリースキン,75,110,110,110,105,80,590,https://pchamdb.com/pokemon/
+#0350,ミロカロス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,ふしぎなうろこ / かちき / メロメロボディ,95,60,79,100,125,81,540,https://pchamdb.com/pokemon/
+#0351,ポワルン,通常のすがた,フォーム,○,天候でタイプ・見た目・ウェザーボールのタイプが変化,直接登録できる基本形,天候フォームは別行（戦闘中フォーム）,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,てんきや,70,70,70,70,70,70,420,https://pchamdb.com/pokemon/
+#0351,ポワルン,あまみずのすがた,戦闘中フォーム,×,天候でタイプが変化し、ウェザーボールのタイプも変化,あめ時に戦闘中変化,チームへこの姿を直接登録することはできない。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,,てんきや,70,70,70,70,70,70,420,https://pchamdb.com/pokemon/
+#0351,ポワルン,たいようのすがた,戦闘中フォーム,×,天候でタイプが変化し、ウェザーボールのタイプも変化,はれ時に戦闘中変化,チームへこの姿を直接登録することはできない。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,,てんきや,70,70,70,70,70,70,420,https://pchamdb.com/pokemon/
+#0351,ポワルン,ゆきぐものすがた,戦闘中フォーム,×,天候でタイプが変化し、ウェザーボールのタイプも変化,ゆき時に戦闘中変化,チームへこの姿を直接登録することはできない。,https://www.serebii.net/pokemonchampions/pokemon.shtml,こおり,,てんきや,70,70,70,70,70,70,420,https://pchamdb.com/pokemon/
+#0354,ジュペッタ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,,ふみん / おみとおし / のろわれボディ,64,115,65,83,63,65,455,https://pchamdb.com/pokemon/
+#0354,メガジュペッタ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ゴースト,,いたずらごころ,64,165,75,93,83,75,555,https://pchamdb.com/pokemon/
+#0358,チリーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,ふゆう,75,50,80,95,90,65,455,https://pchamdb.com/pokemon/
+#0358,メガチリーン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,エスパー,はがね,ふゆう,75,50,110,135,120,65,555,https://pchamdb.com/pokemon/
+#0359,アブソル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,プレッシャー / きょううん / せいぎのこころ,65,130,60,75,60,75,465,https://pchamdb.com/pokemon/
+#0359,メガアブソル,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,あく,,マジックミラー,65,150,60,115,60,115,565,https://pchamdb.com/pokemon/
+#0359,メガアブソルZ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,あく,ゴースト,きれあじ,65,154,60,75,60,151,565,https://pchamdb.com/pokemon/
+#0362,オニゴーリ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,,せいしんりょく / アイスボディ / ムラっけ,80,80,80,80,80,80,480,https://pchamdb.com/pokemon/
+#0362,メガオニゴーリ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,こおり,,フリーズスキン,80,120,80,120,80,100,580,https://pchamdb.com/pokemon/
+#0373,ボーマンダ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,ひこう,いかく / じしんかじょう,95,135,80,110,80,100,600,https://pchamdb.com/pokemon/
+#0373,メガボーマンダ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,ひこう,スカイスキン,95,145,130,120,90,120,700,https://pchamdb.com/pokemon/
+#0376,メタグロス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,エスパー,クリアボディ / ライトメタル,80,135,130,95,90,70,600,https://pchamdb.com/pokemon/
+#0376,メガメタグロス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,はがね,エスパー,かたいツメ,80,145,150,105,110,110,700,https://pchamdb.com/pokemon/
+#0389,ドダイトス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,じめん,しんりょく / シェルアーマー,95,109,105,75,85,56,525,https://pchamdb.com/pokemon/
+#0392,ゴウカザル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,かくとう,もうか / てつのこぶし,76,104,71,104,71,108,534,https://pchamdb.com/pokemon/
+#0395,エンペルト,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,はがね,げきりゅう / かちき,84,86,88,111,101,60,530,https://pchamdb.com/pokemon/
+#0398,ムクホーク,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ひこう,いかく / すてみ,85,120,70,50,60,100,485,https://pchamdb.com/pokemon/
+#0398,メガムクホーク,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,ひこう,あまのじゃく,85,140,100,60,90,110,585,https://pchamdb.com/pokemon/
+#0405,レントラー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,とうそうしん / いかく / こんじょう,80,120,79,95,79,70,523,https://pchamdb.com/pokemon/
+#0407,ロズレイド,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,どく,しぜんかいふく / どくのトゲ / テクニシャン,60,70,65,125,105,90,515,https://pchamdb.com/pokemon/
+#0409,ラムパルド,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,,かたやぶり / ちからずく,97,165,60,65,50,58,495,https://pchamdb.com/pokemon/
+#0411,トリデプス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,はがね,がんじょう / ぼうおん,60,52,168,47,138,30,495,https://pchamdb.com/pokemon/
+#0428,ミミロップ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,メロメロボディ / ぶきよう / じゅうなん,65,76,84,54,96,105,480,https://pchamdb.com/pokemon/
+#0428,メガミミロップ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ノーマル,かくとう,きもったま,65,136,94,54,96,135,580,https://pchamdb.com/pokemon/
+#0442,ミカルゲ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,あく,プレッシャー / すりぬけ,50,92,108,92,108,35,485,https://pchamdb.com/pokemon/
+#0445,ガブリアス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,じめん,すながくれ / さめはだ,108,130,95,80,85,102,600,https://pchamdb.com/pokemon/
+#0445,メガガブリアス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,じめん,すなのちから,108,170,115,120,95,92,700,https://pchamdb.com/pokemon/
+#0445,メガガブリアスZ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,,ふゆう,108,130,85,141,85,151,700,https://pchamdb.com/pokemon/
+#0448,ルカリオ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,はがね,ふくつのこころ / せいしんりょく / せいぎのこころ,70,110,70,115,70,90,525,https://pchamdb.com/pokemon/
+#0448,メガルカリオ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,はがね,てきおうりょく,70,145,88,140,70,112,625,https://pchamdb.com/pokemon/
+#0448,メガルカリオZ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,はがね,はどうのぼうご,70,100,70,164,70,151,625,https://pchamdb.com/pokemon/
+#0450,カバルドン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,,すなおこし / すなのちから,108,112,118,68,72,47,525,https://pchamdb.com/pokemon/
+#0454,ドクロッグ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,かくとう,きけんよち / かんそうはだ / どくしゅ,83,106,65,86,65,85,490,https://pchamdb.com/pokemon/
+#0460,ユキノオー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,こおり,ゆきふらし / ぼうおん,90,92,75,92,85,60,494,https://pchamdb.com/pokemon/
+#0460,メガユキノオー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,こおり,ゆきふらし,90,132,105,132,105,30,594,https://pchamdb.com/pokemon/
+#0461,マニューラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,こおり,プレッシャー / わるいてぐせ,70,120,65,45,85,125,510,https://pchamdb.com/pokemon/
+#0464,ドサイドン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,いわ,ひらいしん / ハードロック / すてみ,115,140,130,55,55,40,535,https://pchamdb.com/pokemon/
+#0470,リーフィア,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,リーフガード / ようりょくそ,65,110,130,60,65,95,525,https://pchamdb.com/pokemon/
+#0471,グレイシア,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,,ゆきがくれ / アイスボディ,65,60,110,130,95,65,525,https://pchamdb.com/pokemon/
+#0472,グライオン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,ひこう,かいりきバサミ / すながくれ / ポイズンヒール,75,95,125,45,75,95,510,https://pchamdb.com/pokemon/
+#0473,マンムー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,じめん,どんかん / ゆきがくれ / あついしぼう,110,130,80,70,60,80,530,https://pchamdb.com/pokemon/
+#0475,エルレイド,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,かくとう,ふくつのこころ / きれあじ / せいぎのこころ,68,125,65,65,115,80,518,https://pchamdb.com/pokemon/
+#0475,メガエルレイド,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,エスパー,かくとう,せいしんりょく,68,165,95,65,115,110,618,https://pchamdb.com/pokemon/
+#0478,ユキメノコ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,ゴースト,ゆきがくれ / のろわれボディ,70,80,70,80,70,110,480,https://pchamdb.com/pokemon/
+#0478,メガユキメノコ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,こおり,ゴースト,ゆきふらし,70,80,70,140,100,120,580,https://pchamdb.com/pokemon/
+#0479,ロトム,ウォッシュロトム,フォーム,○,タイプ・種族値・専用技が通常フォルムと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,みず,ふゆう,50,65,107,105,107,86,520,https://pchamdb.com/pokemon/
+#0479,ロトム,カットロトム,フォーム,○,タイプ・種族値・専用技が通常フォルムと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,くさ,ふゆう,50,65,107,105,107,86,520,https://pchamdb.com/pokemon/
+#0479,ロトム,スピンロトム,フォーム,○,タイプ・種族値・専用技が通常フォルムと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,ひこう,ふゆう,50,65,107,105,107,86,520,https://pchamdb.com/pokemon/
+#0479,ロトム,ヒートロトム,フォーム,○,タイプ・種族値・専用技が通常フォルムと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,ほのお,ふゆう,50,65,107,105,107,86,520,https://pchamdb.com/pokemon/
+#0479,ロトム,フロストロトム,フォーム,○,タイプ・種族値・専用技が通常フォルムと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,こおり,ふゆう,50,65,107,105,107,86,520,https://pchamdb.com/pokemon/
+#0479,ロトム,通常フォルム,フォーム,○,タイプ・種族値・習得技が各フォルムで異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,ゴースト,ふゆう,50,50,77,95,77,91,440,https://pchamdb.com/pokemon/
+#0497,ジャローダ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,しんりょく / あまのじゃく,75,75,95,75,95,113,528,https://pchamdb.com/pokemon/
+#0500,エンブオー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,かくとう,もうか / すてみ,110,123,65,100,65,65,528,https://pchamdb.com/pokemon/
+#0500,メガエンブオー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,かくとう,かたやぶり,110,148,75,110,110,75,628,https://pchamdb.com/pokemon/
+#0503,ダイケンキ,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,げきりゅう / シェルアーマー,95,100,85,108,70,70,528,https://pchamdb.com/pokemon/
+#0503,ダイケンキ,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,あく,げきりゅう / きれあじ,90,108,80,100,65,85,528,https://pchamdb.com/pokemon/
+#0505,ミルホッグ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,はっこう / するどいめ / アナライズ,60,85,69,60,69,77,420,https://pchamdb.com/pokemon/
+#0510,レパルダス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,じゅうなん / かるわざ / いたずらごころ,64,88,50,88,50,106,446,https://pchamdb.com/pokemon/
+#0512,ヤナッキー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,くいしんぼう / しんりょく,75,98,63,98,63,101,498,https://pchamdb.com/pokemon/
+#0514,バオッキー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,くいしんぼう / もうか,75,98,63,98,63,101,498,https://pchamdb.com/pokemon/
+#0516,ヒヤッキー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,くいしんぼう / げきりゅう,75,98,63,98,63,101,498,https://pchamdb.com/pokemon/
+#0518,ムシャーナ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,よちむ / シンクロ / テレパシー,116,55,85,107,95,29,487,https://pchamdb.com/pokemon/
+#0530,ドリュウズ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,はがね,すなかき / すなのちから / かたやぶり,110,135,60,50,65,88,508,https://pchamdb.com/pokemon/
+#0530,メガドリュウズ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,じめん,はがね,かんつうドリル,110,165,100,65,65,103,608,https://pchamdb.com/pokemon/
+#0531,タブンネ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,いやしのこころ / さいせいりょく / ぶきよう,103,60,86,60,86,50,445,https://pchamdb.com/pokemon/
+#0531,メガタブンネ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ノーマル,フェアリー,いやしのこころ,103,60,126,80,126,50,545,https://pchamdb.com/pokemon/
+#0534,ローブシン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,こんじょう / ちからずく / てつのこぶし,105,140,95,55,65,45,505,https://pchamdb.com/pokemon/
+#0545,ペンドラー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,どく,どくのトゲ / むしのしらせ / かそく,60,100,89,55,69,112,485,https://pchamdb.com/pokemon/
+#0545,メガペンドラー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,むし,どく,シェルアーマー,60,140,149,75,99,62,585,https://pchamdb.com/pokemon/
+#0547,エルフーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,フェアリー,いたずらごころ / すりぬけ / ようりょくそ,60,67,85,77,75,116,480,https://pchamdb.com/pokemon/
+#0553,ワルビアル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,あく,いかく / じしんかじょう / いかりのつぼ,95,117,80,65,70,92,519,https://pchamdb.com/pokemon/
+#0560,ズルズキン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,かくとう,だっぴ / じしんかじょう / いかく,65,90,115,45,115,58,488,https://pchamdb.com/pokemon/
+#0560,メガズルズキン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,あく,かくとう,いかく,65,130,135,55,135,68,588,https://pchamdb.com/pokemon/
+#0563,デスカーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,,ミイラ,58,50,145,95,105,30,483,https://pchamdb.com/pokemon/
+#0569,ダストダス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,,あくしゅう / くだけるよろい / ゆうばく,80,95,82,60,82,75,474,https://pchamdb.com/pokemon/
+#0571,ゾロアーク,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,イリュージョン,60,105,60,120,60,105,510,https://pchamdb.com/pokemon/
+#0571,ゾロアーク,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ゴースト,イリュージョン,55,100,60,125,60,110,510,https://pchamdb.com/pokemon/
+#0579,ランクルス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,ぼうじん / マジックガード / さいせいりょく,110,65,75,125,85,30,490,https://pchamdb.com/pokemon/
+#0584,バイバニラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,,アイスボディ / ゆきふらし / くだけるよろい,71,95,85,110,95,79,535,https://pchamdb.com/pokemon/
+#0587,エモンガ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,ひこう,せいでんき / でんきエンジン,55,75,60,75,60,103,428,https://pchamdb.com/pokemon/
+#0604,シビルドン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,ふゆう,85,115,80,105,80,50,515,https://pchamdb.com/pokemon/
+#0604,メガシビルドン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,でんき,,うなぎのぼり,85,145,80,135,90,80,615,https://pchamdb.com/pokemon/
+#0609,シャンデラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,ほのお,もらいび / ほのおのからだ / すりぬけ,60,55,90,145,90,80,520,https://pchamdb.com/pokemon/
+#0609,メガシャンデラ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ゴースト,ほのお,すりぬけ,60,75,110,175,110,90,620,https://pchamdb.com/pokemon/
+#0614,ツンベアー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,,ゆきがくれ / ゆきかき / すいすい,95,130,80,70,80,50,505,https://pchamdb.com/pokemon/
+#0618,マッギョ,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,でんき,せいでんき / じゅうなん / すながくれ,109,66,84,81,99,32,471,https://pchamdb.com/pokemon/
+#0618,マッギョ,ガラルのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,はがね,ぎたい,109,81,99,66,84,32,471,https://pchamdb.com/pokemon/
+#0623,ゴルーグ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,ゴースト,てつのこぶし / ぶきよう / ノーガード,89,124,80,55,80,55,483,https://pchamdb.com/pokemon/
+#0623,メガゴルーグ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,じめん,ゴースト,ふかしのこぶし,89,159,105,70,105,55,583,https://pchamdb.com/pokemon/
+#0635,サザンドラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,ドラゴン,ふゆう,92,105,90,125,90,98,600,https://pchamdb.com/pokemon/
+#0637,ウルガモス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,ほのお,ほのおのからだ / むしのしらせ,85,60,65,135,105,100,550,https://pchamdb.com/pokemon/
+#0652,ブリガロン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,かくとう,しんりょく / ぼうだん,88,107,122,74,75,64,530,https://pchamdb.com/pokemon/
+#0652,メガブリガロン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,かくとう,ぼうだん,88,137,172,74,115,44,630,https://pchamdb.com/pokemon/
+#0655,マフォクシー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,エスパー,もうか / マジシャン,75,69,72,114,100,104,534,https://pchamdb.com/pokemon/
+#0655,メガマフォクシー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,エスパー,ふゆう,75,69,72,159,125,134,634,https://pchamdb.com/pokemon/
+#0658,ゲッコウガ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,あく,げきりゅう / へんげんじざい / きずなへんげ,72,95,67,103,71,122,530,https://pchamdb.com/pokemon/
+#0658,メガゲッコウガ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,あく,へんげんじざい,72,125,77,133,81,142,630,https://pchamdb.com/pokemon/
+#0660,ホルード,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,じめん,ものひろい / ほおぶくろ / ちからもち,85,56,77,50,77,78,423,https://pchamdb.com/pokemon/
+#0663,ファイアロー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ひこう,ほのおのからだ / はやてのつばさ,78,81,71,74,69,126,499,https://pchamdb.com/pokemon/
+#0666,ビビヨン,,通常,○,—,通常（スカウト/HOME等）,模様違いは対戦性能が同じため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,ひこう,りんぷん / ふくがん / フレンドガード,80,52,50,90,50,89,411,https://pchamdb.com/pokemon/
+#0668,カエンジシ,,通常,○,—,通常（スカウト/HOME等）,♂♀は見た目差のみのため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ノーマル,とうそうしん / きんちょうかん / じしんかじょう,86,68,72,109,66,106,507,https://pchamdb.com/pokemon/
+#0668,メガカエンジシ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ほのお,ノーマル,ほのおのたてがみ,86,88,92,129,86,126,607,https://pchamdb.com/pokemon/
+#0670,フラエッテ,えいえんのはな,HOME限定フォーム,○,通常の花色フラエッテと種族値・習得技等が異なる,Pokémon HOMEから転送,Championsで確認できるフラエッテは『えいえんのはな』。,https://www.serebii.net/pokemonchampions/transferonly.shtml,フェアリー,,フラワーベール / きょうせい,74,65,67,125,128,92,551,https://pchamdb.com/pokemon/
+#0670,メガフラエッテ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,フラエッテ（えいえんのはな）＋フラエッテナイトから戦闘中に変化,Championsで使用可能なフラエッテ（えいえんのはな）からメガシンカ。,https://yakkun.com/ch/zukan/n670m,フェアリー,,フェアリーオーラ,74,85,87,155,148,102,651,https://pchamdb.com/pokemon/
+#0671,フラージェス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,,フラワーベール / きょうせい,78,65,68,112,154,75,552,https://pchamdb.com/pokemon/
+#0673,ゴーゴート,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,そうしょく / くさのけがわ,123,100,62,97,81,68,531,https://pchamdb.com/pokemon/
+#0675,ゴロンダ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,あく,てつのこぶし / かたやぶり / きもったま,95,124,78,69,71,58,495,https://pchamdb.com/pokemon/
+#0676,トリミアン,,通常,○,—,通常（スカウト/HOME等）,カット違いは対戦性能が同じため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,ファーコート,75,80,60,65,90,102,472,https://pchamdb.com/pokemon/
+#0678,ニャオニクス,オス,性別フォーム,○,隠れ特性・習得技がメスと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,するどいめ / すりぬけ / いたずらごころ,74,48,76,83,81,104,466,https://pchamdb.com/pokemon/
+#0678,ニャオニクス,メス,性別フォーム,○,隠れ特性・習得技がオスと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,するどいめ / すりぬけ / かちき,74,48,76,83,81,104,466,https://pchamdb.com/pokemon/
+#0678,メガニャオニクス♂,オス由来,メガシンカ,×,メガ後の種族値・特性は♀と同じだが、元のニャオニクス♂/♀で習得技が異なるため分離,ニャオニクス♂＋ニャオニクスナイトから戦闘中に変化,公式上は『メガニャオニクス』1種類。対戦用一覧では習得技差を考慮して♂♀を別行化。,https://yakkun.com/ch/zukan/n678m,エスパー,,トレース,74,48,76,143,101,124,566,https://pchamdb.com/pokemon/
+#0678,メガニャオニクス♀,メス由来,メガシンカ,×,メガ後の種族値・特性は♂と同じだが、元のニャオニクス♂/♀で習得技が異なるため分離,ニャオニクス♀＋ニャオニクスナイトから戦闘中に変化,公式上は『メガニャオニクス』1種類。対戦用一覧では習得技差を考慮して♂♀を別行化。,https://yakkun.com/ch/zukan/n678fm,エスパー,,トレース,74,48,76,143,101,124,566,https://pchamdb.com/pokemon/
+#0681,ギルガルド,シールドフォルム,戦闘フォーム,○,種族値がブレードフォルムと異なる,直接登録できる基本形,ブレードフォルムは別行（戦闘中フォーム）,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,ゴースト,バトルスイッチ,60,50,140,50,140,60,500,https://pchamdb.com/pokemon/
+#0681,ギルガルド,ブレードフォルム,戦闘中フォーム,×,攻撃・特攻と防御・特防の種族値配分がシールドフォルムと異なる,バトル中にフォルムチェンジ,チームへこの姿を直接登録することはできない。,https://www.serebii.net/pokemonchampions/pokemon.shtml,はがね,ゴースト,バトルスイッチ,60,140,50,140,50,60,500,https://pchamdb.com/pokemon/
+#0683,フレフワン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,,いやしのこころ / アロマベール,101,72,72,99,89,29,462,https://pchamdb.com/pokemon/
+#0685,ペロリーム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,,スイートベール / かるわざ,82,80,86,85,75,72,480,https://pchamdb.com/pokemon/
+#0687,カラマネロ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,エスパー,あまのじゃく / きゅうばん / すりぬけ,86,92,88,68,75,73,482,https://pchamdb.com/pokemon/
+#0687,メガカラマネロ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,あく,エスパー,あまのじゃく,86,102,88,98,120,88,582,https://pchamdb.com/pokemon/
+#0689,ガメノデス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,みず,かたいツメ / スナイパー / わるいてぐせ,72,105,115,54,86,68,500,https://pchamdb.com/pokemon/
+#0689,メガガメノデス,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,いわ,かくとう,かたいツメ,72,140,130,64,106,88,600,https://pchamdb.com/pokemon/
+#0691,ドラミドロ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,ドラゴン,どくのトゲ / どくしゅ / てきおうりょく,65,75,90,97,123,44,494,https://pchamdb.com/pokemon/
+#0691,メガドラミドロ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,どく,ドラゴン,さいせいりょく,65,85,105,132,163,44,594,https://pchamdb.com/pokemon/
+#0693,ブロスター,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,メガランチャー,71,73,88,120,89,59,500,https://pchamdb.com/pokemon/
+#0695,エレザード,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,ノーマル,かんそうはだ / すながくれ / サンパワー,62,55,52,109,94,109,481,https://pchamdb.com/pokemon/
+#0697,ガチゴラス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,ドラゴン,がんじょうあご / いしあたま,82,121,119,69,59,71,521,https://pchamdb.com/pokemon/
+#0699,アマルルガ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,こおり,フリーズスキン / ゆきふらし,123,77,72,99,92,58,521,https://pchamdb.com/pokemon/
+#0700,ニンフィア,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,,メロメロボディ / フェアリースキン,95,65,65,110,130,60,525,https://pchamdb.com/pokemon/
+#0701,ルチャブル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,ひこう,じゅうなん / かるわざ / かたやぶり,78,92,75,74,63,118,500,https://pchamdb.com/pokemon/
+#0701,メガルチャブル,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,ひこう,ノーガード,78,137,100,74,93,118,600,https://pchamdb.com/pokemon/
+#0702,デデンネ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,フェアリー,ほおぶくろ / ものひろい / プラス,67,58,57,81,67,101,431,https://pchamdb.com/pokemon/
+#0706,ヌメルゴン,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,,そうしょく / うるおいボディ / ぬめぬめ,90,100,70,110,150,80,600,https://pchamdb.com/pokemon/
+#0706,ヌメルゴン,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,ドラゴン,そうしょく / シェルアーマー / ぬめぬめ,80,100,100,110,150,60,600,https://pchamdb.com/pokemon/
+#0707,クレッフィ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,フェアリー,いたずらごころ / マジシャン,57,80,91,80,87,75,470,https://pchamdb.com/pokemon/
+#0709,オーロット,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,くさ,しぜんかいふく / おみとおし / しゅうかく,85,110,76,65,82,56,474,https://pchamdb.com/pokemon/
+#0711,パンプジン,おおきいサイズ,サイズフォーム,○,種族値（HP・素早さ等）がサイズで異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,くさ,ものひろい / おみとおし / ふみん,75,95,122,58,75,69,494,https://pchamdb.com/pokemon/
+#0711,パンプジン,ちいさいサイズ,サイズフォーム,○,種族値（HP・素早さ等）がサイズで異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,くさ,ものひろい / おみとおし / ふみん,55,85,122,58,75,99,494,https://pchamdb.com/pokemon/
+#0711,パンプジン,とくだいサイズ,サイズフォーム,○,種族値（HP・素早さ等）がサイズで異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,くさ,ものひろい / おみとおし / ふみん,85,100,122,58,75,54,494,https://pchamdb.com/pokemon/
+#0711,パンプジン,ふつうのサイズ,サイズフォーム,○,種族値（HP・素早さ等）がサイズで異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,くさ,ものひろい / おみとおし / ふみん,65,90,122,58,75,84,494,https://pchamdb.com/pokemon/
+#0713,クレベース,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,,マイペース / アイスボディ / がんじょう,95,117,184,44,46,28,514,https://pchamdb.com/pokemon/
+#0713,クレベース,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,いわ,がんじょうあご / アイスボディ / がんじょう,95,127,184,34,36,38,514,https://pchamdb.com/pokemon/
+#0715,オンバーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ひこう,ドラゴン,おみとおし / すりぬけ / テレパシー,85,70,80,97,80,123,535,https://pchamdb.com/pokemon/
+#0724,ジュナイパー,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ゴースト,しんりょく / えんかく,78,107,75,100,100,70,530,https://pchamdb.com/pokemon/
+#0724,ジュナイパー,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,かくとう,しんりょく / きもったま,88,112,80,95,95,60,530,https://pchamdb.com/pokemon/
+#0727,ガオガエン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,あく,もうか / いかく,95,115,90,80,90,60,530,https://pchamdb.com/pokemon/
+#0730,アシレーヌ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,フェアリー,げきりゅう / うるおいボイス,80,74,74,126,116,60,530,https://pchamdb.com/pokemon/
+#0733,ドデカバシ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ひこう,するどいめ / スキルリンク / ちからずく,80,120,75,75,75,60,485,https://pchamdb.com/pokemon/
+#0740,ケケンカニ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,こおり,かいりきバサミ / てつのこぶし / いかりのつぼ,97,132,77,62,67,43,478,https://pchamdb.com/pokemon/
+#0740,メガケケンカニ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,こおり,てつのこぶし,97,157,122,62,107,33,578,https://pchamdb.com/pokemon/
+#0745,ルガルガン,たそがれのすがた,フォーム,○,種族値・特性・習得技が他フォームと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,,かたいツメ,75,117,65,55,65,110,487,https://pchamdb.com/pokemon/
+#0745,ルガルガン,まひるのすがた,フォーム,○,種族値・特性・習得技が他フォームと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,,するどいめ / すなかき / ふくつのこころ,75,115,65,55,65,112,487,https://pchamdb.com/pokemon/
+#0745,ルガルガン,まよなかのすがた,フォーム,○,種族値・特性・習得技が他フォームと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,,するどいめ / やるき / ノーガード,85,115,75,55,75,82,487,https://pchamdb.com/pokemon/
+#0748,ドヒドイデ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,みず,ひとでなし / じゅうなん / さいせいりょく,50,63,152,53,142,35,495,https://pchamdb.com/pokemon/
+#0750,バンバドロ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,,マイペース / じきゅうりょく / せいしんりょく,100,125,100,55,85,35,500,https://pchamdb.com/pokemon/
+#0752,オニシズクモ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,むし,すいほう / ちょすい,68,70,92,50,132,42,454,https://pchamdb.com/pokemon/
+#0758,エンニュート,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,どく,ほのお,ふしょく / どんかん,68,64,60,111,60,117,480,https://pchamdb.com/pokemon/
+#0763,アマージョ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,リーフガード / じょおうのいげん / スイートベール,72,120,98,50,98,72,510,https://pchamdb.com/pokemon/
+#0765,ヤレユータン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,エスパー,せいしんりょく / テレパシー / きょうせい,90,60,80,90,110,60,490,https://pchamdb.com/pokemon/
+#0766,ナゲツケサル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,レシーバー / まけんき,100,120,90,40,60,80,490,https://pchamdb.com/pokemon/
+#0768,グソクムシャ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,みず,ききかいひ,75,125,140,60,90,40,530,https://pchamdb.com/pokemon/
+#0768,メガグソクムシャ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,むし,はがね,かたいツメ,75,150,175,70,120,40,630,https://pchamdb.com/pokemon/
+#0778,ミミッキュ,,通常,○,—,通常（スカウト/HOME等）,ばけたすがた/ばれたすがたは戦闘中の特性消費状態のため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,フェアリー,ばけのかわ,55,90,80,50,105,96,476,https://pchamdb.com/pokemon/
+#0780,ジジーロン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ドラゴン,ぎゃくじょう / そうしょく / ノーてんき,78,60,85,135,91,36,485,https://pchamdb.com/pokemon/
+#0780,メガジジーロン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ノーマル,ドラゴン,ぎゃくじょう,78,85,110,160,116,36,585,https://pchamdb.com/pokemon/
+#0784,ジャラランガ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,かくとう,ぼうだん / ぼうおん / ぼうじん,75,110,125,100,105,85,600,https://pchamdb.com/pokemon/
+#0812,ゴリランダー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,しんりょく / グラスメイカー,100,125,90,60,70,85,530,https://pchamdb.com/pokemon/
+#0815,エースバーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,もうか / リベロ,80,116,75,65,75,119,530,https://pchamdb.com/pokemon/
+#0818,インテレオン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,げきりゅう / スナイパー,70,85,65,125,65,120,530,https://pchamdb.com/pokemon/
+#0823,アーマーガア,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ひこう,はがね,プレッシャー / きんちょうかん / ミラーアーマー,98,87,105,53,85,67,495,https://pchamdb.com/pokemon/
+#0828,フォクスライ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,にげあし / かるわざ / はりこみ,70,58,58,87,92,90,455,https://pchamdb.com/pokemon/
+#0841,アップリュー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ドラゴン,じゅくせい / くいしんぼう / はりきり,70,110,80,95,60,70,485,https://pchamdb.com/pokemon/
+#0842,タルップル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ドラゴン,じゅくせい / くいしんぼう / あついしぼう,110,85,80,100,80,30,485,https://pchamdb.com/pokemon/
+#0844,サダイジャ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,,すなはき / だっぴ / すながくれ,72,107,125,65,70,71,510,https://pchamdb.com/pokemon/
+#0849,ストリンダー,ハイなすがた,フォーム,○,特性・習得技がローなすがたと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,どく,パンクロック / プラス / テクニシャン,75,98,70,114,70,75,502,https://pchamdb.com/pokemon/
+#0849,ストリンダー,ローなすがた,フォーム,○,特性・習得技がハイなすがたと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,どく,パンクロック / マイナス / テクニシャン,75,98,70,114,70,75,502,https://pchamdb.com/pokemon/
+#0853,オトスパス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,じゅうなん / テクニシャン,80,118,90,70,80,42,480,https://pchamdb.com/pokemon/
+#0855,ポットデス,,通常,○,—,通常（スカウト/HOME等）,贋作/真作の違いは対戦性能が同じため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,,くだけるよろい / のろわれボディ,60,65,65,134,114,70,508,https://pchamdb.com/pokemon/
+#0858,ブリムオン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,フェアリー,いやしのこころ / きけんよち / マジックミラー,57,90,95,136,103,29,510,https://pchamdb.com/pokemon/
+#0861,オーロンゲ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,フェアリー,いたずらごころ / おみとおし / わるいてぐせ,95,120,65,95,75,60,510,https://pchamdb.com/pokemon/
+#0863,ニャイキング,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,,カブトアーマー / かたいツメ / はがねのせいしん,70,110,100,50,60,50,440,https://pchamdb.com/pokemon/
+#0865,ネギガナイト,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,ふくつのこころ / きもったま,62,135,95,68,82,65,507,https://pchamdb.com/pokemon/
+#0866,バリコオル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,こおり,エスパー,ちどりあし / バリアフリー / アイスボディ,80,85,75,110,100,70,520,https://pchamdb.com/pokemon/
+#0867,デスバーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,じめん,ゴースト,さまようたましい,58,95,145,50,105,30,483,https://pchamdb.com/pokemon/
+#0869,マホイップ,,通常,○,—,通常（スカウト/HOME等）,クリーム・アメざい等の見た目違いは対戦性能が同じため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,,スイートベール / アロマベール,65,60,75,110,121,64,495,https://pchamdb.com/pokemon/
+#0870,タイレーツ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,,カブトアーマー / まけんき,65,100,100,70,60,75,470,https://pchamdb.com/pokemon/
+#0870,メガタイレーツ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,かくとう,,まけんき,65,135,135,70,65,100,570,https://pchamdb.com/pokemon/
+#0871,バチンウニ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,ひらいしん / エレキメイカー,48,101,95,91,85,15,435,https://pchamdb.com/pokemon/
+#0876,イエッサン,オス,性別フォーム,○,種族値・特性・習得技がメスと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,ノーマル,せいしんりょく / シンクロ / サイコメイカー,60,65,55,105,95,95,475,https://pchamdb.com/pokemon/
+#0876,イエッサン,メス,性別フォーム,○,種族値・特性・習得技がオスと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,ノーマル,マイペース / シンクロ / サイコメイカー,70,55,65,95,105,85,475,https://pchamdb.com/pokemon/
+#0877,モルペコ,まんぷくもよう,戦闘フォーム,○,オーラぐるまのタイプがはらぺこもようと異なる,直接登録できる基本形,はらぺこもようは別行（戦闘中フォーム）,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,あく,はらぺこスイッチ,58,95,58,70,58,97,436,https://pchamdb.com/pokemon/
+#0877,モルペコ,はらぺこもよう,戦闘中フォーム,×,オーラぐるまのタイプがまんぷくもようと異なる,特性により戦闘中変化,チームへこの姿を直接登録することはできない。,https://www.serebii.net/pokemonchampions/pokemon.shtml,でんき,あく,はらぺこスイッチ,58,95,58,70,58,97,436,https://pchamdb.com/pokemon/
+#0887,ドラパルト,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,ゴースト,クリアボディ / すりぬけ / のろわれボディ,88,120,75,100,75,142,600,https://pchamdb.com/pokemon/
+#0899,アヤシシ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,エスパー,いかく / おみとおし / そうしょく,103,105,72,105,75,65,525,https://pchamdb.com/pokemon/
+#0900,バサギリ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,むし,いわ,むしのしらせ / ちからずく / きれあじ,70,135,95,45,70,85,500,https://pchamdb.com/pokemon/
+#0902,イダイトウ,オス,性別フォーム,○,攻撃・特攻の種族値がメスと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,ゴースト,すいすい / てきおうりょく / かたやぶり,120,112,65,80,75,78,530,https://pchamdb.com/pokemon/
+#0902,イダイトウ,メス,性別フォーム,○,攻撃・特攻の種族値がオスと異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,ゴースト,すいすい / てきおうりょく / かたやぶり,120,92,65,100,75,78,530,https://pchamdb.com/pokemon/
+#0903,オオニューラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,どく,プレッシャー / かるわざ / どくしゅ,80,130,60,40,80,120,510,https://pchamdb.com/pokemon/
+#0904,ハリーマン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,どく,どくのトゲ / すいすい / いかく,85,115,95,65,65,85,510,https://pchamdb.com/pokemon/
+#0908,マスカーニャ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,あく,しんりょく / へんげんじざい,76,110,70,81,70,123,530,https://pchamdb.com/pokemon/
+#0911,ラウドボーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ゴースト,もうか / てんねん,104,75,100,110,75,66,530,https://pchamdb.com/pokemon/
+#0914,ウェーニバル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,かくとう,げきりゅう / じしんかじょう,85,120,80,85,75,85,530,https://pchamdb.com/pokemon/
+#0923,パーモット,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,かくとう,ちくでん / しぜんかいふく / てつのこぶし,70,115,70,70,60,105,490,https://pchamdb.com/pokemon/
+#0925,イッカネズミ,,通常,○,—,通常（スカウト/HOME等）,3びきかぞく/4ひきかぞくは対戦性能が同じため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,フレンドガード / ほおぶくろ / テクニシャン,74,75,70,65,75,111,470,https://pchamdb.com/pokemon/
+#0930,オリーヴァ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ノーマル,こぼれダネ / しゅうかく,78,69,90,125,109,39,510,https://pchamdb.com/pokemon/
+#0931,イキリンコ,イエロー/ホワイトフェザー,フォーム,○,グリーン/ブルー群と隠れ特性が異なる,通常（スカウト/HOME等）,イエローとホワイト同士は対戦性能が同一のため1行に統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ひこう,いかく / はりきり / ちからずく,82,96,51,45,51,92,417,https://pchamdb.com/pokemon/
+#0931,イキリンコ,グリーン/ブルーフェザー,フォーム,○,イエロー/ホワイト群と隠れ特性が異なる,通常（スカウト/HOME等）,グリーンとブルー同士は対戦性能が同一のため1行に統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,ひこう,いかく / はりきり / こんじょう,82,96,51,45,51,92,417,https://pchamdb.com/pokemon/
+#0934,キョジオーン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,,きよめのしお / がんじょう / クリアボディ,100,100,130,45,90,35,500,https://pchamdb.com/pokemon/
+#0936,グレンアルマ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,エスパー,もらいび / くだけるよろい,85,60,100,125,80,75,525,https://pchamdb.com/pokemon/
+#0937,ソウブレイズ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ゴースト,もらいび / くだけるよろい,75,125,80,60,100,85,525,https://pchamdb.com/pokemon/
+#0939,ハラバリー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,でんき,,でんきにかえる / せいでんき / しめりけ,109,64,91,103,83,45,495,https://pchamdb.com/pokemon/
+#0943,マフィティフ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,,いかく / ばんけん / はりこみ,80,120,90,60,70,85,505,https://pchamdb.com/pokemon/
+#0952,スコヴィラン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ほのお,ようりょくそ / ふみん / ムラっけ,65,108,65,108,65,75,486,https://pchamdb.com/pokemon/
+#0952,メガスコヴィラン,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,ほのお,とびだすハバネロ,65,138,85,138,85,75,586,https://pchamdb.com/pokemon/
+#0956,クエスパトラ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,エスパー,,びんじょう / おみとおし / かそく,95,60,60,101,60,105,481,https://pchamdb.com/pokemon/
+#0959,デカヌチャン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,フェアリー,はがね,かたやぶり / マイペース / わるいてぐせ,85,75,77,70,105,94,506,https://pchamdb.com/pokemon/
+#0964,イルカマン,ナイーブフォルム,戦闘フォーム,○,マイティフォルムと種族値が大きく異なる,直接登録できる基本形,マイティフォルムは別行（戦闘中フォーム）,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,みず,,マイティチェンジ,100,70,72,53,62,100,457,https://pchamdb.com/pokemon/
+#0964,イルカマン,マイティフォルム,戦闘中フォーム,×,種族値がナイーブフォルムと大きく異なる,一度交代後、特性により戦闘中変化,チームへこの姿を直接登録することはできない。,https://www.serebii.net/pokemonchampions/pokemon.shtml,みず,,マイティチェンジ,100,160,97,106,87,100,650,https://pchamdb.com/pokemon/
+#0968,ミミズズ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,,どしょく / すながくれ,70,85,145,60,55,65,480,https://pchamdb.com/pokemon/
+#0970,キラフロル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,いわ,どく,どくげしょう / ふしょく,83,55,90,130,81,86,525,https://pchamdb.com/pokemon/
+#0970,メガキラフロル,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,いわ,どく,てきおうりょく,83,90,105,150,96,101,625,https://pchamdb.com/pokemon/
+#0972,ハカドッグ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ゴースト,,すなかき / もふもふ,72,101,100,50,97,68,488,https://pchamdb.com/pokemon/
+#0979,コノヨザル,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,かくとう,ゴースト,やるき / せいしんりょく / まけんき,110,115,80,50,90,90,535,https://pchamdb.com/pokemon/
+#0981,リキキリン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,エスパー,はんすう / テイルアーマー / そうしょく,120,90,70,110,70,60,520,https://pchamdb.com/pokemon/
+#0983,ドドゲザン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,あく,はがね,まけんき / そうだいしょう / プレッシャー,100,135,120,60,85,50,550,https://pchamdb.com/pokemon/
+#0998,セグレイブ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,こおり,ねつこうかん / アイスボディ,115,145,92,75,86,87,600,https://pchamdb.com/pokemon/
+#0998,メガセグレイブ,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,こおり,ねつこうかん,115,175,117,105,101,87,700,https://pchamdb.com/pokemon/
+#1000,サーフゴー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,ゴースト,おうごんのからだ,87,60,95,133,91,84,550,https://pchamdb.com/pokemon/
+#1013,ヤバソチャ,,通常,○,—,通常（スカウト/HOME等）,見た目/真正性のフォーム差は対戦性能が同じため統合,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ゴースト,おもてなし / たいねつ,71,60,106,121,80,70,508,https://pchamdb.com/pokemon/
+#1018,ブリジュラス,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,はがね,ドラゴン,じきゅうりょく / がんじょう / すじがねいり,90,105,130,125,65,85,600,https://pchamdb.com/pokemon/
+#1019,カミツオロチ,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,ドラゴン,かんろなミツ / さいせいりょく / ねんちゃく,106,80,110,120,80,44,540,https://pchamdb.com/pokemon/

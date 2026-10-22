@@ -1,0 +1,27 @@
+# Pokémon Champions LIVEソース役割定義
+# 更新: 2026-10-03 現行構築ソース切替
+
+【唯一正本】
+選出・PREP・対戦中の判断順序、時間上限、処理回数上限、処理役集中、温存、第二温存タグ、メガ/フォーム変化、技固定、死に出し等のLIVE運用ルールは Pokemon_Champions_MC_live_decision_gate.txt だけを正本とする。
+本ファイルおよび Pokemon_Champions_MC_realtime_support_master.txt に同じLIVE判断ルールを重複保持しない。競合があれば Pokemon_Champions_MC_live_decision_gate.txt を優先する。
+
+【各ソースの役割】
+1. Pokemon_Champions_MC_live_decision_gate.txt：LIVE判断ルールの唯一正本。
+2. Pokemon_Champions_MC_live_selection_matrix.txt：選出・18対面の高速基礎評価データ。
+3. Pokemon_Champions_MC_60sec_lookup_master.txt：マトリクスで不足・矛盾・重大警戒がある箇所だけを補完する軽量参照データ。
+4. Pokemon_Champions_MC_realtime_support_master.txt：技・特性・タイプ・対面等の詳細データ。LIVE判断ルールは持たない。
+5. 現在の自軍構築ファイル：自軍6匹の技・持ち物・特性・性格・能力配分・役割の正本。
+
+【ランクマ開始前・事前ロード】
+事前ロードの実行条件・成功判定・禁止事項は Pokemon_Champions_MC_live_decision_gate.txt の「事前ロード実行ハードゲート」を唯一の正本とする。
+概要: 「ランクマ始める」「次の対戦へ」等の開始指示を受けたら、ユーザー向け返答より先に、①Pokemon_Champions_MC_live_decision_gate.txt ②Pokemon_Champions_MC_live_selection_matrix.txt ③Pokemon_Champions_MC_60sec_lookup_master.txt ④現在の自軍構築ファイル、の4本文を今回ターンで実読込し、4/4成功後のみ「事前ロード完了」と返す。過去会話・要約・既保持コンテキスト・ファイル存在確認は代替不可。
+Pokemon_Champions_MC_realtime_support_master.txt と本ファイルは事前ロード必須4ファイルに含めない。
+
+【保守ルール】
+LIVE運用を変更する場合は原則 Pokemon_Champions_MC_live_decision_gate.txt だけを修正する。
+データ内容を変更する場合は該当データソースだけを修正し、LIVE判断ルールをデータファイルへ複製しない。
+【現在の自軍構築ファイル】
+Pokemon_Champions_MC_team_2026-10-03.csv を現行正本とする。
+Pokemon_Champions_MC_team_2026-09-29.csv は旧構築履歴として保持し、LIVE事前ロードでは使用しない。
+構築変更時は、現在構築ファイルだけでなく LIVE選出マトリクス / 60秒ルックアップ / リアルタイム支援マスター内の自軍依存セクションも同時同期する。
+

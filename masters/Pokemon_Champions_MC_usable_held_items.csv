@@ -1,0 +1,167 @@
+﻿No.,区分,道具名,英語名,効果,用途/分類,対応ポケモン,変化先,入手方法,必要VP,発動/消費,追加時期,備考,Champions出典URL,日本語確認URL
+1,通常持ち物,ふうせん,Air Balloon,じめん技を受けなくなる。攻撃を受けると割れて効果を失う。,汎用,,,ショップ,1000,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+2,通常持ち物,おおきなねっこ,Big Root,HPを吸収する技などで自分が回復する量が増える。,回復強化,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+3,通常持ち物,しめつけバンド,Binding Band,しめつける等の拘束技による継続ダメージを強化する。,定数ダメージ,,,ショップ,700,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+4,通常持ち物,くろおび,Black Belt,かくとうタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+5,通常持ち物,くろいメガネ,Black Glasses,あくタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+6,通常持ち物,ひかりのこな,Bright Powder,相手から受ける技の命中率を下げる。,回避補助,,,最初から所持,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+7,通常持ち物,もくたん,Charcoal,ほのおタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+8,通常持ち物,こだわりスカーフ,Choice Scarf,同じ技しか選べなくなる代わりに、すばやさが1.5倍になる。,素早さ強化,,,最初から所持,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+9,通常持ち物,しめったいわ,Damp Rock,自分が雨を降らせたとき、雨の継続ターンを延長する。,天候,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+10,通常持ち物,りゅうのキバ,Dragon Fang,ドラゴンタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+11,通常持ち物,だっしゅつボタン,Eject Button,攻撃技でダメージを受けると、1度だけ手持ちと交代する。,対面操作,,,ショップ,700,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+12,通常持ち物,エレキシード,Electric Seed,エレキフィールドになると消費して防御が1段階上がる。,フィールド,,,ショップ,700,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+13,通常持ち物,たつじんのおび,Expert Belt,効果抜群の技の威力が1.2倍になる。,火力強化,,,ショップ,1000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+14,通常持ち物,ようせいのハネ,Fairy Feather,フェアリータイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+15,通常持ち物,きあいのハチマキ,Focus Band,ひんしになるダメージを受けても10%の確率でHP1で耐える。,行動保証,,,最初から所持,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+16,通常持ち物,きあいのタスキ,Focus Sash,HP満タン時にひんしになるダメージを受けても、1度だけHP1で耐える。,行動保証,,,最初から所持,,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+17,通常持ち物,グラスシード,Grassy Seed,グラスフィールドになると消費して防御が1段階上がる。,フィールド,,,ショップ,700,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+18,通常持ち物,かたいいし,Hard Stone,いわタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+19,通常持ち物,あついいわ,Heat Rock,自分が晴れにしたとき、晴れの継続ターンを延長する。,天候,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+20,通常持ち物,つめたいいわ,Icy Rock,自分が雪を降らせたとき、雪の継続ターンを延長する。,天候,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+21,通常持ち物,くろいてっきゅう,Iron Ball,すばやさが下がり、ひこうタイプや「ふゆう」でもじめん技が当たるようになる。,素早さ操作,,,ショップ,1000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+22,通常持ち物,おうじゃのしるし,King's Rock,攻撃技でダメージを与えたとき、10%で相手をひるませる効果を追加する。,追加効果,,,最初から所持,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+23,通常持ち物,ながねぎ,Leek,カモネギ・ネギガナイトに持たせると急所に当たりやすくなる。,専用,,,ショップ,700,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+24,通常持ち物,たべのこし,Leftovers,毎ターン終了時に最大HPの1/16を回復する。,継続回復,,,最初から所持,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+25,通常持ち物,いのちのたま,Life Orb,攻撃技の威力が1.3倍になる代わりに、攻撃が当たるたび最大HPの1/10を失う。,火力強化,,,ショップ,1000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+26,通常持ち物,でんきだま,Light Ball,ピカチュウに持たせると攻撃・特攻が2倍になる。,専用,,,ショップ,1000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+27,通常持ち物,ひかりのねんど,Light Clay,リフレクター・ひかりのかべ等の継続ターンを延長する。,壁展開,,,ショップ,1000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+28,通常持ち物,じしゃく,Magnet,でんきタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+29,通常持ち物,メンタルハーブ,Mental Herb,ちょうはつ等の行動を制限する効果を1度だけ解除する。,状態対策,,,ショップ,1000,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+30,通常持ち物,メタルコート,Metal Coat,はがねタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+31,通常持ち物,メトロノーム,Metronome,同じ技を連続して使うほど、その技の威力が上がる。,火力強化,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+32,通常持ち物,きせきのタネ,Miracle Seed,くさタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+33,通常持ち物,ミストシード,Misty Seed,ミストフィールドになると消費して特防が1段階上がる。,フィールド,,,ショップ,700,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+34,通常持ち物,ちからのハチマキ,Muscle Band,物理技の威力が1.1倍になる。,火力強化,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+35,通常持ち物,しんぴのしずく,Mystic Water,みずタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+36,通常持ち物,とけないこおり,Never-Melt Ice,こおりタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+37,通常持ち物,ノーマルジュエル,Normal Gem,ノーマルタイプの攻撃技を使うと1度だけ威力を上げて消費する。,火力強化,,,ショップ,1000,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+38,通常持ち物,どくバリ,Poison Barb,どくタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+39,通常持ち物,サイコシード,Psychic Seed,サイコフィールドになると消費して特防が1段階上がる。,フィールド,,,ショップ,700,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+40,通常持ち物,せんせいのツメ,Quick Claw,20%の確率で、同じ優先度の行動順を無視して先に行動する。,行動順,,,最初から所持,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+41,通常持ち物,レッドカード,Red Card,攻撃技でダメージを受けると、1度だけ攻撃した相手を強制交代させる。,対面操作,,,ショップ,1000,対戦中1回,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+42,通常持ち物,ゴツゴツメット,Rocky Helmet,直接攻撃を受けると、攻撃した相手に最大HPの1/6のダメージを与える。,接触対策,,,ショップ,1000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+43,通常持ち物,ピントレンズ,Scope Lens,急所に当たりやすくなる。,急所,,,ショップ,1000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+44,通常持ち物,するどいくちばし,Sharp Beak,ひこうタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+45,通常持ち物,きれいなぬけがら,Shed Shell,交代を封じる効果を受けていても交代できる。,交代補助,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+46,通常持ち物,かいがらのすず,Shell Bell,攻撃で与えたダメージの1/8だけHPを回復する。,回復,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+47,通常持ち物,シルクのスカーフ,Silk Scarf,ノーマルタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+48,通常持ち物,ぎんのこな,Silver Powder,むしタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+49,通常持ち物,さらさらいわ,Smooth Rock,自分が砂嵐にしたとき、砂嵐の継続ターンを延長する。,天候,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+50,通常持ち物,やわらかいすな,Soft Sand,じめんタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+51,通常持ち物,のろいのおふだ,Spell Tag,ゴーストタイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+52,通常持ち物,グランドコート,Terrain Extender,自分が発生させたフィールドの継続ターンを延長する。,フィールド,,,ショップ,700,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+53,通常持ち物,まがったスプーン,Twisted Spoon,エスパータイプの技の威力が1.2倍になる。,タイプ強化,,,ショップ,700,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+54,通常持ち物,しろいハーブ,White Herb,下がった能力ランクを1度だけ元に戻して消費する。,能力低下対策,,,最初から所持,,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+55,通常持ち物,こうかくレンズ,Wide Lens,技の命中率が1.1倍になる。,命中補助,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+56,通常持ち物,ものしりメガネ,Wise Glasses,特殊技の威力が1.1倍になる。,火力強化,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+57,通常持ち物,フォーカスレンズ,Zoom Lens,相手より後に行動するとき、技の命中率が1.2倍になる。,命中補助,,,ショップ,700,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+58,きのみ,イトケのみ,Passho Berry,弱点となるみずタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+59,きのみ,ウタンのみ,Payapa Berry,弱点となるエスパータイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+60,きのみ,オッカのみ,Occa Berry,弱点となるほのおタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+61,きのみ,オボンのみ,Sitrus Berry,HPが半分以下になると最大HPの1/4を回復する。,HP回復,,,最初から所持,,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+62,きのみ,オレンのみ,Oran Berry,HPが半分以下になるとHPを10回復する。,HP回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+63,きのみ,カゴのみ,Chesto Berry,ねむり状態になったとき、自分で治す。,状態異常回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+64,きのみ,カシブのみ,Kasib Berry,弱点となるゴーストタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+65,きのみ,キーのみ,Persim Berry,こんらん状態になったとき、自分で治す。,状態異常回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+66,きのみ,クラボのみ,Cheri Berry,まひ状態になったとき、自分で治す。,状態異常回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+67,きのみ,シュカのみ,Shuca Berry,弱点となるじめんタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+68,きのみ,ソクノのみ,Wacan Berry,弱点となるでんきタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+69,きのみ,タンガのみ,Tanga Berry,弱点となるむしタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+70,きのみ,チーゴのみ,Rawst Berry,やけど状態になったとき、自分で治す。,状態異常回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+71,きのみ,ナナシのみ,Aspear Berry,こおり状態になったとき、自分で治す。,状態異常回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+72,きのみ,ナモのみ,Colbur Berry,弱点となるあくタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+73,きのみ,ハバンのみ,Haban Berry,弱点となるドラゴンタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+74,きのみ,バコウのみ,Coba Berry,弱点となるひこうタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+75,きのみ,ヒメリのみ,Leppa Berry,技のPPが0になったとき、その技のPPを10回復する。,PP回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+76,きのみ,ビアーのみ,Kebia Berry,弱点となるどくタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+77,きのみ,ホズのみ,Chilan Berry,ノーマルタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+78,きのみ,モモンのみ,Pecha Berry,どく状態になったとき、自分で治す。,状態異常回復,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+79,きのみ,ヤチェのみ,Yache Berry,弱点となるこおりタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+80,きのみ,ヨプのみ,Chople Berry,弱点となるかくとうタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+81,きのみ,ヨロギのみ,Charti Berry,弱点となるいわタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+82,きのみ,ラムのみ,Lum Berry,状態異常またはこんらんになったとき、自分で治す。,状態異常回復,,,最初から所持,,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+83,きのみ,リリバのみ,Babiri Berry,弱点となるはがねタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+84,きのみ,リンドのみ,Rindo Berry,弱点となるくさタイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+85,きのみ,ロゼルのみ,Roseli Berry,弱点となるフェアリータイプの技を受けたとき、1度だけダメージを半減する。,半減実,,,ショップ,400,対戦中1回,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/ch/item.htm
+86,メガストーン,ユキノオナイト,Abomasite,ユキノオーに持たせるとメガユキノオーへメガシンカできる。,メガストーン,ユキノオー,メガユキノオー,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+87,メガストーン,アブソルナイト,Absolite,アブソルに持たせるとメガアブソルへメガシンカできる。,メガストーン,アブソル,メガアブソル,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+88,メガストーン,アブソルナイトZ,Absolite Z,アブソルに持たせるとメガアブソルZへメガシンカできる。,メガストーン,アブソル,メガアブソルZ,ショップ,2000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+89,メガストーン,プテラナイト,Aerodactylite,プテラに持たせるとメガプテラへメガシンカできる。,メガストーン,プテラ,メガプテラ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+90,メガストーン,ボスゴドラナイト,Aggronite,ボスゴドラに持たせるとメガボスゴドラへメガシンカできる。,メガストーン,ボスゴドラ,メガボスゴドラ,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+91,メガストーン,フーディナイト,Alakazite,フーディンに持たせるとメガフーディンへメガシンカできる。,メガストーン,フーディン,メガフーディン,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+92,メガストーン,チルタリスナイト,Altarianite,チルタリスに持たせるとメガチルタリスへメガシンカできる。,メガストーン,チルタリス,メガチルタリス,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+93,メガストーン,デンリュウナイト,Ampharosite,デンリュウに持たせるとメガデンリュウへメガシンカできる。,メガストーン,デンリュウ,メガデンリュウ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+94,メガストーン,タブンネナイト,Audinite,タブンネに持たせるとメガタブンネへメガシンカできる。,メガストーン,タブンネ,メガタブンネ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+95,メガストーン,ジュペッタナイト,Banettite,ジュペッタに持たせるとメガジュペッタへメガシンカできる。,メガストーン,ジュペッタ,メガジュペッタ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+96,メガストーン,ガメノデスナイト,Barbaracite,ガメノデスに持たせるとメガガメノデスへメガシンカできる。,メガストーン,ガメノデス,メガガメノデス,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+97,メガストーン,セグレイブナイト,Baxcalibrite,セグレイブに持たせるとメガセグレイブへメガシンカできる。,メガストーン,セグレイブ,メガセグレイブ,ショップ,2000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+98,メガストーン,スピアナイト,Beedrillite,スピアーに持たせるとメガスピアーへメガシンカできる。,メガストーン,スピアー,メガスピアー,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+99,メガストーン,カメックスナイト,Blastoisinite,カメックスに持たせるとメガカメックスへメガシンカできる。,メガストーン,カメックス,メガカメックス,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+100,メガストーン,バシャーモナイト,Blazikenite,バシャーモに持たせるとメガバシャーモへメガシンカできる。,メガストーン,バシャーモ,メガバシャーモ,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+101,メガストーン,バクーダナイト,Cameruptite,バクーダに持たせるとメガバクーダへメガシンカできる。,メガストーン,バクーダ,メガバクーダ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+102,メガストーン,シャンデラナイト,Chandelurite,シャンデラに持たせるとメガシャンデラへメガシンカできる。,メガストーン,シャンデラ,メガシャンデラ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+103,メガストーン,リザードナイトX,Charizardite X,リザードンに持たせるとメガリザードンXへメガシンカできる。,メガストーン,リザードン,メガリザードンX,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+104,メガストーン,リザードナイトY,Charizardite Y,リザードンに持たせるとメガリザードンYへメガシンカできる。,メガストーン,リザードン,メガリザードンY,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+105,メガストーン,ブリガロナイト,Chesnaughtite,ブリガロンに持たせるとメガブリガロンへメガシンカできる。,メガストーン,ブリガロン,メガブリガロン,Pokémon Legends: Z-AのブリガロンをHOME経由で預ける／ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+106,メガストーン,チリーンナイト,Chimechite,チリーンに持たせるとメガチリーンへメガシンカできる。,メガストーン,チリーン,メガチリーン,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+107,メガストーン,ピクシナイト,Clefablite,ピクシーに持たせるとメガピクシーへメガシンカできる。,メガストーン,ピクシー,メガピクシー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+108,メガストーン,ケケンカニナイト,Crabominite,ケケンカニに持たせるとメガケケンカニへメガシンカできる。,メガストーン,ケケンカニ,メガケケンカニ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+109,メガストーン,マフォクシナイト,Delphoxite,マフォクシーに持たせるとメガマフォクシーへメガシンカできる。,メガストーン,マフォクシー,メガマフォクシー,Pokémon Legends: Z-AのマフォクシーをHOME経由で預ける／ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+110,メガストーン,ドラミドナイト,Dragalgite,ドラミドロに持たせるとメガドラミドロへメガシンカできる。,メガストーン,ドラミドロ,メガドラミドロ,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+111,メガストーン,カイリュナイト,Dragoninite,カイリューに持たせるとメガカイリューへメガシンカできる。,メガストーン,カイリュー,メガカイリュー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+112,メガストーン,ジジーロナイト,Drampanite,ジジーロンに持たせるとメガジジーロンへメガシンカできる。,メガストーン,ジジーロン,メガジジーロン,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+113,メガストーン,シビルドナイト,Eelektrossite,シビルドンに持たせるとメガシビルドンへメガシンカできる。,メガストーン,シビルドン,メガシビルドン,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+114,メガストーン,エンブオナイト,Emboarite,エンブオーに持たせるとメガエンブオーへメガシンカできる。,メガストーン,エンブオー,メガエンブオー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+115,メガストーン,ドリュウズナイト,Excadrite,ドリュウズに持たせるとメガドリュウズへメガシンカできる。,メガストーン,ドリュウズ,メガドリュウズ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+116,メガストーン,タイレーツナイト,Falinksite,タイレーツに持たせるとメガタイレーツへメガシンカできる。,メガストーン,タイレーツ,メガタイレーツ,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+117,メガストーン,オーダイルナイト,Feraligite,オーダイルに持たせるとメガオーダイルへメガシンカできる。,メガストーン,オーダイル,メガオーダイル,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+118,メガストーン,フラエッテナイト,Floettite,フラエッテ（えいえんのはな）に持たせるとメガフラエッテへメガシンカできる。,メガストーン,フラエッテ（えいえんのはな）,メガフラエッテ,Pokémon Legends: Z-Aのフラエッテ（えいえんのはな）をHOME経由で預ける,,非消費,M-A/初期,フラエッテ（えいえんのはな）専用。,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+119,メガストーン,ユキメノコナイト,Froslassite,ユキメノコに持たせるとメガユキメノコへメガシンカできる。,メガストーン,ユキメノコ,メガユキメノコ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+120,メガストーン,エルレイドナイト,Galladite,エルレイドに持たせるとメガエルレイドへメガシンカできる。,メガストーン,エルレイド,メガエルレイド,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+121,メガストーン,ガブリアスナイト,Garchompite,ガブリアスに持たせるとメガガブリアスへメガシンカできる。,メガストーン,ガブリアス,メガガブリアス,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+122,メガストーン,ガブリアスナイトZ,Garchompite Z,ガブリアスに持たせるとメガガブリアスZへメガシンカできる。,メガストーン,ガブリアス,メガガブリアスZ,ショップ,2000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+123,メガストーン,サーナイトナイト,Gardevoirite,サーナイトに持たせるとメガサーナイトへメガシンカできる。,メガストーン,サーナイト,メガサーナイト,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+124,メガストーン,ゲンガナイト,Gengarite,ゲンガーに持たせるとメガゲンガーへメガシンカできる。,メガストーン,ゲンガー,メガゲンガー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+125,メガストーン,オニゴーリナイト,Glalitite,オニゴーリに持たせるとメガオニゴーリへメガシンカできる。,メガストーン,オニゴーリ,メガオニゴーリ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+126,メガストーン,キラフロルナイト,Glimmoranite,キラフロルに持たせるとメガキラフロルへメガシンカできる。,メガストーン,キラフロル,メガキラフロル,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+127,メガストーン,グソクムシャナイト,Golisopite,グソクムシャに持たせるとメガグソクムシャへメガシンカできる。,メガストーン,グソクムシャ,メガグソクムシャ,ショップ,2000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+128,メガストーン,ゴルーグナイト,Golurkite,ゴルーグに持たせるとメガゴルーグへメガシンカできる。,メガストーン,ゴルーグ,メガゴルーグ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+129,メガストーン,ゲッコウガナイト,Greninjite,ゲッコウガに持たせるとメガゲッコウガへメガシンカできる。,メガストーン,ゲッコウガ,メガゲッコウガ,Pokémon Legends: Z-AのゲッコウガをHOME経由で預ける／ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+130,メガストーン,ギャラドスナイト,Gyaradosite,ギャラドスに持たせるとメガギャラドスへメガシンカできる。,メガストーン,ギャラドス,メガギャラドス,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+131,メガストーン,ルチャブルナイト,Hawluchanite,ルチャブルに持たせるとメガルチャブルへメガシンカできる。,メガストーン,ルチャブル,メガルチャブル,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+132,メガストーン,ヘラクロスナイト,Heracronite,ヘラクロスに持たせるとメガヘラクロスへメガシンカできる。,メガストーン,ヘラクロス,メガヘラクロス,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+133,メガストーン,ヘルガナイト,Houndoominite,ヘルガーに持たせるとメガヘルガーへメガシンカできる。,メガストーン,ヘルガー,メガヘルガー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+134,メガストーン,ガルーラナイト,Kangaskhanite,ガルーラに持たせるとメガガルーラへメガシンカできる。,メガストーン,ガルーラ,メガガルーラ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+135,メガストーン,ミミロップナイト,Lopunnite,ミミロップに持たせるとメガミミロップへメガシンカできる。,メガストーン,ミミロップ,メガミミロップ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+136,メガストーン,ルカリオナイト,Lucarionite,ルカリオに持たせるとメガルカリオへメガシンカできる。,メガストーン,ルカリオ,メガルカリオ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+137,メガストーン,ルカリオナイトZ,Lucarionite Z,ルカリオに持たせるとメガルカリオZへメガシンカできる。,メガストーン,ルカリオ,メガルカリオZ,ショップ,2000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+138,メガストーン,カラマネナイト,Malamarite,カラマネロに持たせるとメガカラマネロへメガシンカできる。,メガストーン,カラマネロ,メガカラマネロ,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+139,メガストーン,ライボルトナイト,Manectite,ライボルトに持たせるとメガライボルトへメガシンカできる。,メガストーン,ライボルト,メガライボルト,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+140,メガストーン,クチートナイト,Mawilite,クチートに持たせるとメガクチートへメガシンカできる。,メガストーン,クチート,メガクチート,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+141,メガストーン,チャーレムナイト,Medichamite,チャーレムに持たせるとメガチャーレムへメガシンカできる。,メガストーン,チャーレム,メガチャーレム,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+142,メガストーン,メガニウムナイト,Meganiumite,メガニウムに持たせるとメガメガニウムへメガシンカできる。,メガストーン,メガニウム,メガメガニウム,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+143,メガストーン,ニャオニクスナイト,Meowsticite,ニャオニクスに持たせるとメガニャオニクスへメガシンカできる。,メガストーン,ニャオニクス,メガニャオニクス,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+144,メガストーン,メタグロスナイト,Metagrossite,メタグロスに持たせるとメガメタグロスへメガシンカできる。,メガストーン,メタグロス,メガメタグロス,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+145,メガストーン,ピジョットナイト,Pidgeotite,ピジョットに持たせるとメガピジョットへメガシンカできる。,メガストーン,ピジョット,メガピジョット,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+146,メガストーン,カイロスナイト,Pinsirite,カイロスに持たせるとメガカイロスへメガシンカできる。,メガストーン,カイロス,メガカイロス,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+147,メガストーン,カエンジシナイト,Pyroarite,カエンジシに持たせるとメガカエンジシへメガシンカできる。,メガストーン,カエンジシ,メガカエンジシ,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+148,メガストーン,ライチュウナイトX,Raichunite X,ライチュウ（通常のすがた）に持たせるとメガライチュウXへメガシンカできる。,メガストーン,ライチュウ（通常のすがた）,メガライチュウX,スペシャルギフト,,非消費,M-B,アローラライチュウではなく、通常のライチュウ用。,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+149,メガストーン,ライチュウナイトY,Raichunite Y,ライチュウ（通常のすがた）に持たせるとメガライチュウYへメガシンカできる。,メガストーン,ライチュウ（通常のすがた）,メガライチュウY,スペシャルギフト,,非消費,M-B,アローラライチュウではなく、通常のライチュウ用。,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+150,メガストーン,ヤミラミナイト,Sablenite,ヤミラミに持たせるとメガヤミラミへメガシンカできる。,メガストーン,ヤミラミ,メガヤミラミ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+151,メガストーン,ボーマンダナイト,Salamencite,ボーマンダに持たせるとメガボーマンダへメガシンカできる。,メガストーン,ボーマンダ,メガボーマンダ,ショップ,2000,非消費,M-C,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+152,メガストーン,ジュカインナイト,Sceptilite,ジュカインに持たせるとメガジュカインへメガシンカできる。,メガストーン,ジュカイン,メガジュカイン,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+153,メガストーン,ハッサムナイト,Scizorite,ハッサムに持たせるとメガハッサムへメガシンカできる。,メガストーン,ハッサム,メガハッサム,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+154,メガストーン,ペンドラナイト,Scolipite,ペンドラーに持たせるとメガペンドラーへメガシンカできる。,メガストーン,ペンドラー,メガペンドラー,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+155,メガストーン,スコヴィラナイト,Scovillainite,スコヴィランに持たせるとメガスコヴィランへメガシンカできる。,メガストーン,スコヴィラン,メガスコヴィラン,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+156,メガストーン,ズルズキナイト,Scraftinite,ズルズキンに持たせるとメガズルズキンへメガシンカできる。,メガストーン,ズルズキン,メガズルズキン,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+157,メガストーン,サメハダナイト,Sharpedonite,サメハダーに持たせるとメガサメハダーへメガシンカできる。,メガストーン,サメハダー,メガサメハダー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+158,メガストーン,エアームドナイト,Skarmorite,エアームドに持たせるとメガエアームドへメガシンカできる。,メガストーン,エアームド,メガエアームド,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+159,メガストーン,ヤドランナイト,Slowbronite,ヤドラン（通常のすがた）に持たせるとメガヤドランへメガシンカできる。,メガストーン,ヤドラン（通常のすがた）,メガヤドラン,ショップ,2000,非消費,M-A/初期,ガラルヤドランには使用不可。,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+160,メガストーン,ムクホークナイト,Staraptite,ムクホークに持たせるとメガムクホークへメガシンカできる。,メガストーン,ムクホーク,メガムクホーク,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+161,メガストーン,スターミナイト,Starminite,スターミーに持たせるとメガスターミーへメガシンカできる。,メガストーン,スターミー,メガスターミー,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+162,メガストーン,ハガネールナイト,Steelixite,ハガネールに持たせるとメガハガネールへメガシンカできる。,メガストーン,ハガネール,メガハガネール,メガシンカのチュートリアル,,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+163,メガストーン,ラグラージナイト,Swampertite,ラグラージに持たせるとメガラグラージへメガシンカできる。,メガストーン,ラグラージ,メガラグラージ,ショップ,2000,非消費,M-B,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+164,メガストーン,バンギラスナイト,Tyranitarite,バンギラスに持たせるとメガバンギラスへメガシンカできる。,メガストーン,バンギラス,メガバンギラス,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+165,メガストーン,フシギバナイト,Venusaurite,フシギバナに持たせるとメガフシギバナへメガシンカできる。,メガストーン,フシギバナ,メガフシギバナ,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm
+166,メガストーン,ウツボットナイト,Victreebelite,ウツボットに持たせるとメガウツボットへメガシンカできる。,メガストーン,ウツボット,メガウツボット,ショップ,2000,非消費,M-A/初期,,https://www.serebii.net/pokemonchampions/items.shtml,https://yakkun.com/za/item.htm

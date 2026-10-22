@@ -1,0 +1,807 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Champions API Request Wire Protocol v2.3.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {
+      "enum": [
+        "2.3.0"
+      ]
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "match_id": {
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "SELECT",
+        "PREP",
+        "NORMAL_COMMAND",
+        "PIVOT_TARGET",
+        "FAINT_REPLACEMENT",
+        "EFFECT_REPLACEMENT",
+        "REVIEW"
+      ]
+    },
+    "decision_window_id": {
+      "type": "string"
+    },
+    "tactical_state_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "observation_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "allowed_action_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "deadline_ms_remaining": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frozen_at": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "sha256"
+            ]
+          }
+        }
+      },
+      "required": [
+        "frozen_at",
+        "files"
+      ]
+    },
+    "allowed_actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "completeness": {
+          "enum": [
+            "COMPLETE",
+            "PARTIAL",
+            "UNKNOWN"
+          ]
+        },
+        "moves": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pivot_moves": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "switch_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "team_candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mega_available": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "choice_lock": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "active_form": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "completeness",
+        "moves",
+        "pivot_moves",
+        "switch_targets",
+        "team_candidates",
+        "mega_available",
+        "choice_lock",
+        "active_form"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "own_team": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "moves": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "item": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "ability": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "nature": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evs": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "role": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "speed_note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "preserve_priority": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mega_form": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "moves",
+              "item",
+              "ability",
+              "nature",
+              "evs",
+              "role",
+              "speed_note",
+              "preserve_priority",
+              "mega_form"
+            ]
+          }
+        },
+        "selected_three": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lead": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "opponent_preview_six": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "live_matrix_rows_six": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "prep": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "NOT_STARTED",
+                "COMPLETE",
+                "INCOMPLETE",
+                "STALE"
+              ]
+            },
+            "matchups_18": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "preserve": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stopper": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "closer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "matchups_18",
+            "preserve",
+            "stopper",
+            "closer"
+          ]
+        },
+        "gate_sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "own_team",
+        "selected_three",
+        "lead",
+        "opponent_preview_six",
+        "live_matrix_rows_six",
+        "prep",
+        "gate_sha256"
+      ]
+    },
+    "battle_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "our_active": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "opponent_active": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "our_remaining": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "opponent_revealed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "opponent_unrevealed_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hp_status": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "certainty": {
+                "type": "string",
+                "enum": [
+                  "CONFIRMED",
+                  "CANDIDATE",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "remaining_turn_candidates": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "certainty",
+              "remaining_turn_candidates",
+              "evidence_ids"
+            ]
+          }
+        },
+        "stat_stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "certainty": {
+                "type": "string",
+                "enum": [
+                  "CONFIRMED",
+                  "CANDIDATE",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "remaining_turn_candidates": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "certainty",
+              "remaining_turn_candidates",
+              "evidence_ids"
+            ]
+          }
+        },
+        "field_effects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "certainty": {
+                "type": "string",
+                "enum": [
+                  "CONFIRMED",
+                  "CANDIDATE",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "remaining_turn_candidates": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "certainty",
+              "remaining_turn_candidates",
+              "evidence_ids"
+            ]
+          }
+        },
+        "statuses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "certainty": {
+                "type": "string",
+                "enum": [
+                  "CONFIRMED",
+                  "CANDIDATE",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "remaining_turn_candidates": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "certainty",
+              "remaining_turn_candidates",
+              "evidence_ids"
+            ]
+          }
+        },
+        "forms_and_types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "certainty": {
+                "type": "string",
+                "enum": [
+                  "CONFIRMED",
+                  "CANDIDATE",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "remaining_turn_candidates": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "certainty",
+              "remaining_turn_candidates",
+              "evidence_ids"
+            ]
+          }
+        },
+        "choice_locks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "null"
+                ]
+              },
+              "certainty": {
+                "type": "string",
+                "enum": [
+                  "CONFIRMED",
+                  "CANDIDATE",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "remaining_turn_candidates": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "certainty",
+              "remaining_turn_candidates",
+              "evidence_ids"
+            ]
+          }
+        },
+        "speed_observations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "known_moves_items_abilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recent_confirmed_events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unresolved_event_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "uncertainties": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "our_active",
+        "opponent_active",
+        "our_remaining",
+        "opponent_revealed",
+        "opponent_unrevealed_count",
+        "hp_status",
+        "stat_stages",
+        "field_effects",
+        "statuses",
+        "forms_and_types",
+        "choice_locks",
+        "speed_observations",
+        "known_moves_items_abilities",
+        "recent_confirmed_events",
+        "unresolved_event_ids",
+        "uncertainties"
+      ]
+    },
+    "snapshot_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readiness": {
+          "enum": [
+            "READY_CONFIRMED",
+            "READY_WITH_UNCERTAINTY",
+            "BLOCKED"
+          ]
+        },
+        "critical_unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "material_unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pending_event_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_seq_through": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "readiness",
+        "critical_unknowns",
+        "material_unknowns",
+        "pending_event_ids",
+        "evidence_seq_through",
+        "reason"
+      ]
+    },
+    "previous_ai_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parent_decision_window_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "planned_pivot_target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "based_on_version": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "validated_against_current_state": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "parent_decision_window_id",
+        "planned_pivot_target",
+        "based_on_version",
+        "validated_against_current_state"
+      ]
+    },
+    "task": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "request_id",
+    "match_id",
+    "phase",
+    "decision_window_id",
+    "tactical_state_version",
+    "observation_revision",
+    "allowed_action_digest",
+    "deadline_ms_remaining",
+    "source_manifest",
+    "allowed_actions",
+    "context",
+    "battle_state",
+    "snapshot_quality",
+    "previous_ai_plan",
+    "task"
+  ]
+}

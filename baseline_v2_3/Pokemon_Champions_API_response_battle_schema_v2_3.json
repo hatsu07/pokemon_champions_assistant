@@ -1,0 +1,95 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "enum": [
+        "2.3.0"
+      ]
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "match_id": {
+      "type": "string"
+    },
+    "decision_window_id": {
+      "type": "string"
+    },
+    "tactical_state_version": {
+      "type": "integer"
+    },
+    "allowed_action_digest": {
+      "type": "string"
+    },
+    "decision_status": {
+      "type": "string",
+      "enum": [
+        "RECOMMENDED",
+        "NO_DECISION"
+      ]
+    },
+    "reason_code": {
+      "type": "string"
+    },
+    "warning": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "action_kind": {
+      "type": "string",
+      "enum": [
+        "MOVE",
+        "SWITCH",
+        "NONE"
+      ]
+    },
+    "move": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mega": {
+      "type": "boolean"
+    },
+    "switch_target": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "planned_pivot_target": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "keep_back": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "protocol_version",
+    "request_id",
+    "match_id",
+    "decision_window_id",
+    "tactical_state_version",
+    "allowed_action_digest",
+    "decision_status",
+    "reason_code",
+    "warning",
+    "action_kind",
+    "move",
+    "mega",
+    "switch_target",
+    "planned_pivot_target",
+    "keep_back"
+  ]
+}

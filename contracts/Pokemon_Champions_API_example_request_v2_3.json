@@ -1,0 +1,200 @@
+{
+  "protocol_version": "2.3.0",
+  "request_id": "req1",
+  "match_id": "match1",
+  "phase": "NORMAL_COMMAND",
+  "decision_window_id": "dw1",
+  "tactical_state_version": 17,
+  "observation_revision": 29,
+  "allowed_action_digest": "sha256:cf7c2e3c97f98774ef67772cf36aab6f348b859eac988595ea2ec88f404bd1ed",
+  "deadline_ms_remaining": 14000,
+  "source_manifest": {
+    "frozen_at": "2026-10-21T16:00:00+09:00",
+    "files": [
+      {
+        "name": "Pokemon_Champions_MC_60sec_lookup_master.txt",
+        "sha256": "dac0fe02c5b393e67d20b457fcee029c1de229a32766d66daec5e5161d9c2bfb"
+      },
+      {
+        "name": "Pokemon_Champions_MC_live_decision_gate.txt",
+        "sha256": "f9faac8918cf60b3a424547fddef86e19cb5f28c4b01e481dfc1f9e5ee64c2e2"
+      },
+      {
+        "name": "Pokemon_Champions_MC_live_selection_matrix.txt",
+        "sha256": "915b0887826004e6217bf437695ddea14e3b405a5da73c1b7ddab38835082c2c"
+      },
+      {
+        "name": "Pokemon_Champions_MC_team_2026-10-03.csv",
+        "sha256": "b495662c79d13ae158502412dd3aadeb1c726505b9e23d066d2524ec459ff426"
+      }
+    ]
+  },
+  "allowed_actions": {
+    "completeness": "COMPLETE",
+    "moves": [
+      "技A",
+      "技B",
+      "技C",
+      "技D"
+    ],
+    "pivot_moves": [],
+    "switch_targets": [
+      "ポケモン乙",
+      "ポケモン丙"
+    ],
+    "team_candidates": [
+      "ポケモン甲",
+      "ポケモン乙",
+      "ポケモン丙",
+      "ポケモン丁",
+      "ポケモン戊",
+      "ポケモン己"
+    ],
+    "mega_available": false,
+    "choice_lock": null,
+    "active_form": null
+  },
+  "context": {
+    "own_team": [
+      {
+        "name": "ポケモン甲",
+        "moves": [
+          "技A",
+          "技B",
+          "技C",
+          "技D"
+        ],
+        "item": null,
+        "ability": null,
+        "nature": null,
+        "evs": null,
+        "role": null,
+        "speed_note": null,
+        "preserve_priority": null,
+        "mega_form": null
+      },
+      {
+        "name": "ポケモン乙",
+        "moves": [
+          "技A",
+          "技B",
+          "技C",
+          "技D"
+        ],
+        "item": null,
+        "ability": null,
+        "nature": null,
+        "evs": null,
+        "role": null,
+        "speed_note": null,
+        "preserve_priority": null,
+        "mega_form": null
+      },
+      {
+        "name": "ポケモン丙",
+        "moves": [
+          "技A",
+          "技B",
+          "技C",
+          "技D"
+        ],
+        "item": null,
+        "ability": null,
+        "nature": null,
+        "evs": null,
+        "role": null,
+        "speed_note": null,
+        "preserve_priority": null,
+        "mega_form": null
+      }
+    ],
+    "selected_three": [
+      "ポケモン甲",
+      "ポケモン乙",
+      "ポケモン丙"
+    ],
+    "lead": "ポケモン甲",
+    "opponent_preview_six": [
+      "敵甲",
+      "敵乙",
+      "敵丙",
+      "敵丁",
+      "敵戊",
+      "敵己"
+    ],
+    "live_matrix_rows_six": [
+      "matrix-0",
+      "matrix-1",
+      "matrix-2",
+      "matrix-3",
+      "matrix-4",
+      "matrix-5"
+    ],
+    "prep": {
+      "status": "COMPLETE",
+      "matchups_18": [
+        "pair-0",
+        "pair-1",
+        "pair-2",
+        "pair-3",
+        "pair-4",
+        "pair-5",
+        "pair-6",
+        "pair-7",
+        "pair-8",
+        "pair-9",
+        "pair-10",
+        "pair-11",
+        "pair-12",
+        "pair-13",
+        "pair-14",
+        "pair-15",
+        "pair-16",
+        "pair-17"
+      ],
+      "preserve": "乙",
+      "stopper": "甲",
+      "closer": "丙"
+    },
+    "gate_sha256": "c974e17b8e7321ce8c12983de3d0ed4a289821f579bbe0925b0181a4bc8e8d80"
+  },
+  "battle_state": {
+    "our_active": "ポケモン甲",
+    "opponent_active": "敵甲",
+    "our_remaining": [
+      "ポケモン甲",
+      "ポケモン乙",
+      "ポケモン丙"
+    ],
+    "opponent_revealed": [
+      "敵甲"
+    ],
+    "opponent_unrevealed_count": 2,
+    "hp_status": [],
+    "stat_stages": [],
+    "field_effects": [],
+    "statuses": [],
+    "forms_and_types": [],
+    "choice_locks": [],
+    "speed_observations": [],
+    "known_moves_items_abilities": [],
+    "recent_confirmed_events": [],
+    "unresolved_event_ids": [],
+    "uncertainties": []
+  },
+  "snapshot_quality": {
+    "readiness": "READY_CONFIRMED",
+    "critical_unknowns": [],
+    "material_unknowns": [],
+    "pending_event_ids": [],
+    "evidence_seq_through": 100,
+    "reason": "all processed"
+  },
+  "previous_ai_plan": {
+    "parent_decision_window_id": null,
+    "planned_pivot_target": null,
+    "based_on_version": null,
+    "validated_against_current_state": false
+  },
+  "task": "choose one action"
+}

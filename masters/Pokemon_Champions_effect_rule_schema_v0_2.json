@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pokemon Champions Canonical Effect Rule Catalog v0.2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rule_id",
+    "source_type",
+    "source_key",
+    "source_name",
+    "trigger",
+    "conditions",
+    "effects",
+    "duration",
+    "confirmation_required",
+    "verification_status",
+    "source",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "rule_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_type": {
+      "enum": [
+        "move",
+        "ability",
+        "item"
+      ]
+    },
+    "source_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trigger": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "target",
+          "value",
+          "stat",
+          "delta",
+          "multiplier"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stat": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delta": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "multiplier": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "duration": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unit",
+            "base_candidates",
+            "extended_candidates",
+            "extension_source"
+          ],
+          "properties": {
+            "unit": {
+              "enum": [
+                "turn"
+              ]
+            },
+            "base_candidates": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "extended_candidates": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "extension_source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "confirmation_required": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verification_status": {
+      "enum": [
+        "VERIFIED",
+        "PARTIAL",
+        "UNMAPPED",
+        "CONFLICT"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "field",
+        "excerpt",
+        "checked_date"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "excerpt": {
+          "type": "string"
+        },
+        "checked_date": {
+          "type": "string"
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}
