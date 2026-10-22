@@ -348,8 +348,15 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
         elapsed = round((perf_counter()-started)*1000)
         result.update(elapsed_ms=elapsed,observed_ui=observation["visual_ui"],
                       observation=observation,model=model)
-        if elapsed > total_seconds*1000 and result["status"] in ("ADVICE","OK","TEST_ONLY"):
-            result.update(status="DEADLINE_EXCEEDED",recommendation="")
+        if elapsed > total_seconds*1000:
+            # Late output must never be promoted into replay state or shown
+            # as a recommendation. The same visible image may be submitted
+            # explicitly again by the user.
+            return deepcopy(state), {
+                "status":"DEADLINE_EXCEEDED","elapsed_ms":elapsed,
+                "observed_ui":observation["visual_ui"],"model":model,
+                "recommendation":"",
+            }
         return updated,result
     except TimeoutError:
         return deepcopy(state), {"status":"DEADLINE_EXCEEDED","elapsed_ms":round((perf_counter()-started)*1000)}
