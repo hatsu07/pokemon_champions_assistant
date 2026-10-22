@@ -36,7 +36,12 @@ def capture_for_chatgpt(config: CaptureConfiguration,
         raise AutoCaptureUnavailable("GAME_VIEWPORT_ROI_REQUIRED")
     result = (preview or CapturePreviewService()).preview_once(config)
     if result.image is None or result.status != "CAPTURED_READ_ONLY_UNVERIFIED_CONTENT":
-        raise AutoCaptureUnavailable("CAPTURE_UNAVAILABLE")
+        # Surface actionable preview states (lost Win32 identity, minimized
+        # window, ADB capture failure). Never include image or secret data.
+        raise AutoCaptureUnavailable(
+            result.status if result.status != "CAPTURED_READ_ONLY_UNVERIFIED_CONTENT"
+            else "CAPTURE_UNAVAILABLE"
+        )
     try:
         image = NormalizedROI("GAME_VIEWPORT", *config.game_viewport_normalized).crop(result.image)
         if image.ndim != 3 or image.shape[2] != 3:
