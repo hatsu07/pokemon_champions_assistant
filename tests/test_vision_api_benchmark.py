@@ -10,6 +10,16 @@ import numpy as np
 from champions_assist.vision_api_benchmark import OpenAIVisionBenchmark, read_image, parse_extraction
 
 
+class _Stream:
+    def __init__(self,payload):
+        self.payload=payload
+    def __enter__(self):return self
+    def __exit__(self,*args):return False
+    def __iter__(self):
+        yield SimpleNamespace(type="response.output_text.delta",delta=self.payload)
+        yield SimpleNamespace(type="response.completed")
+
+
 class _Client:
     def __init__(self):
         self.responses = self
@@ -17,10 +27,11 @@ class _Client:
 
     def create(self, **kwargs):
         self.requests.append(kwargs)
-        return SimpleNamespace(output_text=json.dumps({
+        payload=json.dumps({
             "visual_ui": "MOVE_MENU", "pokemon": ["ピカチュウ"],
             "moves": ["10まんボルト"], "hp": ["112/112"], "messages": []
-        }, ensure_ascii=False))
+        }, ensure_ascii=False)
+        return _Stream(payload)
 
 
 class VisionBenchmarkTests(unittest.TestCase):
@@ -30,8 +41,8 @@ class VisionBenchmarkTests(unittest.TestCase):
         def factory(**kwargs):
             settings.append(kwargs)
             return client
-        result = OpenAIVisionBenchmark(client_factory=factory).run(
-            np.zeros((50, 90, 3), dtype=np.uint8), api_key="test-key")
+        result = OpenAIVisionBenchmark(model="test-vision",client_factory=factory).run(
+            np.zeros((50, 90, 3), dtype=np.uint8), access_token="test-token")
         self.assertEqual(result.status, "OK")
         report = result.report("MOVE_MENU")
         self.assertTrue(report["ui_match"])
@@ -39,6 +50,8 @@ class VisionBenchmarkTests(unittest.TestCase):
         self.assertEqual(report["image_size"], [90, 50])
         self.assertFalse(report["tactical_decision_executed"])
         self.assertFalse(client.requests[0]["store"])
+        self.assertTrue(client.requests[0]["stream"])
+        self.assertEqual(settings[0]["api_key"],"test-token")
         self.assertEqual(client.requests[0]["input"][0]["content"][1]["type"], "input_image")
         self.assertTrue(client.requests[0]["input"][0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,"))
         self.assertEqual(settings[0]["max_retries"], 0)

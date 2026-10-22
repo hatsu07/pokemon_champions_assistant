@@ -75,15 +75,15 @@ def parse_extraction(value: str) -> dict[str, Any]:
 
 
 class OpenAIVisionBenchmark:
-    """Uses a caller-supplied client for tests; no implicit API key persistence."""
+    """ChatGPT-plan OAuth only; caller selects an account-listed model."""
 
-    def __init__(self, *, model: str = "gpt-4.1-mini", client_factory: Callable[..., Any] | None = None):
+    def __init__(self, *, model: str, client_factory: Callable[..., Any] | None = None):
         self.model = model
         self.client_factory = client_factory
 
-    def run(self, image: np.ndarray, *, api_key: str, timeout_seconds: float = 30.0) -> VisionBenchResult:
-        if not api_key:
-            raise ValueError("runtime API key required")
+    def run(self, image: np.ndarray, *, access_token: str, timeout_seconds: float = 30.0) -> VisionBenchResult:
+        if not access_token:
+            raise ValueError("ChatGPT OAuth token required")
         height, width = image.shape[:2]
         data_uri = jpeg_data_uri(image)
         start = perf_counter()
@@ -93,9 +93,9 @@ class OpenAIVisionBenchmark:
                 factory = OpenAI
             else:
                 factory = self.client_factory
-            client = factory(api_key=api_key, max_retries=0, timeout=timeout_seconds)
-            answer = client.responses.create(
-                model=self.model, store=False,
+            client = factory(api_key=access_token, base_url="https://api.openai.com/v1", max_retries=0, timeout=timeout_seconds)
+            stream = client.responses.create(
+                model=self.model, store=False, stream=True,
                 instructions=(
                     "Read this screenshot of Pokémon Champions. This is visual transcription only, "
                     "not a move recommendation. Identify UI type and only clearly visible Pokémon "
@@ -119,7 +119,20 @@ class OpenAIVisionBenchmark:
                         "required": ["visual_ui", "pokemon", "moves", "hp", "messages"],
                     }}},
             )
-            result = parse_extraction(answer.output_text)
+            deltas: list[str] = []
+            completed = False
+            with stream:
+                for event in stream:
+                    event_type = getattr(event, "type", "")
+                    if event_type == "response.output_text.delta":
+                        deltas.append(str(event.delta))
+                    elif event_type in {"response.failed", "response.incomplete", "error"}:
+                        raise RuntimeError("VISION_RESPONSE_NOT_COMPLETED")
+                    elif event_type == "response.completed":
+                        completed = True
+            if not completed:
+                raise RuntimeError("VISION_STREAM_INTERRUPTED")
+            result = parse_extraction("".join(deltas))
             duration = round((perf_counter() - start) * 1000)
             if duration > 35_000:
                 return VisionBenchResult("DEADLINE_EXCEEDED", duration, result, (width, height), self.model)
