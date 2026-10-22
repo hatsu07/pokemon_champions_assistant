@@ -379,6 +379,9 @@ class SettingsDialog(QDialog):
         self.calibrate_button = QPushButton("認識較正を開く（ローカル・オフライン）")
         self.calibrate_button.clicked.connect(self._open_calibration)
         layout.addWidget(self.calibrate_button)
+        self.vision_benchmark_button = QPushButton("OpenAI画像認識の実測（保存画像・明示送信）")
+        self.vision_benchmark_button.clicked.connect(self._open_vision_benchmark)
+        layout.addWidget(self.vision_benchmark_button)
         layout.addWidget(QLabel("ゲーム領域はプレビュー上でドラッグ指定します。選択は正規化ROIとして保存され、画面サイズ変更時は再較正が必要です。"))
         return tab
 
@@ -539,6 +542,11 @@ class SettingsDialog(QDialog):
             self.capture_metrics.setText(f"明示操作で保存しました: {saved.name}（内容は未検証）")
         except ConfigurationError as exc:
             QMessageBox.warning(self, "撮影を保存できません", str(exc))
+
+    def _open_vision_benchmark(self) -> None:
+        from .vision_benchmark_dialog import VisionBenchmarkDialog
+        self._vision_benchmark_dialog = VisionBenchmarkDialog(parent=self)
+        self._vision_benchmark_dialog.show()
 
     def _open_calibration(self) -> None:
         from .ui_calibration_dialog import UiCalibrationDialog
