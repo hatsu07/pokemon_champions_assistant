@@ -27,12 +27,14 @@ class _ReplayWorker(QObject):
     finished = Signal(object)
 
     def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
+                 reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None):
         super().__init__()
         self.job=job
         self.app_root=app_root
         self.selected_model=selected_model
+        self.reasoning_effort=reasoning_effort
         self.capture_config=capture_config
         self.capture_gate=capture_gate
         self.capture_function=capture_function
@@ -48,6 +50,7 @@ class _ReplayWorker(QObject):
                 next_state, report=run_replay_prep(
                     state=self.state, assets=self.assets,
                     access_token=auth.access_token(),model=self.selected_model,
+                    reasoning_effort=self.reasoning_effort,
                 )
             elif self.job=="auto_frame":
                 # Capture and model transport run on this worker thread.
@@ -75,6 +78,7 @@ class _ReplayWorker(QObject):
                     next_state,report=run_replay_image(
                         image, state=self.state, assets=self.assets,
                         access_token=token,model=self.selected_model,
+                        reasoning_effort=self.reasoning_effort,
                         total_seconds=remaining,
                     )
                 report["capture_and_auth_ms"]=capture_and_auth_ms
@@ -91,11 +95,13 @@ class _ReplayWorker(QObject):
 class MatchReplayDialog(QDialog):
     def __init__(self, *, model: str, master_directory: str, team_path: str,
                  capture_config: CaptureConfiguration | None = None,
-                 store_root: str | Path | None = None, parent: QWidget | None = None):
+                 store_root: str | Path | None = None, parent: QWidget | None = None,
+                 reasoning_effort: str = "auto"):
         super().__init__(parent)
         self.setWindowTitle("マッチング～対戦終了 自動キャプチャ・AI支援（ゲーム操作なし）")
         self.setMinimumSize(790,620)
         self.model=model
+        self.reasoning_effort=reasoning_effort
         self.master_directory=master_directory
         self.team_path=team_path
         self.store_root=Path(store_root) if store_root else default_app_root()
@@ -233,6 +239,7 @@ class MatchReplayDialog(QDialog):
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
+            reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="auto_frame",
             capture_config=self.capture_config,capture_gate=self._capture_gate,
             cancel_event=self._cancel_event,
@@ -297,6 +304,7 @@ class MatchReplayDialog(QDialog):
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
+            reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=self.state, job="prep")
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -339,6 +347,7 @@ class MatchReplayDialog(QDialog):
         dest,_=QFileDialog.getSaveFileName(self,"対戦テスト結果を保存","","JSON (*.json)")
         if not dest:return
         report={"scope":"OPT_IN_AUTO_CAPTURE_MATCH_SUPPORT_NO_IMAGE_STORAGE","model":self.model,
+                "reasoning_effort":self.reasoning_effort,
                 "matrix_compatible":self.state["matrix_compatible"],
                 "state":self.state,"timeline":self.entries}
         try:
