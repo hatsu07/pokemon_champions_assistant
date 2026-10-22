@@ -96,6 +96,11 @@ class DesktopSettingsService:
             raise ConfigurationError("team editing is available only between matches")
         return self.teams.update_csv(team_id, text)
 
+    def revalidate_team(self, team_id: str, *, match_active: bool) -> RegisteredTeam:
+        if match_active:
+            raise ConfigurationError("試合中は構築を再検証できません")
+        return self.teams.revalidate(team_id)
+
     def select_team(self, team_id: str, *, match_active: bool) -> str:
         # Resolve/validate before updating settings.  This does not reread
         # masters: registration stored its fixed-master validation result.
