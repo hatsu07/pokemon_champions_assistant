@@ -48,7 +48,7 @@ jobs:
           $env:QT_QPA_PLATFORM = "offscreen"
           python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_terminology tests.test_phase_2 -v
           if ($LASTEXITCODE -ne 0) { throw "existing Windows suites failed" }
-          python -m unittest tests.test_vision_preferences -v
+          python scripts/windows_qt_test_runner.py
           if ($LASTEXITCODE -ne 0) { throw "vision preference GUI tests failed" }
       - name: Build portable validation harness (not MSI)
         run: >-
