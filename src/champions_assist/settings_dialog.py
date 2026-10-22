@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QDoubleSpinBox,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -39,7 +40,11 @@ from .windows_capture import WindowCandidate
 
 
 class RoiPreviewLabel(QLabel):
-    """Preview image widget that converts a drag rectangle into normalized ROI."""
+    """Editable ROI overlay in the displayed image's normalized coordinates.
+
+    Supports creation, live preview, moving and eight resize handles. It draws
+    over a full-widget QLabel pixmap rather than assuming the image is at (0, 0).
+    """
 
     roi_changed = Signal(object)
 
@@ -48,18 +53,33 @@ class RoiPreviewLabel(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(420, 240)
         self.setStyleSheet("border: 1px solid #666;")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
         self._image: np.ndarray | None = None
         self._roi: tuple[float, float, float, float] | None = None
-        self._drag_start: QPoint | None = None
-        self._drag_end: QPoint | None = None
+        self._drag_start: tuple[float, float] | None = None
+        self._drag_origin: tuple[float, float, float, float] | None = None
+        self._drag_mode: str | None = None
+        self._preview_roi: tuple[float, float, float, float] | None = None
 
     @property
     def normalized_roi(self) -> tuple[float, float, float, float] | None:
         return self._roi
 
+    @property
+    def image_size(self) -> tuple[int, int] | None:
+        if self._image is None:
+            return None
+        height, width = self._image.shape[:2]
+        return width, height
+
     def set_normalized_roi(self, roi: tuple[float, float, float, float] | None) -> None:
+        if roi is not None:
+            from .roi import NormalizedROI
+            NormalizedROI("GAME_VIEWPORT", *roi)
         self._roi = roi
-        self._redraw()
+        self._preview_roi = None
+        self.update()
 
     def set_frame(self, image: np.ndarray) -> None:
         self._image = image.copy()
@@ -69,7 +89,7 @@ class RoiPreviewLabel(QLabel):
         if self._image is None:
             return QRect()
         height, width = self._image.shape[:2]
-        if not width or not height:
+        if width <= 0 or height <= 0:
             return QRect()
         ratio = min(self.width() / width, self.height() / height)
         shown = QSize(max(1, int(width * ratio)), max(1, int(height * ratio)))
@@ -81,67 +101,164 @@ class RoiPreviewLabel(QLabel):
         height, width = self._image.shape[:2]
         qimage = QImage(self._image.data, width, height, width * 3, QImage.Format.Format_RGB888).copy()
         rect = self._image_rect()
-        if rect.isEmpty():
-            return
-        self.setPixmap(QPixmap.fromImage(qimage).scaled(rect.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        if not rect.isEmpty():
+            canvas = QPixmap(self.size())
+            canvas.fill(QColor("#202020"))
+            painter = QPainter(canvas)
+            painter.drawImage(rect, qimage)
+            painter.end()
+            self.setPixmap(canvas)
+        self.update()
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt callback
+    def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._redraw()
 
-    def _normalized_point(self, point: QPoint) -> tuple[float, float] | None:
+    def _normalized_point(self, point: QPoint, *, clamp: bool = False) -> tuple[float, float] | None:
         rect = self._image_rect()
-        if rect.isEmpty() or not rect.contains(point):
+        if rect.isEmpty() or (not clamp and not rect.contains(point)):
             return None
-        return ((point.x() - rect.left()) / rect.width(), (point.y() - rect.top()) / rect.height())
+        x = (point.x() - rect.left()) / rect.width()
+        y = (point.y() - rect.top()) / rect.height()
+        return (min(1.0, max(0.0, x)), min(1.0, max(0.0, y)))
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt callback
-        if event.button() is Qt.MouseButton.LeftButton and self._normalized_point(event.position().toPoint()) is not None:
-            self._drag_start = event.position().toPoint()
-            self._drag_end = self._drag_start
-            event.accept()
-            return
+    def _handle_at(self, point: QPoint) -> str | None:
+        roi = self._roi
+        rect = self._image_rect()
+        if roi is None or rect.isEmpty():
+            return None
+        l, t, r, b = roi
+        px = (rect.left() + l * rect.width(), rect.left() + r * rect.width())
+        py = (rect.top() + t * rect.height(), rect.top() + b * rect.height())
+        handles = {"nw": (px[0], py[0]), "n": ((px[0]+px[1])/2, py[0]), "ne": (px[1], py[0]),
+                   "w": (px[0], (py[0]+py[1])/2), "e": (px[1], (py[0]+py[1])/2),
+                   "sw": (px[0], py[1]), "s": ((px[0]+px[1])/2, py[1]), "se": (px[1], py[1])}
+        for name, (hx, hy) in handles.items():
+            if abs(point.x()-hx) <= 9 and abs(point.y()-hy) <= 9:
+                return name
+        normalized = self._normalized_point(point)
+        if normalized and l < normalized[0] < r and t < normalized[1] < b:
+            return "move"
+        return None
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() is Qt.MouseButton.LeftButton:
+            point = self._normalized_point(event.position().toPoint())
+            if point is not None:
+                self.setFocus()
+                self._drag_mode = self._handle_at(event.position().toPoint()) or "new"
+                self._drag_start = point
+                self._drag_origin = self._roi
+                self._preview_roi = self._roi
+                event.accept()
+                return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt callback
-        if self._drag_start is not None:
-            self._drag_end = event.position().toPoint()
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._drag_mode and self._drag_start:
+            point = self._normalized_point(event.position().toPoint(), clamp=True)
+            if point:
+                self._preview_roi = self._dragged_roi(point)
+                self.update()
             event.accept()
             return
+        mode = self._handle_at(event.position().toPoint())
+        if mode == "move":
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        elif mode in {"nw", "se"}:
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif mode in {"ne", "sw"}:
+            self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        elif mode in {"n", "s"}:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif mode in {"w", "e"}:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        else:
+            self.setCursor(Qt.CursorShape.CrossCursor)
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt callback
-        if self._drag_start is not None and self._drag_end is not None:
-            start = self._normalized_point(self._drag_start)
-            end = self._normalized_point(event.position().toPoint())
-            self._drag_start = self._drag_end = None
-            if start is not None and end is not None:
-                left, right = sorted((start[0], end[0]))
-                top, bottom = sorted((start[1], end[1]))
-                if right - left > 0.001 and bottom - top > 0.001:
-                    self._roi = (left, top, right, bottom)
-                    self.roi_changed.emit(self._roi)
+    def _dragged_roi(self, end: tuple[float, float]) -> tuple[float, float, float, float] | None:
+        if self._drag_start is None or self._drag_mode is None:
+            return None
+        x0, y0 = self._drag_start
+        x1, y1 = end
+        if self._drag_mode == "new":
+            return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+        if self._drag_origin is None:
+            return None
+        l, t, r, b = self._drag_origin
+        if self._drag_mode == "move":
+            dx = max(-l, min(1-r, x1-x0))
+            dy = max(-t, min(1-b, y1-y0))
+            return l+dx, t+dy, r+dx, b+dy
+        gap = 0.001
+        if "w" in self._drag_mode:
+            l = max(0., min(r-gap, x1))
+        if "e" in self._drag_mode:
+            r = min(1., max(l+gap, x1))
+        if "n" in self._drag_mode:
+            t = max(0., min(b-gap, y1))
+        if "s" in self._drag_mode:
+            b = min(1., max(t+gap, y1))
+        return l, t, r, b
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() is Qt.MouseButton.LeftButton and self._drag_mode:
+            point = self._normalized_point(event.position().toPoint(), clamp=True)
+            roi = self._dragged_roi(point) if point else None
+            self._drag_mode = None
+            self._drag_start = None
+            self._drag_origin = None
+            self._preview_roi = None
+            if roi is not None and roi[2]-roi[0] > 0.001 and roi[3]-roi[1] > 0.001:
+                self._roi = roi
+                self.roi_changed.emit(roi)
+            self.update()
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt callback
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if self._roi is not None and self.image_size is not None:
+            directions = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
+                          Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
+            if event.key() in directions:
+                dx, dy = directions[event.key()]
+                w, h = self.image_size
+                step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
+                l, t, r, b = self._roi
+                off_x = max(-l, min(1-r, dx*step/w))
+                off_y = max(-t, min(1-b, dy*step/h))
+                self.set_normalized_roi((l+off_x, t+off_y, r+off_x, b+off_y))
+                self.roi_changed.emit(self._roi)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
-        if self._roi is None:
+        roi = self._preview_roi if self._drag_mode else self._roi
+        if roi is None:
             return
         image_rect = self._image_rect()
         if image_rect.isEmpty():
             return
-        left, top, right, bottom = self._roi
-        overlay = QRect(
-            image_rect.left() + int(left * image_rect.width()),
-            image_rect.top() + int(top * image_rect.height()),
-            max(1, int((right - left) * image_rect.width())),
-            max(1, int((bottom - top) * image_rect.height())),
-        )
+        l, t, r, b = roi
+        overlay = QRect(image_rect.left() + round(l*image_rect.width()),
+                        image_rect.top() + round(t*image_rect.height()),
+                        max(1, round((r-l)*image_rect.width())),
+                        max(1, round((b-t)*image_rect.height())))
         painter = QPainter(self)
         painter.setPen(QPen(QColor("#00d084"), 2))
+        painter.fillRect(overlay, QColor(0, 208, 132, 36))
         painter.drawRect(overlay)
+        if not self._drag_mode and self._roi is not None:
+            cx, cy = overlay.center().x(), overlay.center().y()
+            for x in (overlay.left(), cx, overlay.right()):
+                for y in (overlay.top(), cy, overlay.bottom()):
+                    painter.fillRect(QRect(x-4, y-4, 9, 9), QColor("#ffffff"))
+                    painter.drawRect(QRect(x-4, y-4, 9, 9))
+        painter.end()
 
 
 class _PreviewWorker(QObject):
@@ -236,6 +353,22 @@ class SettingsDialog(QDialog):
         self.preview_label = RoiPreviewLabel()
         self.preview_label.roi_changed.connect(self._roi_changed)
         layout.addWidget(self.preview_label, 1)
+        self.roi_fields: dict[str, QSpinBox] = {}
+        coords = QHBoxLayout()
+        for name, label in (("left", "左"), ("top", "上"), ("right", "右"), ("bottom", "下")):
+            coords.addWidget(QLabel(label))
+            field = QSpinBox()
+            field.setRange(0, 100000)
+            field.setSuffix(" px")
+            field.setEnabled(False)
+            field.valueChanged.connect(self._roi_field_changed)
+            coords.addWidget(field)
+            self.roi_fields[name] = field
+        clear_roi = QPushButton("ROIを解除")
+        clear_roi.clicked.connect(lambda: self._set_roi_from_controls(None))
+        coords.addWidget(clear_roi)
+        layout.addLayout(coords)
+        layout.addWidget(QLabel("矩形内をドラッグして移動、8個のハンドルでサイズ変更。矢印キー=1px、Shift+矢印=10px。"))
         self.capture_metrics = QLabel("未取得")
         self.capture_metrics.setWordWrap(True)
         layout.addWidget(self.capture_metrics)
@@ -323,6 +456,7 @@ class SettingsDialog(QDialog):
         self.adb_path.setText(config.adb_path or "")
         self.adb_serial.setText(config.adb_serial or "")
         self.preview_label.set_normalized_roi(config.game_viewport_normalized)
+        self._sync_roi_fields()
         storage = self.service.settings.storage
         self.data_root.setText(storage.data_root)
         self.captures_root.setText(storage.captures_root)
@@ -376,6 +510,7 @@ class SettingsDialog(QDialog):
         result = value if isinstance(value, CapturePreviewResult) else CapturePreviewResult("CAPTURE_FAILED", "invalid preview result")
         if result.image is not None:
             self.preview_label.set_frame(result.image)
+            self._sync_roi_fields()
             self._last_preview = result
             self.save_preview_button.setEnabled(True)
         self.capture_metrics.setText(
@@ -398,7 +533,38 @@ class SettingsDialog(QDialog):
         except ConfigurationError as exc:
             QMessageBox.warning(self, "撮影を保存できません", str(exc))
 
+    def _sync_roi_fields(self) -> None:
+        size = self.preview_label.image_size
+        roi = self.preview_label.normalized_roi
+        for name, field in self.roi_fields.items():
+            field.blockSignals(True)
+            field.setEnabled(size is not None)
+            if size is not None:
+                index = {"left": 0, "top": 1, "right": 2, "bottom": 3}[name]
+                limit = size[0] if name in {"left", "right"} else size[1]
+                field.setMaximum(limit)
+                if roi is not None:
+                    field.setValue(round(roi[index] * limit))
+            field.blockSignals(False)
+
+    def _set_roi_from_controls(self, roi: tuple[float, float, float, float] | None) -> None:
+        self.preview_label.set_normalized_roi(roi)
+        self._sync_roi_fields()
+        self._roi_changed(roi)
+
+    def _roi_field_changed(self) -> None:
+        size = self.preview_label.image_size
+        if size is None:
+            return
+        w, h = size
+        values = tuple(self.roi_fields[name].value() for name in ("left", "top", "right", "bottom"))
+        l, t, r, b = values
+        if not (0 <= l < r <= w and 0 <= t < b <= h):
+            return
+        self._set_roi_from_controls((l/w, t/h, r/w, b/h))
+
     def _roi_changed(self, _roi: object) -> None:
+        self._sync_roi_fields()
         self.capture_metrics.setText("ROIを変更しました。保存後、画面サイズ/DPIの変更時は再較正が必要です。")
 
     def _choose_directory(self, target: QLineEdit) -> None:
@@ -542,7 +708,7 @@ class SettingsDialog(QDialog):
         self.backend_box.setCurrentIndex(self.backend_box.findData(default.capture.backend))
         self.adb_path.clear()
         self.adb_serial.clear()
-        self.preview_label.set_normalized_roi(None)
+        self._set_roi_from_controls(None)
 
     def _save(self) -> None:
         try:
