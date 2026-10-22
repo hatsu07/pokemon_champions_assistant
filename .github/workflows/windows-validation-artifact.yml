@@ -9,6 +9,7 @@ on:
       - ".github/workflows/windows-validation-artifact.yml"
       - "scripts/windows_validation_entry.py"
       - "scripts/windows_settings_validation_entry.py"
+      - "scripts/windows_desktop_entry.py"
       - "src/champions_assist/**"
       - "tests/test_phase_6.py"
       - "tests/test_phase_8_settings.py"
@@ -66,6 +67,58 @@ jobs:
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
           --add-data "build\settings-validation-assets\masters;masters"
           scripts/windows_settings_validation_entry.py
+      - name: Stage non-private live assets for the desktop GUI
+        shell: pwsh
+        run: |
+          $destination = ".\\build\\desktop-assets\\masters"
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          $files = @(
+            "Pokemon_Champions_MC_live_decision_gate.txt",
+            "Pokemon_Champions_MC_live_selection_matrix.txt",
+            "Pokemon_Champions_MC_60sec_lookup_master.txt",
+            "Pokemon_Champions_MC_usable_pokemon.csv",
+            "Pokemon_Champions_MC_move_master.csv",
+            "Pokemon_Champions_MC_usable_held_items.csv",
+            "Pokemon_Champions_MC_ability_master.csv",
+            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv"
+          )
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath (Join-Path ".\\masters" $file) -Destination (Join-Path $destination $file) -Force
+          }
+      - name: Build portable Windows desktop GUI (not MSI)
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
+          --name PokemonChampionsAssistant --paths src
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
+          --add-data "build\\desktop-assets\\masters;masters"
+          scripts/windows_desktop_entry.py
+      - name: Smoke desktop GUI headlessly with isolated local settings, no capture/API
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = Resolve-Path .\\dist\\PokemonChampionsAssistant\\PokemonChampionsAssistant.exe
+          $report = Join-Path $env:RUNNER_TEMP "desktop-smoke.json"
+          # GUI-subsystem Windows executables must be explicitly waited for.
+          # In PowerShell, direct '& $exe' may return before a windowed process
+          # finishes, leaving $LASTEXITCODE unset or stale from another program.
+          $process = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
+          Write-Host "Desktop GUI smoke exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\\diagnostics"
+            if (Test-Path -LiteralPath $diagnostics) {
+              Get-ChildItem -LiteralPath $diagnostics -Filter "startup-*.log" -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 3 |
+                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
+            }
+            throw "portable desktop GUI startup smoke failed (actual exit code $($process.ExitCode))"
+          }
+          if (-not (Test-Path -LiteralPath $report)) { throw "missing desktop startup smoke report" }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED") {
+            throw "desktop GUI startup smoke returned unexpected report"
+          }
+          Remove-Item Env:QT_QPA_PLATFORM
       - name: Smoke the portable CLI and target-window guard without capture or network
         shell: pwsh
         run: |
@@ -101,6 +154,19 @@ jobs:
           New-Item -ItemType Directory -Force $package | Out-Null
           Copy-Item -Recurse -Force .\dist\PokemonChampionsSettingsValidation\* $package
           Compress-Archive -Path $package -DestinationPath .\dist\PokemonChampionsSettingsValidation-windows-x64.zip -Force
+      - name: Create portable desktop GUI ZIP layout
+        shell: pwsh
+        run: |
+          $package = "package\\PokemonChampionsAssistant"
+          New-Item -ItemType Directory -Force $package | Out-Null
+          Copy-Item -Recurse -Force .\\dist\\PokemonChampionsAssistant\\* $package
+          Compress-Archive -Path $package -DestinationPath .\\dist\\PokemonChampionsAssistant-windows-x64.zip -Force
+      - name: Upload portable desktop GUI
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokemonChampionsAssistant-windows-x64
+          path: dist/PokemonChampionsAssistant-windows-x64.zip
+          if-no-files-found: error
       - name: Upload portable validation harness
         uses: actions/upload-artifact@v4
         with:
