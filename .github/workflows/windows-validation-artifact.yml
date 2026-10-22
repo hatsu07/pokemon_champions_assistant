@@ -46,7 +46,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_phase_2 -v
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_terminology tests.test_phase_2 -v
           if ($LASTEXITCODE -ne 0) { throw "existing Windows suites failed" }
           python -m unittest tests.test_vision_preferences -v
           if ($LASTEXITCODE -ne 0) { throw "vision preference GUI tests failed" }
@@ -54,7 +54,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir
           --name PokemonChampionsValidation --paths src
-          --hidden-import PIL.ImageGrab --collect-binaries cv2
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-data champions_assist
           scripts/windows_validation_entry.py
       - name: Stage non-private fixed catalogue for settings validation
         shell: pwsh
@@ -75,7 +75,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir
           --name PokemonChampionsSettingsValidation --paths src
-          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-data champions_assist --collect-all PySide6
           --add-data "build\settings-validation-assets\masters;masters"
           scripts/windows_settings_validation_entry.py
       - name: Stage non-private live assets for the desktop GUI
@@ -100,7 +100,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name PokemonChampionsAssistant --paths src
-          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-data champions_assist --collect-all PySide6
           --add-data "build\\desktop-assets\\masters;masters"
           scripts/windows_desktop_entry.py
       - name: Smoke desktop GUI headlessly with isolated local settings, no capture/API
