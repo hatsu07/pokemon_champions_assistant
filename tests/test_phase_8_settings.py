@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import tempfile
@@ -27,7 +28,7 @@ from champions_assist.fsm import MatchController
 from champions_assist.settings_dialog import SettingsDialog, RoiPreviewLabel
 from champions_assist.settings_management import DesktopSettingsService
 from champions_assist.store import BattleStore
-from champions_assist.team_management import TeamDocument
+from champions_assist.team_management import TeamDocument, TeamValidation, TEAM_STATUS_INVALID
 from champions_assist.windows_capture import WindowCandidate, WindowGeometry
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QMessageBox
@@ -198,6 +199,76 @@ class Phase8SettingsTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid game viewport ROI"):
             CapturePreviewService.save_explicit_frame(preview, self.root / "invalid.png", roi=(0.5, 0.5, 0.5, 0.8))
         self.assertFalse((self.root / "invalid.png").exists())
+
+    def test_legacy_invalid_role_only_is_revalidated_on_settings_open(self) -> None:
+        initial = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(initial.team_id, match_active=False)
+        original = TeamDocument.load(initial.csv_path)
+        lines = [dict(row) for row in original.rows]
+        next(row for row in lines if row.get("record") == "MON")["role"] = ""
+        self.service.update_team_csv(initial.team_id,
+                                     TeamDocument(original.fieldnames, tuple(lines)).to_text(),
+                                     match_active=False)
+        valid = self.service.teams.get(initial.team_id)
+        self.assertTrue(valid.validation.selectable_for_next_match)
+        # Simulate an INVALID snapshot saved by an old version with role required.
+        stale = replace(valid, validation=TeamValidation(
+            TEAM_STATUS_INVALID, ("マスカーニャ: role が空です",),
+            valid.validation.master_sha256))
+        self.service.teams._save_index([stale])
+        self.assertEqual(self.service.teams.get(initial.team_id).validation.status, "INVALID")
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            refreshed = self.service.teams.get(initial.team_id)
+            self.assertTrue(refreshed.validation.selectable_for_next_match)
+            self.assertEqual(refreshed.sha256, valid.sha256)
+            self.assertNotIn("role が空です", dialog.team_validation_details.toPlainText())
+            dialog._select_team()
+            self.assertEqual(dialog._selected_team_id, initial.team_id)
+        finally:
+            dialog.close()
+
+    def test_invalid_draft_displays_all_reasons_and_cannot_be_selected(self) -> None:
+        draft = self.service.create_team("未完成の構築", match_active=False)
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            dialog._refresh_teams(focus_id=draft.team_id)
+            reasons = self.service.teams.get(draft.team_id).validation.reasons
+            self.assertGreater(len(reasons), 3)
+            details = dialog.team_validation_details.toPlainText()
+            self.assertTrue(all(reason in details for reason in reasons))
+            with patch("champions_assist.settings_dialog.QMessageBox.warning") as warning:
+                dialog._select_team()
+                warning.assert_called_once()
+                self.assertIn(reasons[-1], warning.call_args.args[2])
+            self.assertIsNone(dialog._selected_team_id)
+        finally:
+            dialog.close()
+
+    def test_next_match_select_persists_edited_team_before_validation(self) -> None:
+        team = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            dialog._refresh_teams(focus_id=team.team_id)
+            note_column = dialog.member_columns.index("runtime_note")
+            dialog.team_editor.item(0, note_column).setText("SAVED_WHEN_SELECTING_NEXT_TEAM")
+            role_column = dialog.member_columns.index("role")
+            dialog.team_editor.item(0, role_column).setText("")
+            # No explicit construction Save first.
+            dialog._select_team()
+            self.assertEqual(dialog._selected_team_id, team.team_id)
+            persisted = TeamDocument.load(team.csv_path).members[0]
+            self.assertEqual(persisted["runtime_note"], "SAVED_WHEN_SELECTING_NEXT_TEAM")
+            self.assertEqual(persisted["role"], "")
+            self.assertTrue(self.service.teams.get(team.team_id).validation.selectable_for_next_match)
+        finally:
+            dialog.close()
 
     def test_role_is_optional_and_main_settings_save_persists_editor(self) -> None:
         team = self.service.import_team(
