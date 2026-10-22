@@ -136,6 +136,7 @@ class MatchReplayDialog(QDialog):
         self._manual_submission=False
         self._latest_image=None
         self._capture_error_count=0
+        self._capture_paused=False
         self._cancel_event=Event()
         self._auto_running=False
         self._poll_timer=QTimer(self)
@@ -263,18 +264,29 @@ class MatchReplayDialog(QDialog):
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         self._auto_running=True
+        self._capture_error_count=0
+        self._capture_paused=False
+        self._poll_timer.setInterval(300)
         self._cancel_event.clear()
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
         self._pending_batch=None
         self._poll_timer.start()
+        # Starting capture must update the status before a menu triggers AI.
+        self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
         self._capture_next()
 
     def _stop_auto(self):
         self._cancel_event.set()
         self._auto_running=False
+        self._capture_paused=False
+        self._capture_error_count=0
         self._poll_timer.stop()
+        self._poll_timer.setInterval(300)
         self._pending_batch=None
+        # Previously the UI could still say "自動送信中" after stopping.
+        if self.state is not None:
+            self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
 
     def _calibrate(self, kind):
         if self.capture_config is None:
@@ -347,13 +359,28 @@ class MatchReplayDialog(QDialog):
             return
         try:
             image=capture_for_chatgpt(self.capture_config)
-            self._capture_error_count=0
-        except AutoCaptureUnavailable:
+        except AutoCaptureUnavailable as exc:
             self._capture_error_count+=1
-            if self._capture_error_count>=3:
-                self._stop_auto()
-                self._render({"status":"CAPTURE_FAILED","reason":"CAPTURE_UNAVAILABLE"})
+            if self._capture_error_count>=3 and not self._capture_paused:
+                # A transient BlueStacks/Win32/ADB miss must not silently
+                # disable user-approved monitoring. Remain opted-in and
+                # retry slowly until the window can be captured again.
+                self._capture_paused=True
+                self._poll_timer.setInterval(2000)
+                report={"step":len(self.entries)+1,"status":"CAPTURE_PAUSED",
+                        "reason":str(exc),"consecutive_failures":self._capture_error_count,
+                        "message":"画面取得に失敗しました。自動送信は停止せず、2秒間隔で再試行します。"}
+                self.entries.append(report)
+                self._render(report)
             return
+        self._capture_error_count=0
+        if self._capture_paused:
+            self._capture_paused=False
+            self._poll_timer.setInterval(300)
+            report={"step":len(self.entries)+1,"status":"CAPTURE_RESUMED",
+                    "message":"画面の取得が復旧しました。自動送信を継続します。"}
+            self.entries.append(report)
+            self._render(report)
         self._latest_image=image
         kind=self._turn_buffer.observe(image)
         if kind is not None:
@@ -448,7 +475,8 @@ class MatchReplayDialog(QDialog):
         phase=state.get("phase","NOT_STARTED")
         compatible=state.get("matrix_compatible",False)
         suffix="構築別LIVEマトリクス有効" if compatible else "LIVEマトリクス不一致・機能試験のみ"
-        sending = "自動送信中" if self._auto_running else "自動送信停止"
+        sending = ("画面取得待機中（自動再試行）" if self._auto_running and self._capture_paused
+                   else "自動送信中" if self._auto_running else "自動送信停止")
         self.status.setText(f"段階：{phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
