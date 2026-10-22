@@ -9,14 +9,16 @@ from .vision_api_benchmark import OpenAIVisionBenchmark,read_image,SUPPORTED_UI
 from .siwc_auth import ChatGPTSignIn,ProtectedSessionStore,SignInError
 from .app_config import default_app_root
 from .vision_preferences import VisionPreferenceStore
+from .reasoning_config import EFFORT_OPTIONS
 
 
 class _Worker(QObject):
     finished = Signal(object)
-    def __init__(self, job: str, store_root: str, path: str = "", model: str = "", expected=None, master_directory: str = "", team_path: str = ""):
+    def __init__(self, job: str, store_root: str, path: str = "", model: str = "", expected=None, master_directory: str = "", team_path: str = "", reasoning_effort: str = "auto"):
         super().__init__()
         self.job,self.store_root,self.path,self.model,self.expected=job,store_root,path,model,expected
         self.master_directory,self.team_path=master_directory,team_path
+        self.reasoning_effort=reasoning_effort
     @Slot()
     def run(self):
         try:
@@ -36,12 +38,14 @@ class _Worker(QObject):
                 else:
                     assets=MasterPreloader(self.master_directory,team_source=self.team_path).load_for_new_match()
                     token=auth.access_token()
-                    decision=run_selection_image(read_image(self.path),access_token=token,model=self.model,assets=assets)
+                    decision=run_selection_image(read_image(self.path),access_token=token,model=self.model,assets=assets,
+                                                 reasoning_effort=self.reasoning_effort)
                     result={"operation":"selection",**decision.as_dict(),"registered_team":list(assets.own_team_names)}
             else:
                 token=auth.access_token()
                 image=read_image(self.path)
-                report=OpenAIVisionBenchmark(model=self.model).run(image,access_token=token).report(self.expected)
+                report=OpenAIVisionBenchmark(model=self.model,reasoning_effort=self.reasoning_effort).run(
+                    image,access_token=token).report(self.expected)
                 result={"operation":"bench",**report}
         except Exception as exc:
             result={"operation":self.job,"status":"ERROR","error_type":type(exc).__name__,
@@ -91,6 +95,19 @@ class VisionBenchmarkDialog(QDialog):
         self.model.currentIndexChanged.connect(self._remember_model)
         row.addWidget(QLabel("正解UI:"));row.addWidget(self.expected)
         row.addWidget(QLabel("モデル:"));row.addWidget(self.model,1);form.addLayout(row)
+        effort_row=QHBoxLayout()
+        self.reasoning_effort=QComboBox()
+        for title,value in EFFORT_OPTIONS:
+            self.reasoning_effort.addItem(title,value)
+        chosen=self.reasoning_effort.findData(self.preferences.reasoning_effort())
+        self.reasoning_effort.setCurrentIndex(max(0,chosen))
+        self.reasoning_effort.currentIndexChanged.connect(self._remember_reasoning_effort)
+        effort_row.addWidget(QLabel("AIの思考の深さ:"))
+        effort_row.addWidget(self.reasoning_effort,1)
+        form.addLayout(effort_row)
+        hint=QLabel("軽量は応答速度を優先、高精度は思考時間が増えます。対応する強度はモデルにより異なります。\\n"
+                    "『自動』はモデルの既定値。非対応ならエラーを表示し、勝手に切り替えません。")
+        hint.setWordWrap(True);form.addWidget(hint)
         row=QHBoxLayout()
         self.send=QPushButton("この画像1枚を送信して実測")
         self.send.clicked.connect(self._start_benchmark)
@@ -128,6 +145,13 @@ class VisionBenchmarkDialog(QDialog):
             except (OSError, ValueError):
                 self.connection.setText("モデル設定を保存できません")
 
+    def _remember_reasoning_effort(self, _index: int) -> None:
+        effort=self.reasoning_effort.currentData()
+        try:
+            self.preferences.save_reasoning_effort(str(effort))
+        except (OSError,ValueError):
+            self.connection.setText("思考強度の設定を保存できません")
+
     def _restore_model_options(self, models) -> None:
         # Refresh models for the current account, then restore the saved slug.
         preferred = self.preferences.selected_model()
@@ -163,6 +187,7 @@ class VisionBenchmarkDialog(QDialog):
             return
         self._match_replay_dialog=MatchReplayDialog(
             model=str(self.model.currentData()),
+            reasoning_effort=str(self.reasoning_effort.currentData()),
             master_directory=self.master_directory,
             team_path=self.team_path, capture_config=self.capture_config,
             store_root=self.store_root,parent=self)
@@ -203,7 +228,8 @@ class VisionBenchmarkDialog(QDialog):
         self._thread=QThread(self)
         self._worker=_Worker(operation,str(self.store_root),self.path.text(),
                              str(self.model.currentData() or ""),self.expected.currentData(),
-                             self.master_directory,self.team_path)
+                             self.master_directory,self.team_path,
+                             str(self.reasoning_effort.currentData()))
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._complete)

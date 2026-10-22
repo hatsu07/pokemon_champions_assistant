@@ -5,6 +5,7 @@ then the sole tactical model chooses three using the six frozen LIVE rows.
 The 35-second limit applies to the complete pipeline, not either call alone.
 """
 from __future__ import annotations
+from .reasoning_config import reasoning_request_kwargs
 from dataclasses import dataclass, replace
 import json
 from time import perf_counter
@@ -265,9 +266,10 @@ CHOICE_SCHEMA = {
 }
 
 def _stream_json(client, *, model: str, instructions: str, content: list,
-                 schema: dict, name: str) -> dict:
+                 schema: dict, name: str, reasoning_effort: str = "auto") -> dict:
     stream = client.responses.create(
         model=model, stream=True, store=False,
+        **reasoning_request_kwargs(reasoning_effort),
         instructions=instructions,
         input=[{"role": "user", "content": content}],
         text={"format": {"type": "json_schema", "name": name,
@@ -290,7 +292,8 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
 
 def run_selection_image(image, *, access_token: str, model: str,
                         assets: FrozenMatchAssets, total_seconds: float = 35.0,
-                        client_factory=None, allow_test_without_matrix: bool = False) -> SelectionDecision:
+                        client_factory=None, allow_test_without_matrix: bool = False,
+                        reasoning_effort: str = "auto") -> SelectionDecision:
     """Explicit offline image-to-selection evaluation, one total 35s budget."""
     from .vision_api_benchmark import jpeg_data_uri
     started = perf_counter()
@@ -304,6 +307,7 @@ def run_selection_image(image, *, access_token: str, model: str,
                                 timeout=total_seconds, max_retries=0)
         visible = _stream_json(
             client, model=model, schema=VISION_SCHEMA, name="champions_team_preview",
+            reasoning_effort=reasoning_effort,
             instructions=(
                 "Observe only the Pokémon Champions team selection screenshot. "
                 "The left column is the player's 6 and the right is opponent's 6. "
@@ -324,6 +328,7 @@ def run_selection_image(image, *, access_token: str, model: str,
                 raise SelectionBlocked("DEADLINE_EXCEEDED")
             return _stream_json(
                 client, model=model, schema=CHOICE_SCHEMA, name="champions_select_three",
+                reasoning_effort=reasoning_effort,
                 instructions=(
                     "You are the single tactical decision maker for Pokémon Champions. "
                     "Use the supplied FROZEN LIVE decision gate as authoritative. "

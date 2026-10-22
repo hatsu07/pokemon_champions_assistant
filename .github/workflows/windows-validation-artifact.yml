@@ -1,19 +1,41 @@
 name: Windows desktop release validation
 
+# Draft PRs are for code changes; ready PRs validate on every new revision.
 on:
   workflow_dispatch:
   pull_request:
-    types: [ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+# Superseded runs must not publish artifacts or count as current validation.
+concurrency:
+  group: desktop-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   desktop-windows-validation:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # GitHub PR checkout defaults to a synthetic merge commit.
+          # Validate the source revision explicitly.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify checked-out commit matches the triggering revision
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $checkedOut = (git rev-parse HEAD).Trim()
+          if ($checkedOut -ne $env:EXPECTED_SHA) {
+            throw "Checkout SHA $checkedOut differs from CI target $env:EXPECTED_SHA"
+          }
+          Write-Host "Validating exact source revision: $checkedOut"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -23,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_terminology tests.test_phase_2 -v
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_terminology tests.test_phase_2 -v
           if ($LASTEXITCODE -ne 0) { throw "battle and settings suites failed" }
           python scripts/windows_qt_test_runner.py
           if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
@@ -79,6 +101,39 @@ jobs:
             throw "desktop GUI startup smoke returned unexpected report"
           }
           Remove-Item Env:QT_QPA_PLATFORM
+      - name: Verify PR head is still current before releasing artifact
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $checkedOut = (git rev-parse HEAD).Trim()
+          if ($checkedOut -ne $env:EXPECTED_SHA) {
+            throw "Checkout SHA changed during build; refusing stale artifact"
+          }
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "pokemon-champions-ci"
+          }
+          $url = "https://api.github.com/repos/${{ github.repository }}/pulls/$env:PR_NUMBER"
+          $current = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+          if ($current.head.sha -ne $checkedOut) {
+            throw "PR HEAD moved to $($current.head.sha) while building $checkedOut; refusing stale artifact"
+          }
+          Write-Host "Verified current PR head SHA: $checkedOut"
+      - name: Embed build revision into portable distribution
+        shell: pwsh
+        run: |
+          $built = (git rev-parse HEAD).Trim()
+          @(
+            "commit_sha=$built"
+            "workflow_run_id=${{ github.run_id }}"
+            "workflow_run_attempt=${{ github.run_attempt }}"
+          ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
       - name: Upload the one portable desktop ZIP
         uses: actions/upload-artifact@v4
         with:

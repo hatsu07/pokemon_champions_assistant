@@ -1,6 +1,16 @@
 # Codex repository guidance — Pokémon Champions local assistance
 
 
+## Mandatory AI development / CI policy (2026-10-23)
+- **Read and follow `docs/AI_DEVELOPMENT_AND_CI_POLICY.md` before changing code or reporting a result.** This requirement applies to Codex, ChatGPT, other development agents and human contributors.
+- Use a Draft PR while implementing, testing, documenting and committing. **Freeze the final commit before triggering/accepting release CI.**
+- When CI fails, add commits, or HEAD moves: ignore the old run for completion; ensure a new CI run validates the **latest PR HEAD SHA** from the start.
+- A successful result is relevant only if the `workflow_run.head_sha`, actual checkout SHA, and current PR head are identical and all required jobs succeeded. Keep run ID + SHA in the completion report.
+- A CI run on an old SHA is never proof that newer code works. Do not merge, publish an artifact as verified, or tell the user the work is complete without checking the final revision. Never claim game-device/real API correctness from offline tests.
+- The Windows workflow is configured to rerun on PR commits, cancel superseded jobs and block uploading artifacts for a stale PR head. Required status checks still need repository ruleset/branch protection; a passing check is not the same as actual merge protection.
+
+
+
 ## Development host isolation (v2.6)
 - **Source code is stored in WSL2 Linux**, not `/mnt/c` or a Windows filesystem. VS Code WSL + Codex IDE extension is the default editing/agent workflow.
 - **All Python/ADB/Tesseract/development tools run in Docker.** The canonical commands are `docker compose run --rm dev ...` or terminal in Dev Container. Never direct Codex to install Python/Node/ADB/OCR tools on Windows or WSL host or create a host `.venv`.

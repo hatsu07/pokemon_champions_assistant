@@ -41,8 +41,9 @@
 
 - 配布対象は **PokemonChampionsAssistant-windows-x64** のみです。
 - GitHub Actions の Artifact をダウンロードすると1個のZIPになります。そのZIPを展開した直下の `PokemonChampionsAssistant.exe` を起動します。内部ZIPは含みません。
-- 開発PRは**Draft**で作成し、機能がまとまった最後に **Ready for review** に変更します。この時にWindows CIが1回起動します。単なるコミット追加・PR作成・masterへのpushでは配布CIを自動起動しません。
-- CI失敗時はマージせず原因を修正。失敗した実行の再試行、または最終修正後にDraft→Readyで再検証します。**必ず最終コミットSHAの成功を確認すること。**
+- 開発PRは**Draft**で作成し、実装・テスト・修正・ドキュメントの**全コミットを確定後**に **Ready for review** に変更します。Ready PRへの新しいコミットでも `synchronize` でWindows CIを再実行し、古い実行はキャンセルします。DraftのPRではWindowsビルドを実施しません。masterへの単なるpushでは配布CIを起動しません。
+- CI失敗時はPRをDraftに戻して修正し、全コミット後にReadyで再検証します。**旧SHAのCI再試行を新SHAの検証として扱わないこと。** CIはPRのHEAD SHAを明示的にcheckoutし、成果物公開前に最新PR HEADが変わっていないか再確認します。配布ZIPには `BUILD_REVISION.txt` を同梱します。
+- 開発エージェントの必須手順は [AI開発・CI検証方針](docs/AI_DEVELOPMENT_AND_CI_POLICY.md) と [AGENTS.md](AGENTS.md) を参照してください。最終報告では **PR最新HEAD SHA・CI対象SHA・CI結果** の一致を示します。
 - GitHubのRequired status checks（失敗PRのマージ禁止）はリポジトリの保護ルールで別途有効化する必要があります。保護ルール未設定のときは、GitHub画面のマージボタンをCIが自動的に無効化するものではありません。
 
 ## 自動キャプチャによるフル対戦AI試験
