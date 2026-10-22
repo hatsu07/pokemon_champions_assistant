@@ -11,6 +11,7 @@ from typing import Callable, Any
 import cv2
 import numpy as np
 from .terminology import translate_extraction_fields
+from .reasoning_config import reasoning_request_kwargs
 
 SUPPORTED_UI = ("TEAM_SELECTION", "COMMAND_MENU", "MOVE_MENU", "PARTY_MENU",
                 "DETAIL_OVERLAY", "ACTION_RESOLUTION", "RESULT_SCREEN", "UNKNOWN")
@@ -78,8 +79,10 @@ def parse_extraction(value: str) -> dict[str, Any]:
 class OpenAIVisionBenchmark:
     """ChatGPT-plan OAuth only; caller selects an account-listed model."""
 
-    def __init__(self, *, model: str, client_factory: Callable[..., Any] | None = None):
+    def __init__(self, *, model: str, client_factory: Callable[..., Any] | None = None,
+                 reasoning_effort: str = "auto"):
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self.client_factory = client_factory
 
     def run(self, image: np.ndarray, *, access_token: str, timeout_seconds: float = 30.0) -> VisionBenchResult:
@@ -107,6 +110,7 @@ class OpenAIVisionBenchmark:
                     {"type": "input_text", "text": "Read exact visible names accurately. Japanese or English names are both acceptable internally. If uncertain, omit."},
                     {"type": "input_image", "image_url": data_uri, "detail": "high"},
                 ]}],
+                **reasoning_request_kwargs(self.reasoning_effort),
                 text={"format": {"type": "json_schema", "name": "champions_vision_probe",
                     "strict": True, "schema": {
                         "type": "object", "additionalProperties": False,
