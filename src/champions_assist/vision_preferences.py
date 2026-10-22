@@ -8,7 +8,7 @@ import re
 import tempfile
 from .reasoning_config import VALID_EFFORTS
 
-_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\Z")
+_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 class VisionPreferenceStore:
