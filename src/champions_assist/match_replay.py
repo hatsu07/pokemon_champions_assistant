@@ -80,7 +80,8 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "our_active": "", "opponent_active": "", "observed_hp": {},
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
-        "image_observations_unverified": [],
+        "image_observations_unverified": [], "prep_status": "NOT_STARTED",
+        "prep": None,
     }
 
 
@@ -106,7 +107,8 @@ def confirm_actual_selection(state: dict, assets: FrozenMatchAssets,
     updated = deepcopy(state)
     updated["selected_three"] = list(chosen)
     updated["lead"] = first
-    updated["phase"] = "BATTLE"
+    updated["phase"] = "PREP"
+    updated["prep_status"] = "PENDING"
     updated["last_event"] = "NONE"
     return updated
 
@@ -237,6 +239,13 @@ def advance_observation(
         return state, output
     if state["phase"] == "SELECTION":
         return state, {"status":"BLOCKED","reason":"CONFIRM_ACTUAL_SELECTION_FIRST"}
+    if state["phase"] == "PREP":
+        if ui in ("COMMAND_MENU","MOVE_MENU","PARTY_MENU","ACTION_RESOLUTION") and obs.get("opponent_active"):
+            state["phase"] = "BATTLE"
+            if state["prep_status"] == "PENDING":
+                state["prep_status"] = "INTERRUPTED_BY_BATTLE_SCREEN"
+        else:
+            return state, {"status":"BLOCKED","reason":"AWAITING_OPPONENT_LEAD"}
     _apply_observed_fields(state, obs, assets)
     if ui == "RESULT_SCREEN":
         result = obs.get("match_result")
@@ -347,3 +356,111 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
     except Exception as exc:
         return deepcopy(state), {"status":"ERROR","reason":type(exc).__name__,
                                   "elapsed_ms":round((perf_counter()-started)*1000)}
+
+PREP_SCHEMA = {
+    "type":"object","additionalProperties":False,
+    "properties":{
+        "matchups_18":{
+            "type":"array","items":{"type":"object","additionalProperties":False,
+                "properties":{
+                    "our_pokemon":{"type":"string"},
+                    "opponent_pokemon":{"type":"string"},
+                    "eval_code":{"type":"string"},
+                },
+                "required":["our_pokemon","opponent_pokemon","eval_code"]},
+        },
+        "preserve":{"type":"string"},
+        "stopper":{"type":"string"},
+        "closer":{"type":"string"},
+    },
+    "required":["matchups_18","preserve","stopper","closer"],
+}
+
+
+def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str,
+                    model: str, limit_seconds: float = 40.0,
+                    client_factory=None) -> tuple[dict, dict]:
+    """Optional 40s PREP test; complete only when all 18 tags validate."""
+    from .prep import (
+        build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+    )
+    started=perf_counter()
+    updated=deepcopy(state)
+    if updated.get("phase")!="PREP" or len(updated.get("selected_three",[]))!=3:
+        return updated,{"status":"BLOCKED","reason":"PREP_NOT_EXPECTED"}
+    if not updated["matrix_compatible"]:
+        updated["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
+        return updated,{"status":"PREP_UNAVAILABLE","reason":"OWN_MATRIX_MISMATCH",
+                        "message":"別構築のLIVEマトリクスは使えません。18対面の実戦評価は行いません。"}
+    try:
+        opponents=tuple(updated["opponent_six"])
+        rows=assets.matrix_rows_for(opponents)
+        prep_input=build_prep_input(
+            tuple(updated["selected_three"]),updated["lead"],opponents,rows)
+        if client_factory is None:
+            from openai import OpenAI
+            client_factory=OpenAI
+        client=client_factory(api_key=access_token,base_url="https://api.openai.com/v1",
+                              timeout=limit_seconds,max_retries=0)
+        prompt={
+            "selected_three":updated["selected_three"],
+            "lead":updated["lead"],
+            "opponent_six":updated["opponent_six"],
+            "matrix_rows_six":list(rows),
+            "registered_team":list(assets.own_team),
+            "frozen_gate":assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"],
+            "evaluation_format":{
+                "lead":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
+                "bench":"S|OUR|OPP|PRI|SAFE|PROC",
+                "example":"S=faster|OUR=observed_move|OPP=unknown|PRI=none|SAFE=unknown|PROC=needs_damage_check",
+            },
+        }
+        answer=_stream_json(
+            client,model=model,schema=PREP_SCHEMA,name="champions_replay_prep",
+            instructions=(
+                "Champions 40-second PREP. Compare ALL selected 3 x opponent 6 "
+                "= 18 pairs once using these six frozen LIVE matrix rows. "
+                "For each lead matchup provide all required key=value tags "
+                "separated by |, and for each bench matchup provide all its tags. "
+                "Do not invent moves or type facts. SAFE means safe to SWITCH IN, "
+                "which is different from PROC meaning it can finish a matchup. "
+                "Preserve one key member, identify a stopper and closer. "
+                "If uncertain use explicit 'unknown' values; never claim "
+                "competitive validation beyond the supplied data."
+            ),
+            content=[{"type":"input_text","text":json.dumps(prompt,ensure_ascii=False)}],
+        )
+        result=PrepResult(
+            "COMPLETE",
+            tuple(PrepMatchup(str(row["our_pokemon"]),
+                              str(row["opponent_pokemon"]),
+                              str(row["eval_code"]))
+                  for row in answer.get("matchups_18",[])),
+            str(answer.get("preserve") or ""),
+            str(answer.get("stopper") or ""),
+            str(answer.get("closer") or ""),
+        )
+        validation=validate_prep_result(prep_input,result)
+        elapsed=round((perf_counter()-started)*1000)
+        if elapsed>limit_seconds*1000:
+            updated["prep_status"]="DEADLINE_EXCEEDED"
+            return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed}
+        updated["prep_status"]="STRUCTURE_COMPLETE" if validation.complete else "INCOMPLETE"
+        if validation.complete:
+            updated["prep"]={
+                "matchups_18":[{"our_pokemon":m.our_pokemon,
+                                "opponent_pokemon":m.opponent_pokemon,
+                                "eval_code":m.eval_code} for m in result.matchups_18],
+                "preserve":result.preserve,"stopper":result.stopper,
+                "closer":result.closer,
+                "note":"AI評価案。形式確認済みであり戦術的な正確性は別途検証が必要",
+            }
+        return updated,{"status":"PREP_STRUCTURE_OK" if validation.complete else "PREP_INCOMPLETE",
+                        "reason":validation.reason,"elapsed_ms":elapsed,
+                        "matchups_evaluated":len(result.matchups_18),
+                        "message":"事前評価完了（構造検証）。" if validation.complete
+                                  else "事前評価は未完成です。"}
+    except Exception as exc:
+        updated["prep_status"]="ERROR"
+        return updated,{"status":"PREP_ERROR","reason":type(exc).__name__,
+                        "elapsed_ms":round((perf_counter()-started)*1000)}
