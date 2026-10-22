@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from champions_assist.__main__ import main
 from champions_assist.adb_capture import AdbScreenshotFrameSource
@@ -67,15 +66,15 @@ class Phase6TestCase(unittest.TestCase):
         )
         bboxes: list[tuple[int, int, int, int] | None] = []
 
-        def grab(bbox: tuple[int, int, int, int] | None) -> Image.Image:
-            bboxes.append(bbox)
-            return Image.fromarray(np.zeros((3, 5, 3), dtype=np.uint8))
+        def grab(geometry: WindowGeometry) -> np.ndarray:
+            bboxes.append(geometry.client_bbox)
+            return np.zeros((3, 5, 3), dtype=np.uint8)
 
         source = WindowsNativeFrameSource(
             window_title="BlueStacks",
             max_frames=2,
             geometry_provider=provider,
-            image_grabber=grab,
+            window_client_grabber=grab,
             clock_ms=lambda: 123,
             is_windows=False,
         )
@@ -83,6 +82,7 @@ class Phase6TestCase(unittest.TestCase):
         first = next(iterator)
         self.assertEqual(first.captured_at_ms, 123)
         self.assertEqual(first.reference, "BlueStacks App Player")
+        self.assertEqual(first.source, "WINDOWS_WIN32_PRINTWINDOW_CLIENT_UNVERIFIED")
         self.assertEqual(bboxes, [(10, 20, 110, 220)])
         second = next(iterator)
         self.assertEqual(second.reference, "BlueStacks App Player")
@@ -92,7 +92,7 @@ class Phase6TestCase(unittest.TestCase):
             window_title="BlueStacks",
             max_frames=1,
             geometry_provider=_GeometryProvider([WindowGeometry("WINDOW_MINIMIZED", title="BlueStacks App Player", hwnd=1)]),
-            image_grabber=grab,
+            window_client_grabber=grab,
             is_windows=False,
         )
         with self.assertRaisesRegex(CaptureUnavailable, "WINDOW_MINIMIZED"):
@@ -348,7 +348,7 @@ class Phase6TestCase(unittest.TestCase):
             window_title="BlueStacks",
             max_frames=1,
             geometry_provider=provider,
-            image_grabber=lambda _bbox: Image.fromarray(np.zeros((100, 50, 3), dtype=np.uint8)),
+            window_client_grabber=lambda _geometry: np.zeros((100, 50, 3), dtype=np.uint8),
             is_windows=False,
         )
         args = type(
@@ -381,6 +381,7 @@ class Phase6TestCase(unittest.TestCase):
         self.assertEqual(measurement["matched_window"]["titles"], ["BlueStacks App Player"])
         self.assertEqual(measurement["matched_window"]["client_bboxes_screen_px"], [[10, 20, 110, 220]])
         self.assertEqual(measurement["matched_window"]["dpi_awareness"], ["PER_MONITOR_AWARE_V2_SET"])
+        self.assertEqual(measurement["capture_method"], ["WIN32_PRINTWINDOW_CLIENT"])
         self.assertIsInstance(report["capture_timing"]["probe_elapsed_ms"], int)
         self.assertIsNotNone(report["capture_timing"]["first_frame_acquisition_ms"])
         self.assertFalse(report["real_game_validated"])

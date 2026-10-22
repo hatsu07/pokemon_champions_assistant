@@ -79,10 +79,13 @@ class CaptureFrameMeasurements:
     matched_window_titles: list[str] = field(default_factory=list)
     matched_window_bboxes: list[tuple[int, int, int, int]] = field(default_factory=list)
     dpi_awareness: list[str] = field(default_factory=list)
+    capture_methods: list[str] = field(default_factory=list)
 
-    def record(self, frame_image, geometry: WindowGeometry | None) -> None:
+    def record(self, frame_image, geometry: WindowGeometry | None, capture_method: str | None) -> None:
         height, width = frame_image.shape[:2]
         self.image_sizes_px.append((int(width), int(height)))
+        if capture_method is not None:
+            self.capture_methods.append(capture_method)
         if geometry is None:
             return
         if geometry.title is not None:
@@ -128,6 +131,7 @@ class CaptureFrameMeasurements:
                 "client_bboxes_screen_px": [list(value) for value in sorted(set(self.matched_window_bboxes))],
                 "dpi_awareness": sorted(set(self.dpi_awareness)),
             },
+            "capture_method": sorted(set(self.capture_methods)),
             "note": (
                 "Win32 window DPI is measured separately from the emulator's Android density; "
                 "do not treat one as the other."
@@ -450,7 +454,8 @@ def run_capture_probe(args: argparse.Namespace) -> dict[str, object]:
     def on_frame(frame) -> None:
         nonlocal first_frame_acquisition_ms, saved_frame
         geometry = None if active_windows_source is None else active_windows_source.last_geometry
-        measurements.record(frame.image, geometry)
+        capture_method = None if active_windows_source is None else active_windows_source.last_capture_method
+        measurements.record(frame.image, geometry, capture_method)
         if first_frame_acquisition_ms is None and source_attempt_started_at_ms is not None:
             first_frame_acquisition_ms = max(0, monotonic_ns() // 1_000_000 - source_attempt_started_at_ms)
         if save_first_frame is None or saved_frame is not None:
