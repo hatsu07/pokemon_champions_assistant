@@ -150,7 +150,7 @@ class FullReplayTest(unittest.TestCase):
     def test_prep_complete_only_when_all_eighteen_matchups_are_structurally_present(self):
         from champions_assist.matrix_compatibility import matrix_matches_registered_team
         original=self.assets
-        team_header="# OWN={P:ピカチュウ,D:ドドゲザン,C:ガブリアス,A:マリルリ,G:ギャラドス,E:ゲンガー}\\n"
+        team_header="# OWN={P:ピカチュウ,D:ドドゲザン,C:ガブリアス,A:マリルリ,G:ギャラドス,E:ゲンガー}\n"
         compatible=FrozenMatchAssets(
             contents=MappingProxyType({
                 **original.contents,
