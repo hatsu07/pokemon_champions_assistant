@@ -922,6 +922,10 @@ class SettingsDialog(QDialog):
         self._set_roi_from_controls(None)
 
     def _save(self) -> None:
+        if self._chatgpt_job_busy():
+            QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を保存してください。")
+            self._show_chatgpt_tab()
+            return
         try:
             # Persist unsaved table edits before closing settings, including
             # draft teams whose validation is not complete yet.
