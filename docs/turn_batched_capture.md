@@ -18,7 +18,8 @@ This is a **read-only test harness**, not a game controller. It never clicks, ty
 - The GUI timer polls scoped, in-memory screenshots approximately every 300 ms; actual capture speed depends on Win32/ADB and the host.
 - Compare a calibrated lower-right menu region against templates to detect stable command/party/team screens. Registration must use the actual game resolution and UI; recalibrate after resolution/layout changes.
 - Store a bounded rolling set of images on detected changes to the whole viewport; the image buffer is not written to disk.
-- On a stable transition to a registered menu, send up to 4 chronological images and the frozen match state in **one** ChatGPT Responses request combining observation and proposed action. There is no per-frame API call.
+- On a stable transition to a registered **battle action** menu, send up to 4 chronological images and the frozen match state in **one** ChatGPT Responses request combining observation and proposed action. There is no per-frame API call.
+- Team preview remains **two-stage** (recognize opponent six, then query the exact frozen six LIVE matrix rows and choose three/lead). Do not sacrifice LIVE-matrix selection accuracy to force one call.
 - The network call is on a separate QThread while local game capture continues on the GUI timer. A pending batch is replaced by the newest trigger. No older recommendation should be promoted after the request times out.
 - The proposed move/switch is passed through the original replay legal-action validation. Observations are never automatically treated as confirmed opponent sets.
 - Repeated screens in the same menu entry do not cause duplicate requests; the trigger re-arms after the calibrated menu disappears in two consecutive observations.
@@ -28,7 +29,7 @@ This is a **read-only test harness**, not a game controller. It never clicks, ty
 - Calibrated template matching is a heuristic. Full-screen effects, changing scene layout, animations, UI scaling, and different backgrounds can lead to false positives or missed events.
 - Coarse event sampling cannot guarantee every ephemeral battle message, move name, ability, ability change, or exact HP delta is retained. Manual sending is essential as a fallback.
 - The normal match replay still has separate manual/prep/image probe paths; turn-batched capture is specifically used by the auto-capture dialog.
-- Team-preview recognition and selection in a single model request cannot dynamically preselect the exact six LIVE matrix rows for previously unknown opponent Pokémon; test recommendations still require competitive review. This limitation must be resolved before production-grade ranked-match automation.
+- Team-preview uses two model calls to preserve the exact LIVE-matrix rows; it is not included in the one-request-per-battle-turn optimization. Tactical validity still requires live verification.
 - The GUI timer currently performs scoped capture on the UI thread. ADB capture especially may need a separate capture thread after performance measurement.
 - API speed/usage depends on the selected model, effort and image sizes; a single multi-image request does not guarantee low image-token consumption or completion within the 45-second turn.
 - No real live-battle validation has been performed by the GitHub runner. Validate UI recognition, API deadlines, state accuracy and battle recommendations on the actual Windows/BlueStacks setup.
