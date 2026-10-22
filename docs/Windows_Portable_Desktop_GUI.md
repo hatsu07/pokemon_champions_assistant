@@ -19,7 +19,7 @@ The desktop package is a **portable technical preview**, **not an MSI or complet
 5. Open `PokemonChampionsAssistant\\PokemonChampionsAssistant.exe` by double-click. It should open the desktop directly, **without a terminal**. Allow first-launch settings to appear.
 6. Keep the entire onedir directory intact, including `_internal`.
 
-The package bundles the three LIVE text masters, the bundled fallback current team CSV, and five fixed catalogue CSVs. User-imported teams, SQLite logs, API keys, screenshots and `private_history` files are **not** packaged. The selected private team CSV is read from user storage only on new-match preload. This entry point does **not** opt in to real paid API calls.
+The package bundles the three LIVE text masters, five fixed catalogue CSVs. The current team CSV and all user-imported teams, SQLite logs, API keys, screenshots and `private_history` files are **not** packaged. Register a valid team through Settings before starting a match. Until that registration, the fourth mandatory source is unavailable and PRELOAD must not be declared complete. The selected private team CSV is read from user storage only on new-match preload. This entry point does **not** opt in to real paid API calls.
 
 ## Failure diagnostics
 
