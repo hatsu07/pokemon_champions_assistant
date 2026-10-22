@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import unicodedata
 from time import perf_counter
 from typing import Any, Callable
 
@@ -79,6 +80,7 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "our_active": "", "opponent_active": "", "observed_hp": {},
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
+        "image_observations_unverified": [],
     }
 
 
@@ -97,6 +99,8 @@ def confirm_actual_selection(state: dict, assets: FrozenMatchAssets,
                              selected_three: list[str], lead: str) -> dict:
     if state["phase"] != "SELECTION":
         raise ValueError("selection confirmation only during SELECTION phase")
+    if len(state.get("opponent_six", [])) != 6:
+        raise ValueError("相手6匹が確認できていません。")
     chosen, first = selection_response(
         {"selected_three": selected_three, "lead": lead}, own_names=assets.own_team_names)
     updated = deepcopy(state)
@@ -120,7 +124,10 @@ def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) ->
         hp = obs.get(field) or ""
         if hp:
             state["observed_hp"][owner] = hp
-    state["last_event"] = obs.get("observed_event") or "NONE"
+    if obs.get("observed_event") and obs["observed_event"] != "NONE":
+        state["last_event"] = obs["observed_event"]
+    elif obs.get("visual_ui") == "MOVE_MENU":
+        state["last_event"] = "NONE"
 
 
 def validate_battle_choice(answer: dict, obs: dict, state: dict,
@@ -135,11 +142,15 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
     if kind in ("MOVE", "PIVOT"):
         if obs["visual_ui"] != "MOVE_MENU":
             return "MOVE_MENU_NOT_VISIBLE", {}
-        move = japanese_name("move", str(answer.get("move", "")))
-        registered = {member.get("move"+str(i), "") for i in range(1,5)}
-        visible = {japanese_name("move", name) for name in obs["visible_moves"]}
-        if not move or move not in registered or move not in visible:
+        def move_key(label):
+            return unicodedata.normalize("NFKC", japanese_name("move", label))
+        requested = move_key(str(answer.get("move", "")))
+        registered = {move_key(member.get("move"+str(i), "")): member.get("move"+str(i), "")
+                      for i in range(1,5)}
+        visible = {move_key(name) for name in obs["visible_moves"]}
+        if not requested or requested not in registered or requested not in visible:
             return "MOVE_NOT_VERIFIED", {}
+        move = registered[requested]
         if kind == "PIVOT":
             target = str(answer.get("switch_target", ""))
             matched = [entry for entry in state["selected_three"]
@@ -193,6 +204,16 @@ def advance_observation(
     if state["phase"] == "MATCHMAKING" and ui not in ("TEAM_SELECTION", "MATCHMAKING", "UNKNOWN"):
         return state, {"status":"BLOCKED","reason":"START_FROM_MATCHMAKING"}
     output = {"status":"OBSERVED", "phase":state["phase"],"screen":ui,"recommendation":""}
+    # The AI's visual reading is candidate evidence. Never infer that a proposed
+    # action happened simply because it was recommended on the previous step.
+    if ui != "TEAM_SELECTION":
+        state["image_observations_unverified"].append({
+            "ui":ui, "own":obs.get("our_active"),"opponent":obs.get("opponent_active"),
+            "our_hp":obs.get("our_hp"),"opponent_hp":obs.get("opponent_hp"),
+            "messages":list(obs.get("messages") or [])[:12],
+            "observed_event":obs.get("observed_event","NONE"),
+        })
+        state["image_observations_unverified"] = state["image_observations_unverified"][-12:]
     if ui == "TEAM_SELECTION":
         if state["phase"] not in ("MATCHMAKING", "SELECTION"):
             return state, {"status":"BLOCKED","reason":"SELECTION_AFTER_BATTLE"}
@@ -237,7 +258,8 @@ def advance_observation(
                 "own_team_member":member,
                 "opponent_preview":state["opponent_six"],
                 "current_observation":obs,
-                "prior_confirmed_observations":state["history"][-8:],
+                "prior_image_observations_unverified":state["image_observations_unverified"][-8:],
+                "history":state["history"][-8:],
                 "observed_hp":state["observed_hp"],
                 "last_event":state["last_event"],
                 "matrix_compatible":state["matrix_compatible"],
