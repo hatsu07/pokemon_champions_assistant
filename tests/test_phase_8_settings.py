@@ -22,11 +22,13 @@ from champions_assist.capture import Frame, SyntheticFrameSource
 from champions_assist.capture_settings import CapturePreviewService
 from champions_assist.desktop import DesktopController, DesktopMainWindow, ensure_application
 from champions_assist.fsm import MatchController
-from champions_assist.settings_dialog import SettingsDialog
+from champions_assist.settings_dialog import SettingsDialog, RoiPreviewLabel
 from champions_assist.settings_management import DesktopSettingsService
 from champions_assist.store import BattleStore
 from champions_assist.team_management import TeamDocument
 from champions_assist.windows_capture import WindowCandidate, WindowGeometry
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 
 
 OPPONENTS = ("Opp1", "Opp2", "Opp3", "Opp4", "Opp5", "Opp6")
@@ -65,6 +67,53 @@ class Phase8SettingsTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def test_roi_interactive_creation_move_resize_pixel_edit_and_nudge(self) -> None:
+        label = RoiPreviewLabel()
+        changes: list[object] = []
+        label.roi_changed.connect(changes.append)
+        label.resize(600, 360)
+        label.set_frame(np.zeros((200, 400, 3), dtype=np.uint8))
+        label.show()
+        self.application.processEvents()
+        try:
+            frame_rect = label._image_rect()
+            start = QPoint(frame_rect.left() + 40, frame_rect.top() + 30)
+            finish = QPoint(frame_rect.left() + 300, frame_rect.top() + 150)
+            QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=start)
+            QTest.mouseMove(label, finish)
+            self.assertIsNotNone(label._preview_roi)  # changes before mouse release
+            QTest.mouseRelease(label, Qt.MouseButton.LeftButton, pos=finish)
+            self.assertIsNotNone(label.normalized_roi)
+            first = label.normalized_roi
+            center = QPoint((start.x() + finish.x()) // 2, (start.y() + finish.y()) // 2)
+            shifted = center + QPoint(10, 10)
+            QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=center)
+            QTest.mouseMove(label, shifted)
+            QTest.mouseRelease(label, Qt.MouseButton.LeftButton, pos=shifted)
+            moved = label.normalized_roi
+            self.assertGreater(moved[0], first[0])
+            self.assertGreater(moved[1], first[1])
+            QTest.keyClick(label, Qt.Key.Key_Right)
+            self.assertGreater(label.normalized_roi[0], moved[0])
+            self.assertGreaterEqual(len(changes), 3)
+        finally:
+            label.close()
+
+    def test_roi_settings_coordinate_fields_and_previous_normalized_format(self) -> None:
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            dialog.preview_label.set_frame(np.zeros((200, 400, 3), dtype=np.uint8))
+            dialog._set_roi_from_controls((0.1, 0.2, 0.9, 0.8))
+            self.assertEqual(
+                tuple(dialog.roi_fields[n].value() for n in ("left", "top", "right", "bottom")),
+                (40, 40, 360, 160),
+            )
+            dialog.roi_fields["left"].setValue(45)
+            self.assertAlmostEqual(dialog.preview_label.normalized_roi[0], 45/400)
+            self.assertEqual(dialog._capture_config().game_viewport_normalized, dialog.preview_label.normalized_roi)
+        finally:
+            dialog.close()
 
     def test_windows_default_path_round_trip_and_corruption_recovers_last_good_nonsecret_config(self) -> None:
         self.assertEqual(
