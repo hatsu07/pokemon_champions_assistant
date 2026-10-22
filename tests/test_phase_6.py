@@ -14,10 +14,10 @@ from PIL import Image
 
 from champions_assist.__main__ import main
 from champions_assist.adb_capture import AdbScreenshotFrameSource
-from champions_assist.capture import CaptureUnavailable, Frame, SyntheticFrameSource
+from champions_assist.capture import CaptureUnavailable, Frame, LiveCaptureBackend, SyntheticFrameSource, create_live_frame_source
 from champions_assist.capture_runtime import CaptureMetrics, CaptureWorker, LatencyLedger, compare_capture_reports
 from champions_assist.observer_pipeline import FrameObservation, SyncWatermark
-from champions_assist.validation import REQUIRED_PHASE6_SCENARIOS, ValidationDataset, evaluate_labelled_replay
+from champions_assist.validation import REQUIRED_PHASE6_SCENARIOS, ValidationDataset, evaluate_labelled_replay, run_capture_probe
 from champions_assist.vision import DetectedUI, UiClassification
 from champions_assist.windows_capture import WindowGeometry, WindowsNativeFrameSource
 
@@ -302,6 +302,12 @@ class Phase6TestCase(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[-1], "get-state")
         self.assertNotIn("input", command)
+        custom_path_source = create_live_frame_source(
+            LiveCaptureBackend.ADB_SCREENSHOT,
+            adb_serial="emulator-5555",
+            adb_path="C:/trusted/HD-Adb.exe",
+        )
+        self.assertEqual(custom_path_source.adb_path, "C:/trusted/HD-Adb.exe")
         output = StringIO()
         with redirect_stdout(output):
             code = main(
@@ -310,6 +316,8 @@ class Phase6TestCase(unittest.TestCase):
                     "--backend",
                     "WINDOWS_NATIVE",
                     "--confirm-read-only-capture",
+                    "--window-title",
+                    "BlueStacks",
                     "--frames",
                     "1",
                     "--duration-ms",
@@ -322,6 +330,81 @@ class Phase6TestCase(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(report["status"], "CAPTURE_UNAVAILABLE")
         self.assertFalse(report["real_game_validated"])
+
+    def test_capture_probe_records_image_size_client_pixels_and_win32_dpi_without_claiming_game_content(self) -> None:
+        provider = _GeometryProvider(
+            [WindowGeometry("AVAILABLE", title="BlueStacks App Player", hwnd=1, client_bbox=(10, 20, 110, 220), dpi=144)]
+        )
+        source = WindowsNativeFrameSource(
+            window_title="BlueStacks",
+            max_frames=1,
+            geometry_provider=provider,
+            image_grabber=lambda _bbox: Image.fromarray(np.zeros((100, 50, 3), dtype=np.uint8)),
+            is_windows=False,
+        )
+        args = type(
+            "CaptureArgs",
+            (),
+            {
+                "backend": "WINDOWS_NATIVE",
+                "confirm_read_only_capture": True,
+                "adb_serial": None,
+                "adb_path": "adb",
+                "windows_bbox": None,
+                "window_title": "BlueStacks",
+                "expected_fps": None,
+                "retry_delay_ms": 0,
+                "frames": 1,
+                "duration_ms": 100,
+                "output": None,
+                "save_first_frame": None,
+            },
+        )()
+        with patch("champions_assist.validation.create_live_frame_source", return_value=source):
+            report = run_capture_probe(args)
+        measurement = report["frame_measurement"]
+        self.assertEqual(report["status"], "CAPTURED_READ_ONLY_UNVERIFIED_CONTENT")
+        self.assertEqual(measurement["image_size_px"]["unique_values"], [[50, 100]])
+        self.assertEqual(measurement["window_client_size_screen_px"]["unique_values"], [[100, 200]])
+        self.assertEqual(measurement["image_to_client_pixel_scale"]["x"]["p50"], 0.5)
+        self.assertEqual(measurement["win32_window_dpi"]["unique_values"], [144])
+        self.assertEqual(measurement["win32_window_dpi"]["scale_relative_to_96_dpi"]["p50"], 1.5)
+        self.assertIsInstance(report["capture_timing"]["probe_elapsed_ms"], int)
+        self.assertIsNotNone(report["capture_timing"]["first_frame_acquisition_ms"])
+        self.assertFalse(report["real_game_validated"])
+
+    def test_capture_probe_saves_only_the_first_frame_to_a_new_local_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "first.png"
+            args = type(
+                "CaptureArgs",
+                (),
+                {
+                    "backend": "WINDOWS_NATIVE",
+                    "confirm_read_only_capture": True,
+                    "adb_serial": None,
+                    "adb_path": "adb",
+                    "windows_bbox": None,
+                    "window_title": "BlueStacks",
+                    "expected_fps": None,
+                    "retry_delay_ms": 0,
+                    "frames": 1,
+                    "duration_ms": 100,
+                    "output": None,
+                    "save_first_frame": output_path,
+                },
+            )()
+            with patch("champions_assist.validation.create_live_frame_source", return_value=SyntheticFrameSource((test_frame("saved"),))):
+                report = run_capture_probe(args)
+            self.assertTrue(output_path.exists())
+            self.assertEqual(report["saved_first_frame"]["path"], str(output_path))
+            self.assertEqual(report["saved_first_frame"]["image_size_px"], [4, 4])
+
+    def test_windows_probe_refuses_untargeted_desktop_capture(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            with self.assertRaisesRegex(ValueError, "--window-title"):
+                main(["capture-probe", "--backend", "WINDOWS_NATIVE", "--confirm-read-only-capture"])
 
     def test_desktop_observer_bridge_only_refreshes_and_records_gui_latency(self) -> None:
         from champions_assist.desktop import DesktopObserverBridge

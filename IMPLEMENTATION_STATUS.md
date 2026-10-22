@@ -8,7 +8,7 @@
 - Phase 3: 完了（mock-first Responses adapter、v2.3再検証、予算/期限/失効制御）
 - Phase 4: 完了（合成フレームでのobserver/OCR/replay校正。Windows/BlueStacks実機は未検証）
 - Phase 5: 完了（Docker Qt offscreenでのPySide6デスクトップ、モックGUIデモ。Windows実機は未検証）
-- Phase 6: 検証ハーネス完了（Docker合成検証のみ）。Windows/BlueStacks実機受入は未実施・BLOCKED
+- Phase 6: 1フレームWindows検証用ハーネスを準備済み（Docker合成検証のみ）。Phase 6Rの実機基準環境は記録済みだが、利用者による成功報告まではWindows/BlueStacks実機受入は未実施・BLOCKED
 - BlueStacks録画認識: 未検証
 - OpenAI実API通信: 未検証（明示的オプトインCLIのみ。今回の有料通信は0件）
 - 実機のターン境界/交代UI: 未検証
@@ -24,7 +24,7 @@
 | 3 OpenAI adapter | DONE | `model_adapter.py`, `contract_validation.py`, `structured_schema.py`, `prompts.py`, `session_payloads.py`, `settings.py`, Phase 2 bridge/storage/CLI/tests | Docker build; baseline 16/16; app 33/33; mock SELECT→PREP→BATTLE→REVIEW CLI | 実API・実機タイミングは未検証 |
 | 4 Observer / OCR / calibration | DONE (synthetic only) | `capture.py`, `windows_capture.py`, `adb_capture.py`, `roi.py`, `vision.py`, `ocr.py`, `observation_events.py`, `observer_pipeline.py`, `calibration.py`, `observer_replay.py`, Phase 2/SQLite/CLI/deps/tests | Docker baseline 16/16; app 43/43 (Phase 4: 10/10); synthetic CLI | BlueStacks Windows capture, ROI/templates, Japanese OCR accuracy, actual event wording |
 | 5 Desktop UI | DONE (Docker/offscreen only) | `desktop.py`, `desktop_demo.py`, `fsm.py`, `store.py`, CLI/dependencies/tests | baseline 16/16; app 54/54 (Phase 5: 11/11); mock GUI demo | Windows native GUI/capture/OCR/API latency/MSI are unverified |
-| 6 Real tests | TOOLING DONE / ON-DEVICE BLOCKED | `capture_runtime.py`, Windows/ADB adapters, labelled replay/ROI/CLI, Windows validation artifact workflow, tests/docs | baseline 16/16; app 64/64 (Phase 6: 10/10); Docker synthetic replay | Windows/BlueStacks footage and both capture-route measurements; terms review; Phase 7 packaging gates |
+| 6 Real tests | TOOLING DONE / ON-DEVICE BLOCKED | `capture_runtime.py`, Windows/ADB adapters, labelled replay/ROI/CLI, Windows validation artifact workflow, tests/docs | baseline 16/16; app 67/67 (Phase 6/6R: 13/13); Docker synthetic replay | Windows/BlueStacks footage and both capture-route measurements; terms review; Phase 7 packaging gates |
 
 - 2026-10-21 v2.5: `.devcontainer`/Compose scaffolding prepared for WSL2 Docker VS Code Codex. Docker build and Windows BlueStacks connectivity **未実行**（作成環境にDocker CLIがない）。
 
@@ -232,8 +232,10 @@
 - Added ADB availability probing plus screenshot capture using only read commands. ADB has no game-control, shell input, port-forward or automatic network configuration path. Windows native and ADB are reported separately and a comparison never chooses a backend automatically.
 - Added a framework-independent capture worker that retries after source loss and captures FPS, interval, capture-lag, estimated drop and recovery statistics. A Qt bridge only refreshes the desktop from an observer-worker notification; it neither runs OCR on the UI thread nor schedules OpenAI work. `LatencyLedger` supports independently measured capture-to-observer and capture-to-GUI p50/p95/max reporting.
 - Added local ROI/template crop calibration, labelled replay dataset evaluation, source/evidence distinction, UI/event/OCR counts, and the twelve Phase 6 scenario gate. A synthetic, hash-mismatched or incomplete dataset is blocked; a complete attested real dataset is only `READY_FOR_HUMAN_REVIEW`, never automatically approved.
-- Added a manually triggered GitHub Actions Windows PyInstaller `onedir` **validation-harness** artifact, with only an offline `--version` smoke test. It is explicitly not a Phase 7 MSI/release artefact and does not include private captures by default.
+- Added a manually triggered GitHub Actions Windows PyInstaller `onedir` **validation-harness** artifact. The runner executes Phase 6 tests, bundles the dynamic Windows `PIL.ImageGrab` dependency, smoke-tests `--version` plus a deliberately absent target-window guard, and publishes a portable ZIP layout. It is explicitly not a Phase 7 MSI/release artefact and does not include private captures or ADB by default.
 - Added a zero-valued performance-report template that lists actual measurements as unmeasured until the tool runs against an on-device Windows/BlueStacks source.
+- Phase 6R records the operator-reported target environment: BlueStacks 5.22.285.1013, Android 13 beta, landscape 1920 × 1080 and Android density 240 dpi. The probe now records actual captured-image dimensions, Win32 client pixels, their pixel ratio and Win32 DPI/96 scale separately, and can save one non-overwriting local frame for manual ROI calibration. This configuration record is not a capture/OCR acceptance result.
+- The first-frame native probe requires a target window title (or a separately supplied explicit rectangle), blocks untargeted desktop capture, and records full-probe plus first-acquisition timing. ADB fallback accepts only an explicit trusted local executable path and serial; it remains read-only and unbundled.
 
 ### Docker verification
 
@@ -242,12 +244,13 @@
 | `docker compose build` | PASS |
 | `docker compose run --rm dev python scripts/verify_package.py` | PASS: required files + 892 effect records (before Phase 6 edits; repeated in final verification) |
 | `docker compose run --rm dev python -m unittest discover -s baseline_v2_3 -p 'test_*.py' -v` | PASS: 16/16 (before Phase 6 edits; repeated in final verification) |
-| `docker compose run --rm -e QT_QPA_PLATFORM=offscreen dev python -m unittest tests.test_phase_6 -v` | PASS: 10/10 Phase 6 synthetic/unit tests |
-| `docker compose run --rm -e QT_QPA_PLATFORM=offscreen dev python -m unittest discover -s tests -p 'test_*.py' -v` | PASS: 64/64 after final verification |
+| `docker compose run --rm -e QT_QPA_PLATFORM=offscreen dev python -m unittest tests.test_phase_6 -v` | PASS: 13/13 Phase 6/6R synthetic/unit tests |
+| `docker compose run --rm -e QT_QPA_PLATFORM=offscreen dev python -m unittest discover -s tests -p 'test_*.py' -v` | PASS: 67/67 after first-frame preparation |
+| `docker compose run --rm dev python -m champions_assist capture-probe --backend WINDOWS_NATIVE ...` | PASS (fail-safe): Docker/WSL returned `CAPTURE_UNAVAILABLE` / `WINDOWS_RUNTIME_REQUIRED`, 0 image/DPI samples; it did not claim a Windows capture |
 | `docker compose run --rm dev python -m champions_assist observer-replay ... --validation-dataset ...` | PASS via Phase 6 synthetic CLI test; SQLite/FSM path, no network/control |
 
 ### On-device acceptance / Phase 7 handoff
 
-- **Not accepted on device:** this workspace cannot access Windows, BlueStacks, ADB or real Champions footage. No capture success, OCR accuracy, UI coordinate, event phrase, timer, latency, DPI behavior or GUI rendering is claimed for an actual game.
+- **Not accepted on device:** this workspace cannot access Windows, BlueStacks, ADB or real Champions footage. The operator has reported the Phase 6R launch configuration, but no capture success, OCR accuracy, UI coordinate, event phrase, timer, latency, measured Win32 DPI behavior or GUI rendering is claimed for an actual game. Acceptance remains blocked until the operator reports a saved/visually confirmed first frame and its local report values.
 - Required before Phase 7 human review: run and retain both read-only capture reports; label local footage for every listed scenario; replay it through the existing SQLite/FSM path; compare false/missed OCR/events and GUI latency; verify random forced switch, pivot, faint replacement, actual correction and stale response suppression; decide a backend manually; confirm game/platform terms.
 - Still separate Phase 7 work: run the Windows artifact on a real PC, validate PyInstaller DLL/Qt/OCR inclusion, then build/test the per-user WiX MSI including install/upgrade/uninstall/data retention and Windows credential protection. No paid OpenAI request was made, and no automatic gameplay operation was added.

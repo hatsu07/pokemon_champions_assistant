@@ -8,11 +8,12 @@ that requires labelled footage and an operator review on the target machine.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
 from pathlib import Path
+from time import monotonic_ns
 from typing import Iterable, Sequence
 
 import cv2
@@ -20,10 +21,11 @@ import cv2
 from .adb_capture import AdbScreenshotFrameSource
 from .calibration import CalibrationLabels, FrameLabel
 from .capture import LiveCaptureBackend, create_live_frame_source
-from .capture_runtime import CaptureWorker, compare_capture_reports
+from .capture_runtime import CaptureWorker, compare_capture_reports, percentile
 from .observer_pipeline import FrameObservation
 from .roi import NormalizedROI, ROI_NAMES, RoiConfiguration
 from .vision import DetectedUI
+from .windows_capture import WindowGeometry, WindowsNativeFrameSource
 
 
 EVIDENCE_KINDS = frozenset({"SYNTHETIC", "RECORDED_CHAMPIONS", "LIVE_WINDOWS_CHAMPIONS"})
@@ -41,6 +43,82 @@ REQUIRED_PHASE6_SCENARIOS = (
     "MEGA_ABILITY_ITEM",
     "TURN_AND_RESULT",
 )
+
+
+def _measurement_summary(values: Sequence[float]) -> dict[str, float | int | None]:
+    """Summarise unitless measurements without presenting absent values as zero."""
+    measured = tuple(float(value) for value in values)
+    return {
+        "samples": len(measured),
+        "p50": percentile(measured, 50.0),
+        "p95": percentile(measured, 95.0),
+        "min": None if not measured else min(measured),
+        "max": None if not measured else max(measured),
+    }
+
+
+def _unique_pairs(values: Sequence[tuple[int, int]]) -> list[list[int]]:
+    return [[width, height] for width, height in sorted(set(values))]
+
+
+@dataclass
+class CaptureFrameMeasurements:
+    """Capture facts required before an ROI can be calibrated from a live frame.
+
+    Android's configured density is not inferred from a Windows capture.  The
+    report therefore preserves the actual Win32 window DPI and the pixel ratio
+    between the grabbed image and the freshly measured client rectangle as
+    separate facts.
+    """
+
+    image_sizes_px: list[tuple[int, int]] = field(default_factory=list)
+    client_sizes_screen_px: list[tuple[int, int]] = field(default_factory=list)
+    image_to_client_scale_x: list[float] = field(default_factory=list)
+    image_to_client_scale_y: list[float] = field(default_factory=list)
+    window_dpi: list[int] = field(default_factory=list)
+
+    def record(self, frame_image, geometry: WindowGeometry | None) -> None:
+        height, width = frame_image.shape[:2]
+        self.image_sizes_px.append((int(width), int(height)))
+        if geometry is None:
+            return
+        if geometry.dpi is not None:
+            self.window_dpi.append(geometry.dpi)
+        if not geometry.available or geometry.client_bbox is None:
+            return
+        left, top, right, bottom = geometry.client_bbox
+        client_width, client_height = right - left, bottom - top
+        if client_width <= 0 or client_height <= 0:
+            return
+        self.client_sizes_screen_px.append((client_width, client_height))
+        self.image_to_client_scale_x.append(width / client_width)
+        self.image_to_client_scale_y.append(height / client_height)
+
+    def as_dict(self) -> dict[str, object]:
+        dpi_scale = [dpi / 96.0 for dpi in self.window_dpi]
+        return {
+            "image_size_px": {
+                "samples": len(self.image_sizes_px),
+                "unique_values": _unique_pairs(self.image_sizes_px),
+            },
+            "window_client_size_screen_px": {
+                "samples": len(self.client_sizes_screen_px),
+                "unique_values": _unique_pairs(self.client_sizes_screen_px),
+            },
+            "image_to_client_pixel_scale": {
+                "x": _measurement_summary(self.image_to_client_scale_x),
+                "y": _measurement_summary(self.image_to_client_scale_y),
+            },
+            "win32_window_dpi": {
+                "samples": len(self.window_dpi),
+                "unique_values": sorted(set(self.window_dpi)),
+                "scale_relative_to_96_dpi": _measurement_summary(dpi_scale),
+            },
+            "note": (
+                "Win32 window DPI is measured separately from the emulator's Android density; "
+                "do not treat one as the other."
+            ),
+        }
 
 
 def sha256_file(path: str | Path) -> str:
@@ -325,27 +403,74 @@ def run_capture_probe(args: argparse.Namespace) -> dict[str, object]:
     backend = LiveCaptureBackend(args.backend)
     if backend is LiveCaptureBackend.ADB_SCREENSHOT and not args.adb_serial:
         raise ValueError("--adb-serial is required for ADB_SCREENSHOT")
-    source_factory = lambda: create_live_frame_source(
-        backend,
-        windows_bbox=None if args.windows_bbox is None else tuple(args.windows_bbox),
-        windows_title=args.window_title,
-        adb_serial=args.adb_serial,
-    )
+    if backend is LiveCaptureBackend.WINDOWS_NATIVE and not args.window_title and args.windows_bbox is None:
+        raise ValueError("WINDOWS_NATIVE requires --window-title for target-window detection or an explicit --windows-bbox")
+    save_first_frame = getattr(args, "save_first_frame", None)
+    if save_first_frame is not None and Path(save_first_frame).exists():
+        raise ValueError(f"refusing to overwrite existing capture: {save_first_frame}")
+    adb_path = getattr(args, "adb_path", "adb")
+    active_windows_source: WindowsNativeFrameSource | None = None
+    source_attempt_started_at_ms: int | None = None
+    first_frame_acquisition_ms: int | None = None
+    probe_started_at_ms = monotonic_ns() // 1_000_000
+
+    def source_factory():
+        nonlocal active_windows_source, source_attempt_started_at_ms
+        source_attempt_started_at_ms = monotonic_ns() // 1_000_000
+        source = create_live_frame_source(
+            backend,
+            windows_bbox=None if args.windows_bbox is None else tuple(args.windows_bbox),
+            windows_title=args.window_title,
+            adb_serial=args.adb_serial,
+            adb_path=adb_path,
+        )
+        active_windows_source = source if isinstance(source, WindowsNativeFrameSource) else None
+        return source
+
     adb_status = None
     if backend is LiveCaptureBackend.ADB_SCREENSHOT:
-        adb_status = AdbScreenshotFrameSource(args.adb_serial).connection_status().as_dict()
+        adb_status = AdbScreenshotFrameSource(args.adb_serial, adb_path=adb_path).connection_status().as_dict()
+    measurements = CaptureFrameMeasurements()
+    saved_frame: dict[str, object] | None = None
+
+    def on_frame(frame) -> None:
+        nonlocal first_frame_acquisition_ms, saved_frame
+        geometry = None if active_windows_source is None else active_windows_source.last_geometry
+        measurements.record(frame.image, geometry)
+        if first_frame_acquisition_ms is None and source_attempt_started_at_ms is not None:
+            first_frame_acquisition_ms = max(0, monotonic_ns() // 1_000_000 - source_attempt_started_at_ms)
+        if save_first_frame is None or saved_frame is not None:
+            return
+        target = Path(save_first_frame)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(target), cv2.cvtColor(frame.image, cv2.COLOR_RGB2BGR)):
+            raise RuntimeError(f"cannot write first captured frame: {target}")
+        height, width = frame.image.shape[:2]
+        saved_frame = {
+            "path": str(target),
+            "sha256": sha256_file(target),
+            "image_size_px": [int(width), int(height)],
+        }
+
     worker = CaptureWorker(
         source_factory,
-        lambda _frame: None,
+        on_frame,
         expected_fps=args.expected_fps,
         retry_delay_ms=args.retry_delay_ms,
     )
     metrics = worker.run(frame_limit=args.frames, duration_ms=args.duration_ms)
+    probe_elapsed_ms = max(0, monotonic_ns() // 1_000_000 - probe_started_at_ms)
     report = {
         "mode": "LIVE_CAPTURE_PROBE",
         "backend": backend.value,
         "status": "CAPTURED_READ_ONLY_UNVERIFIED_CONTENT" if metrics.frames else "CAPTURE_UNAVAILABLE",
         "metrics": metrics.as_dict(),
+        "frame_measurement": measurements.as_dict(),
+        "capture_timing": {
+            "probe_elapsed_ms": probe_elapsed_ms,
+            "first_frame_acquisition_ms": first_frame_acquisition_ms,
+        },
+        "saved_first_frame": saved_frame,
         "latency": worker.latency.as_dict(),
         "adb_connection": adb_status,
         "runtime_platform": os.name,
@@ -355,8 +480,8 @@ def run_capture_probe(args: argparse.Namespace) -> dict[str, object]:
         "content_verification": "UNVERIFIED; label footage and review it on the Windows/BlueStacks machine.",
     }
     if args.output:
-        Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         report["report_output"] = str(args.output)
+        Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
 
@@ -382,6 +507,16 @@ def add_phase6_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     capture.add_argument("--window-title")
     capture.add_argument("--windows-bbox", type=int, nargs=4, metavar=("LEFT", "TOP", "RIGHT", "BOTTOM"))
     capture.add_argument("--adb-serial")
+    capture.add_argument(
+        "--adb-path",
+        default="adb",
+        help="trusted local ADB executable for ADB_SCREENSHOT; the portable harness does not bundle ADB",
+    )
+    capture.add_argument(
+        "--save-first-frame",
+        type=Path,
+        help="write the first captured RGB frame locally for later manual ROI calibration; refuses to overwrite",
+    )
     capture.add_argument("--output", type=Path)
 
     calibration = subparsers.add_parser("roi-calibrate", help="write explicit ROI/template calibration artifacts from a local image")

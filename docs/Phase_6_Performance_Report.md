@@ -27,6 +27,8 @@ The following table intentionally contains no substituted synthetic value.
 - measured FPS, frame interval p50/p95/max, capture lag p50/p95/max;
 - interval-derived estimated dropped frames only when `--expected-fps` is supplied;
 - unavailable reasons (`WINDOW_NOT_FOUND`, `WINDOW_MINIMIZED`, ADB failures) and recovery p50/p95/max;
+- first-frame probe elapsed time and the acquisition time from the most recent source attempt;
+- grabbed image size, and for native target-window capture, the fresh Win32 client size, image-to-client pixel scale, and Win32 DPI/96 scale;
 - explicit `CAPTURED_READ_ONLY_UNVERIFIED_CONTENT` status even if pixels are available.
 
 `observer-replay --validation-dataset` emits UI/event/OCR counts and observer processing p50/p95/max. `LatencyLedger` emits capture-to-observer and capture-to-GUI p50/p95/max only when a runtime supplies those corresponding timestamp marks. Missing timing stages remain `null`; they must not be treated as zero latency.

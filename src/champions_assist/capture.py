@@ -59,6 +59,7 @@ def create_live_frame_source(
     windows_bbox: tuple[int, int, int, int] | None = None,
     windows_title: str | None = None,
     adb_serial: str | None = None,
+    adb_path: str = "adb",
     max_frames: int | None = None,
 ) -> FrameSource:
     """Select an explicit live capture adapter; Windows native is the default.
@@ -75,7 +76,7 @@ def create_live_frame_source(
             raise ValueError("ADB fallback requires an explicit serial")
         from .adb_capture import AdbScreenshotFrameSource
 
-        return AdbScreenshotFrameSource(adb_serial, max_frames=max_frames)
+        return AdbScreenshotFrameSource(adb_serial, adb_path=adb_path, max_frames=max_frames)
     raise ValueError(f"unsupported live capture backend: {backend}")
 
 
