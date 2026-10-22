@@ -556,7 +556,15 @@ class SettingsDialog(QDialog):
 
     def _open_vision_benchmark(self) -> None:
         from .vision_benchmark_dialog import VisionBenchmarkDialog
-        self._vision_benchmark_dialog = VisionBenchmarkDialog(parent=self)
+        active_id = self.service.settings.teams.active_team_id
+        team_path = None
+        if active_id:
+            try:
+                team_path = self.service.teams.path_for_next_match(active_id)
+            except ConfigurationError:
+                team_path = None
+        self._vision_benchmark_dialog = VisionBenchmarkDialog(
+            parent=self, master_directory=self.service.master_directory, team_path=team_path)
         self._vision_benchmark_dialog.show()
 
     def _open_calibration(self) -> None:
