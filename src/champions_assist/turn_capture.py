@@ -29,6 +29,7 @@ class TurnCaptureBuffer:
         self.change_threshold=event_change_threshold
         self.stable_frames=stable_frames
         self._last=None
+        self._last_full=None
         self._candidate=None
         self._streak=0
         self._armed=True
@@ -54,8 +55,12 @@ class TurnCaptureBuffer:
     def observe(self,image: np.ndarray) -> str | None:
         patch=_menu_patch(image)
         kind=self._classify(patch)
-        if self._last is None or float(np.mean(np.abs(patch-self._last)))>=self.change_threshold:
+        # Whole-viewport change records battle messages/HP outside the menu patch.
+        small=cv2.resize(cv2.cvtColor(image,cv2.COLOR_RGB2GRAY),(96,54),
+                         interpolation=cv2.INTER_AREA).astype(np.float32)/255.0
+        if self._last_full is None or float(np.mean(np.abs(small-self._last_full)))>=self.change_threshold:
             self.frames.append(image.copy())
+        self._last_full=small
         self._last=patch.copy()
         if kind is None:
             self._candidate=None
