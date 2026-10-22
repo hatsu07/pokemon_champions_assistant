@@ -1,13 +1,14 @@
-"""Standalone saved-screenshot match-replay GUI, deliberately read-only.
+"""Opt-in automatic read-only live capture and AI match-support GUI.
 
-The only outgoing image is the file selected by the player at each click.
-The frozen four match masters are loaded once at "new replay", never midbattle.
+Frames come from a scoped game window/ADB and stay in memory. The player
+explicitly starts/stops capture once per match; game inputs remain manual.
+The four frozen match assets are loaded once, never re-read during battle.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
@@ -17,18 +18,22 @@ from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep
-from .vision_api_benchmark import read_image
+from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
+from .app_config import CaptureConfiguration
 
 
 class _ReplayWorker(QObject):
     finished = Signal(object)
 
-    def __init__(self, *, app_root, selected_model, image_path, assets, state, job='frame'):
+    def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
+                 capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt):
         super().__init__()
         self.job=job
         self.app_root=app_root
         self.selected_model=selected_model
-        self.image_path=image_path
+        self.capture_config=capture_config
+        self.capture_gate=capture_gate
+        self.capture_function=capture_function
         self.assets=assets
         self.state=state
 
@@ -41,12 +46,28 @@ class _ReplayWorker(QObject):
                     state=self.state, assets=self.assets,
                     access_token=auth.access_token(),model=self.selected_model,
                 )
+            elif self.job=="auto_frame":
+                # Capture and model transport run on this worker thread.
+                # Do not materialize the RGB data on disk, ever.
+                from time import perf_counter
+                started=perf_counter()
+                image=self.capture_function(self.capture_config)
+                if not self.capture_gate.accept(image):
+                    self.finished.emit({"state":self.state,
+                                        "report":{"status":"UNCHANGED_FRAME"}})
+                    return
+                remaining=35.0-(perf_counter()-started)
+                if remaining <= 1.0:
+                    next_state,report=self.state,{"status":"DEADLINE_EXCEEDED"}
+                else:
+                    next_state,report=run_replay_image(
+                        image, state=self.state, assets=self.assets,
+                        access_token=auth.access_token(),model=self.selected_model,
+                        total_seconds=remaining,
+                    )
+                self.finished.emit({"state":next_state,"report":report})
             else:
-                next_state, report=run_replay_image(
-                    read_image(self.image_path), state=self.state, assets=self.assets,
-                    access_token=auth.access_token(),model=self.selected_model,
-                )
-            self.finished.emit({"state":next_state,"report":report})
+                raise ValueError("UNKNOWN_REPLAY_JOB")
         except Exception as exc:
             self.finished.emit({"state":self.state,"report":{
                 "status":"ERROR","reason":str(exc) if isinstance(exc,SignInError)
@@ -55,14 +76,21 @@ class _ReplayWorker(QObject):
 
 class MatchReplayDialog(QDialog):
     def __init__(self, *, model: str, master_directory: str, team_path: str,
+                 capture_config: CaptureConfiguration | None = None,
                  store_root: str | Path | None = None, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("対戦全体の画像・AIやり取りテスト（ゲーム操作なし）")
+        self.setWindowTitle("マッチング～対戦終了 自動キャプチャ・AI支援（ゲーム操作なし）")
         self.setMinimumSize(790,620)
         self.model=model
         self.master_directory=master_directory
         self.team_path=team_path
         self.store_root=Path(store_root) if store_root else default_app_root()
+        self.capture_config=capture_config
+        self._capture_gate=FrameChangeGate()
+        self._auto_running=False
+        self._poll_timer=QTimer(self)
+        self._poll_timer.setInterval(1000)
+        self._poll_timer.timeout.connect(self._capture_next)
         self.assets=None
         self.state=None
         self.entries=[]
@@ -70,12 +98,12 @@ class MatchReplayDialog(QDialog):
         self._worker=None
         panel=QVBoxLayout(self)
         intro=QLabel(
-            "マッチング→選出→技選択→交代→行動結果→勝敗まで、画像を1枚ずつ送信します。\n"
-            "マッチング中・戦闘中は登録マスターを再読込しません。AIの提案はゲーム操作に反映されません。"
+            "開始を一度押すと、設定したゲーム画面を自動キャプチャしてChatGPTに送信します。\\n"
+            "画像ファイルは保存しません。停止はいつでも可能。ゲームの操作は行いません。"
         )
         intro.setWordWrap(True)
         panel.addWidget(intro)
-        self.status=QLabel("未開始 / 保存画像だけで検証")
+        self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         row=QHBoxLayout()
         self.start_button=QPushButton("新しいテスト対戦を開始（4ファイル事前読込）")
@@ -86,15 +114,12 @@ class MatchReplayDialog(QDialog):
         row.addWidget(self.reset_button)
         panel.addLayout(row)
         row=QHBoxLayout()
-        self.path=QLineEdit()
-        self.path.setReadOnly(True)
-        select=QPushButton("次の画像を選択")
-        select.clicked.connect(self._pick)
-        self.next_button=QPushButton("この画像を送信してAI判断")
-        self.next_button.clicked.connect(self._next)
-        row.addWidget(self.path,1)
-        row.addWidget(select)
-        row.addWidget(self.next_button)
+        self.auto_button=QPushButton("ゲーム画面を自動キャプチャしてAI支援開始")
+        self.auto_button.clicked.connect(self._start_auto)
+        self.stop_button=QPushButton("自動送信を停止")
+        self.stop_button.clicked.connect(self._stop_auto)
+        row.addWidget(self.auto_button)
+        row.addWidget(self.stop_button)
         panel.addLayout(row)
         panel.addWidget(QLabel("実際に使った3匹と初手（選出提案を確認後、手動で確定）"))
         row=QHBoxLayout()
@@ -131,7 +156,8 @@ class MatchReplayDialog(QDialog):
             self.entries=[]
             self.actual_three.clear()
             self.actual_lead.clear()
-            self._render({"status":"MATCH_STARTED","message":"4ファイルの事前読込完了。画像を追加してください。"})
+            self._capture_gate.reset()
+            self._render({"status":"MATCH_STARTED","message":"4ファイル事前読込完了。自動キャプチャ開始で進めます。"})
         except Exception as exc:
             self.assets=None
             self.state=None
@@ -139,43 +165,54 @@ class MatchReplayDialog(QDialog):
 
     def _reset(self):
         if self._thread is not None:return
+        self._stop_auto()
         self.assets=None
         self.state=None
         self.entries=[]
         self.actual_three.clear()
         self.actual_lead.clear()
-        self.path.clear()
         self._render({"status":"RESET"})
 
-    def _pick(self):
-        path,_=QFileDialog.getOpenFileName(self,"次の対戦画面","","Images (*.png *.jpg *.jpeg)")
-        if path:self.path.setText(path)
+    def _start_auto(self):
+        if self._thread is not None or self._auto_running:
+            return
+        if self.state is None or self.assets is None:
+            QMessageBox.warning(self, "未開始", "先に新しい対戦を開始してください。")
+            return
+        if not self.model or self.capture_config is None:
+            QMessageBox.warning(self, "設定不足", "ChatGPTモデルとキャプチャ設定を確認してください。")
+            return
+        if not self.capture_config.game_viewport_normalized:
+            QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
+            return
+        if QMessageBox.question(self, "自動送信の確認",
+                "指定したゲーム画面を継続的に読み取り、変化した画像をChatGPTに自動送信します。"
+                "送信のたびの確認は行いません。画像はローカル保存しません。開始しますか？",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._auto_running=True
+        self._capture_gate.reset()
+        self._poll_timer.start()
+        self._capture_next()
 
-    def _next(self):
-        if self._thread is not None:return
-        if self.assets is None or self.state is None:
-            QMessageBox.warning(self,"未開始","「新しいテスト対戦を開始」を押してください。")
+    def _stop_auto(self):
+        self._auto_running=False
+        self._poll_timer.stop()
+
+    def _capture_next(self):
+        if not self._auto_running or self._thread is not None:
             return
-        if self.state["phase"]=="ENDED":
-            QMessageBox.warning(self,"対戦終了済み","新しいテスト対戦を開始してください。")
-            return
-        if not self.path.text() or not Path(self.path.text()).is_file():
-            QMessageBox.warning(self,"画像未選択","次の画像を選択してください。")
-            return
-        if not self.model:
-            QMessageBox.warning(self,"モデル未選択","ChatGPTのモデルを選択してください。")
-            return
-        if QMessageBox.question(
-            self,"送信確認","選んだ保存画像1枚をChatGPTへ送信して、認識と判断を実行しますか？",
-            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )!=QMessageBox.StandardButton.Yes:
+        if self.state is None or self.state.get("phase") in ("ENDED", "SELECTION"):
+            if self.state is not None and self.state.get("phase")=="ENDED":
+                self._stop_auto()
             return
         self._set_busy(True)
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
-            image_path=self.path.text(),assets=self.assets,state=self.state,
+            assets=self.assets,state=self.state,job="auto_frame",
+            capture_config=self.capture_config,capture_gate=self._capture_gate,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -189,6 +226,12 @@ class MatchReplayDialog(QDialog):
     @Slot(object)
     def _completed(self, payload):
         report=payload["report"]
+        if not self._auto_running and report.get("status") not in ("PREP_STRUCTURE_OK","PREP_UNAVAILABLE"):
+            return
+        if report.get("status") == "UNCHANGED_FRAME":
+            return
+        if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
+            self._stop_auto()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED"):
             self.state=payload["state"]
         entry={"step":len(self.entries)+1,**report}
@@ -197,6 +240,8 @@ class MatchReplayDialog(QDialog):
             self.actual_three.setText(" / ".join(report["selected_three"]))
             self.actual_lead.setText(report.get("lead") or "")
         self._render(entry)
+        if self.state is not None and self.state.get("phase")=="ENDED":
+            self._stop_auto()
 
     def _confirm_selection(self):
         if self._thread is not None:return
@@ -228,7 +273,7 @@ class MatchReplayDialog(QDialog):
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
-            image_path="", assets=self.assets, state=self.state, job="prep")
+            assets=self.assets, state=self.state, job="prep")
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._completed)
@@ -239,7 +284,7 @@ class MatchReplayDialog(QDialog):
         self._thread.start()
 
     def _set_busy(self,busy):
-        for widget in (self.start_button,self.next_button,self.reset_button,self.confirm_button,self.prep_button):
+        for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button):
             widget.setEnabled(not busy)
 
     @Slot()
@@ -253,7 +298,8 @@ class MatchReplayDialog(QDialog):
         phase=state.get("phase","NOT_STARTED")
         compatible=state.get("matrix_compatible",False)
         suffix="構築別LIVEマトリクス有効" if compatible else "LIVEマトリクス不一致・機能試験のみ"
-        self.status.setText(f"段階：{phase} / {suffix} / 記録 {len(self.entries)} 件")
+        sending = "自動送信中" if self._auto_running else "自動送信停止"
+        self.status.setText(f"段階：{phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
             rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
@@ -267,7 +313,7 @@ class MatchReplayDialog(QDialog):
         if self.state is None:return
         dest,_=QFileDialog.getSaveFileName(self,"対戦テスト結果を保存","","JSON (*.json)")
         if not dest:return
-        report={"scope":"OFFLINE_SAVED_IMAGE_MATCH_REPLAY_ONLY","model":self.model,
+        report={"scope":"OPT_IN_AUTO_CAPTURE_MATCH_SUPPORT_NO_IMAGE_STORAGE","model":self.model,
                 "matrix_compatible":self.state["matrix_compatible"],
                 "state":self.state,"timeline":self.entries}
         try:
@@ -277,3 +323,12 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"既存ファイル","上書きしません。別の名前を選んでください。")
         except OSError:
             QMessageBox.warning(self,"保存不可","指定の場所に書き込めません。")
+
+    def closeEvent(self, event):
+        self._stop_auto()
+        if self._thread is not None:
+            # Never destroy a QThread while a network request is still
+            # running. Closing will be possible after it completes.
+            event.ignore()
+            return
+        super().closeEvent(event)
