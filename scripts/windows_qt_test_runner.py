@@ -10,6 +10,11 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
+
+# Running 'python scripts/...' places scripts/, not the repository root,
+# on sys.path. Restore the root so tests.test_vision_preferences imports.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main() -> None:
