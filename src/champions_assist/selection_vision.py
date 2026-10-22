@@ -5,7 +5,8 @@ then the sole tactical model chooses three using the six frozen LIVE rows.
 The 35-second limit applies to the complete pipeline, not either call alone.
 """
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import unicodedata
 import json
 from time import perf_counter
 from typing import Any, Callable, Mapping
@@ -28,6 +29,12 @@ class SelectionDecision:
                     lead=self.lead, opponent_six=list(self.opponent_six),
                     reason=self.reason, elapsed_ms=self.elapsed_ms)
 
+def _display_name(registered_name: str) -> str:
+    # Registered Champions team rows can show a base and its Mega form,
+    # whereas the selection UI only shows the base species.
+    return unicodedata.normalize("NFKC", registered_name).split("→", 1)[0].strip()
+
+
 def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAssets) -> tuple[str, ...]:
     if raw.get("visual_ui") != "TEAM_SELECTION":
         raise SelectionBlocked("NOT_TEAM_SELECTION")
@@ -35,7 +42,11 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
     opponent = raw.get("opponent_six")
     if not isinstance(own, list) or len(own) != 6 or not all(isinstance(v, str) for v in own):
         raise SelectionBlocked("OWN_SIX_INCOMPLETE")
-    if len(set(own)) != 6 or set(own) != set(assets.own_team_names):
+    registered = tuple(_display_name(name) for name in assets.own_team_names)
+    observed = tuple(_display_name(name) for name in own)
+    if len(set(registered)) != 6 or len(set(observed)) != 6:
+        raise SelectionBlocked("AMBIGUOUS_OWN_SPECIES")
+    if set(observed) != set(registered):
         raise SelectionBlocked("REGISTERED_TEAM_MISMATCH")
     if not isinstance(opponent, list) or len(opponent) != 6 or not all(isinstance(v, str) for v in opponent):
         raise SelectionBlocked("OPPONENT_SIX_INCOMPLETE")
@@ -54,11 +65,20 @@ def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) ->
     lead = raw.get("lead")
     if not isinstance(chosen, list) or len(chosen) != 3 or len(set(chosen)) != 3:
         raise SelectionBlocked("INVALID_SELECTION")
-    if any(name not in own_names for name in chosen):
+    aliases = {}
+    for full in own_names:
+        aliases[full] = full
+        base = _display_name(full)
+        if base in aliases and aliases[base] != full:
+            raise SelectionBlocked("AMBIGUOUS_OWN_SPECIES")
+        aliases[base] = full
+    normalized = [aliases.get(name) for name in chosen]
+    if any(name is None for name in normalized) or len(set(normalized)) != 3:
         raise SelectionBlocked("SELECTION_OUTSIDE_REGISTERED_TEAM")
-    if lead not in chosen:
+    normalized_lead = aliases.get(lead)
+    if normalized_lead not in normalized:
         raise SelectionBlocked("LEAD_NOT_SELECTED")
-    return tuple(chosen), lead
+    return tuple(normalized), normalized_lead
 
 def decision_context(assets: FrozenMatchAssets, opponents: tuple[str, ...]) -> dict:
     return {
