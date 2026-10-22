@@ -523,7 +523,7 @@ class MatchSession:
             current_deadline = current.deadline.expires_at_ms
             revised_end = now_ms + revised_budget
             current.deadline = Deadline(now_ms, max(0, min(revised_end, current_deadline) - now_ms) if current_deadline is not None else revised_budget)
-            current.status = WindowStatus.OPEN if allowed_actions.completeness == "COMPLETE" else WindowStatus.BLOCKED
+            current.status = WindowStatus.OPEN if allowed_actions.completeness == "COMPLETE" and current.deadline.budget_ms > 0 else WindowStatus.BLOCKED
             current.requires_model = current.status is WindowStatus.OPEN
             current.recommendation = None
             self._audit("WINDOW_REVISED", decision_window_id=current.decision_window_id)
