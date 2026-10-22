@@ -12,9 +12,10 @@ from .app_config import default_app_root
 
 class _Worker(QObject):
     finished = Signal(object)
-    def __init__(self, job: str, store_root: str, path: str = "", model: str = "", expected=None):
+    def __init__(self, job: str, store_root: str, path: str = "", model: str = "", expected=None, master_directory: str = "", team_path: str = ""):
         super().__init__()
         self.job,self.store_root,self.path,self.model,self.expected=job,store_root,path,model,expected
+        self.master_directory,self.team_path=master_directory,team_path
     @Slot()
     def run(self):
         try:
@@ -26,6 +27,16 @@ class _Worker(QObject):
             elif self.job=="signout":
                 auth.sign_out()
                 result={"operation":"signout","status":"OK"}
+            elif self.job=="selection":
+                from .selection_vision import run_selection_image
+                from .preload import MasterPreloader
+                if not self.master_directory or not self.team_path:
+                    result={"operation":"selection","status":"BLOCKED","reason":"REGISTERED_TEAM_REQUIRED"}
+                else:
+                    assets=MasterPreloader(self.master_directory,team_source=self.team_path).load_for_new_match()
+                    token=auth.access_token()
+                    decision=run_selection_image(read_image(self.path),access_token=token,model=self.model,assets=assets)
+                    result={"operation":"selection",**decision.as_dict(),"registered_team":list(assets.own_team_names)}
             else:
                 token=auth.access_token()
                 image=read_image(self.path)
@@ -38,11 +49,13 @@ class _Worker(QObject):
 
 
 class VisionBenchmarkDialog(QDialog):
-    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None):
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None):
         super().__init__(parent)
         self.setWindowTitle("ChatGPTでログイン・画像認識実測")
         self.setMinimumSize(760,540)
         self.store_root=Path(store_root) if store_root else default_app_root()
+        self.master_directory=str(master_directory or "")
+        self.team_path=str(team_path or "")
         self._thread=None
         self._worker=None
         self._report=None
@@ -75,9 +88,12 @@ class VisionBenchmarkDialog(QDialog):
         row=QHBoxLayout()
         self.send=QPushButton("この画像1枚を送信して実測")
         self.send.clicked.connect(self._start_benchmark)
+        self.selection_button=QPushButton("選出画面から3匹＋初手を提案（35秒上限）")
+        self.selection_button.clicked.connect(self._start_selection)
         self.save=QPushButton("診断JSONを保存");self.save.setEnabled(False)
         self.save.clicked.connect(self._save_report)
         row.addWidget(self.send);row.addWidget(self.save);form.addLayout(row)
+        form.addWidget(self.selection_button)
         self.output=QPlainTextEdit();self.output.setReadOnly(True);form.addWidget(self.output,1)
         self._refresh_status()
     def _auth(self):
@@ -106,13 +122,25 @@ class VisionBenchmarkDialog(QDialog):
               QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
               QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
         self._start_job("bench")
+    def _start_selection(self):
+        if not self.path.text() or not Path(self.path.text()).is_file() or not self.model.currentData():
+            QMessageBox.warning(self,"選出不可","画像とモデルを指定してください。")
+            return
+        if not self.master_directory or not self.team_path:
+            QMessageBox.warning(self,"選出不可","設定画面で登録構築を「次戦に選択」してください。")
+            return
+        if QMessageBox.question(self,"選出支援の画像送信","選出画面1枚をChatGPTに送信し、画像認識と選出提案を行いますか？",
+               QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+               QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
+        self._start_job("selection")
     def _start_job(self,operation):
         if self._thread is not None:return
         self.output.setPlainText("実行中: "+operation)
         self._set_busy(True)
         self._thread=QThread(self)
         self._worker=_Worker(operation,str(self.store_root),self.path.text(),
-                             str(self.model.currentData() or ""),self.expected.currentData())
+                             str(self.model.currentData() or ""),self.expected.currentData(),
+                             self.master_directory,self.team_path)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._complete)
@@ -122,7 +150,7 @@ class VisionBenchmarkDialog(QDialog):
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
     def _set_busy(self,busy):
-        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send):
+        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send,self.selection_button):
             widget.setEnabled(not busy)
     @Slot(object)
     def _complete(self,result):
@@ -135,7 +163,7 @@ class VisionBenchmarkDialog(QDialog):
             if self.model.count()==0:self.model.addItem("対応モデルなし",None)
         if result.get("operation")=="signout" and result.get("status")=="OK":
             self.model.clear();self.model.addItem("再ログインが必要",None)
-        if result.get("operation")=="bench":
+        if result.get("operation") in ("bench","selection"):
             self._report=result
             self.save.setEnabled(True)
     @Slot()
