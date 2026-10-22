@@ -13,6 +13,7 @@ import numpy as np
 from .adb_capture import AdbScreenshotFrameSource
 from .app_config import CaptureConfiguration, ConfigurationError
 from .capture import CaptureUnavailable, FrameSource
+from .roi import NormalizedROI
 from .windows_capture import (
     WindowCandidate,
     Win32WindowGeometryProvider,
@@ -113,14 +114,20 @@ class CapturePreviewService:
             return CapturePreviewResult("CAPTURE_FAILED", type(exc).__name__, target=target)
 
     @staticmethod
-    def save_explicit_frame(result: CapturePreviewResult, destination: str | Path) -> Path:
+    def save_explicit_frame(result: CapturePreviewResult, destination: str | Path, *, roi: tuple[float, float, float, float] | None = None) -> Path:
         """Save only a caller-confirmed preview image; never overwrite evidence."""
         if result.image is None:
             raise ConfigurationError("there is no captured preview to save")
+        image = result.image
+        if roi is not None:
+            try:
+                image = NormalizedROI("GAME_VIEWPORT", *roi).crop(image)
+            except (ValueError, TypeError) as exc:
+                raise ConfigurationError("invalid game viewport ROI for saved preview") from exc
         target = Path(destination)
         if target.exists():
             raise ConfigurationError("refusing to overwrite an existing capture")
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not cv2.imwrite(str(target), cv2.cvtColor(result.image, cv2.COLOR_RGB2BGR)):
+        if not cv2.imwrite(str(target), cv2.cvtColor(image, cv2.COLOR_RGB2BGR)):
             raise ConfigurationError("preview image could not be saved")
         return target
