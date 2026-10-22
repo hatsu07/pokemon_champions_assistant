@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QDoubleSpinBox,
     QSpinBox,
+    QScrollArea,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -39,6 +40,7 @@ from .capture_settings import CapturePreviewResult, CapturePreviewService
 from .settings_management import DesktopSettingsService
 from .team_management import RegisteredTeam, TeamDocument
 from .windows_capture import WindowCandidate
+from .vision_benchmark_dialog import VisionBenchmarkPanel
 
 
 class RoiPreviewLabel(QLabel):
@@ -383,8 +385,8 @@ class SettingsDialog(QDialog):
         self.calibrate_button = QPushButton("認識較正を開く（ローカル・オフライン）")
         self.calibrate_button.clicked.connect(self._open_calibration)
         layout.addWidget(self.calibrate_button)
-        self.vision_benchmark_button = QPushButton("ChatGPT画像認識の実測（保存画像・明示送信）")
-        self.vision_benchmark_button.clicked.connect(self._open_vision_benchmark)
+        self.vision_benchmark_button = QPushButton("ChatGPTタブで画像認識を実測")
+        self.vision_benchmark_button.clicked.connect(self._show_chatgpt_tab)
         layout.addWidget(self.vision_benchmark_button)
         layout.addWidget(QLabel("ゲーム領域はプレビュー上でドラッグ指定します。選択は正規化ROIとして保存され、画面サイズ変更時は再較正が必要です。"))
         return tab
@@ -461,14 +463,35 @@ class SettingsDialog(QDialog):
         return tab
 
     def _chatgpt_tab(self) -> QWidget:
-        tab=QWidget()
-        layout=QVBoxLayout(tab)
-        layout.addWidget(QLabel("ChatGPT Plus等を使った認識診断です。APIキー登録は不要です。"))
-        button=QPushButton("ChatGPTでログイン・認識実測を開く")
-        button.clicked.connect(self._open_vision_benchmark)
-        layout.addWidget(button)
-        layout.addStretch(1)
+        tab = QWidget()
+        self.chatgpt_tab = tab
+        layout = QVBoxLayout(tab)
+        # The login, model/effort selection and recognition benchmarks belong
+        # directly to Settings; opening a second dialog hid all these controls.
+        self.chatgpt_panel = VisionBenchmarkPanel(
+            parent=tab,
+            master_directory=self.service.master_directory,
+            context_provider=self._chatgpt_context,
+        )
+        scroller = QScrollArea(tab)
+        scroller.setWidgetResizable(True)
+        scroller.setWidget(self.chatgpt_panel)
+        layout.addWidget(scroller)
         return tab
+
+    def _show_chatgpt_tab(self) -> None:
+        self.tabs.setCurrentWidget(self.chatgpt_tab)
+
+    def _chatgpt_context(self):
+        # Resolve the in-dialog next-match team and edited capture settings at
+        # action time, not from the snapshot used when Settings first opened.
+        team_path = None
+        if self._selected_team_id:
+            try:
+                team_path = self.service.teams.path_for_next_match(self._selected_team_id)
+            except ConfigurationError:
+                pass
+        return self.service.master_directory, team_path, self._capture_config()
 
     def _diagnostics_tab(self) -> QWidget:
         tab = QWidget()
@@ -567,20 +590,6 @@ class SettingsDialog(QDialog):
             self.capture_metrics.setText(f"明示操作で保存しました: {saved.name}（内容は未検証）")
         except ConfigurationError as exc:
             QMessageBox.warning(self, "撮影を保存できません", str(exc))
-
-    def _open_vision_benchmark(self) -> None:
-        from .vision_benchmark_dialog import VisionBenchmarkDialog
-        active_id = self.service.settings.teams.active_team_id
-        team_path = None
-        if active_id:
-            try:
-                team_path = self.service.teams.path_for_next_match(active_id)
-            except ConfigurationError:
-                team_path = None
-        self._vision_benchmark_dialog = VisionBenchmarkDialog(
-            parent=self, master_directory=self.service.master_directory, team_path=team_path,
-            capture_config=self.service.settings.capture)
-        self._vision_benchmark_dialog.show()
 
     def _open_calibration(self) -> None:
         from .ui_calibration_dialog import UiCalibrationDialog
@@ -935,3 +944,30 @@ class SettingsDialog(QDialog):
             self.accept()
         except (ConfigurationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, "設定を保存できません", str(exc))
+
+    def _chatgpt_job_busy(self) -> bool:
+        return self.chatgpt_panel.busy
+
+    def accept(self) -> None:
+        if self._chatgpt_job_busy():
+            QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を閉じてください。")
+            self._show_chatgpt_tab()
+            return
+        super().accept()
+
+    def reject(self) -> None:
+        if self._chatgpt_job_busy():
+            QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を閉じてください。")
+            self._show_chatgpt_tab()
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        # A live QThread is a child of the embedded panel. Destroying Settings
+        # while it runs can crash Qt ("QThread: Destroyed while thread is still
+        # running"). Never close the dialog until the worker cleans up.
+        if self._chatgpt_job_busy():
+            event.ignore()
+            self._show_chatgpt_tab()
+            return
+        super().closeEvent(event)
