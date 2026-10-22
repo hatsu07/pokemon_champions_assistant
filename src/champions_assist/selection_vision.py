@@ -183,14 +183,21 @@ _BLOCK_REASONS_JA = {
 }
 
 
+def _japanese_selection_label(name: str) -> str:
+    # Preserve the registered Mega/form annotation in player-facing results.
+    base, *form = name.split("→", 1)
+    normalized = selection_base_name(base)
+    return normalized + (" → " + form[0].strip() if form else "")
+
+
 def selection_summary_ja(result: Mapping[str, Any]) -> str:
     """Player-facing concise Japanese summary; raw result stays diagnostic."""
     if result.get("status") == "OK":
         picked = result.get("selected_three") or ()
         lead = result.get("lead")
         if len(picked) == 3 and isinstance(lead, str):
-            return "選出：" + " / ".join(selection_base_name(n) for n in picked) + (
-                "　初手：" + selection_base_name(lead))
+            return "選出：" + " / ".join(_japanese_selection_label(n) for n in picked) + (
+                "　初手：" + _japanese_selection_label(lead))
     reason = str(result.get("reason", ""))
     if result.get("status") == "BLOCKED":
         return "選出できません：" + _BLOCK_REASONS_JA.get(reason, "確認が必要な情報があります。")
