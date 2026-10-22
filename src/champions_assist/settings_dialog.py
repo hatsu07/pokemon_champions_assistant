@@ -528,7 +528,11 @@ class SettingsDialog(QDialog):
 
         destination = Path(self.captures_root.text().strip()) / f"manual-preview-{int(time() * 1000)}.png"
         try:
-            saved = self.preview_service.save_explicit_frame(self._last_preview, destination)
+            roi = self.preview_label.normalized_roi
+            if roi is None:
+                QMessageBox.warning(self, "撮影を保存できません", "先にゲーム領域のROIを指定してください。")
+                return
+            saved = self.preview_service.save_explicit_frame(self._last_preview, destination, roi=roi)
             self.capture_metrics.setText(f"明示操作で保存しました: {saved.name}（内容は未検証）")
         except ConfigurationError as exc:
             QMessageBox.warning(self, "撮影を保存できません", str(exc))
