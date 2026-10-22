@@ -16,15 +16,16 @@ from PySide6.QtWidgets import (
 from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
-from .match_replay import new_replay, confirm_actual_selection, run_replay_image
+from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep
 from .vision_api_benchmark import read_image
 
 
 class _ReplayWorker(QObject):
     finished = Signal(object)
 
-    def __init__(self, *, app_root, selected_model, image_path, assets, state):
+    def __init__(self, *, app_root, selected_model, image_path, assets, state, job='frame'):
         super().__init__()
+        self.job=job
         self.app_root=app_root
         self.selected_model=selected_model
         self.image_path=image_path
@@ -35,10 +36,16 @@ class _ReplayWorker(QObject):
     def run(self):
         try:
             auth=ChatGPTSignIn(ProtectedSessionStore(self.app_root))
-            next_state, report=run_replay_image(
-                read_image(self.image_path), state=self.state, assets=self.assets,
-                access_token=auth.access_token(),model=self.selected_model,
-            )
+            if self.job=="prep":
+                next_state, report=run_replay_prep(
+                    state=self.state, assets=self.assets,
+                    access_token=auth.access_token(),model=self.selected_model,
+                )
+            else:
+                next_state, report=run_replay_image(
+                    read_image(self.image_path), state=self.state, assets=self.assets,
+                    access_token=auth.access_token(),model=self.selected_model,
+                )
             self.finished.emit({"state":next_state,"report":report})
         except Exception as exc:
             self.finished.emit({"state":self.state,"report":{
@@ -101,6 +108,9 @@ class MatchReplayDialog(QDialog):
         row.addWidget(self.actual_lead,1)
         row.addWidget(self.confirm_button)
         panel.addLayout(row)
+        self.prep_button=QPushButton("選出後の40秒PREPをテスト（18対面）")
+        self.prep_button.clicked.connect(self._prep)
+        panel.addWidget(self.prep_button)
         panel.addWidget(QLabel("画像の認識・AI提案・進行ログ（現在の1試合）"))
         self.output=QPlainTextEdit()
         self.output.setReadOnly(True)
@@ -203,8 +213,33 @@ class MatchReplayDialog(QDialog):
         except (ValueError, KeyError) as exc:
             QMessageBox.warning(self,"実際の選出を確定できません",str(exc))
 
+    def _prep(self):
+        if self._thread is not None:return
+        if self.state is None or self.state["phase"]!="PREP":
+            QMessageBox.warning(self,"PREP不可","まず実際の選出3匹と初手を確定してください。")
+            return
+        if QMessageBox.question(
+            self,"PREPテストの確認",
+            "40秒のPREP試験を実行しますか？構築専用のLIVEマトリクスがなければ評価を行いません。",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )!=QMessageBox.StandardButton.Yes:return
+        self._set_busy(True)
+        self._thread=QThread(self)
+        self._worker=_ReplayWorker(
+            app_root=self.store_root, selected_model=self.model,
+            image_path="", assets=self.assets, state=self.state, job="prep")
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._completed)
+        self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self._cleanup)
+        self._thread.start()
+
     def _set_busy(self,busy):
-        for widget in (self.start_button,self.next_button,self.reset_button,self.confirm_button):
+        for widget in (self.start_button,self.next_button,self.reset_button,self.confirm_button,self.prep_button):
             widget.setEnabled(not busy)
 
     @Slot()
@@ -219,7 +254,9 @@ class MatchReplayDialog(QDialog):
         compatible=state.get("matrix_compatible",False)
         suffix="構築別LIVEマトリクス有効" if compatible else "LIVEマトリクス不一致・機能試験のみ"
         self.status.setText(f"段階：{phase} / {suffix} / 記録 {len(self.entries)} 件")
-        rec=report.get("recommendation","")
+        rec=report.get("recommendation","") or report.get("message","")
+        if report.get("status")=="TEST_ONLY":
+            rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
         line=(rec+"\n\n") if rec else ""
         self.output.setPlainText(
             line+json.dumps({"latest":report,"replay_state":state,
