@@ -71,7 +71,6 @@ class VisionBenchmarkPanel(QWidget):
         self._thread=None
         self._worker=None
         self._report=None
-        self._match_replay_dialog=None
         form=QVBoxLayout(self)
         form.setContentsMargins(0, 0, 0, 0)
         form.addWidget(QLabel("ChatGPT Plus等の利用可能なモデルで画像認識を実測します。キー入力・従量APIキー不要。\n"
@@ -122,9 +121,9 @@ class VisionBenchmarkPanel(QWidget):
         self.save.clicked.connect(self._save_report)
         row.addWidget(self.send);row.addWidget(self.save);form.addLayout(row)
         form.addWidget(self.selection_button)
-        self.replay_button=QPushButton("マッチングから対戦終了までのAI再現テスト")
-        self.replay_button.clicked.connect(self._open_replay)
-        form.addWidget(self.replay_button)
+        operational_hint=QLabel("対戦全体の自動キャプチャ支援はメイン画面の「自動キャプチャ対戦支援」から開始します。")
+        operational_hint.setWordWrap(True)
+        form.addWidget(operational_hint)
         self.output=QPlainTextEdit();self.output.setReadOnly(True);form.addWidget(self.output,1)
         if self._refresh_status():
             # Refresh the model list asynchronously after reopening the dialog.
@@ -194,23 +193,6 @@ class VisionBenchmarkPanel(QWidget):
             self.model.blockSignals(was_blocked)
         if preferred is None:
             self._remember_model(self.model.currentIndex())
-    def _open_replay(self):
-        self._refresh_match_context()
-        from .match_replay_dialog import MatchReplayDialog
-        if not self.model.currentData():
-            QMessageBox.warning(self,"モデル未選択","ChatGPTのモデルを選択してください。")
-            return
-        if not self.master_directory or not self.team_path:
-            QMessageBox.warning(self,"構築未設定","次戦用の構築を先に選択してください。")
-            return
-        self._match_replay_dialog=MatchReplayDialog(
-            model=str(self.model.currentData()),
-            reasoning_effort=str(self.reasoning_effort.currentData()),
-            master_directory=self.master_directory,
-            team_path=self.team_path, capture_config=self.capture_config,
-            store_root=self.store_root,parent=self)
-        self._match_replay_dialog.show()
-
     def _choose_image(self):
         path,_=QFileDialog.getOpenFileName(self,"ゲーム領域の保存画像","","Images (*.png *.jpg *.jpeg)")
         if path:self.path.setText(path)
@@ -258,7 +240,7 @@ class VisionBenchmarkPanel(QWidget):
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
     def _set_busy(self,busy):
-        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send,self.selection_button,self.replay_button):
+        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send,self.selection_button):
             widget.setEnabled(not busy)
         self.busy_changed.emit(busy)
     @Slot(object)
