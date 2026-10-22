@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "jsonschema>=4.18,<5",
     "openai>=2.0,<3",
+    "PyJWT[crypto]>=2.9,<3",
     "numpy>=2.0,<3",
     "opencv-python-headless>=4.10,<5",
     "pillow>=10,<12",
