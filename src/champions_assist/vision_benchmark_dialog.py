@@ -197,7 +197,13 @@ class VisionBenchmarkDialog(QDialog):
             widget.setEnabled(not busy)
     @Slot(object)
     def _complete(self,result):
-        self.output.setPlainText(json.dumps(result,ensure_ascii=False,indent=2))
+        if result.get("operation") == "selection":
+            from .selection_vision import selection_summary_ja
+            self.output.setPlainText(
+                selection_summary_ja(result) + "\n\n" +
+                json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            self.output.setPlainText(json.dumps(result,ensure_ascii=False,indent=2))
         self._refresh_status()
         if result.get("operation")=="models" and result.get("status")=="OK":
             self._restore_model_options(result["models"])
