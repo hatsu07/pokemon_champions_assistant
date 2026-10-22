@@ -314,6 +314,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._capture_tab(), "画面キャプチャ")
         self.tabs.addTab(self._storage_tab(), "保存先")
         self.tabs.addTab(self._team_tab(), "自軍構築")
+        self.tabs.addTab(self._api_tab(), "OpenAI API")
         self.tabs.addTab(self._diagnostics_tab(), "診断")
         layout.addWidget(self.tabs)
         buttons = QDialogButtonBox()
@@ -444,6 +445,21 @@ class SettingsDialog(QDialog):
         self.team_status.setWordWrap(True)
         layout.addWidget(self.team_status)
         return tab
+
+    def _api_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(QLabel("OpenAI APIキーはWindows資格情報マネージャーに保存されます。設定JSONには保存しません。"))
+        button = QPushButton("APIキーを登録・変更・削除")
+        button.clicked.connect(self._open_api_key_dialog)
+        layout.addWidget(button)
+        layout.addStretch(1)
+        return tab
+
+    def _open_api_key_dialog(self) -> None:
+        from .api_key_dialog import ApiKeyDialog
+        dialog = ApiKeyDialog(self)
+        dialog.exec()
 
     def _diagnostics_tab(self) -> QWidget:
         tab = QWidget()
