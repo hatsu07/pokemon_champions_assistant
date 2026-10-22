@@ -119,7 +119,7 @@ def decision_context(assets: FrozenMatchAssets, opponents: tuple[str, ...]) -> d
         "opponent_six": list(opponents),
         "matrix_rows_six": list(assets.matrix_rows_for(opponents)),
         "frozen_gate": assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"],
-        "instructions": "Select three members of own_team and one of them as lead. Only use the frozen Champions rules and exactly six matrix rows. Never infer another game's mechanics.",
+        "instructions": "Select three members of own_team and one of them as lead. If a member role is blank, infer its situational tactical role from its confirmed four moves, ability, held item, nature and AP spread plus the opponents and six LIVE matrix rows; do not guess hidden mechanics or alter stored team roles. A manually supplied role is contextual guidance, not a fixed selection constraint. Only use the frozen Champions rules and exactly six matrix rows. Never infer another game's mechanics.",
     }
 
 class SelectionPlanner:
@@ -240,6 +240,7 @@ def run_selection_image(image, *, access_token: str, model: str,
                 instructions=(
                     "You are the single tactical decision maker for Pokémon Champions. "
                     "Use the supplied FROZEN LIVE decision gate as authoritative. "
+                    "When role is empty, determine situational role from the registered moves, item, ability and AP spread and current opponent preview, not an invented fixed tag. "
                     "Choose only from the exact registered own_team six. "
                     "Return exactly three unique Pokémon and their lead. "
                     "Do not use SV mechanics or unobserved opponent moves."
