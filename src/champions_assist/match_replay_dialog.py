@@ -58,11 +58,23 @@ class _ReplayWorker(QObject):
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
-                next_state,report=run_replay_batch(
-                    self.frames, state=self.state, assets=self.assets,
-                    access_token=auth.access_token(),model=self.selected_model,
-                    reasoning_effort=self.reasoning_effort,
-                )
+                token=auth.access_token()
+                if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
+                    # Team preview needs the exact six LIVE matrix rows AFTER
+                    # reading the opponent icons; do not guess selection in
+                    # a single blind request. Only battle actions are batched.
+                    next_state,report=run_replay_image(
+                        self.frames[-1],state=self.state,assets=self.assets,
+                        access_token=token,model=self.selected_model,
+                        reasoning_effort=self.reasoning_effort,
+                    )
+                    report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
+                else:
+                    next_state,report=run_replay_batch(
+                        self.frames, state=self.state, assets=self.assets,
+                        access_token=token,model=self.selected_model,
+                        reasoning_effort=self.reasoning_effort,
+                    )
                 self.finished.emit({"state":next_state,"report":report})
             elif self.job=="auto_frame":
                 # Capture and model transport run on this worker thread.
