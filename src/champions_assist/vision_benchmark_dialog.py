@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Callable
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QComboBox,
     QPushButton,QFileDialog,QPlainTextEdit,QMessageBox,QWidget)
 from .vision_api_benchmark import OpenAIVisionBenchmark,read_image,SUPPORTED_UI
@@ -290,29 +290,20 @@ class VisionBenchmarkPanel(QWidget):
         except OSError:
             QMessageBox.warning(self,"保存失敗","書き込みできません。")
 
-class VisionBenchmarkDialog(QDialog):
-    """Compatibility wrapper for callers explicitly wanting a standalone dialog.
+class VisionBenchmarkDialog(VisionBenchmarkPanel):
+    """Backward-compatible standalone window for existing callers/tests.
 
-    Settings now embeds VisionBenchmarkPanel directly and never opens this.
+    Settings itself embeds VisionBenchmarkPanel; no new window is opened.
     """
     def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
-        super().__init__(parent)
+        super().__init__(parent=parent,store_root=store_root,master_directory=master_directory,
+                         team_path=team_path,capture_config=capture_config)
+        self.setWindowFlag(Qt.WindowType.Window, True)
         self.setWindowTitle("ChatGPTでログイン・画像認識実測")
         self.setMinimumSize(760,540)
-        form=QVBoxLayout(self)
-        self.panel=VisionBenchmarkPanel(
-            parent=self,store_root=store_root,master_directory=master_directory,
-            team_path=team_path,capture_config=capture_config)
-        form.addWidget(self.panel)
-
-    def reject(self) -> None:
-        if self.panel.busy:
-            QMessageBox.information(self,"ChatGPT処理中","処理が終わってから閉じてください。")
-            return
-        super().reject()
 
     def closeEvent(self,event) -> None:
-        if self.panel.busy:
+        if self.busy:
             event.ignore()
             return
         super().closeEvent(event)
