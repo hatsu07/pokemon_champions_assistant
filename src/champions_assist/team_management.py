@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 from io import StringIO
@@ -363,6 +363,34 @@ class TeamRepository:
         records[team_id] = updated
         self._save_index(records.values())
         return updated
+
+    def revalidate(self, team_id: str) -> RegisteredTeam:
+        """Re-evaluate a saved team with today's bundled Champions validation.
+
+        The index's status is a snapshot and may have been computed by an older
+        app version (for example, when role was incorrectly mandatory). Do not
+        require a content edit simply to refresh the status. No battle-session
+        assets are read or modified here.
+        """
+        records = self._load_index()
+        try:
+            previous = records[team_id]
+        except KeyError as exc:
+            raise ConfigurationError(f"unknown team: {team_id}") from exc
+        document = TeamDocument.load(previous.csv_path)
+        validation = validate_team_document(document, self.catalog)
+        digest = document.sha256()
+        if previous.validation == validation and previous.sha256 == digest:
+            return previous
+        refreshed = replace(
+            previous,
+            validation=validation,
+            sha256=digest,
+            updated_at=_utc_now() if digest != previous.sha256 else previous.updated_at,
+        )
+        records[team_id] = refreshed
+        self._save_index(records.values())
+        return refreshed
 
     def export_csv(self, team_id: str, destination: str | Path) -> Path:
         record = self.get(team_id)
