@@ -63,15 +63,22 @@ class _ReplayWorker(QObject):
                     self.finished.emit({"state":self.state,
                                         "report":{"status":"UNCHANGED_FRAME"}})
                     return
+                token=auth.access_token()
+                # Both capture and credential refresh consume the 35s budget.
+                capture_and_auth_ms=round((perf_counter()-started)*1000)
                 remaining=35.0-(perf_counter()-started)
-                if remaining <= 1.0:
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    next_state,report=self.state,{"status":"CANCELLED"}
+                elif remaining <= 1.0:
                     next_state,report=self.state,{"status":"DEADLINE_EXCEEDED"}
                 else:
                     next_state,report=run_replay_image(
                         image, state=self.state, assets=self.assets,
-                        access_token=auth.access_token(),model=self.selected_model,
+                        access_token=token,model=self.selected_model,
                         total_seconds=remaining,
                     )
+                report["capture_and_auth_ms"]=capture_and_auth_ms
+                report["elapsed_ms"]=round((perf_counter()-started)*1000)
                 self.finished.emit({"state":next_state,"report":report})
             else:
                 raise ValueError("UNKNOWN_REPLAY_JOB")
