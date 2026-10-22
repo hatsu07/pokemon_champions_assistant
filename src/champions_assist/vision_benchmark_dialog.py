@@ -2,12 +2,13 @@
 from __future__ import annotations
 import json
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QComboBox,
     QPushButton,QFileDialog,QPlainTextEdit,QMessageBox,QWidget)
 from .vision_api_benchmark import OpenAIVisionBenchmark,read_image,SUPPORTED_UI
 from .siwc_auth import ChatGPTSignIn,ProtectedSessionStore,SignInError
 from .app_config import default_app_root
+from .vision_preferences import VisionPreferenceStore
 
 
 class _Worker(QObject):
@@ -54,6 +55,8 @@ class VisionBenchmarkDialog(QDialog):
         self.setWindowTitle("ChatGPTでログイン・画像認識実測")
         self.setMinimumSize(760,540)
         self.store_root=Path(store_root) if store_root else default_app_root()
+        self.preferences=VisionPreferenceStore(self.store_root)
+        self._pending_model_refresh=False
         self.master_directory=str(master_directory or "")
         self.team_path=str(team_path or "")
         self._thread=None
@@ -83,6 +86,7 @@ class VisionBenchmarkDialog(QDialog):
         for ui in SUPPORTED_UI:self.expected.addItem(ui,ui)
         self.model=QComboBox()
         self.model.addItem("ログイン後、モデル一覧を取得",None)
+        self.model.currentIndexChanged.connect(self._remember_model)
         row.addWidget(QLabel("正解UI:"));row.addWidget(self.expected)
         row.addWidget(QLabel("モデル:"));row.addWidget(self.model,1);form.addLayout(row)
         row=QHBoxLayout()
@@ -95,16 +99,55 @@ class VisionBenchmarkDialog(QDialog):
         row.addWidget(self.send);row.addWidget(self.save);form.addLayout(row)
         form.addWidget(self.selection_button)
         self.output=QPlainTextEdit();self.output.setReadOnly(True);form.addWidget(self.output,1)
-        self._refresh_status()
+        if self._refresh_status():
+            # Refresh the model list asynchronously after reopening the dialog.
+            QTimer.singleShot(0, lambda: self._start_job("models"))
     def _auth(self):
         return ChatGPTSignIn(ProtectedSessionStore(self.store_root))
-    def _refresh_status(self):
+    def _refresh_status(self) -> bool:
         try:
             status=self._auth().status()
-            self.connection.setText("ChatGPT接続済み / 利用権限: "+("確認済み" if status["plan_enabled"] else "未確認")
+            connected=bool(status["connected"] and status["plan_enabled"])
+            self.connection.setText("保存済みChatGPTセッションあり / 利用権限: "+("確認済み" if status["plan_enabled"] else "未確認")
                                     if status["connected"] else "ChatGPT未接続")
+            return connected
         except Exception:
             self.connection.setText("接続状態を確認できません")
+            return False
+
+    def _remember_model(self, _index: int) -> None:
+        model = self.model.currentData()
+        if isinstance(model, str) and model:
+            try:
+                self.preferences.save_model(model)
+            except (OSError, ValueError):
+                self.connection.setText("モデル設定を保存できません")
+
+    def _restore_model_options(self, models) -> None:
+        # Refresh models for the current account, then restore the saved slug.
+        preferred = self.preferences.selected_model()
+        was_blocked = self.model.blockSignals(True)
+        try:
+            self.model.clear()
+            for item in models:
+                slug = item.get("slug") if isinstance(item, dict) else None
+                if isinstance(slug, str) and slug:
+                    self.model.addItem(str(item.get("display_name") or slug), slug)
+            if self.model.count()==0:
+                self.model.addItem("利用可能なモデルがありません", None)
+            elif preferred is not None:
+                index = self.model.findData(preferred)
+                if index >= 0:
+                    self.model.setCurrentIndex(index)
+                else:
+                    self.model.insertItem(0, "以前のモデルは利用不可：再選択してください", None)
+                    self.model.setCurrentIndex(0)
+            else:
+                self.model.setCurrentIndex(0)
+        finally:
+            self.model.blockSignals(was_blocked)
+        if preferred is None:
+            self._remember_model(self.model.currentIndex())
     def _choose_image(self):
         path,_=QFileDialog.getOpenFileName(self,"ゲーム領域の保存画像","","Images (*.png *.jpg *.jpeg)")
         if path:self.path.setText(path)
@@ -157,18 +200,30 @@ class VisionBenchmarkDialog(QDialog):
         self.output.setPlainText(json.dumps(result,ensure_ascii=False,indent=2))
         self._refresh_status()
         if result.get("operation")=="models" and result.get("status")=="OK":
+            self._restore_model_options(result["models"])
+            self.connection.setText("ChatGPTログイン有効 / モデル一覧更新済み")
+        if result.get("operation")=="models" and result.get("status")!="OK":
+            was_blocked=self.model.blockSignals(True)
             self.model.clear()
-            for item in result["models"]:
-                self.model.addItem(item["display_name"],item["slug"])
-            if self.model.count()==0:self.model.addItem("対応モデルなし",None)
+            self.model.addItem("ログインし直すかモデル一覧を再取得",None)
+            self.model.blockSignals(was_blocked)
+            self.connection.setText("モデル一覧取得に失敗：ログイン状態を確認してください")
+        if result.get("operation")=="login" and result.get("status")=="OK":
+            self._pending_model_refresh=True
         if result.get("operation")=="signout" and result.get("status")=="OK":
-            self.model.clear();self.model.addItem("再ログインが必要",None)
+            was_blocked=self.model.blockSignals(True)
+            self.model.clear()
+            self.model.addItem("再ログインが必要",None)
+            self.model.blockSignals(was_blocked)
         if result.get("operation") in ("bench","selection"):
             self._report=result
             self.save.setEnabled(True)
     @Slot()
     def _cleanup(self):
         self._thread=None;self._worker=None;self._set_busy(False)
+        if self._pending_model_refresh:
+            self._pending_model_refresh=False
+            QTimer.singleShot(0, lambda: self._start_job("models"))
     def _save_report(self):
         if self._report is None:return
         path,_=QFileDialog.getSaveFileName(self,"診断JSONを保存","","JSON (*.json)")
