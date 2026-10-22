@@ -98,8 +98,21 @@ jobs:
           $env:QT_QPA_PLATFORM = "offscreen"
           $exe = Resolve-Path .\\dist\\PokemonChampionsAssistant\\PokemonChampionsAssistant.exe
           $report = Join-Path $env:RUNNER_TEMP "desktop-smoke.json"
-          & $exe --smoke $report
-          if ($LASTEXITCODE -ne 0) { throw "portable desktop GUI startup smoke failed" }
+          # GUI-subsystem Windows executables must be explicitly waited for.
+          # In PowerShell, direct '& $exe' may return before a windowed process
+          # finishes, leaving $LASTEXITCODE unset or stale from another program.
+          $process = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
+          Write-Host "Desktop GUI smoke exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\\diagnostics"
+            if (Test-Path -LiteralPath $diagnostics) {
+              Get-ChildItem -LiteralPath $diagnostics -Filter "startup-*.log" -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 3 |
+                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
+            }
+            throw "portable desktop GUI startup smoke failed (actual exit code $($process.ExitCode))"
+          }
           if (-not (Test-Path -LiteralPath $report)) { throw "missing desktop startup smoke report" }
           $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
           if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED") {
