@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+from typing import Callable
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QComboBox,
     QPushButton,QFileDialog,QPlainTextEdit,QMessageBox,QWidget)
@@ -53,11 +54,14 @@ class _Worker(QObject):
         self.finished.emit(result)
 
 
-class VisionBenchmarkDialog(QDialog):
-    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
+class VisionBenchmarkPanel(QWidget):
+    """Reusable inline ChatGPT settings/benchmark interface (no extra dialog)."""
+
+    busy_changed = Signal(bool)
+
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None,context_provider: Callable|None=None):
         super().__init__(parent)
-        self.setWindowTitle("ChatGPTでログイン・画像認識実測")
-        self.setMinimumSize(760,540)
+        self._context_provider=context_provider
         self.store_root=Path(store_root) if store_root else default_app_root()
         self.preferences=VisionPreferenceStore(self.store_root)
         self._pending_model_refresh=False
@@ -69,6 +73,7 @@ class VisionBenchmarkDialog(QDialog):
         self._report=None
         self._match_replay_dialog=None
         form=QVBoxLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)
         form.addWidget(QLabel("ChatGPT Plus等の利用可能なモデルで画像認識を実測します。キー入力・従量APIキー不要。\n"
                               "ログインと画像送信は各ボタンの明示操作時のみ。プラン利用可否はログイン後に確認します。"))
         self.connection=QLabel("未接続")
@@ -124,6 +129,18 @@ class VisionBenchmarkDialog(QDialog):
         if self._refresh_status():
             # Refresh the model list asynchronously after reopening the dialog.
             QTimer.singleShot(0, lambda: self._start_job("models"))
+    @property
+    def busy(self) -> bool:
+        return self._thread is not None
+
+    def _refresh_match_context(self) -> None:
+        if self._context_provider is None:
+            return
+        master_directory, team_path, capture_config = self._context_provider()
+        self.master_directory=str(master_directory or "")
+        self.team_path=str(team_path or "")
+        self.capture_config=capture_config
+
     def _auth(self):
         return ChatGPTSignIn(ProtectedSessionStore(self.store_root))
     def _refresh_status(self) -> bool:
@@ -178,6 +195,7 @@ class VisionBenchmarkDialog(QDialog):
         if preferred is None:
             self._remember_model(self.model.currentIndex())
     def _open_replay(self):
+        self._refresh_match_context()
         from .match_replay_dialog import MatchReplayDialog
         if not self.model.currentData():
             QMessageBox.warning(self,"モデル未選択","ChatGPTのモデルを選択してください。")
@@ -211,6 +229,7 @@ class VisionBenchmarkDialog(QDialog):
               QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
         self._start_job("bench")
     def _start_selection(self):
+        self._refresh_match_context()
         if not self.path.text() or not Path(self.path.text()).is_file() or not self.model.currentData():
             QMessageBox.warning(self,"選出不可","画像とモデルを指定してください。")
             return
@@ -239,8 +258,9 @@ class VisionBenchmarkDialog(QDialog):
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
     def _set_busy(self,busy):
-        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send,self.selection_button):
+        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send,self.selection_button,self.replay_button):
             widget.setEnabled(not busy)
+        self.busy_changed.emit(busy)
     @Slot(object)
     def _complete(self,result):
         if result.get("operation") == "selection":
@@ -287,3 +307,30 @@ class VisionBenchmarkDialog(QDialog):
             QMessageBox.warning(self,"上書き不可","既存ファイルは上書きしません。")
         except OSError:
             QMessageBox.warning(self,"保存失敗","書き込みできません。")
+
+class VisionBenchmarkDialog(QDialog):
+    """Compatibility wrapper for callers explicitly wanting a standalone dialog.
+
+    Settings now embeds VisionBenchmarkPanel directly and never opens this.
+    """
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
+        super().__init__(parent)
+        self.setWindowTitle("ChatGPTでログイン・画像認識実測")
+        self.setMinimumSize(760,540)
+        form=QVBoxLayout(self)
+        self.panel=VisionBenchmarkPanel(
+            parent=self,store_root=store_root,master_directory=master_directory,
+            team_path=team_path,capture_config=capture_config)
+        form.addWidget(self.panel)
+
+    def reject(self) -> None:
+        if self.panel.busy:
+            QMessageBox.information(self,"ChatGPT処理中","処理が終わってから閉じてください。")
+            return
+        super().reject()
+
+    def closeEvent(self,event) -> None:
+        if self.panel.busy:
+            event.ignore()
+            return
+        super().closeEvent(event)
