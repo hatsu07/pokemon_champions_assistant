@@ -18,6 +18,52 @@ import numpy as np
 from .capture import CaptureUnavailable, Frame
 
 
+_dpi_awareness_status: str | None = None
+
+
+def ensure_per_monitor_dpi_awareness() -> str:
+    """Align Win32 geometry and Pillow screen coordinates for this process.
+
+    This changes only the validation harness process's coordinate awareness. It
+    never changes a window's size, position, focus, or DPI setting.  The
+    result is recorded as a diagnostic because a failed/unchanged request must
+    not be treated as a confirmed capture-coordinate alignment.
+    """
+    global _dpi_awareness_status
+    if _dpi_awareness_status is not None:
+        return _dpi_awareness_status
+    if os.name != "nt":
+        _dpi_awareness_status = "WINDOWS_RUNTIME_REQUIRED"
+        return _dpi_awareness_status
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    set_context = getattr(user32, "SetProcessDpiAwarenessContext", None)
+    if set_context is not None:
+        try:
+            set_context.argtypes = [ctypes.c_void_p]
+            set_context.restype = ctypes.c_bool
+            # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is -4.
+            if set_context(ctypes.c_void_p(-4)):
+                _dpi_awareness_status = "PER_MONITOR_AWARE_V2_SET"
+                return _dpi_awareness_status
+        except (AttributeError, OSError):
+            pass
+    try:
+        shcore = ctypes.windll.shcore
+        set_awareness = shcore.SetProcessDpiAwareness
+        set_awareness.argtypes = [ctypes.c_int]
+        set_awareness.restype = ctypes.c_long
+        # PROCESS_PER_MONITOR_DPI_AWARE is 2; HRESULT 0 means success.
+        if int(set_awareness(2)) == 0:
+            _dpi_awareness_status = "PER_MONITOR_AWARE_SET"
+            return _dpi_awareness_status
+    except (AttributeError, OSError):
+        pass
+    _dpi_awareness_status = "DPI_AWARENESS_UNCHANGED_OR_UNAVAILABLE"
+    return _dpi_awareness_status
+
+
 @dataclass(frozen=True)
 class WindowGeometry:
     """Current client-area geometry in screen pixels, never guessed."""
@@ -27,6 +73,7 @@ class WindowGeometry:
     hwnd: int | None = None
     client_bbox: tuple[int, int, int, int] | None = None
     dpi: int | None = None
+    dpi_awareness: str | None = None
 
     @property
     def available(self) -> bool:
@@ -39,6 +86,7 @@ class WindowGeometry:
             "hwnd": self.hwnd,
             "client_bbox": None if self.client_bbox is None else list(self.client_bbox),
             "dpi": self.dpi,
+            "dpi_awareness": self.dpi_awareness,
             "coordinate_space": "CLIENT_AREA_SCREEN_PIXELS",
         }
 
@@ -68,6 +116,7 @@ class Win32WindowGeometryProvider:
         import ctypes
         from ctypes import wintypes
 
+        dpi_awareness = ensure_per_monitor_dpi_awareness()
         user32 = ctypes.windll.user32
         matches: list[tuple[int, str]] = []
         needle = self.title_substring.casefold()
@@ -126,6 +175,7 @@ class Win32WindowGeometryProvider:
             hwnd=hwnd,
             client_bbox=(top_left.x, top_left.y, bottom_right.x, bottom_right.y),
             dpi=dpi,
+            dpi_awareness=dpi_awareness,
         )
 
 

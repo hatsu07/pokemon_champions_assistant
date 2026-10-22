@@ -76,12 +76,19 @@ class CaptureFrameMeasurements:
     image_to_client_scale_x: list[float] = field(default_factory=list)
     image_to_client_scale_y: list[float] = field(default_factory=list)
     window_dpi: list[int] = field(default_factory=list)
+    matched_window_titles: list[str] = field(default_factory=list)
+    matched_window_bboxes: list[tuple[int, int, int, int]] = field(default_factory=list)
+    dpi_awareness: list[str] = field(default_factory=list)
 
     def record(self, frame_image, geometry: WindowGeometry | None) -> None:
         height, width = frame_image.shape[:2]
         self.image_sizes_px.append((int(width), int(height)))
         if geometry is None:
             return
+        if geometry.title is not None:
+            self.matched_window_titles.append(geometry.title)
+        if geometry.dpi_awareness is not None:
+            self.dpi_awareness.append(geometry.dpi_awareness)
         if geometry.dpi is not None:
             self.window_dpi.append(geometry.dpi)
         if not geometry.available or geometry.client_bbox is None:
@@ -90,6 +97,7 @@ class CaptureFrameMeasurements:
         client_width, client_height = right - left, bottom - top
         if client_width <= 0 or client_height <= 0:
             return
+        self.matched_window_bboxes.append(geometry.client_bbox)
         self.client_sizes_screen_px.append((client_width, client_height))
         self.image_to_client_scale_x.append(width / client_width)
         self.image_to_client_scale_y.append(height / client_height)
@@ -113,6 +121,12 @@ class CaptureFrameMeasurements:
                 "samples": len(self.window_dpi),
                 "unique_values": sorted(set(self.window_dpi)),
                 "scale_relative_to_96_dpi": _measurement_summary(dpi_scale),
+            },
+            "matched_window": {
+                "samples": len(self.matched_window_bboxes),
+                "titles": sorted(set(self.matched_window_titles)),
+                "client_bboxes_screen_px": [list(value) for value in sorted(set(self.matched_window_bboxes))],
+                "dpi_awareness": sorted(set(self.dpi_awareness)),
             },
             "note": (
                 "Win32 window DPI is measured separately from the emulator's Android density; "

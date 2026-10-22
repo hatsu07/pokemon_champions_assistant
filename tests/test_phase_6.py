@@ -333,7 +333,16 @@ class Phase6TestCase(unittest.TestCase):
 
     def test_capture_probe_records_image_size_client_pixels_and_win32_dpi_without_claiming_game_content(self) -> None:
         provider = _GeometryProvider(
-            [WindowGeometry("AVAILABLE", title="BlueStacks App Player", hwnd=1, client_bbox=(10, 20, 110, 220), dpi=144)]
+            [
+                WindowGeometry(
+                    "AVAILABLE",
+                    title="BlueStacks App Player",
+                    hwnd=1,
+                    client_bbox=(10, 20, 110, 220),
+                    dpi=144,
+                    dpi_awareness="PER_MONITOR_AWARE_V2_SET",
+                )
+            ]
         )
         source = WindowsNativeFrameSource(
             window_title="BlueStacks",
@@ -369,6 +378,9 @@ class Phase6TestCase(unittest.TestCase):
         self.assertEqual(measurement["image_to_client_pixel_scale"]["x"]["p50"], 0.5)
         self.assertEqual(measurement["win32_window_dpi"]["unique_values"], [144])
         self.assertEqual(measurement["win32_window_dpi"]["scale_relative_to_96_dpi"]["p50"], 1.5)
+        self.assertEqual(measurement["matched_window"]["titles"], ["BlueStacks App Player"])
+        self.assertEqual(measurement["matched_window"]["client_bboxes_screen_px"], [[10, 20, 110, 220]])
+        self.assertEqual(measurement["matched_window"]["dpi_awareness"], ["PER_MONITOR_AWARE_V2_SET"])
         self.assertIsInstance(report["capture_timing"]["probe_elapsed_ms"], int)
         self.assertIsNotNone(report["capture_timing"]["first_frame_acquisition_ms"])
         self.assertFalse(report["real_game_validated"])

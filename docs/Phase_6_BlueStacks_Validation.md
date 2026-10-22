@@ -94,6 +94,8 @@ if ($Probe.status -eq "CAPTURED_READ_ONLY_UNVERIFIED_CONTENT" -and (Test-Path -L
 
 `CAPTURED_READ_ONLY_UNVERIFIED_CONTENT`, an existing PNG, one or more `image_size_px` samples, one or more `window_client_size_screen_px` and `win32_window_dpi` samples, and non-null `first_frame_acquisition_ms` mean only that one local pixel read completed. Confirm visually that the opened PNG contains Pokémon Champions, then report the status and measurements. Do not upload the PNG, report, ADB serial, or battle data to GitHub. This result remains **Phase 6R unaccepted** until the operator reports that successful capture.
 
+If the saved PNG does not show the matched BlueStacks window, do not calibrate ROI or treat the pixel read as a success. Retain the local report, which now includes `frame_measurement.matched_window` (title and client rectangle) and its DPI-awareness status. The next harness build requests per-monitor DPI awareness before it reads geometry or uses Pillow; rerun exactly one frame with the rebuilt artifact and compare those values. Do not use guessed coordinates or capture extra frames to compensate.
+
 ## Read-only capture probes
 
 Run the native-window route first from the portable harness on the Windows machine. Use the visible BlueStacks window title; the adapter reads its fresh client rectangle before each frame, records its reported DPI, and returns `WINDOW_NOT_FOUND` or `WINDOW_MINIMIZED` rather than reusing old coordinates. It does not resize, restore, focus, launch or close the window.
