@@ -64,6 +64,33 @@ class DesktopSettingsService:
             raise ConfigurationError("team import reads files and is available only between matches")
         return self.teams.import_csv(source, display_name=display_name)
 
+    def create_team(self, display_name: str, *, match_active: bool) -> RegisteredTeam:
+        if match_active:
+            raise ConfigurationError("試合中は新しい構築を作成できません")
+        return self.teams.create_blank(display_name)
+
+    def duplicate_team(self, team_id: str, *, match_active: bool) -> RegisteredTeam:
+        if match_active:
+            raise ConfigurationError("試合中は構築を複製できません")
+        return self.teams.duplicate(team_id)
+
+    def delete_team(self, team_id: str, *, match_active: bool) -> None:
+        if match_active:
+            raise ConfigurationError("試合中は構築を削除できません")
+        self.teams.get(team_id)
+        teams = self.settings.teams
+        # Forget any active or deferred selection before deleting its backing
+        # CSV. An invalid active ID would break the next four-file preload.
+        if team_id in (teams.active_team_id, teams.pending_team_id):
+            teams = replace(
+                teams,
+                active_team_id=None if teams.active_team_id == team_id else teams.active_team_id,
+                pending_team_id=None if teams.pending_team_id == team_id else teams.pending_team_id,
+            )
+            self.settings = replace(self.settings, teams=teams)
+            self._save()
+        self.teams.delete(team_id)
+
     def update_team_csv(self, team_id: str, text: str, *, match_active: bool) -> RegisteredTeam:
         if match_active:
             raise ConfigurationError("team editing is available only between matches")
