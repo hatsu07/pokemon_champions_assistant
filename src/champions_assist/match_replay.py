@@ -196,16 +196,14 @@ def advance_observation(
     if ui == "TEAM_SELECTION":
         if state["phase"] not in ("MATCHMAKING", "SELECTION"):
             return state, {"status":"BLOCKED","reason":"SELECTION_AFTER_BATTLE"}
-        selection = SelectionPlanner().choose(
+        selection = SelectionPlanner(clock=elapsed_seconds).choose(
             obs, assets,
             lambda context, remaining: tactical_call(
                 context, remaining, "SELECTION"),
-            started_at=0.0,  # Planner clock normalized below via replacement.
+            started_at=0.0,  # elapsed_seconds starts when image is submitted.
             max_total_seconds=limit_seconds,
             allow_test_without_matrix=True,
         )
-        # SelectionPlanner uses a real perf_counter by default; use remaining
-        # time instead by creating a local clock relative to image submission.
         output.update(selection.as_dict())
         output["recommendation"] = selection_summary_ja(selection.as_dict())
         state["phase"] = "SELECTION"
