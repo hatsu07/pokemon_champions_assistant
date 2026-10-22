@@ -2,6 +2,12 @@ name: Windows validation harness artifact
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-validation-artifact.yml"
+      - "src/champions_assist/**"
+      - "tests/**"
+      - "pyproject.toml"
   push:
     branches:
       - master
@@ -14,6 +20,7 @@ on:
       - "tests/test_phase_6.py"
       - "tests/test_phase_8_settings.py"
       - "tests/test_phase_6r_calibration.py"
+      - "tests/test_vision_api_benchmark.py"
       - "pyproject.toml"
       - "masters/Pokemon_Champions_MC_usable_pokemon.csv"
       - "masters/Pokemon_Champions_MC_move_master.csv"
@@ -39,7 +46,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration -v
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_phase_2 -v
       - name: Build portable validation harness (not MSI)
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir

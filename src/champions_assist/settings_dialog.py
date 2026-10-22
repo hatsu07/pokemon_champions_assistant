@@ -314,6 +314,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._capture_tab(), "画面キャプチャ")
         self.tabs.addTab(self._storage_tab(), "保存先")
         self.tabs.addTab(self._team_tab(), "自軍構築")
+        self.tabs.addTab(self._api_tab(), "OpenAI API")
         self.tabs.addTab(self._diagnostics_tab(), "診断")
         layout.addWidget(self.tabs)
         buttons = QDialogButtonBox()
@@ -379,6 +380,9 @@ class SettingsDialog(QDialog):
         self.calibrate_button = QPushButton("認識較正を開く（ローカル・オフライン）")
         self.calibrate_button.clicked.connect(self._open_calibration)
         layout.addWidget(self.calibrate_button)
+        self.vision_benchmark_button = QPushButton("OpenAI画像認識の実測（保存画像・明示送信）")
+        self.vision_benchmark_button.clicked.connect(self._open_vision_benchmark)
+        layout.addWidget(self.vision_benchmark_button)
         layout.addWidget(QLabel("ゲーム領域はプレビュー上でドラッグ指定します。選択は正規化ROIとして保存され、画面サイズ変更時は再較正が必要です。"))
         return tab
 
@@ -441,6 +445,21 @@ class SettingsDialog(QDialog):
         self.team_status.setWordWrap(True)
         layout.addWidget(self.team_status)
         return tab
+
+    def _api_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(QLabel("OpenAI APIキーはWindows資格情報マネージャーに保存されます。設定JSONには保存しません。"))
+        button = QPushButton("APIキーを登録・変更・削除")
+        button.clicked.connect(self._open_api_key_dialog)
+        layout.addWidget(button)
+        layout.addStretch(1)
+        return tab
+
+    def _open_api_key_dialog(self) -> None:
+        from .api_key_dialog import ApiKeyDialog
+        dialog = ApiKeyDialog(self)
+        dialog.exec()
 
     def _diagnostics_tab(self) -> QWidget:
         tab = QWidget()
@@ -539,6 +558,11 @@ class SettingsDialog(QDialog):
             self.capture_metrics.setText(f"明示操作で保存しました: {saved.name}（内容は未検証）")
         except ConfigurationError as exc:
             QMessageBox.warning(self, "撮影を保存できません", str(exc))
+
+    def _open_vision_benchmark(self) -> None:
+        from .vision_benchmark_dialog import VisionBenchmarkDialog
+        self._vision_benchmark_dialog = VisionBenchmarkDialog(parent=self)
+        self._vision_benchmark_dialog.show()
 
     def _open_calibration(self) -> None:
         from .ui_calibration_dialog import UiCalibrationDialog
