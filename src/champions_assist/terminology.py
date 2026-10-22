@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import json
 from importlib.resources import files
-import re
 import unicodedata
 
 
 def _key(value: str) -> str:
-    return re.sub(r"[\\s_\\-‐–—’']", "", unicodedata.normalize("NFKC", value).strip().casefold())
-
+    normalized = unicodedata.normalize("NFKC", value).strip().casefold()
+    # Match the generator's punctuation-insensitive keys without a regex
+    # character-class escape accidentally deleting normal Latin letters.
+    return "".join(ch for ch in normalized
+                   if not ch.isspace() and ch not in "_-‐–—’'")
 
 def _read_catalogue() -> dict:
     path = files("champions_assist").joinpath("data/champions_name_aliases.json")
