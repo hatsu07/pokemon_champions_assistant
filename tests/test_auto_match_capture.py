@@ -63,6 +63,63 @@ class AutoCaptureTests(unittest.TestCase):
         gate.reset()
         self.assertTrue(gate.accept(frame))
 
+    def test_reports_specific_capture_failure_kind(self):
+        class MissingWindow:
+            def preview_once(self, configuration):
+                return CapturePreviewResult(
+                    "WINDOW_IDENTITY_UNAVAILABLE", "window is gone")
+        with self.assertRaisesRegex(AutoCaptureUnavailable, "WINDOW_IDENTITY_UNAVAILABLE"):
+            capture_for_chatgpt(CONFIG, preview=MissingWindow())
+
+    def test_auto_capture_pauses_and_recovers_without_turning_off(self):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from champions_assist.match_replay_dialog import MatchReplayDialog
+        app = QApplication.instance() or QApplication([])
+        self.assertIsNotNone(app)
+        dialog = MatchReplayDialog(
+            model="test", master_directory="unused", team_path="unused",
+            capture_config=CONFIG,
+        )
+        try:
+            dialog.state = {"phase": "MATCHMAKING", "matrix_compatible": False}
+            dialog.assets = object()
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                 patch.object(dialog, "_capture_next"):
+                dialog._start_auto()
+            dialog._poll_timer.stop()  # Drive captures deterministically, not by a GUI timer.
+            self.assertTrue(dialog._auto_running)
+            self.assertIn("自動送信中", dialog.status.text())
+
+            with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                       side_effect=AutoCaptureUnavailable("WINDOW_MINIMIZED")):
+                for _ in range(3):
+                    dialog._capture_next()
+            self.assertTrue(dialog._auto_running)
+            self.assertTrue(dialog._capture_paused)
+            self.assertEqual(dialog._poll_timer.interval(), 2000)
+            self.assertIn("画面取得待機中", dialog.status.text())
+            self.assertEqual(dialog.entries[-1]["status"], "CAPTURE_PAUSED")
+            self.assertEqual(dialog.entries[-1]["reason"], "WINDOW_MINIMIZED")
+
+            frame = np.zeros((60,100,3), dtype=np.uint8)
+            with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                       return_value=frame):
+                dialog._capture_next()
+            self.assertTrue(dialog._auto_running)
+            self.assertFalse(dialog._capture_paused)
+            self.assertEqual(dialog._poll_timer.interval(), 300)
+            self.assertIn("自動送信中", dialog.status.text())
+            self.assertEqual(dialog.entries[-1]["status"], "CAPTURE_RESUMED")
+            dialog._stop_auto()
+            self.assertFalse(dialog._auto_running)
+            self.assertIn("自動送信停止", dialog.status.text())
+            self.assertEqual(dialog._capture_error_count, 0)
+        finally:
+            dialog._stop_auto()
+            dialog.close()
+
     def test_worker_automatically_sends_frame_to_ai_without_saved_image(self):
         from champions_assist.match_replay_dialog import _ReplayWorker
         pixels=np.full((32,56,3),200,dtype=np.uint8)
