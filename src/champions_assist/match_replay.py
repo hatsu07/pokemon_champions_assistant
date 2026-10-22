@@ -303,7 +303,7 @@ def advance_observation(
 
 def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                      access_token: str, model: str, total_seconds: float = 35.0,
-                     client_factory=None) -> tuple[dict, dict]:
+                     client_factory=None, reasoning_effort: str = "auto") -> tuple[dict, dict]:
     """One user-approved screenshot; output never presses game controls."""
     from .vision_api_benchmark import jpeg_data_uri
     started = perf_counter()
@@ -315,6 +315,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
     try:
         observation = _stream_json(
             client,model=model,schema=OBSERVATION_SCHEMA,name=_OBSERVATION_NAME,
+            reasoning_effort=reasoning_effort,
             instructions=("Read exactly the visible Pokémon Champions screen. "
                           "Classify UI, species, the four visible move buttons, "
                           "visible party switch choices, HP text, result and battle "
@@ -328,7 +329,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             if perf_counter()-started >= total_seconds-1:
                 raise TimeoutError("REPLAY_DEADLINE")
             return _stream_json(
-                client,model=model,
+                client,model=model,reasoning_effort=reasoning_effort,
                 schema=CHOICE_SCHEMA if phase=="SELECTION" else ACTION_SCHEMA,
                 name=_SELECTION_NAME if phase=="SELECTION" else _ACTION_NAME,
                 instructions=(
@@ -386,7 +387,7 @@ PREP_SCHEMA = {
 
 def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str,
                     model: str, limit_seconds: float = 40.0,
-                    client_factory=None) -> tuple[dict, dict]:
+                    client_factory=None, reasoning_effort: str = "auto") -> tuple[dict, dict]:
     """Optional 40s PREP test; complete only when all 18 tags validate."""
     from .prep import (
         build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
@@ -424,6 +425,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         }
         answer=_stream_json(
             client,model=model,schema=PREP_SCHEMA,name="champions_replay_prep",
+            reasoning_effort=reasoning_effort,
             instructions=(
                 "Champions 40-second PREP. Compare ALL selected 3 x opponent 6 "
                 "= 18 pairs once using these six frozen LIVE matrix rows. "
