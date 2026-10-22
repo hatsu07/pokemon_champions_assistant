@@ -54,6 +54,24 @@ class TeamDocument:
         return cls.from_text(Path(path).read_text(encoding="utf-8-sig"))
 
     @classmethod
+    def blank(cls, display_name: str) -> "TeamDocument":
+        """Six-slot GUI draft without inventing Champions move or AP data."""
+        name = display_name.strip()
+        if not name or len(name) > 100:
+            raise ConfigurationError("構築名を1～100文字で入力してください")
+        columns = ("record", "date", "reg", *(
+            column for column in TEAM_REQUIRED_COLUMNS if column != "record"
+        ), "priority", "setup", "recovery", "choice_lock", "action_guarantee")
+        team = {column: "" for column in columns}
+        team.update(record="TEAM", name=name, role="GUI_DRAFT")
+        rows = [team]
+        for _ in range(6):
+            member = {column: "" for column in columns}
+            member["record"] = "MON"
+            rows.append(member)
+        return cls(tuple(columns), tuple(rows))
+
+    @classmethod
     def from_text(cls, text: str) -> "TeamDocument":
         records = list(csv.reader(StringIO(text)))
         if not records:
@@ -308,6 +326,27 @@ class TeamRepository:
         self._save_index(records.values())
         return record
 
+    def create_blank(self, display_name: str) -> RegisteredTeam:
+        """Register an editable six-slot draft without importing any CSV."""
+        document = TeamDocument.blank(display_name)
+        team_id = uuid.uuid4().hex
+        destination = self.root / f"{team_id}.csv"
+        records = self._load_index()
+        now = _utc_now()
+        record = RegisteredTeam(
+            team_id, display_name.strip(), str(destination), None, now, now,
+            document.sha256(), validate_team_document(document, self.catalog),
+        )
+        self.root.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(destination, document.to_text())
+        try:
+            records[team_id] = record
+            self._save_index(records.values())
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        return record
+
     def update_csv(self, team_id: str, text: str) -> RegisteredTeam:
         document = TeamDocument.from_text(text)
         validation = validate_team_document(document, self.catalog)
@@ -352,9 +391,10 @@ class TeamRepository:
         record = records.pop(team_id, None)
         if record is None:
             raise ConfigurationError(f"unknown team: {team_id}")
-        # The user explicitly requested deletion from the private team list.
-        Path(record.csv_path).unlink(missing_ok=True)
+        # Commit the index change before deleting private content, so a
+        # failed index write cannot leave a reference to a missing CSV.
         self._save_index(records.values())
+        Path(record.csv_path).unlink(missing_ok=True)
 
     def path_for_next_match(self, team_id: str) -> Path:
         record = self.get(team_id)

@@ -5,12 +5,14 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 
 from champions_assist.app_config import (
+    ConfigurationError,
     AppSettingsStore,
     CaptureConfiguration,
     StorageConfiguration,
@@ -28,6 +30,7 @@ from champions_assist.store import BattleStore
 from champions_assist.team_management import TeamDocument
 from champions_assist.windows_capture import WindowCandidate, WindowGeometry
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtWidgets import QMessageBox
 from PySide6.QtTest import QTest
 
 
@@ -195,6 +198,100 @@ class Phase8SettingsTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid game viewport ROI"):
             CapturePreviewService.save_explicit_frame(preview, self.root / "invalid.png", roi=(0.5, 0.5, 0.5, 0.8))
         self.assertFalse((self.root / "invalid.png").exists())
+
+    def test_new_team_draft_created_without_csv_then_saved_and_selected(self) -> None:
+        original = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(original.team_id, match_active=False)
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            with patch("champions_assist.settings_dialog.QInputDialog.getText",
+                       return_value=("テスト用の新規構築", True)):
+                dialog._create_team()
+            drafts = [team for team in self.service.teams.list() if team.team_id != original.team_id]
+            self.assertEqual(len(drafts), 1)
+            draft = drafts[0]
+            self.assertEqual(draft.display_name, "テスト用の新規構築")
+            self.assertEqual(draft.validation.status, "INVALID")
+            self.assertEqual(len(TeamDocument.load(draft.csv_path).members), 6)
+            self.assertEqual(dialog._editing_team_id, draft.team_id)
+            self.assertEqual(dialog.team_editor.rowCount(), 6)
+            self.assertEqual(self.service.settings.teams.active_team_id, original.team_id)
+            # A draft cannot become active, even if the user requests it.
+            with patch("champions_assist.settings_dialog.QMessageBox.warning") as warning:
+                dialog._select_team()
+                warning.assert_called_once()
+            self.assertEqual(dialog._selected_team_id, original.team_id)
+
+            # Fill six slots with values copied from a validated registered team,
+            # through the actual editable GUI (no source CSV upload).
+            source = TeamDocument.load(original.csv_path).members
+            for row, member in enumerate(source):
+                for col, field in enumerate(dialog.member_columns):
+                    control = dialog.team_editor.cellWidget(row, col)
+                    if control is not None:
+                        control.setCurrentText(member.get(field, ""))
+                    else:
+                        dialog.team_editor.item(row, col).setText(member.get(field, ""))
+            dialog._save_team_edit()
+            saved = self.service.teams.get(draft.team_id)
+            self.assertTrue(saved.validation.selectable_for_next_match)
+            self.assertEqual([mon["name"] for mon in TeamDocument.load(saved.csv_path).members],
+                             [mon["name"] for mon in source])
+            self.assertEqual(dialog._editing_team_id, draft.team_id)
+            dialog._select_team()
+            self.assertEqual(dialog._selected_team_id, draft.team_id)
+            dialog._save()
+            self.assertEqual(self.service.settings.teams.active_team_id, draft.team_id)
+        finally:
+            dialog.close()
+
+    def test_confirmed_gui_delete_clears_active_and_keeps_other_team(self) -> None:
+        source = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(source.team_id, match_active=False)
+        other = self.service.duplicate_team(source.team_id, match_active=False)
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            target_row = next(row for row in range(dialog.team_list.rowCount())
+                              if dialog.team_list.item(row, 0).data(Qt.ItemDataRole.UserRole) == source.team_id)
+            dialog.team_list.selectRow(target_row)
+            with patch("champions_assist.settings_dialog.QMessageBox.question",
+                       return_value=QMessageBox.StandardButton.No):
+                dialog._delete_team()
+            self.assertTrue(Path(source.csv_path).is_file())
+            self.assertEqual(self.service.settings.teams.active_team_id, source.team_id)
+            with patch("champions_assist.settings_dialog.QMessageBox.question",
+                       return_value=QMessageBox.StandardButton.Yes):
+                dialog._delete_team()
+            self.assertFalse(Path(source.csv_path).exists())
+            self.assertIsNone(self.service.settings.teams.active_team_id)
+            self.assertIsNone(self.service.settings.teams.pending_team_id)
+            self.assertTrue(Path(other.csv_path).is_file())
+            self.assertEqual(len(self.service.teams.list()), 1)
+            self.assertIsNone(dialog._selected_team_id)
+            self.assertEqual(dialog.team_list.rowCount(), 1)
+        finally:
+            dialog.close()
+
+    def test_team_delete_create_duplicate_refused_during_active_match(self) -> None:
+        original = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(original.team_id, match_active=False)
+        with self.assertRaises(ConfigurationError):
+            self.service.create_team("試合中", match_active=True)
+        with self.assertRaises(ConfigurationError):
+            self.service.duplicate_team(original.team_id, match_active=True)
+        with self.assertRaises(ConfigurationError):
+            self.service.delete_team(original.team_id, match_active=True)
+        self.assertTrue(Path(original.csv_path).exists())
+        self.assertEqual(self.service.settings.teams.active_team_id, original.team_id)
 
     def test_team_import_round_trip_and_deferred_switch_feed_the_next_preload_only(self) -> None:
         initial = self.service.import_team(PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv", match_active=False)
