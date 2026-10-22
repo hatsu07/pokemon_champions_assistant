@@ -91,6 +91,58 @@ class WindowGeometry:
         }
 
 
+@dataclass(frozen=True)
+class WindowCandidate:
+    """A visible top-level window offered for explicit, read-only selection."""
+
+    hwnd: int
+    pid: int | None
+    process_name: str | None
+    title: str
+    client_bbox: tuple[int, int, int, int] | None
+    dpi: int | None
+    minimized: bool
+
+    @property
+    def is_bluestacks(self) -> bool:
+        values = " ".join(value or "" for value in (self.process_name, self.title)).casefold()
+        return "bluestacks" in values or "hd-player" in values
+
+    def identity(self) -> dict[str, object]:
+        """Persist enough data to reject a stale/reused HWND on next preview."""
+        return {
+            "hwnd": self.hwnd,
+            "pid": self.pid,
+            "process_name": self.process_name,
+            "title": self.title,
+        }
+
+    def display_name(self) -> str:
+        suffix = " [BlueStacks候補]" if self.is_bluestacks else ""
+        state = "最小化" if self.minimized else "表示中"
+        process = self.process_name or "不明プロセス"
+        return f"{process} | {self.title} | PID {self.pid or '—'} | HWND {self.hwnd} | {state}{suffix}"
+
+
+def candidate_matches_identity(candidate: WindowCandidate, identity: dict[str, object] | None) -> bool:
+    """Accept only an exact current HWND/PID/title identity, never title alone."""
+    if identity is None:
+        return False
+    try:
+        stored_hwnd = int(identity["hwnd"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if candidate.hwnd != stored_hwnd or candidate.title != str(identity.get("title", "")):
+        return False
+    stored_pid = identity.get("pid")
+    if stored_pid is None:
+        return True
+    try:
+        return candidate.pid == int(stored_pid)
+    except (TypeError, ValueError):
+        return False
+
+
 def _validate_rgb_pixels(pixels: np.ndarray, *, failure_reason: str) -> np.ndarray:
     if pixels.ndim != 3 or pixels.shape[2] != 3 or pixels.dtype != np.uint8:
         raise CaptureUnavailable(failure_reason)
@@ -226,10 +278,12 @@ class Win32WindowGeometryProvider:
     evidence that the target is a BlueStacks/Champions window.
     """
 
-    def __init__(self, title_substring: str) -> None:
+    def __init__(self, title_substring: str, *, expected_hwnd: int | None = None, expected_pid: int | None = None) -> None:
         if not title_substring.strip():
             raise ValueError("a non-empty window title substring is required")
         self.title_substring = title_substring
+        self.expected_hwnd = expected_hwnd
+        self.expected_pid = expected_pid
 
     def probe(self) -> WindowGeometry:
         if os.name != "nt":
@@ -250,6 +304,8 @@ class Win32WindowGeometryProvider:
         user32.GetWindowTextLengthW.restype = ctypes.c_int
         user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.GetWindowTextW.restype = ctypes.c_int
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
         user32.IsIconic.argtypes = [wintypes.HWND]
         user32.IsIconic.restype = wintypes.BOOL
         user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
@@ -260,19 +316,25 @@ class Win32WindowGeometryProvider:
         def visit(hwnd: int, _lparam: int) -> bool:
             if not user32.IsWindowVisible(hwnd):
                 return True
+            if self.expected_hwnd is not None and int(hwnd) != self.expected_hwnd:
+                return True
             length = user32.GetWindowTextLengthW(hwnd)
             if length <= 0:
                 return True
             text = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, text, length + 1)
             if needle in text.value.casefold():
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if self.expected_pid is not None and int(pid.value) != self.expected_pid:
+                    return True
                 matches.append((int(hwnd), text.value))
                 return False
             return True
 
         user32.EnumWindows(callback_type(visit), 0)
         if not matches:
-            return WindowGeometry("WINDOW_NOT_FOUND")
+            return WindowGeometry("WINDOW_IDENTITY_UNAVAILABLE" if self.expected_hwnd is not None else "WINDOW_NOT_FOUND")
         hwnd, title = matches[0]
         if user32.IsIconic(hwnd):
             return WindowGeometry("WINDOW_MINIMIZED", title=title, hwnd=hwnd)
@@ -298,6 +360,84 @@ class Win32WindowGeometryProvider:
             dpi=dpi,
             dpi_awareness=dpi_awareness,
         )
+
+
+def _windows_process_name(pid: int) -> str | None:
+    """Best-effort process label for a picker; failure never grants capture."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    process = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not process:
+        return None
+    try:
+        buffer = ctypes.create_unicode_buffer(32_768)
+        length = wintypes.DWORD(len(buffer))
+        query = kernel32.QueryFullProcessImageNameW
+        query.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        query.restype = wintypes.BOOL
+        if not query(process, 0, buffer, ctypes.byref(length)):
+            return None
+        return os.path.basename(buffer.value)
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def enumerate_visible_windows() -> tuple[WindowCandidate, ...]:
+    """List visible top-level Windows without focusing, moving, or capturing them."""
+    if os.name != "nt":
+        return ()
+    import ctypes
+    from ctypes import wintypes
+
+    ensure_per_monitor_dpi_awareness()
+    user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+    found: list[WindowCandidate] = []
+
+    def visit(hwnd: int, _lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        title_buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, title_buffer, length + 1)
+        title = title_buffer.value.strip()
+        if not title:
+            return True
+        pid_value = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_value))
+        pid = int(pid_value.value) if pid_value.value else None
+        minimized = bool(user32.IsIconic(hwnd))
+        geometry = Win32WindowGeometryProvider(title, expected_hwnd=int(hwnd), expected_pid=pid).probe()
+        found.append(
+            WindowCandidate(
+                hwnd=int(hwnd), pid=pid, process_name=None if pid is None else _windows_process_name(pid), title=title,
+                client_bbox=geometry.client_bbox, dpi=geometry.dpi, minimized=minimized,
+            )
+        )
+        return True
+
+    user32.EnumWindows(callback_type(visit), 0)
+    return tuple(sorted(found, key=lambda item: (not item.is_bluestacks, item.process_name or "", item.title, item.hwnd)))
 
 
 ImageGrabber = Callable[[tuple[int, int, int, int] | None], object]
@@ -354,7 +494,7 @@ class WindowsNativeFrameSource:
         if self._image_grabber is not None:
             image = self._image_grabber(bbox)
             self.last_capture_method = "INJECTED_IMAGE_GRABBER"
-        elif self.window_title is not None and self.last_geometry is not None:
+        elif self._geometry_provider is not None and self.last_geometry is not None:
             grabber = self._window_client_grabber or _print_window_client
             self.last_capture_method = "WIN32_PRINTWINDOW_CLIENT"
             return _validate_rgb_pixels(grabber(self.last_geometry), failure_reason="WINDOW_PRINT_INVALID_PIXELS")

@@ -91,17 +91,24 @@ class FrozenMatchAssets:
 
 
 class MasterPreloader:
-    """Only this class touches required-master paths, once per load call."""
+    """Only this class touches required-master paths, once per load call.
 
-    def __init__(self, master_directory: str | Path) -> None:
+    ``team_source`` is a registered user CSV selected for a future match.  It
+    replaces only the fourth live input at load time; the in-memory asset still
+    uses the canonical contract filename and is immutable after this call.
+    """
+
+    def __init__(self, master_directory: str | Path, *, team_source: str | Path | None = None) -> None:
         self._master_directory = Path(master_directory)
+        self._team_source = None if team_source is None else Path(team_source)
 
     def load_for_new_match(self) -> FrozenMatchAssets:
         raw_bytes: dict[str, bytes] = {}
         failures: dict[str, str] = {}
         for filename in REQUIRED_MASTER_FILES:
             try:
-                body = (self._master_directory / filename).read_bytes()
+                source = self._team_source if filename == REQUIRED_MASTER_FILES[3] and self._team_source is not None else self._master_directory / filename
+                body = source.read_bytes()
                 if not body:
                     raise ValueError("empty file")
                 raw_bytes[filename] = body

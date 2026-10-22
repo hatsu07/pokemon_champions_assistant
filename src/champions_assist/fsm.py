@@ -765,10 +765,26 @@ class MatchController:
     """Owns S00/S01 transitions and guarantees a fresh preload for every match."""
 
     def __init__(self, master_directory: str | Path, *, store: BattleStore | None = None) -> None:
-        self._preloader = MasterPreloader(master_directory)
+        self._master_directory = Path(master_directory)
+        self._team_source: Path | None = None
+        self._preloader = MasterPreloader(self._master_directory)
         self._store = store
         self.phase = MatchPhase.S00_WAIT_START
         self.active_session: MatchSession | None = None
+
+    def set_team_source_for_next_match(self, team_source: str | Path | None) -> None:
+        """Choose a validated private CSV for the next four-file preload.
+
+        Existing ``MatchSession.assets`` objects remain untouched, so changing
+        this value during a match cannot alter an in-flight API payload or PREP.
+        The settings layer decides when this method may be called.
+        """
+        self._team_source = None if team_source is None else Path(team_source)
+        self._preloader = MasterPreloader(self._master_directory, team_source=self._team_source)
+
+    def set_store_for_next_match(self, store: BattleStore) -> None:
+        """Switch the append-only database only at a next-match boundary."""
+        self._store = store
 
     def start_match(self, match_id: str, *, now_ms: int) -> MatchSession:
         if self.active_session is not None:

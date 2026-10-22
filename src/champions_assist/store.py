@@ -58,6 +58,12 @@ class BattleStore:
     def close(self) -> None:
         self._connection.close()
 
+    def checkpoint(self) -> None:
+        """Flush WAL pages before a user-approved next-match data migration."""
+        if self.database_path == Path(":memory:"):
+            return
+        self._connection.execute("PRAGMA wal_checkpoint(FULL)")
+
     def _migrate(self) -> None:
         with self._connection:
             self._connection.executescript(

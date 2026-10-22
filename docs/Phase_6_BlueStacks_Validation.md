@@ -23,7 +23,22 @@ The operator has confirmed that Pokémon Champions launches on the following loc
 | Orientation / configured resolution | Landscape, 1920 × 1080 | Emulator configuration; not a captured-image measurement |
 | Android density | 240 dpi | Emulator configuration; not Win32 window DPI |
 
-These are the Phase 6R reference conditions, not a successful Windows capture result. In particular, Android's 240 dpi must not be substituted for `GetDpiForWindow`: monitor scaling, the BlueStacks client rectangle, and Pillow's grabbed pixel dimensions must be measured from the probe report. No Champions ROI is fixed from this table.
+These are the Phase 6R reference conditions, not a successful Windows capture result. In particular, Android's 240 dpi must not be substituted for `GetDpiForWindow`: monitor scaling, the BlueStacks client rectangle, and the captured image dimensions must be measured from the probe report. No Champions ROI is fixed from this table.
+
+## First-frame result — 2026-10-22
+
+The operator ran the native probe on the reference environment and supplied the locally retained PNG and JSON report for inspection. The read-only Win32 `PrintWindow` path captured the Pokémon Champions title screen, rather than the previously captured VS Code/PowerShell desktop overlay.
+
+| Measurement | Observed value |
+| --- | --- |
+| Capture method | `WIN32_PRINTWINDOW_CLIENT` |
+| Captured image / Win32 client area | 2254 × 1298 px / 2254 × 1298 px |
+| Window DPI / scale | 192 / 2.0 relative to 96 DPI |
+| DPI awareness | `PER_MONITOR_AWARE_V2_SET` |
+| First-frame acquisition / complete probe | 47 ms / 156 ms |
+| Content | Champions title screen; not a battle UI sample |
+
+This accepts only the Phase 6R first-frame capture checkpoint. It does not establish a fixed ROI, OCR accuracy, a battle UI classifier, event parsing, capture stability, GUI latency, or gameplay readiness. The local image/report remain private and are not committed or uploaded.
 
 ## Portable Windows harness without installing development Python
 
@@ -92,7 +107,7 @@ if ($Probe.status -eq "CAPTURED_READ_ONLY_UNVERIFIED_CONTENT" -and (Test-Path -L
 }
 ```
 
-`CAPTURED_READ_ONLY_UNVERIFIED_CONTENT`, an existing PNG, one or more `image_size_px` samples, one or more `window_client_size_screen_px` and `win32_window_dpi` samples, and non-null `first_frame_acquisition_ms` mean only that one local pixel read completed. Confirm visually that the opened PNG contains Pokémon Champions, then report the status and measurements. Do not upload the PNG, report, ADB serial, or battle data to GitHub. This result remains **Phase 6R unaccepted** until the operator reports that successful capture.
+`CAPTURED_READ_ONLY_UNVERIFIED_CONTENT`, an existing PNG, one or more `image_size_px` samples, one or more `window_client_size_screen_px` and `win32_window_dpi` samples, and non-null `first_frame_acquisition_ms` mean only that one local pixel read completed. Confirm visually that the opened PNG contains Pokémon Champions, then report the status and measurements. Do not upload the PNG, report, ADB serial, or battle data to GitHub. This permits acceptance of the **first-frame capture checkpoint only**; it does not validate battle recognition or any later Phase 6 gate.
 
 The title-selected native route uses Win32 `PrintWindow` to request the target client rendering into an off-screen buffer. Therefore other desktop windows may overlap BlueStacks without becoming the saved PNG. It records `frame_measurement.capture_method`; an accepted one-frame retest must show `WIN32_PRINTWINDOW_CLIENT` and the expected game pixels. The prior Pillow desktop-bbox route remains only for an explicit rectangle diagnostic and never silently replaces a failed `PrintWindow` capture. If BlueStacks returns a failed or blank `PrintWindow` result, retain the report and use the explicit read-only ADB fallback; do not calibrate ROI or use guessed coordinates.
 

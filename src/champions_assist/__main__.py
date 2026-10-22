@@ -24,6 +24,25 @@ def _json_output(value: object) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def resolve_desktop_settings_paths(config_override: Path | None) -> tuple[Path, Path]:
+    """Return an app-data root and the non-secret settings path.
+
+    An explicit ``.../config/settings.json`` is useful for a portable
+    validation build: all generated local data then remains beside that chosen
+    validation root instead of silently mixing with the normal application
+    profile.  Other explicit filenames use their containing directory as the
+    root.  This helper performs no I/O.
+    """
+    if config_override is None:
+        from .app_config import default_app_root
+
+        app_root = default_app_root()
+        return app_root, app_root / "config" / "settings.json"
+    config_path = Path(config_override).expanduser()
+    app_root = config_path.parent.parent if config_path.parent.name.casefold() == "config" else config_path.parent
+    return app_root, config_path
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="champions-assist")
     parser.add_argument("--version", action="store_true", help="show package and contract versions")
@@ -47,9 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     desktop = subparsers.add_parser("desktop", help="start the local observer-only PySide6 desktop shell")
     desktop.add_argument("--master-dir", type=Path, default=Path("masters"))
-    desktop.add_argument("--db", type=Path, default=Path("champions_assist.sqlite3"))
+    desktop.add_argument("--db", type=Path, help="override the configured local SQLite path")
+    desktop.add_argument("--config", type=Path, help="override the non-secret settings.json path")
     desktop.add_argument("--offscreen", action="store_true", help="use Qt offscreen rendering for CI/Docker verification")
     desktop.add_argument("--real-api", action="store_true", help="select the Responses transport; environment safeguards still must permit it")
+    desktop.add_argument(
+        "--settings-validation-only",
+        action="store_true",
+        help="disable match start and API-send controls for a local settings/capture validation session",
+    )
 
     api_smoke = subparsers.add_parser("api-smoke", help="explicitly opt in to one real SELECT Responses API smoke request")
     api_smoke.add_argument("--master-dir", type=Path, default=Path("masters"))
@@ -89,16 +114,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "desktop":
         if args.offscreen:
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from .app_config import AppSettingsStore
         from .desktop import AdapterJobExecutor, DesktopController, DesktopMainWindow, DesktopModelDispatcher, ensure_application
         from .model_adapter import MockResponsesTransport
+        from .settings_management import DesktopSettingsService
 
-        store = BattleStore(args.db)
+        if args.settings_validation_only and args.real_api:
+            raise ValueError("--settings-validation-only cannot be combined with --real-api")
+        app_root, config_path = resolve_desktop_settings_paths(args.config)
+        settings_service = DesktopSettingsService(AppSettingsStore(config_path, defaults_root=app_root), master_directory=args.master_dir)
+        database_path = args.db or Path(settings_service.settings.storage.data_root) / "battle.sqlite3"
+        store = BattleStore(database_path)
         dispatcher: DesktopModelDispatcher | None = None
         try:
             application = ensure_application()
             desktop_controller = DesktopController(
                 store=store,
                 match_controller=MatchController(args.master_dir, store=store),
+                settings_service=settings_service,
             )
             settings = ModelSettings.from_environment()
             if args.real_api:
@@ -108,10 +141,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # startup offline.  Fixture/demo runners provide mock replies.
                 transport_factory = lambda: MockResponsesTransport(())
             dispatcher = DesktopModelDispatcher(
-                AdapterJobExecutor(args.db, transport_factory=transport_factory, settings=settings)
+                AdapterJobExecutor(database_path, transport_factory=transport_factory, settings=settings)
             )
             desktop_controller.bind_dispatcher(dispatcher)
-            window = DesktopMainWindow(desktop_controller)
+            window = DesktopMainWindow(
+                desktop_controller,
+                settings_service=settings_service,
+                settings_validation_only=args.settings_validation_only,
+            )
             window.show()
             return application.exec()
         finally:

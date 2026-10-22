@@ -32,6 +32,15 @@ validation-reports/
 *.mov
 *.avi
 
+# GUI v2.8 user-data overrides. Production defaults are outside the repository,
+# but these protect explicit local --config/--db paths from Git/CI inclusion.
+/settings.json
+/settings.json.bak
+/data/
+/teams/
+/captures/
+/diagnostics/
+
 # OS file-manager metadata
 .DS_Store
 Thumbs.db

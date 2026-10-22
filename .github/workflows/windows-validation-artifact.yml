@@ -7,6 +7,17 @@ on:
       - master
     paths:
       - ".github/workflows/windows-validation-artifact.yml"
+      - "scripts/windows_validation_entry.py"
+      - "scripts/windows_settings_validation_entry.py"
+      - "src/champions_assist/**"
+      - "tests/test_phase_6.py"
+      - "tests/test_phase_8_settings.py"
+      - "pyproject.toml"
+      - "masters/Pokemon_Champions_MC_usable_pokemon.csv"
+      - "masters/Pokemon_Champions_MC_move_master.csv"
+      - "masters/Pokemon_Champions_MC_usable_held_items.csv"
+      - "masters/Pokemon_Champions_MC_ability_master.csv"
+      - "masters/Pokemon_Champions_MC_pokemon_learnsets_linked.csv"
 
 permissions:
   contents: read
@@ -14,7 +25,7 @@ permissions:
 jobs:
   build-validation-harness:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,14 +33,39 @@ jobs:
           python-version: '3.12'
       - name: Install validation-harness build dependencies
         run: python -m pip install --upgrade pip pyinstaller .
-      - name: Run Phase 6 harness tests on Windows
-        run: python -m unittest tests.test_phase_6 -v
+      - name: Run Phase 6 and settings GUI tests on Windows
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings -v
       - name: Build portable validation harness (not MSI)
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir
           --name PokemonChampionsValidation --paths src
           --hidden-import PIL.ImageGrab --collect-binaries cv2
           scripts/windows_validation_entry.py
+      - name: Stage non-private fixed catalogue for settings validation
+        shell: pwsh
+        run: |
+          $catalogue = ".\build\settings-validation-assets\masters"
+          New-Item -ItemType Directory -Force $catalogue | Out-Null
+          $files = @(
+            "Pokemon_Champions_MC_usable_pokemon.csv",
+            "Pokemon_Champions_MC_move_master.csv",
+            "Pokemon_Champions_MC_usable_held_items.csv",
+            "Pokemon_Champions_MC_ability_master.csv",
+            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv"
+          )
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath (Join-Path ".\masters" $file) -Destination (Join-Path $catalogue $file) -Force
+          }
+      - name: Build portable settings GUI validation tool (not MSI)
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir
+          --name PokemonChampionsSettingsValidation --paths src
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
+          --add-data "build\settings-validation-assets\masters;masters"
+          scripts/windows_settings_validation_entry.py
       - name: Smoke the portable CLI and target-window guard without capture or network
         shell: pwsh
         run: |
@@ -41,6 +77,16 @@ jobs:
           if ($report.status -ne "CAPTURE_UNAVAILABLE" -or $report.frame_measurement.image_size_px.samples -ne 0) {
             throw "unexpected capture result on the hosted runner"
           }
+      - name: Smoke the portable settings GUI without a display, capture, API, or game control
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = Resolve-Path .\dist\PokemonChampionsSettingsValidation\PokemonChampionsSettingsValidation.exe
+          $smoke = & $exe --smoke | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "portable settings GUI smoke failed" }
+          if ($smoke.status -ne "GUI_SETTINGS_VALIDATION_SMOKE_OK" -or -not $smoke.catalogue_available) {
+            throw "portable settings GUI smoke did not initialise the fixed catalogue"
+          }
       - name: Create portable ZIP layout
         shell: pwsh
         run: |
@@ -48,9 +94,22 @@ jobs:
           New-Item -ItemType Directory -Force $package | Out-Null
           Copy-Item -Recurse -Force .\dist\PokemonChampionsValidation\* $package
           Compress-Archive -Path $package -DestinationPath .\dist\PokemonChampionsValidation-windows-x64.zip -Force
+      - name: Create portable settings GUI ZIP layout
+        shell: pwsh
+        run: |
+          $package = "package\PokemonChampionsSettingsValidation"
+          New-Item -ItemType Directory -Force $package | Out-Null
+          Copy-Item -Recurse -Force .\dist\PokemonChampionsSettingsValidation\* $package
+          Compress-Archive -Path $package -DestinationPath .\dist\PokemonChampionsSettingsValidation-windows-x64.zip -Force
       - name: Upload portable validation harness
         uses: actions/upload-artifact@v4
         with:
           name: PokemonChampionsValidation-windows-x64
           path: dist/PokemonChampionsValidation-windows-x64.zip
+          if-no-files-found: error
+      - name: Upload portable settings GUI validation tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokemonChampionsSettingsValidation-windows-x64
+          path: dist/PokemonChampionsSettingsValidation-windows-x64.zip
           if-no-files-found: error

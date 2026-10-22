@@ -16,7 +16,7 @@ from pathlib import Path
 import time
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -53,6 +53,7 @@ from .prep import PrepMatchup, PrepResult
 from .preload import FrozenMatchAssets
 from .session_payloads import _BATTLE_PHASES, build_session_payload, current_session_identity
 from .settings import ModelSettings
+from .settings_management import DesktopSettingsService
 from .store import BattleStore
 
 
@@ -392,17 +393,20 @@ class DesktopController(QObject):
         match_controller: MatchController | None = None,
         session: MatchSession | None = None,
         clock_ms: Callable[[], int] = monotonic_ms,
+        settings_service: DesktopSettingsService | None = None,
     ) -> None:
         super().__init__()
         self.store = store
         self.match_controller = match_controller
         self.session = session
         self.clock_ms = clock_ms
+        self.settings_service = settings_service
         self.api_state = ApiRunState.STOPPED
         self._api_epoch = 0
         self._request_sequence = 0
         self._correction_sequence = 0
         self._pending: set[tuple[str, str, int, str]] = set()
+        self._database_worker_rebind_required = False
         self.latest_review: dict[str, Any] | None = None
 
     def bind_dispatcher(self, dispatcher: DesktopModelDispatcher) -> None:
@@ -424,6 +428,27 @@ class DesktopController(QObject):
     def start_new_match(self, match_id: str) -> MatchSession:
         if self.match_controller is None:
             raise RuntimeError("no MatchController is attached")
+        if self.settings_service is not None:
+            # A storage move must finish outside the prior session's SQLite
+            # connection.  Retiring it first preserves its append-only audit.
+            if self.settings_service.settings.pending_storage is not None and self.match_controller.active_session is not None:
+                self.match_controller.active_session.retire_for_next_match()
+                self.match_controller.active_session = None
+            applied = self.settings_service.apply_for_next_match(
+                self.match_controller,
+                before_storage_migration=self.store.checkpoint,
+            )
+            if applied.storage_changed:
+                old_store = self.store
+                database_path = Path(applied.settings.storage.data_root) / old_store.database_path.name
+                old_store.close()
+                self.store = BattleStore(database_path)
+                self.match_controller.set_store_for_next_match(self.store)
+                # A worker bound to the prior database cannot safely serve the
+                # new storage location.  Stop it explicitly; no tactical
+                # replacement is attempted.
+                self.emergency_stop()
+                self._database_worker_rebind_required = True
         self._api_epoch += 1
         self._pending.clear()
         self.latest_review = None
@@ -432,6 +457,10 @@ class DesktopController(QObject):
         return self.session
 
     def set_api_enabled(self, enabled: bool) -> None:
+        if enabled and self._database_worker_rebind_required:
+            self.api_state = ApiRunState.STOPPED
+            self.refresh()
+            return
         if enabled:
             self.api_state = ApiRunState.ENABLED
         else:
@@ -450,7 +479,7 @@ class DesktopController(QObject):
     def request_model_job(self, phase: str) -> DesktopModelJob | None:
         """Explicitly queue one model job.  This method performs no transport."""
         session = self.session
-        if session is None or self.api_state is not ApiRunState.ENABLED:
+        if session is None or self.api_state is not ApiRunState.ENABLED or self._database_worker_rebind_required:
             return None
         now_ms = self.clock_ms()
         try:
@@ -620,10 +649,20 @@ class DesktopMainWindow(QMainWindow):
         "opponent_control_classification",
     )
 
-    def __init__(self, controller: DesktopController, *, preferences: DesktopPreferences | None = None) -> None:
+    def __init__(
+        self,
+        controller: DesktopController,
+        *,
+        preferences: DesktopPreferences | None = None,
+        settings_service: DesktopSettingsService | None = None,
+        settings_validation_only: bool = False,
+    ) -> None:
         super().__init__()
         self.controller = controller
         self.preferences = preferences or DesktopPreferences()
+        self.settings_service = settings_service or controller.settings_service
+        self.settings_validation_only = settings_validation_only
+        self._settings_dialog = None
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
         self._build_ui()
@@ -632,6 +671,8 @@ class DesktopMainWindow(QMainWindow):
         self.compact_box.setChecked(self.preferences.compact())
         self.controller.presentation_changed.connect(self.render)
         self.render(self.controller.presentation())
+        if self.settings_service is not None and self.settings_service.first_launch:
+            QTimer.singleShot(0, self._open_settings)
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -677,9 +718,41 @@ class DesktopMainWindow(QMainWindow):
         self.compact_box.toggled.connect(self._set_compact)
         controls.addWidget(self.on_top_box)
         controls.addWidget(self.compact_box)
+        if self.settings_service is not None:
+            settings_button = QPushButton("設定")
+            settings_button.clicked.connect(self._open_settings)
+            controls.addWidget(settings_button)
         controls.addStretch(1)
         layout.addLayout(controls)
         self.setCentralWidget(root)
+
+    def _match_active_for_settings(self) -> bool:
+        session = self.controller.session
+        return session is not None and session.phase not in {MatchPhase.S00_WAIT_START, MatchPhase.S08_NEXT_MATCH_READY}
+
+    def _open_settings(self) -> None:
+        if self.settings_service is None:
+            return
+        if self._settings_dialog is not None:
+            self._settings_dialog.show()
+            return
+        from .settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(
+            self.settings_service,
+            match_active=self._match_active_for_settings,
+            first_launch=self.settings_service.first_launch,
+            on_active_capture_change=self.controller.emergency_stop,
+            parent=self,
+        )
+        self._settings_dialog = dialog
+
+        def closed(_result: int) -> None:
+            self._settings_dialog = None
+            self.controller.refresh()
+
+        dialog.finished.connect(closed)
+        dialog.open()
 
     def _state_tab(self) -> QWidget:
         tab = QWidget()
@@ -734,10 +807,10 @@ class DesktopMainWindow(QMainWindow):
         start_form = QFormLayout(start_group)
         self.match_id_input = QLineEdit()
         self.match_id_input.setPlaceholderText("空欄なら時刻ベースのローカルID")
-        start_button = QPushButton("次戦を開始")
-        start_button.clicked.connect(self._start_new_match)
+        self.start_match_button = QPushButton("次戦を開始")
+        self.start_match_button.clicked.connect(self._start_new_match)
         start_form.addRow("match_id", self.match_id_input)
-        start_form.addRow(start_button)
+        start_form.addRow(self.start_match_button)
         layout.addWidget(start_group)
         self.api_enabled_box = QCheckBox("API通信を開始（明示的オプトイン設定が別途必要）")
         self.api_enabled_box.toggled.connect(self.controller.set_api_enabled)
@@ -745,14 +818,21 @@ class DesktopMainWindow(QMainWindow):
         stop_button.clicked.connect(self._emergency_stop)
         self.send_phase = QComboBox()
         self.send_phase.addItems(("SELECT", "PREP", "NORMAL_COMMAND", "PIVOT_TARGET", "FAINT_REPLACEMENT", "EFFECT_REPLACEMENT", "REVIEW"))
-        send_button = QPushButton("現在の入力機会を送信キューへ")
-        send_button.clicked.connect(self._request_model_job)
+        self.send_model_button = QPushButton("現在の入力機会を送信キューへ")
+        self.send_model_button.clicked.connect(self._request_model_job)
         layout.addWidget(self.api_enabled_box)
         layout.addWidget(stop_button)
         layout.addWidget(QLabel("送信対象（表示更新では送信しない）"))
         layout.addWidget(self.send_phase)
-        layout.addWidget(send_button)
+        layout.addWidget(self.send_model_button)
         layout.addWidget(QLabel("APIキーはこの画面・SQLite・ログに表示または保存しません。"))
+        if self.settings_validation_only:
+            self.match_id_input.setEnabled(False)
+            self.start_match_button.setEnabled(False)
+            self.api_enabled_box.setEnabled(False)
+            self.send_phase.setEnabled(False)
+            self.send_model_button.setEnabled(False)
+            layout.addWidget(QLabel("このポータブル検証モードでは、設定・読み取りプレビューのみを行います。対戦開始とAPI送信は無効です。"))
         layout.addStretch(1)
         return tab
 
