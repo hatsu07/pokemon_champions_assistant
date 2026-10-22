@@ -1,0 +1,37 @@
+.draft-script/analytics-cache.json
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+build/
+dist/
+PokemonChampionsValidation.spec
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+*.log
+logs/
+private_history/*.xlsx
+
+# Local-only Phase 6 captures, calibration outputs, and performance reports.
+# Real battle media and labels must not be committed or uploaded to CI.
+local-captures/
+local-calibration/
+capture-reports/
+validation-reports/
+*-report.json
+*.mp4
+*.mov
+*.avi
+
+# OS file-manager metadata
+.DS_Store
+Thumbs.db
