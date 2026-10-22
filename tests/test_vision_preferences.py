@@ -24,6 +24,15 @@ class VisionPersistenceTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = ensure_application()
 
+    @classmethod
+    def tearDownClass(cls):
+        # Ensure the Qt singleton is released before interpreter shutdown,
+        # avoiding a platform-plugin destructor race on Windows offscreen CI.
+        import gc
+        cls.app.quit()
+        cls.app = None
+        gc.collect()
+
     def test_model_preference_survives_disk_reload_without_storing_secrets(self):
         with tempfile.TemporaryDirectory() as root:
             first = VisionPreferenceStore(root)
