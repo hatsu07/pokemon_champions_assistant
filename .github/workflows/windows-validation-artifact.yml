@@ -2,6 +2,11 @@ name: Windows validation harness artifact
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/windows-validation-artifact.yml"
 
 permissions:
   contents: read
