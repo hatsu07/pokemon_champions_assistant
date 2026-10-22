@@ -183,12 +183,13 @@ class DecisionProvider(Protocol):
     def decide(self, request: DecisionRequest) -> MockDecision: ...
 
 
-def _deadline_budget(default_ms: int, actual_ui_remaining_ms: int | None) -> int:
+def _deadline_budget(default_ms: int, actual_ui_remaining_ms: int | None, *, reserve_ms: int = 0) -> int:
+    """AI display deadline, retaining time for manual player input."""
     if actual_ui_remaining_ms is None:
         return default_ms
     if actual_ui_remaining_ms < 0:
         raise ValueError("actual UI time remaining cannot be negative")
-    return min(default_ms, actual_ui_remaining_ms)
+    return max(0, min(default_ms, actual_ui_remaining_ms - reserve_ms))
 
 
 class MatchSession:
@@ -323,7 +324,7 @@ class MatchSession:
         self.opponent_preview_six = opponent_preview_six
         self.matrix_rows_six = rows
         self.phase = MatchPhase.S03_TEAM_SELECTION
-        self.selection_deadline = Deadline(now_ms, _deadline_budget(90_000, actual_ui_remaining_ms))
+        self.selection_deadline = Deadline(now_ms, _deadline_budget(35_000, actual_ui_remaining_ms, reserve_ms=10_000))
         self._audit("OPPONENT_PREVIEW_SIX", opponents=list(opponent_preview_six), matrix_rows=6)
         return rows
 
@@ -518,8 +519,11 @@ class MatchSession:
                 return current
             current.allowed_actions = allowed_actions
             current.tactical_state_version = self.tactical_state_version
-            current.deadline = Deadline(now_ms, _deadline_budget(45_000, actual_ui_remaining_ms))
-            current.status = WindowStatus.OPEN if allowed_actions.completeness == "COMPLETE" else WindowStatus.BLOCKED
+            revised_budget = _deadline_budget(35_000, actual_ui_remaining_ms, reserve_ms=10_000)
+            current_deadline = current.deadline.expires_at_ms
+            revised_end = now_ms + revised_budget
+            current.deadline = Deadline(now_ms, max(0, min(revised_end, current_deadline) - now_ms) if current_deadline is not None else revised_budget)
+            current.status = WindowStatus.OPEN if allowed_actions.completeness == "COMPLETE" and current.deadline.budget_ms > 0 else WindowStatus.BLOCKED
             current.requires_model = current.status is WindowStatus.OPEN
             current.recommendation = None
             self._audit("WINDOW_REVISED", decision_window_id=current.decision_window_id)
@@ -536,13 +540,13 @@ class MatchSession:
     ) -> DecisionWindow:
         self.decision_seq += 1
         budget_ms = (
-            _deadline_budget(45_000, actual_ui_remaining_ms)
-            if kind is WindowKind.NORMAL_COMMAND
-            else actual_ui_remaining_ms
+            _deadline_budget(35_000, actual_ui_remaining_ms, reserve_ms=10_000)
+            if kind is WindowKind.NORMAL_COMMAND or actual_ui_remaining_ms is not None
+            else None
         )
         status = (
             WindowStatus.OPEN
-            if allowed_actions.completeness == "COMPLETE" and budget_ms is not None
+            if allowed_actions.completeness == "COMPLETE" and budget_ms is not None and budget_ms > 0
             else WindowStatus.BLOCKED
         )
         window = DecisionWindow(

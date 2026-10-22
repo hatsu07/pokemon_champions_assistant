@@ -93,13 +93,35 @@ class Phase2TestCase(unittest.TestCase):
         session = self.controller.start_match("match-1", now_ms=0)
         rows = session.receive_opponent_preview(OPPONENTS, now_ms=1, actual_ui_remaining_ms=30_000)
         self.assertEqual(len(rows), 6)
-        self.assertEqual(session.selection_deadline.budget_ms, 30_000)
+        self.assertEqual(session.selection_deadline.budget_ms, 20_000)
         session.record_selection_recommendation(("Own1", "Own2", "Own3"), "Own1")
         prep = session.record_actual_selection(("Own2", "Own3", "Own4"), "Own2", now_ms=2, actual_ui_remaining_ms=50_000)
         self.assertEqual(prep.selected_three, ("Own2", "Own3", "Own4"))
         self.assertEqual(prep.lead, "Own2")
         self.assertEqual(len(prep.expected_pairs), 18)
         self.assertEqual(session.prep_deadline.budget_ms, 40_000)
+
+    def test_live_ai_35s_cap_and_10s_input_reserve(self) -> None:
+        selection = self.controller.start_match("selection-budget", now_ms=0)
+        selection.receive_opponent_preview(OPPONENTS, now_ms=10, actual_ui_remaining_ms=90_000)
+        self.assertEqual(selection.selection_deadline.budget_ms, 35_000)
+        battle = self.start_battle()
+        normal = battle.present_ui(VisualUI.COMMAND_MENU, self.normal_actions(), now_ms=100, actual_ui_remaining_ms=45_000)
+        self.assertEqual(normal.deadline.budget_ms, 35_000)
+        self.assertEqual(normal.deadline.expires_at_ms, 35_100)
+        # A shorter clock must preserve ten seconds for player input.
+        revised = battle.present_ui(VisualUI.COMMAND_MENU, self.party_actions(), now_ms=200, actual_ui_remaining_ms=18_000)
+        self.assertIs(revised, normal)
+        self.assertEqual(revised.deadline.expires_at_ms, 8_200)
+        # Further UI navigation must never extend the deadline.
+        battle.present_ui(VisualUI.COMMAND_MENU, self.normal_actions(), now_ms=300, actual_ui_remaining_ms=44_000)
+        self.assertEqual(revised.deadline.expires_at_ms, 8_200)
+
+    def test_action_short_clock_blocks_ai(self) -> None:
+        battle = self.start_battle()
+        normal = battle.present_ui(VisualUI.COMMAND_MENU, self.normal_actions(), now_ms=100, actual_ui_remaining_ms=9_000)
+        self.assertEqual(normal.deadline.budget_ms, 0)
+        self.assertEqual(normal.status, WindowStatus.BLOCKED)
 
     def test_deadline_management_expires_model_work_without_tactical_fallback(self) -> None:
         session = self.controller.start_match("match-1", now_ms=0)
@@ -143,7 +165,7 @@ class Phase2TestCase(unittest.TestCase):
         self.assertIs(via_party, normal)
         self.assertIs(back, normal)
         self.assertEqual(normal.decision_window_id, "match-1:dw:001")
-        self.assertEqual(normal.deadline.budget_ms, 30_000)
+        self.assertEqual(normal.deadline.budget_ms, 20_000)
         self.assertEqual(len(provider.requests), 1)
 
     def test_valid_pivot_plan_reuses_only_planned_target(self) -> None:
