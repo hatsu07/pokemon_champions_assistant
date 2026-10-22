@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QMessageBox,
     QPushButton,
     QDoubleSpinBox,
@@ -304,6 +305,7 @@ class SettingsDialog(QDialog):
         self._editing_document: TeamDocument | None = None
         self._editing_team_id: str | None = None
         self._last_preview: CapturePreviewResult | None = None
+        self._team_validation_refreshed = False
         self.setWindowTitle("初回設定" if first_launch else "設定")
         self.setMinimumSize(780, 600)
         self._build_ui()
@@ -450,6 +452,12 @@ class SettingsDialog(QDialog):
         self.team_status = QLabel("構築を選択してください。手入力値は固定マスターに無い場合、未確認または無効として扱います。")
         self.team_status.setWordWrap(True)
         layout.addWidget(self.team_status)
+        layout.addWidget(QLabel("検証の詳細（不足・不一致のすべて）"))
+        self.team_validation_details = QPlainTextEdit()
+        self.team_validation_details.setReadOnly(True)
+        self.team_validation_details.setMaximumHeight(110)
+        self.team_validation_details.setPlainText("構築を選択してください")
+        layout.addWidget(self.team_validation_details)
         return tab
 
     def _chatgpt_tab(self) -> QWidget:
@@ -632,6 +640,13 @@ class SettingsDialog(QDialog):
             target.setText(selected)
 
     def _refresh_teams(self, focus_id: str | None = None) -> None:
+        # Validation status is persisted in the index. On an updated app,
+        # older INVALID results (such as mandatory role) need recomputation.
+        # Only read private team files between matches, never during LIVE.
+        if not self._team_validation_refreshed and not self._match_active():
+            for stored in self.service.teams.list():
+                self.service.revalidate_team(stored.team_id, match_active=False)
+            self._team_validation_refreshed = True
         records = self.service.teams.list()
         active = self.service.settings.teams.active_team_id
         pending = self.service.settings.teams.pending_team_id
@@ -671,6 +686,7 @@ class SettingsDialog(QDialog):
             self._editing_document = None
             self._editing_team_id = None
             self.team_editor.setRowCount(0)
+            self.team_validation_details.setPlainText("構築を選択してください")
             return
         document = TeamDocument.load(record.csv_path)
         self._editing_document, self._editing_team_id = document, record.team_id
@@ -688,8 +704,21 @@ class SettingsDialog(QDialog):
                     self.team_editor.setCellWidget(row, column, selector)
                 else:
                     self.team_editor.setItem(row, column, QTableWidgetItem(value))
-        reason = " / ".join(record.validation.reasons[:3]) or "固定マスター照合済み"
-        self.team_status.setText(f"{record.validation.status}: {reason}")
+        self._show_team_validation(record)
+
+    def _show_team_validation(self, record: RegisteredTeam) -> None:
+        reasons = record.validation.reasons
+        if reasons:
+            self.team_status.setText(
+                f"{record.validation.status}: {len(reasons)}件の確認事項があります。"
+                " 下の欄をスクロールして確認してください。"
+            )
+            self.team_validation_details.setPlainText(
+                "\n".join(f"{index}. {reason}" for index, reason in enumerate(reasons, 1))
+            )
+        else:
+            self.team_status.setText(f"{record.validation.status}: 固定マスター照合済み")
+            self.team_validation_details.setPlainText("検証上の不足事項はありません。")
 
     def _field_candidates(self, field: str) -> frozenset[str]:
         catalog = self.service.catalog
@@ -716,7 +745,7 @@ class SettingsDialog(QDialog):
             record = self.service.create_team(name.strip(), match_active=False)
             self._refresh_teams(focus_id=record.team_id)
             self.team_status.setText(
-                "新規構築を作成しました。6匹・持ち物・特性・性格・AP配分・4技・役割を入力して"
+                "新規構築を作成しました。6匹・持ち物・特性・性格・AP配分・4技を入力して"
                 "「構築を保存」してください。完成するまで次戦には使用できません。"
             )
         except (ConfigurationError, OSError, ValueError) as exc:
@@ -782,12 +811,29 @@ class SettingsDialog(QDialog):
         record = self._selected_record()
         if record is None:
             return
-        if not record.validation.selectable_for_next_match:
-            QMessageBox.warning(self, "次戦に選択できません",
-                                "構築が未完成または固定マスター検証で無効です。編集・保存してから選択してください。")
-            return
-        self._selected_team_id = record.team_id
-        self.team_status.setText("設定画面下の「保存」で次戦用構築として適用します。")
+        try:
+            if not self._match_active():
+                # Save the visible six before validating/activating them.
+                # This prevents an old validation snapshot from blocking a
+                # now-valid team and stops unsaved edits from being ignored.
+                if self._editing_team_id == record.team_id:
+                    self._persist_team_editor()
+                record = self.service.revalidate_team(record.team_id, match_active=False)
+            if not record.validation.selectable_for_next_match:
+                reasons = record.validation.reasons
+                details = "\n".join(f"{i}. {value}" for i, value in enumerate(reasons, 1))
+                QMessageBox.warning(
+                    self, "次戦に選択できません",
+                    "構築の検証が完了していません。以下を確認してください。\n\n"
+                    + (details or record.validation.status),
+                )
+                self._refresh_teams(focus_id=record.team_id)
+                return
+            self._selected_team_id = record.team_id
+            self._refresh_teams(focus_id=record.team_id)
+            self.team_status.setText("設定画面下の「保存」で次戦用構築として適用します。")
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "次戦に選択できません", str(exc))
 
     def _export_team(self) -> None:
         record = self._selected_record()
@@ -820,7 +866,9 @@ class SettingsDialog(QDialog):
                     rows[row_index][field] = "" if item is None else item.text().strip()
         document = TeamDocument(self._editing_document.fieldnames, tuple(rows))
         if document.to_text() == self._editing_document.to_text():
-            return self.service.teams.get(self._editing_team_id)
+            if self._match_active():
+                return self.service.teams.get(self._editing_team_id)
+            return self.service.revalidate_team(self._editing_team_id, match_active=False)
         updated = self.service.update_team_csv(
             self._editing_team_id,
             document.to_text(),
@@ -835,8 +883,7 @@ class SettingsDialog(QDialog):
             if updated is None:
                 return
             self._refresh_teams(focus_id=updated.team_id)
-            reason = " / ".join(updated.validation.reasons[:2]) or "Champions固定マスター照合済み"
-            self.team_status.setText(f"構築保存済み：{updated.validation.status} — {reason}")
+            self._show_team_validation(updated)
         except (ConfigurationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, "構築を保存できません", str(exc))
 
