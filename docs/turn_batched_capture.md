@@ -34,6 +34,15 @@ This is a **read-only test harness**, not a game controller. It never clicks, ty
 - API speed/usage depends on the selected model, effort and image sizes; a single multi-image request does not guarantee low image-token consumption or completion within the 45-second turn.
 - No real live-battle validation has been performed by the GitHub runner. Validate UI recognition, API deadlines, state accuracy and battle recommendations on the actual Windows/BlueStacks setup.
 
+## Capture interruption and recovery
+
+- Monitoring becomes visibly **自動送信中** when started, even before any AI call. **自動送信停止** means it really stopped.
+- An intermittent failure to read the selected BlueStacks window or ADB frame does **not** revoke the user's start/consent. After three consecutive failures the dialog reports `CAPTURE_PAUSED`, displays **画面取得待機中（自動再試行）**, and reduces local polling to once every 2 seconds. Nothing is sent while frames are unavailable. On a successful frame, `CAPTURE_RESUMED` restores the 300 ms interval.
+- Pause diagnostics identify safe categories such as `WINDOW_IDENTITY_UNAVAILABLE`, `WINDOW_MINIMIZED`, `CAPTURE_FAILED`, or `CAPTURE_ROI_INVALID`. A stale HWND after BlueStacks restart requires stopping and reselecting the window in **設定 → キャプチャ**, then restarting the AI session; the app does not automatically retarget another window.
+- A deliberate **自動送信を停止**, closing the dialog, ending the match, or resetting the session still stops capture immediately. Automatic recovery never re-enables capture after an explicit stop.
+- An individual successfully captured frame does not guarantee that a menu was classified or sent to AI; **手動保険** is still the test fallback. Pause/recovery status events contain no screenshot pixels.
+- The timer still captures on the GUI thread, and this patch does not establish real-device performance or error-free recognition. Record `CAPTURE_PAUSED` reason and duration in BlueStacks testing.
+
 ## Privacy and safety
 
 The app requires an explicit initial start/consent, captures only the configured viewport, and does not manipulate the game. In-memory images are transmitted to the connected AI account only on trigger or manual request. The exported JSON does not include screenshot bytes or OAuth tokens.
