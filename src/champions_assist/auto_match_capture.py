@@ -6,7 +6,6 @@ mouse/keyboard input. The caller owns the AI session and explicit start/stop.
 """
 from __future__ import annotations
 
-import hashlib
 from time import monotonic
 from typing import Callable
 
@@ -48,7 +47,7 @@ def capture_for_chatgpt(config: CaptureConfiguration,
 
 
 def _signature(image: np.ndarray) -> bytes:
-    """Ignore small timer/animation changes instead of re-billing every frame."""
+    """Coarse UI fingerprint, sensitive enough for short status/move changes."""
     small = cv2.resize(image, (48, 30), interpolation=cv2.INTER_AREA)
     grey = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
     return (grey // 16).astype("uint8").tobytes()
@@ -56,7 +55,7 @@ def _signature(image: np.ndarray) -> bytes:
 
 class FrameChangeGate:
     def __init__(self, *, clock: Callable[[], float] = monotonic,
-                 minimum_interval: float = 2.0, different_fraction: float = 0.10):
+                 minimum_interval: float = 2.0, different_fraction: float = 0.008):
         self.clock = clock
         self.minimum_interval = minimum_interval
         self.different_fraction = different_fraction
