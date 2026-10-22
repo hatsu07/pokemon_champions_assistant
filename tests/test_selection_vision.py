@@ -43,6 +43,18 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.selected_three[0],"ルカリオ → メガルカリオZ")
         self.assertEqual(result.lead,"ルカリオ → メガルカリオZ")
 
+    def test_blank_role_is_presented_for_contextual_ai_inference(self):
+        frozen=assets()
+        called=[]
+        def chooser(context,seconds):
+            called.append(context)
+            return {"selected_three":["マスカーニャ","アシレーヌ","ガブリアス"],"lead":"マスカーニャ"}
+        result=SelectionPlanner(clock=lambda:4.0).choose(
+            observation(),frozen,chooser,started_at=0.0)
+        self.assertEqual(result.status,"OK")
+        self.assertTrue(any("infer" in word.lower() for word in called[0]["instructions"].split()))
+        self.assertTrue(all(not row.get("role") for row in called[0]["own_team"]))
+
     def test_mismatch_blocks_before_model(self):
         obs=observation()
         obs["our_six"][0]="ピカチュウ"

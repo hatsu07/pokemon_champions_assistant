@@ -199,6 +199,75 @@ class Phase8SettingsTestCase(unittest.TestCase):
             CapturePreviewService.save_explicit_frame(preview, self.root / "invalid.png", roi=(0.5, 0.5, 0.5, 0.8))
         self.assertFalse((self.root / "invalid.png").exists())
 
+    def test_role_is_optional_and_main_settings_save_persists_editor(self) -> None:
+        team = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(team.team_id, match_active=False)
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            self.assertEqual(dialog._editing_team_id, team.team_id)
+            role_col = dialog.member_columns.index("role")
+            notes_col = dialog.member_columns.index("runtime_note")
+            dialog.team_editor.item(0, role_col).setText("")
+            dialog.team_editor.item(0, notes_col).setText("SAVED_BY_BOTTOM_SETTINGS_BUTTON")
+            # Do NOT use the separate '構築を保存' button.
+            dialog._save()
+            self.assertTrue(dialog.result() == dialog.DialogCode.Accepted)
+            saved = TeamDocument.load(self.service.teams.get(team.team_id).csv_path)
+            self.assertEqual(saved.members[0]["role"], "")
+            self.assertEqual(saved.members[0]["runtime_note"], "SAVED_BY_BOTTOM_SETTINGS_BUTTON")
+            self.assertTrue(self.service.teams.get(team.team_id).validation.selectable_for_next_match)
+            self.assertEqual(self.service.settings.teams.active_team_id, team.team_id)
+        finally:
+            dialog.close()
+
+    def test_bottom_save_preserves_incomplete_new_draft_without_switching_team(self) -> None:
+        original = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(original.team_id, match_active=False)
+        draft = self.service.create_team("未完成のテスト構築", match_active=False)
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            dialog._refresh_teams(focus_id=draft.team_id)
+            self.assertEqual(dialog._editing_team_id, draft.team_id)
+            name_col = dialog.member_columns.index("name")
+            editor = dialog.team_editor.cellWidget(0, name_col)
+            self.assertIsNotNone(editor)
+            editor.setCurrentText("ピカチュウ")
+            dialog._save()  # save draft, do not auto-select invalid team
+            self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
+            draft_saved = TeamDocument.load(draft.csv_path)
+            self.assertEqual(draft_saved.members[0]["name"], "ピカチュウ")
+            self.assertEqual(draft_saved.members[0]["role"], "")
+            self.assertEqual(self.service.settings.teams.active_team_id, original.team_id)
+            self.assertEqual(self.service.teams.get(draft.team_id).validation.status, "INVALID")
+        finally:
+            dialog.close()
+
+    def test_save_failure_keeps_settings_open_with_unsaved_editor(self) -> None:
+        team = self.service.import_team(
+            PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False,
+        )
+        self.service.select_team(team.team_id, match_active=False)
+        dialog = SettingsDialog(self.service, match_active=lambda: False)
+        try:
+            notes_col = dialog.member_columns.index("runtime_note")
+            dialog.team_editor.item(0, notes_col).setText("UNSAVED_AFTER_FAILURE")
+            with patch.object(self.service, "update_team_csv", side_effect=ConfigurationError("test write failure")):
+                with patch("champions_assist.settings_dialog.QMessageBox.warning") as warning:
+                    dialog._save()
+                    warning.assert_called_once()
+            self.assertNotEqual(dialog.result(), dialog.DialogCode.Accepted)
+            self.assertEqual(dialog.team_editor.item(0, notes_col).text(), "UNSAVED_AFTER_FAILURE")
+            self.assertNotIn("UNSAVED_AFTER_FAILURE", Path(team.csv_path).read_text(encoding="utf-8"))
+        finally:
+            dialog.close()
+
     def test_new_team_draft_created_without_csv_then_saved_and_selected(self) -> None:
         original = self.service.import_team(
             PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv",
