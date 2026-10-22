@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from types import MappingProxyType
 from champions_assist.preload import FrozenMatchAssets
-from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked
+from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked, selection_summary_ja
 
 OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
 OPP=("ピカチュウ","ドドゲザン","ゲンガー","マリルリ","ギャラドス","カイリュー")
@@ -55,6 +55,20 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.as_dict()["only_in_image"],[])
         self.assertEqual(result.as_dict()["only_in_registered_team"],[])
         self.assertEqual(len(calls),1)
+
+    def test_japanese_player_facing_summary(self):
+        self.assertEqual(
+            selection_summary_ja({
+                "status":"OK",
+                "selected_three":["Pikachu","Kingambit","Garchomp"],
+                "lead":"Pikachu",
+            }),
+            "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ",
+        )
+        self.assertEqual(
+            selection_summary_ja({"status":"BLOCKED","reason":"REGISTERED_TEAM_MISMATCH"}),
+            "選出できません：画像の自軍6匹と登録構築が一致しません。",
+        )
 
     def test_unknown_english_species_remains_blocked(self):
         obs=observation()
