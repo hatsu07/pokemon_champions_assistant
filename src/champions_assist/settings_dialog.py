@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QInputDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -420,17 +421,22 @@ class SettingsDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         buttons = QHBoxLayout()
+        create_button = QPushButton("新規作成")
+        create_button.clicked.connect(self._create_team)
         import_button = QPushButton("CSVを登録")
         import_button.clicked.connect(self._import_team)
         duplicate_button = QPushButton("複製")
         duplicate_button.clicked.connect(self._duplicate_team)
         select_button = QPushButton("次戦に選択")
         select_button.clicked.connect(self._select_team)
+        delete_button = QPushButton("削除")
+        delete_button.clicked.connect(self._delete_team)
         export_button = QPushButton("CSVをエクスポート")
         export_button.clicked.connect(self._export_team)
-        for button in (import_button, duplicate_button, select_button, export_button):
+        for button in (create_button, import_button, duplicate_button, select_button, export_button, delete_button):
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        layout.addWidget(QLabel("新規作成はCSV不要です。下の表で6匹と技などを入力し、「構築を保存」してから次戦に選択します。"))
         self.team_list = QTableWidget(0, 5)
         self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用"])
         self.team_list.itemSelectionChanged.connect(self._load_selected_team_editor)
@@ -438,7 +444,7 @@ class SettingsDialog(QDialog):
         self.team_editor = QTableWidget(0, len(self.member_columns))
         self.team_editor.setHorizontalHeaderLabels(self.member_columns)
         layout.addWidget(self.team_editor, 1)
-        save_edit = QPushButton("編集した構築CSVを保存")
+        save_edit = QPushButton("構築を保存")
         save_edit.clicked.connect(self._save_team_edit)
         layout.addWidget(save_edit)
         self.team_status = QLabel("構築を選択してください。手入力値は固定マスターに無い場合、未確認または無効として扱います。")
@@ -625,18 +631,33 @@ class SettingsDialog(QDialog):
         if selected:
             target.setText(selected)
 
-    def _refresh_teams(self) -> None:
+    def _refresh_teams(self, focus_id: str | None = None) -> None:
         records = self.service.teams.list()
         active = self.service.settings.teams.active_team_id
         pending = self.service.settings.teams.pending_team_id
-        self.team_list.setRowCount(len(records))
-        for row, record in enumerate(records):
-            members = ", ".join(member.get("name", "") for member in TeamDocument.load(record.csv_path).members)
-            values = (record.display_name, members, record.validation.status, record.sha256, "予約" if record.team_id == pending else "選択中" if record.team_id == active else "")
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setData(Qt.ItemDataRole.UserRole, record.team_id if column == 0 else None)
-                self.team_list.setItem(row, column, item)
+        wanted = focus_id or self._editing_team_id or active
+        was_blocked = self.team_list.blockSignals(True)
+        try:
+            self.team_list.setRowCount(len(records))
+            focus_row = None
+            for row, record in enumerate(records):
+                members = ", ".join(member.get("name", "") or "（未設定）" for member in TeamDocument.load(record.csv_path).members)
+                values = (record.display_name, members, record.validation.status,
+                          record.sha256, "予約" if record.team_id == pending else
+                          "選択中" if record.team_id == active else "")
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setData(Qt.ItemDataRole.UserRole, record.team_id if column == 0 else None)
+                    self.team_list.setItem(row, column, item)
+                if record.team_id == wanted:
+                    focus_row = row
+            self.team_list.clearSelection()
+            if focus_row is not None:
+                self.team_list.setCurrentCell(focus_row, 0)
+                self.team_list.selectRow(focus_row)
+        finally:
+            self.team_list.blockSignals(was_blocked)
+        self._load_selected_team_editor()
 
     def _selected_record(self) -> RegisteredTeam | None:
         selected = self.team_list.selectedItems()
@@ -647,6 +668,9 @@ class SettingsDialog(QDialog):
     def _load_selected_team_editor(self) -> None:
         record = self._selected_record()
         if record is None:
+            self._editing_document = None
+            self._editing_team_id = None
+            self.team_editor.setRowCount(0)
             return
         document = TeamDocument.load(record.csv_path)
         self._editing_document, self._editing_team_id = document, record.team_id
@@ -681,14 +705,62 @@ class SettingsDialog(QDialog):
             return catalog.moves
         return frozenset()
 
+    def _create_team(self) -> None:
+        if self._match_active():
+            QMessageBox.warning(self, "新規作成できません", "試合終了後に作成してください。")
+            return
+        name, accepted = QInputDialog.getText(self, "新しい構築", "構築名を入力してください:")
+        if not accepted:
+            return
+        try:
+            record = self.service.create_team(name.strip(), match_active=False)
+            self._refresh_teams(focus_id=record.team_id)
+            self.team_status.setText(
+                "新規構築を作成しました。6匹・持ち物・特性・性格・AP配分・4技・役割を入力して"
+                "「構築を保存」してください。完成するまで次戦には使用できません。"
+            )
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "構築を作成できません", str(exc))
+
+    def _delete_team(self) -> None:
+        record = self._selected_record()
+        if record is None:
+            return
+        if self._match_active():
+            QMessageBox.warning(self, "構築を削除できません", "試合中の構築は削除できません。")
+            return
+        active = self.service.settings.teams.active_team_id
+        marker = "（次戦に選択中）" if record.team_id == active else ""
+        choice = QMessageBox.question(
+            self, "構築の削除を確認",
+            f"「{record.display_name}」{marker} を登録一覧から削除しますか？\\n"
+            "この構築の保存データも削除され、元に戻せません。"
+            "他の構築と固定マスターは変更されません。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.service.delete_team(record.team_id, match_active=False)
+            if self._selected_team_id == record.team_id:
+                self._selected_team_id = None
+            if self._editing_team_id == record.team_id:
+                self._editing_team_id = None
+                self._editing_document = None
+            self._refresh_teams()
+            self.team_status.setText("削除しました。次戦に使う構築は「次戦に選択」で指定してください。")
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "構築を削除できません", str(exc))
+
     def _import_team(self) -> None:
         source, _ = QFileDialog.getOpenFileName(self, "構築CSVを登録", "", "CSV (*.csv)")
         if not source:
             return
         try:
             record = self.service.import_team(source, match_active=self._match_active())
-            self._selected_team_id = record.team_id
-            self._refresh_teams()
+            self._refresh_teams(focus_id=record.team_id)
+            self.team_status.setText("CSVを登録しました。次戦に使う場合は「次戦に選択」を押してください。")
         except ConfigurationError as exc:
             QMessageBox.warning(self, "構築を登録できません", str(exc))
 
@@ -699,16 +771,23 @@ class SettingsDialog(QDialog):
         if self._match_active():
             QMessageBox.warning(self, "構築を複製できません", "試合中の構築編集は次戦前に行ってください")
             return
-        clone = self.service.teams.duplicate(record.team_id)
-        self._selected_team_id = clone.team_id
-        self._refresh_teams()
+        try:
+            clone = self.service.duplicate_team(record.team_id, match_active=False)
+            self._refresh_teams(focus_id=clone.team_id)
+            self.team_status.setText("複製しました。元の構築は変更されません。次戦への切替は別途選択してください。")
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "構築を複製できません", str(exc))
 
     def _select_team(self) -> None:
         record = self._selected_record()
         if record is None:
             return
+        if not record.validation.selectable_for_next_match:
+            QMessageBox.warning(self, "次戦に選択できません",
+                                "構築が未完成または固定マスター検証で無効です。編集・保存してから選択してください。")
+            return
         self._selected_team_id = record.team_id
-        self.team_status.setText("保存時に次戦用構築として適用します。試合中は予約状態になります。")
+        self.team_status.setText("設定画面下の「保存」で次戦用構築として適用します。")
 
     def _export_team(self) -> None:
         record = self._selected_record()
@@ -736,8 +815,9 @@ class SettingsDialog(QDialog):
             TeamDocument(self._editing_document.fieldnames, tuple(rows)).to_text(),
             match_active=self._match_active(),
         )
-        self.team_status.setText(f"保存済み: {updated.validation.status}")
-        self._refresh_teams()
+        self._refresh_teams(focus_id=updated.team_id)
+        reason = " / ".join(updated.validation.reasons[:2]) or "Champions固定マスター照合済み"
+        self.team_status.setText(f"構築保存済み：{updated.validation.status} — {reason}")
 
     def _refresh_diagnostics(self) -> None:
         storage = self.service.settings.storage
