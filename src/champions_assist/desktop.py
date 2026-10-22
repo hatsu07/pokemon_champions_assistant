@@ -663,6 +663,7 @@ class DesktopMainWindow(QMainWindow):
         self.settings_service = settings_service or controller.settings_service
         self.settings_validation_only = settings_validation_only
         self._settings_dialog = None
+        self._auto_match_dialog = None
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
         self._build_ui()
@@ -719,6 +720,10 @@ class DesktopMainWindow(QMainWindow):
         controls.addWidget(self.on_top_box)
         controls.addWidget(self.compact_box)
         if self.settings_service is not None:
+            auto_button = QPushButton("自動キャプチャ対戦支援")
+            auto_button.clicked.connect(self._open_auto_match_support)
+            auto_button.setEnabled(not self.settings_validation_only)
+            controls.addWidget(auto_button)
             settings_button = QPushButton("設定")
             settings_button.clicked.connect(self._open_settings)
             controls.addWidget(settings_button)
@@ -752,6 +757,45 @@ class DesktopMainWindow(QMainWindow):
             self.controller.refresh()
 
         dialog.finished.connect(closed)
+        dialog.open()
+
+    def _open_auto_match_support(self) -> None:
+        """Open the single user-opt-in ChatGPT capture session from desktop."""
+        if self.settings_service is None or self.settings_validation_only:
+            return
+        if self._auto_match_dialog is not None:
+            self._auto_match_dialog.show()
+            self._auto_match_dialog.raise_()
+            return
+        if self._match_active_for_settings():
+            QMessageBox.warning(self, "対戦中",
+                                "別の対戦セッションが進行中です。終了してから自動支援を開始してください。")
+            return
+        from .match_replay_dialog import MatchReplayDialog
+        from .app_config import default_app_root, ConfigurationError
+        from .vision_preferences import VisionPreferenceStore
+        model = VisionPreferenceStore(default_app_root()).selected_model()
+        if not model:
+            QMessageBox.warning(self, "モデル未設定",
+                                "設定 → ChatGPT でログインし、使用モデルを選択してください。")
+            return
+        active_id = self.settings_service.settings.teams.active_team_id
+        if not active_id:
+            QMessageBox.warning(self, "構築未設定",
+                                "設定 → 自軍構築で次戦に使用する構築を選択してください。")
+            return
+        try:
+            team_path=self.settings_service.teams.path_for_next_match(active_id)
+        except ConfigurationError as exc:
+            QMessageBox.warning(self, "構築未設定", str(exc))
+            return
+        dialog=MatchReplayDialog(
+            model=model,master_directory=str(self.settings_service.master_directory),
+            team_path=str(team_path),capture_config=self.settings_service.settings.capture,
+            store_root=default_app_root(),parent=self,
+        )
+        self._auto_match_dialog=dialog
+        dialog.finished.connect(lambda _result: setattr(self,"_auto_match_dialog",None))
         dialog.open()
 
     def _state_tab(self) -> QWidget:
