@@ -1,104 +1,118 @@
-"""Explicit single-image OpenAI vision benchmark dialog, offline until button press."""
+"""Explicit ChatGPT-account vision benchmark, never automated game input."""
 from __future__ import annotations
 import json
-import os
 from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Signal, Slot
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
-    QPushButton, QFileDialog, QPlainTextEdit, QMessageBox, QWidget)
-from .vision_api_benchmark import OpenAIVisionBenchmark, read_image, SUPPORTED_UI
-from .api_credentials import get_api_key, CredentialStoreError
+from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QComboBox,
+    QPushButton,QFileDialog,QPlainTextEdit,QMessageBox,QWidget)
+from .vision_api_benchmark import OpenAIVisionBenchmark,read_image,SUPPORTED_UI
+from .siwc_auth import ChatGPTSignIn,ProtectedSessionStore,SignInError
+from .app_config import default_app_root
 
 
-class _VisionWorker(QObject):
+class _Worker(QObject):
     finished = Signal(object)
-
-    def __init__(self, image_path: str, model: str, key: str, expected: str | None):
+    def __init__(self, job: str, store_root: str, path: str = "", model: str = "", expected=None):
         super().__init__()
-        self.image_path, self.model, self.key, self.expected = image_path, model, key, expected
-
+        self.job,self.store_root,self.path,self.model,self.expected=job,store_root,path,model,expected
     @Slot()
     def run(self):
         try:
-            image = read_image(self.image_path)
-            report = OpenAIVisionBenchmark(model=self.model).run(image, api_key=self.key).report(self.expected)
+            auth=ChatGPTSignIn(ProtectedSessionStore(self.store_root))
+            if self.job=="login":
+                result={"operation":"login","status":"OK","account":auth.sign_in()}
+            elif self.job=="models":
+                result={"operation":"models","status":"OK","models":auth.models()}
+            elif self.job=="signout":
+                auth.sign_out()
+                result={"operation":"signout","status":"OK"}
+            else:
+                token=auth.access_token()
+                image=read_image(self.path)
+                report=OpenAIVisionBenchmark(model=self.model).run(image,access_token=token).report(self.expected)
+                result={"operation":"bench",**report}
         except Exception as exc:
-            report = {"status": "ERROR", "error_type": type(exc).__name__, "scope": "OFFLINE_SINGLE_IMAGE_ONLY"}
-        self.finished.emit(report)
+            result={"operation":self.job,"status":"ERROR","error_type":type(exc).__name__,
+                    "reason":str(exc) if isinstance(exc,SignInError) else "REQUEST_FAILED"}
+        self.finished.emit(result)
 
 
 class VisionBenchmarkDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None):
         super().__init__(parent)
-        self.setWindowTitle("OpenAI画像認識 実測テスト（明示送信のみ）")
-        self.setMinimumSize(740, 510)
-        self._thread: QThread | None = None
-        self._worker: _VisionWorker | None = None
-        self._report: dict | None = None
-        form = QVBoxLayout(self)
-        form.addWidget(QLabel("PNG/JPEGを1枚だけ明示送信します。画像内容が外部APIに送信され、利用料金が発生します。対戦支援には反映しません。"))
-        row = QHBoxLayout()
-        self.path = QLineEdit()
-        self.path.setReadOnly(True)
-        choose = QPushButton("保存画像を選択")
-        choose.clicked.connect(self.choose_image)
-        row.addWidget(self.path, 1)
-        row.addWidget(choose)
-        form.addLayout(row)
-        row = QHBoxLayout()
-        self.expected = QComboBox()
-        self.expected.addItem("正解ラベルなし", None)
-        for ui in SUPPORTED_UI:
-            self.expected.addItem(ui, ui)
-        self.model = QLineEdit(os.environ.get("CHAMPIONS_ASSIST_OPENAI_MODEL", "gpt-4.1-mini"))
-        row.addWidget(QLabel("正解UI:"))
-        row.addWidget(self.expected)
-        row.addWidget(QLabel("モデル:"))
-        row.addWidget(self.model)
-        form.addLayout(row)
-        form.addWidget(QLabel("APIキーは設定 → OpenAI APIから登録可能です。キーは設定JSONに保存しません。"))
-        row = QHBoxLayout()
-        self.send = QPushButton("この画像をOpenAIに送信して実測")
-        self.send.clicked.connect(self.start)
-        self.save = QPushButton("診断JSONを保存")
-        self.save.setEnabled(False)
-        self.save.clicked.connect(self.save_report)
-        row.addWidget(self.send)
-        row.addWidget(self.save)
-        form.addLayout(row)
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
-        form.addWidget(self.output, 1)
-
-    def choose_image(self):
-        p, _ = QFileDialog.getOpenFileName(self, "テスト画像を選択", "", "Images (*.png *.jpg *.jpeg)")
-        if p:
-            self.path.setText(p)
-            self._report = None
-            self.save.setEnabled(False)
-
-    def start(self):
-        if self._thread is not None:
-            return
-        path = self.path.text()
+        self.setWindowTitle("ChatGPTでログイン・画像認識実測")
+        self.setMinimumSize(760,540)
+        self.store_root=Path(store_root) if store_root else default_app_root()
+        self._thread=None
+        self._worker=None
+        self._report=None
+        form=QVBoxLayout(self)
+        form.addWidget(QLabel("ChatGPT Plus等の利用可能なモデルで画像認識を実測します。キー入力・従量APIキー不要。\n"
+                              "ログインと画像送信は各ボタンの明示操作時のみ。プラン利用可否はログイン後に確認します。"))
+        self.connection=QLabel("未接続")
+        form.addWidget(self.connection)
+        account_row=QHBoxLayout()
+        self.login_button=QPushButton("ChatGPTでログイン")
+        self.login_button.clicked.connect(lambda:self._start_job("login"))
+        self.refresh_button=QPushButton("利用可能モデルを取得")
+        self.refresh_button.clicked.connect(lambda:self._start_job("models"))
+        self.logout_button=QPushButton("ログアウト")
+        self.logout_button.clicked.connect(self._signout)
+        for b in (self.login_button,self.refresh_button,self.logout_button):
+            account_row.addWidget(b)
+        form.addLayout(account_row)
+        row=QHBoxLayout()
+        self.path=QLineEdit();self.path.setReadOnly(True)
+        pick=QPushButton("画像を選択");pick.clicked.connect(self._choose_image)
+        row.addWidget(self.path,1);row.addWidget(pick);form.addLayout(row)
+        row=QHBoxLayout()
+        self.expected=QComboBox();self.expected.addItem("正解ラベルなし",None)
+        for ui in SUPPORTED_UI:self.expected.addItem(ui,ui)
+        self.model=QComboBox()
+        self.model.addItem("ログイン後、モデル一覧を取得",None)
+        row.addWidget(QLabel("正解UI:"));row.addWidget(self.expected)
+        row.addWidget(QLabel("モデル:"));row.addWidget(self.model,1);form.addLayout(row)
+        row=QHBoxLayout()
+        self.send=QPushButton("この画像1枚を送信して実測")
+        self.send.clicked.connect(self._start_benchmark)
+        self.save=QPushButton("診断JSONを保存");self.save.setEnabled(False)
+        self.save.clicked.connect(self._save_report)
+        row.addWidget(self.send);row.addWidget(self.save);form.addLayout(row)
+        self.output=QPlainTextEdit();self.output.setReadOnly(True);form.addWidget(self.output,1)
+        self._refresh_status()
+    def _auth(self):
+        return ChatGPTSignIn(ProtectedSessionStore(self.store_root))
+    def _refresh_status(self):
         try:
-            key = get_api_key() or ""
-        except CredentialStoreError:
-            QMessageBox.warning(self, "実測できません", "Windows資格情報を読み取れません。")
+            status=self._auth().status()
+            self.connection.setText("ChatGPT接続済み / 利用権限: "+("確認済み" if status["plan_enabled"] else "未確認")
+                                    if status["connected"] else "ChatGPT未接続")
+        except Exception:
+            self.connection.setText("接続状態を確認できません")
+    def _choose_image(self):
+        path,_=QFileDialog.getOpenFileName(self,"ゲーム領域の保存画像","","Images (*.png *.jpg *.jpeg)")
+        if path:self.path.setText(path)
+    def _signout(self):
+        if QMessageBox.question(self,"ログアウト確認","このアプリのChatGPTセッションを終了しますか？",
+                                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                                QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+            self._start_job("signout")
+    def _start_benchmark(self):
+        if not self.path.text() or not Path(self.path.text()).is_file() or not self.model.currentData():
+            QMessageBox.warning(self,"送信不可","保存画像とログイン後のモデルを選択してください。")
             return
-        model = self.model.text().strip()
-        if not path or not Path(path).is_file() or not key or not model:
-            QMessageBox.warning(self, "実測できません", "画像、モデル、登録済みAPIキーを確認してください。")
-            return
-        confirmed = QMessageBox.question(
-            self, "外部API送信の確認", "指定した画像1枚をOpenAI APIへ送信します。API利用料金が発生します。実行しますか？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-        if confirmed != QMessageBox.StandardButton.Yes:
-            return
-        self.send.setEnabled(False)
-        self.output.setPlainText("API応答を計測中（30秒タイムアウト、SDK再試行なし）")
-        self._thread = QThread(self)
-        self._worker = _VisionWorker(path, model, key, self.expected.currentData())
+        if QMessageBox.question(self,"画像送信の確認",
+              "画像1枚を、接続したChatGPTアカウントの利用枠で送信します。実行しますか？",
+              QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+              QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
+        self._start_job("bench")
+    def _start_job(self,operation):
+        if self._thread is not None:return
+        self.output.setPlainText("実行中: "+operation)
+        self._set_busy(True)
+        self._thread=QThread(self)
+        self._worker=_Worker(operation,str(self.store_root),self.path.text(),
+                             str(self.model.currentData() or ""),self.expected.currentData())
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._complete)
@@ -107,29 +121,34 @@ class VisionBenchmarkDialog(QDialog):
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
-
+    def _set_busy(self,busy):
+        for widget in (self.login_button,self.refresh_button,self.logout_button,self.send):
+            widget.setEnabled(not busy)
     @Slot(object)
-    def _complete(self, report):
-        self._report = report
-        self.output.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
-        self.save.setEnabled(True)
-
+    def _complete(self,result):
+        self.output.setPlainText(json.dumps(result,ensure_ascii=False,indent=2))
+        self._refresh_status()
+        if result.get("operation")=="models" and result.get("status")=="OK":
+            self.model.clear()
+            for item in result["models"]:
+                self.model.addItem(item["display_name"],item["slug"])
+            if self.model.count()==0:self.model.addItem("対応モデルなし",None)
+        if result.get("operation")=="signout" and result.get("status")=="OK":
+            self.model.clear();self.model.addItem("再ログインが必要",None)
+        if result.get("operation")=="bench":
+            self._report=result
+            self.save.setEnabled(True)
     @Slot()
     def _cleanup(self):
-        self._thread = None
-        self._worker = None
-        self.send.setEnabled(True)
-
-    def save_report(self):
-        if self._report is None:
-            return
-        p, _ = QFileDialog.getSaveFileName(self, "診断JSONを保存", "", "JSON (*.json)")
-        if not p:
-            return
+        self._thread=None;self._worker=None;self._set_busy(False)
+    def _save_report(self):
+        if self._report is None:return
+        path,_=QFileDialog.getSaveFileName(self,"診断JSONを保存","","JSON (*.json)")
+        if not path:return
         try:
-            with open(p, "x", encoding="utf-8") as f:
-                json.dump(self._report, f, ensure_ascii=False, indent=2)
+            with open(path,"x",encoding="utf-8") as out:
+                json.dump(self._report,out,ensure_ascii=False,indent=2)
         except FileExistsError:
-            QMessageBox.warning(self, "上書き不可", "既存ファイルは上書きしません。")
-        except OSError as exc:
-            QMessageBox.warning(self, "保存できません", type(exc).__name__)
+            QMessageBox.warning(self,"上書き不可","既存ファイルは上書きしません。")
+        except OSError:
+            QMessageBox.warning(self,"保存失敗","書き込みできません。")
