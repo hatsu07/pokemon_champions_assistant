@@ -189,7 +189,7 @@ def validate_team_document(document: TeamDocument, catalog: ChampionsTeamCatalog
         missing_moves = [key for key in ("move1", "move2", "move3", "move4") if not member.get(key, "").strip()]
         if missing_moves:
             reasons.append(f"{name or '名称不明'}: 技が4件揃っていません")
-        for key in ("item", "ability", "nature", "ap_h_a_b_c_d_s", "role"):
+        for key in ("item", "ability", "nature", "ap_h_a_b_c_d_s"):
             if not member.get(key, "").strip():
                 reasons.append(f"{name or '名称不明'}: {key} が空です")
     if reasons:
