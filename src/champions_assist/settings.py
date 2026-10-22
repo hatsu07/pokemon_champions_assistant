@@ -62,10 +62,12 @@ class ModelSettings:
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> "ModelSettings":
         env = os.environ if environ is None else environ
+        from .api_credentials import get_api_key
+        key = get_api_key() if environ is None else get_api_key(environ=environ)
         return cls(
             api_enabled=_bool(env.get("CHAMPIONS_ASSIST_ENABLE_OPENAI_API")),
             model=env.get("CHAMPIONS_ASSIST_OPENAI_MODEL", "gpt-4.1-mini"),
-            api_key=env.get("CHAMPIONS_ASSIST_OPENAI_API_KEY") or None,
+            api_key=key,
             timeout_seconds=_decimal(env.get("CHAMPIONS_ASSIST_API_TIMEOUT_SECONDS"), default=8.0, name="CHAMPIONS_ASSIST_API_TIMEOUT_SECONDS"),
             safety_margin_ms=_integer(env.get("CHAMPIONS_ASSIST_API_SAFETY_MARGIN_MS"), default=1_500, name="CHAMPIONS_ASSIST_API_SAFETY_MARGIN_MS"),
             max_requests_per_match=_integer(env.get("CHAMPIONS_ASSIST_API_MAX_REQUESTS_PER_MATCH"), default=40, name="CHAMPIONS_ASSIST_API_MAX_REQUESTS_PER_MATCH"),
