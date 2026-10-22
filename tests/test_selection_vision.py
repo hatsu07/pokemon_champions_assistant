@@ -5,7 +5,7 @@ from types import MappingProxyType
 from champions_assist.preload import FrozenMatchAssets
 from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked
 
-OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ","サーフゴー","ミミッキュ")
+OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
 OPP=("ピカチュウ","ドドゲザン","ゲンガー","マリルリ","ギャラドス","カイリュー")
 def assets():
     rows={name:name+"|matrix" for name in OPP}
@@ -18,7 +18,7 @@ def assets():
         frozen_at="fixture",
     )
 def observation():
-    return {"visual_ui":"TEAM_SELECTION","our_six":list(OWN),"opponent_six":list(OPP),"uncertain_slots":[]}
+    return {"visual_ui":"TEAM_SELECTION","our_six":[name.split("→",1)[0].strip() for name in OWN],"opponent_six":list(OPP),"uncertain_slots":[]}
 
 class SelectionVisionTest(unittest.TestCase):
     def test_six_matrix_rows_and_exact_three_with_lead(self):
@@ -33,6 +33,15 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.selected_three,OWN[:3])
         self.assertEqual(result.lead,OWN[0])
         self.assertEqual(len(called[0][0]["matrix_rows_six"]),6)
+
+    def test_form_alias_is_normalized_to_registered_name(self):
+        obs=observation()
+        def chooser(context,seconds):
+            return {"selected_three":["ルカリオ","マスカーニャ","ガブリアス"],"lead":"ルカリオ"}
+        result=SelectionPlanner(clock=lambda:10.0).choose(obs,assets(),chooser,started_at=0.0)
+        self.assertEqual(result.status,"OK")
+        self.assertEqual(result.selected_three[0],"ルカリオ → メガルカリオZ")
+        self.assertEqual(result.lead,"ルカリオ → メガルカリオZ")
 
     def test_mismatch_blocks_before_model(self):
         obs=observation()
