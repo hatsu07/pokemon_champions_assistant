@@ -1,0 +1,28 @@
+name: Windows validation harness artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-validation-harness:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install validation-harness build dependencies
+        run: python -m pip install --upgrade pip pyinstaller .
+      - name: Build portable validation harness (not MSI)
+        run: python -m PyInstaller --noconfirm --clean --onedir --name PokemonChampionsValidation --paths src scripts/windows_validation_entry.py
+      - name: Smoke the portable CLI without capture or network
+        run: .\dist\PokemonChampionsValidation\PokemonChampionsValidation.exe --version
+      - name: Upload portable validation harness
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokemonChampionsValidation-windows-x64
+          path: dist/PokemonChampionsValidation
+          if-no-files-found: error
