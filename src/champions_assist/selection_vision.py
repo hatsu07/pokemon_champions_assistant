@@ -23,16 +23,49 @@ class SelectionDecision:
     opponent_six: tuple[str, ...] = ()
     reason: str = ""
     elapsed_ms: int = 0
+    observed_own_six: tuple[str, ...] = ()
+    observed_opponent_six: tuple[str, ...] = ()
+    only_in_image: tuple[str, ...] = ()
+    only_in_registered_team: tuple[str, ...] = ()
+    uncertain_slots: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return dict(status=self.status, selected_three=list(self.selected_three),
                     lead=self.lead, opponent_six=list(self.opponent_six),
-                    reason=self.reason, elapsed_ms=self.elapsed_ms)
+                    reason=self.reason, elapsed_ms=self.elapsed_ms,
+                    # All observed fields are unverified model readings,
+                    # never trusted match state or proof of image contents.
+                    observed_own_six=list(self.observed_own_six),
+                    observed_opponent_six=list(self.observed_opponent_six),
+                    only_in_image=list(self.only_in_image),
+                    only_in_registered_team=list(self.only_in_registered_team),
+                    uncertain_slots=list(self.uncertain_slots))
 
 def _display_name(registered_name: str) -> str:
     # Registered Champions team rows can show a base and its Mega form,
     # whereas the selection UI only shows the base species.
     return unicodedata.normalize("NFKC", registered_name).split("→", 1)[0].strip()
+
+
+def _diagnostics(raw: Mapping[str, Any], assets: FrozenMatchAssets) -> dict:
+    def raw_names(key: str) -> tuple[str, ...]:
+        value = raw.get(key)
+        if not isinstance(value, list):
+            return ()
+        return tuple(v for v in value[:12] if isinstance(v, str))
+
+    own = raw_names("our_six")
+    opponents = raw_names("opponent_six")
+    registered = tuple(assets.own_team_names)
+    own_species = {_display_name(n) for n in own}
+    registered_species = {_display_name(n) for n in registered}
+    return dict(
+        observed_own_six=own,
+        observed_opponent_six=opponents,
+        uncertain_slots=raw_names("uncertain_slots"),
+        only_in_image=tuple(n for n in own if _display_name(n) not in registered_species),
+        only_in_registered_team=tuple(n for n in registered if _display_name(n) not in own_species),
+    )
 
 
 def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAssets) -> tuple[str, ...]:
@@ -97,28 +130,35 @@ class SelectionPlanner:
     def choose(self, observation: Mapping[str, Any], assets: FrozenMatchAssets,
                tactical_call: Callable[[dict, float], Mapping[str, Any]],
                *, started_at: float, max_total_seconds: float = 35.0) -> SelectionDecision:
+        details = _diagnostics(observation, assets)
         try:
             opponents = verify_selection_observation(observation, assets)
         except SelectionBlocked as exc:
             return SelectionDecision("BLOCKED", reason=str(exc),
-                                     elapsed_ms=round((self.clock()-started_at)*1000))
+                                     elapsed_ms=round((self.clock()-started_at)*1000),
+                                     **details)
         available = max_total_seconds-(self.clock()-started_at)
         if available <= 1.5:
             return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents,
-                                     elapsed_ms=round((self.clock()-started_at)*1000))
+                                     elapsed_ms=round((self.clock()-started_at)*1000),
+                                     **details)
         try:
             answer = tactical_call(decision_context(assets, opponents), available-1.0)
             chosen, lead = selection_response(answer, own_names=assets.own_team_names)
             elapsed = round((self.clock()-started_at)*1000)
             if elapsed > max_total_seconds*1000:
-                return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed)
-            return SelectionDecision("OK", chosen, lead, opponents, elapsed_ms=elapsed)
+                return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
+                                         **details)
+            return SelectionDecision("OK", chosen, lead, opponents, elapsed_ms=elapsed,
+                                     **details)
         except SelectionBlocked as exc:
             return SelectionDecision("BLOCKED", opponent_six=opponents, reason=str(exc),
-                                     elapsed_ms=round((self.clock()-started_at)*1000))
+                                     elapsed_ms=round((self.clock()-started_at)*1000),
+                                     **details)
         except Exception as exc:
             return SelectionDecision("ERROR", opponent_six=opponents, reason=type(exc).__name__,
-                                     elapsed_ms=round((self.clock()-started_at)*1000))
+                                     elapsed_ms=round((self.clock()-started_at)*1000),
+                                     **details)
 
 VISION_SCHEMA = {
     "type": "object", "additionalProperties": False,
