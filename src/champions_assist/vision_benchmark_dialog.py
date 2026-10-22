@@ -50,7 +50,7 @@ class _Worker(QObject):
 
 
 class VisionBenchmarkDialog(QDialog):
-    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None):
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
         super().__init__(parent)
         self.setWindowTitle("ChatGPTでログイン・画像認識実測")
         self.setMinimumSize(760,540)
@@ -59,6 +59,7 @@ class VisionBenchmarkDialog(QDialog):
         self._pending_model_refresh=False
         self.master_directory=str(master_directory or "")
         self.team_path=str(team_path or "")
+        self.capture_config=capture_config
         self._thread=None
         self._worker=None
         self._report=None
@@ -163,7 +164,7 @@ class VisionBenchmarkDialog(QDialog):
         self._match_replay_dialog=MatchReplayDialog(
             model=str(self.model.currentData()),
             master_directory=self.master_directory,
-            team_path=self.team_path,
+            team_path=self.team_path, capture_config=self.capture_config,
             store_root=self.store_root,parent=self)
         self._match_replay_dialog.show()
 
