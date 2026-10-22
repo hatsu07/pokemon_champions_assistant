@@ -436,13 +436,13 @@ class SettingsDialog(QDialog):
         for button in (create_button, import_button, duplicate_button, select_button, export_button, delete_button):
             buttons.addWidget(button)
         layout.addLayout(buttons)
-        layout.addWidget(QLabel("新規作成はCSV不要です。下の表で6匹と技などを入力し、「構築を保存」してから次戦に選択します。"))
+        layout.addWidget(QLabel("新規作成はCSV不要。role（役割）は任意です。空欄ならAIが技・持ち物・特性・配分と相手6匹から対戦ごとに判断します。"))
         self.team_list = QTableWidget(0, 5)
         self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用"])
         self.team_list.itemSelectionChanged.connect(self._load_selected_team_editor)
         layout.addWidget(self.team_list, 1)
         self.team_editor = QTableWidget(0, len(self.member_columns))
-        self.team_editor.setHorizontalHeaderLabels(self.member_columns)
+        self.team_editor.setHorizontalHeaderLabels(tuple("role（任意・AI判断）" if field == "role" else field for field in self.member_columns))
         layout.addWidget(self.team_editor, 1)
         save_edit = QPushButton("構築を保存")
         save_edit.clicked.connect(self._save_team_edit)
@@ -797,11 +797,19 @@ class SettingsDialog(QDialog):
         if target:
             self.service.teams.export_csv(record.team_id, target)
 
-    def _save_team_edit(self) -> None:
+    def _persist_team_editor(self) -> RegisteredTeam | None:
+        """Save the currently visible editor without changing next-match selection.
+
+        The main settings Save button and the explicit team Save button must
+        share this exact path. Never overwrite a team using stale editor data
+        when no team is currently being edited.
+        """
         if self._editing_document is None or self._editing_team_id is None:
-            return
+            return None
         rows = [dict(row) for row in self._editing_document.rows]
         mon_rows = [index for index, row in enumerate(rows) if row.get("record") == "MON"]
+        if len(mon_rows) != self.team_editor.rowCount():
+            raise ConfigurationError("構築の編集行数が一致しません。保存せずに確認してください。")
         for table_row, row_index in enumerate(mon_rows):
             for column, field in enumerate(self.member_columns):
                 selector = self.team_editor.cellWidget(table_row, column)
@@ -810,14 +818,27 @@ class SettingsDialog(QDialog):
                 else:
                     item = self.team_editor.item(table_row, column)
                     rows[row_index][field] = "" if item is None else item.text().strip()
+        document = TeamDocument(self._editing_document.fieldnames, tuple(rows))
+        if document.to_text() == self._editing_document.to_text():
+            return self.service.teams.get(self._editing_team_id)
         updated = self.service.update_team_csv(
             self._editing_team_id,
-            TeamDocument(self._editing_document.fieldnames, tuple(rows)).to_text(),
+            document.to_text(),
             match_active=self._match_active(),
         )
-        self._refresh_teams(focus_id=updated.team_id)
-        reason = " / ".join(updated.validation.reasons[:2]) or "Champions固定マスター照合済み"
-        self.team_status.setText(f"構築保存済み：{updated.validation.status} — {reason}")
+        self._editing_document = document
+        return updated
+
+    def _save_team_edit(self) -> None:
+        try:
+            updated = self._persist_team_editor()
+            if updated is None:
+                return
+            self._refresh_teams(focus_id=updated.team_id)
+            reason = " / ".join(updated.validation.reasons[:2]) or "Champions固定マスター照合済み"
+            self.team_status.setText(f"構築保存済み：{updated.validation.status} — {reason}")
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "構築を保存できません", str(exc))
 
     def _refresh_diagnostics(self) -> None:
         storage = self.service.settings.storage
@@ -845,6 +866,9 @@ class SettingsDialog(QDialog):
 
     def _save(self) -> None:
         try:
+            # Persist unsaved table edits before closing settings, including
+            # draft teams whose validation is not complete yet.
+            self._persist_team_editor()
             capture = self._capture_config()
             if self._match_active() and capture != self.service.settings.capture and self._on_active_capture_change is not None:
                 # There is no live observer worker implementation here to
