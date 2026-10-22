@@ -163,7 +163,7 @@ def _validate_id_token(id_token: str, client_id: str, nonce: str) -> dict:
         raise SignInError("ID_TOKEN_VALIDATION_FAILED") from exc
 
 
-def _wait_for_callback(redirect_path: str, timeout_seconds: int, browser_url: str) -> dict[str, str]:
+def _wait_for_callback(redirect_path: str, timeout_seconds: int, browser_url) -> dict[str, str]:
     received: dict[str, str] = {}
 
     class Callback(BaseHTTPRequestHandler):
