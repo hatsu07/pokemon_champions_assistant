@@ -1,4 +1,4 @@
-name: Windows desktop release validation
+name: Windows desktop development validation
 
 # Draft PRs are for code changes; ready PRs validate on every new revision.
 on:
@@ -49,6 +49,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "battle and settings suites failed" }
           python scripts/windows_qt_test_runner.py
           if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
+      - name: Check whether a validated screen model is available
+        shell: pwsh
+        run: |
+          python scripts/check_screen_model_release.py
+          if ($LASTEXITCODE -ne 0) { throw "model diagnostic failed" }
+          # Development CI may run with no trained model, but that build is
+          # never labelled as releasable. A real release must call --release.
       - name: Stage non-private live assets for the desktop GUI
         shell: pwsh
         run: |
@@ -133,12 +140,14 @@ jobs:
             "commit_sha=$built"
             "workflow_run_id=${{ github.run_id }}"
             "workflow_run_attempt=${{ github.run_attempt }}"
+            "artifact_type=DEVELOPMENT_ONLY"
+            "screen_model_release_validated=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
-      - name: Upload the one portable desktop ZIP
+      - name: Upload diagnostic-only Windows portable artifact
         uses: actions/upload-artifact@v4
         with:
           # GitHub Actions wraps this folder into ONE download ZIP. Do not
           # Compress-Archive inside it: that created the double ZIP problem.
-          name: PokemonChampionsAssistant-windows-x64
+          name: PokemonChampionsAssistant-DEVELOPMENT-windows-x64
           path: dist/PokemonChampionsAssistant/
           if-no-files-found: error
