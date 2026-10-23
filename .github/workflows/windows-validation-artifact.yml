@@ -45,8 +45,12 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_terminology tests.test_phase_2 tests.test_chatgpt_settings_inline tests.test_unified_main_match_support -v
-          if ($LASTEXITCODE -ne 0) { throw "battle and settings suites failed" }
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_terminology tests.test_phase_2 -v
+          if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
+          # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
+          # finalization after mixing unrelated test lifecycles.
+          python -m unittest tests.test_chatgpt_settings_inline tests.test_unified_main_match_support -v
+          if ($LASTEXITCODE -ne 0) { throw "inline GUI regression suites failed" }
           python scripts/windows_qt_test_runner.py
           if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
       - name: Check whether a validated screen model is available
