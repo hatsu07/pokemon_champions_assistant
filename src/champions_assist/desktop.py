@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QTabWidget,
@@ -776,15 +777,20 @@ class DesktopMainWindow(QMainWindow):
         layout.addLayout(header)
 
         self.tabs = QTabWidget()
+        self._match_scroll = QScrollArea(self.tabs)
+        self._match_scroll.setWidgetResizable(True)
+        self._match_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._match_panel = MatchReplayDialog(
             model="", reasoning_effort="auto",
             master_directory=str(self.settings_service.master_directory),
             team_path="", capture_config=self.settings_service.settings.capture,
-            store_root=default_app_root(), parent=self.tabs,
+            store_root=default_app_root(), parent=self._match_scroll,
             embedded=True, before_new_match=self._prepare_unified_match,
+            on_capture_reconnected=self._persist_reconnected_capture,
         )
         self._match_panel.state_changed.connect(self._on_unified_state)
-        self.tabs.addTab(self._match_panel, "対戦支援")
+        self._match_scroll.setWidget(self._match_panel)
+        self.tabs.addTab(self._match_scroll, "対戦支援")
         state_tab = QWidget()
         state_layout = QVBoxLayout(state_tab)
         self.state_tree = QTreeWidget()
@@ -830,6 +836,10 @@ class DesktopMainWindow(QMainWindow):
         self._match_panel.team_path = str(team_path)
         self._match_panel.capture_config = self.settings_service.settings.capture
 
+    def _persist_reconnected_capture(self, config) -> None:
+        """User-selected, successfully previewed mirror-window identity."""
+        self.settings_service.save_capture(config)
+
     def _halt_unified_capture(self) -> None:
         """Saving a changed capture target never silently retargets a live match."""
         self._match_panel._stop_auto()
@@ -861,6 +871,10 @@ class DesktopMainWindow(QMainWindow):
             self.recommendation_label.setText(suggestion)
         elif status in ("MATCH_STARTED", "RESET"):
             self.recommendation_label.setText("推奨: 試合開始待ち")
+        elif status == "CAPTURE_TARGET_RECONNECTED":
+            self.recommendation_label.setText("撮影対象の再接続完了。必要な画面を登録し直して監視を再開")
+        elif status in ("AUTO_STARTED", "CAPTURE_RESUMED"):
+            self.recommendation_label.setText("撮影中。次のAI判断を待機")
         elif status == "CONFIRMED":
             self.recommendation_label.setText("選出確定。相手初手・行動選択を待機")
         elif status in ("BLOCKED", "NO_ACTION", "DEADLINE_EXCEEDED", "ERROR",
@@ -951,7 +965,7 @@ class DesktopMainWindow(QMainWindow):
     def _open_auto_match_support(self) -> None:
         """Focus the ONLY live support view; never create a second window."""
         if self._unified:
-            self.tabs.setCurrentWidget(self._match_panel)
+            self.tabs.setCurrentWidget(self._match_scroll)
 
     def _state_tab(self) -> QWidget:
         tab = QWidget()
