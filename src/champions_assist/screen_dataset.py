@@ -153,3 +153,124 @@ class LabelledScreenDataset:
                 "session_counts":{label:len(sessions[label]) for label in LABELS},
                 "total":sum(counts.values()),
                 "all_sessions":len(set().union(*sessions.values()))}
+
+# On-disk staging is separate from the seven training labels.  A staged file
+# can never reach training until a human explicitly confirms its class.
+from shutil import disk_usage
+
+MIB = 1024*1024
+
+
+class StagingLimitReached(OSError):
+    """Stop collecting rather than silently delete unreviewed screenshots."""
+
+
+class UnlabelledScreenStaging:
+    """Opt-in, disk-bounded JPEG staging with per-match session directories."""
+
+    def __init__(self, root: str | Path, *, quota_bytes: int=2*1024**3,
+                 reserve_bytes: int=512*MIB, max_edge: int=960):
+        self.root=Path(root).expanduser()
+        self.stage_root=self.root/"_UNLABELLED"
+        if not 1<=quota_bytes<=50*1024**3 or not 0<=reserve_bytes<=100*1024**3:
+            raise ValueError("INVALID_STAGING_QUOTA")
+        if not 160<=max_edge<=2048:
+            raise ValueError("INVALID_STAGING_IMAGE_SIZE")
+        self.quota_bytes=quota_bytes
+        self.reserve_bytes=reserve_bytes
+        self.max_edge=max_edge
+        self._cached_bytes=None
+
+    def session_files(self, session_id: str) -> list[Path]:
+        validate_session(session_id)
+        folder=self.stage_root/session_id
+        if not folder.is_dir():
+            return []
+        return sorted((p for p in folder.glob("*.jpg") if p.is_file() and not p.is_symlink()),
+                      key=lambda p:p.name)
+
+    def sessions(self) -> list[str]:
+        if not self.stage_root.is_dir():
+            return []
+        return sorted((p.name for p in self.stage_root.iterdir()
+                       if p.is_dir() and not p.is_symlink()
+                       and _SESSION_RE.fullmatch(p.name)),reverse=True)
+
+    def used_bytes(self) -> int:
+        if self._cached_bytes is None:
+            self._cached_bytes=sum(p.stat().st_size for session in self.sessions()
+                                   for p in self.session_files(session))
+        return self._cached_bytes
+
+    def _encode(self, image: np.ndarray) -> bytes:
+        if (not isinstance(image,np.ndarray) or image.ndim!=3
+                or image.shape[2]!=3 or image.dtype!=np.uint8 or image.size==0):
+            raise ValueError("INVALID_TRAINING_IMAGE")
+        height,width=image.shape[:2]
+        factor=min(1.0,self.max_edge/max(height,width))
+        scaled=(cv2.resize(image,(max(1,round(width*factor)),
+                                 max(1,round(height*factor))),
+                           interpolation=cv2.INTER_AREA)
+                if factor<1 else image)
+        ok,encoded=cv2.imencode(".jpg",cv2.cvtColor(scaled,cv2.COLOR_RGB2BGR),
+                                [cv2.IMWRITE_JPEG_QUALITY,85])
+        if not ok:
+            raise ValueError("STAGING_JPEG_ENCODING_FAILED")
+        return encoded.tobytes()
+
+    def save_unlabelled(self, image: np.ndarray, session_id: str) -> Path:
+        validate_session(session_id)
+        data=self._encode(image)
+        folder=self.stage_root/session_id
+        folder.mkdir(parents=True,exist_ok=True)
+        if self.used_bytes()+len(data)>self.quota_bytes:
+            raise StagingLimitReached("STAGING_QUOTA_REACHED")
+        if disk_usage(folder).free-len(data)<self.reserve_bytes:
+            raise StagingLimitReached("DISK_SPACE_RESERVE_REACHED")
+        path=folder/(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                     +"_"+uuid4().hex[:14]+".jpg")
+        # Never overwrite an existing review candidate; a half-written image
+        # is removed if a write or fsync fails.
+        descriptor=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+        try:
+            with os.fdopen(descriptor,"wb") as file:
+                file.write(data)
+                file.flush()
+                os.fsync(file.fileno())
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        self._cached_bytes=(self._cached_bytes or 0)+len(data)
+        return path
+
+    def remove_staged(self, file: str | Path) -> None:
+        path=self.validate_staged_path(file)
+        size=path.stat().st_size
+        path.unlink()
+        if self._cached_bytes is not None:
+            self._cached_bytes=max(0,self._cached_bytes-size)
+
+    def validate_staged_path(self, file: str | Path) -> Path:
+        path=Path(file)
+        if (path.suffix.lower()!=".jpg" or path.is_symlink()
+                or not path.is_file() or not _SESSION_RE.fullmatch(path.parent.name)
+                or path.parent.parent.resolve()!=self.stage_root.resolve()):
+            raise ValueError("NOT_AN_UNLABELLED_STAGED_FRAME")
+        return path
+
+    def label(self, file: str | Path, target: str,
+              dataset: LabelledScreenDataset) -> Path:
+        """Convert one checked JPG into a human-labelled PNG before removing it."""
+        path=self.validate_staged_path(file)
+        if target not in LABELS:
+            raise ValueError("INVALID_SCREEN_LABEL")
+        bgr=cv2.imdecode(np.fromfile(path,dtype=np.uint8),cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise ValueError("INVALID_STAGED_JPEG")
+        frame=TrainingFrame(
+            id=path.stem.split("_")[-1],session_id=path.parent.name,
+            timestamp=path.stem.split("_")[0],
+            image=cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB))
+        result=dataset.save(frame,target)
+        self.remove_staged(path)
+        return result
