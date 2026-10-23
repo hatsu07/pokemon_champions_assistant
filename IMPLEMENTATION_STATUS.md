@@ -338,3 +338,11 @@
 - Added a dedicated `auto_label_box` in the **immediate layout row below the grouped thumbnail grid**. Both per-frame correction and group-level correction use this nearby selector; the original `label_box` stays in the manual file-save section.
 - The two dropdowns are independent to prevent accidentally applying a manual-save choice to an automatically grouped frame.
 - Added offscreen Windows regression tests for layout adjacency, independent selection, missing group label refusing a partial correction, and existing per-frame/batch functionality. Actual user's screen size / DPI usability still requires a native Windows check.
+
+## Bulk reviewed auto-label group PNG promotion — 2026-10-23 (PR #29)
+
+- Auto group QListWidget now allows Ctrl/Shift extended selection; previously only one selected group could be committed. A dedicated button approves and promotes **all selected, individually fully-reviewed** groups in one confirmation.
+- Introduced per-group staged label override (correct without immediate save), plus existing per-frame label overrides and exclusions; explicit re-review after group label edit. No model re-inference or private-data export.
+- Full preflight rejects the **entire batch** if any group unchecked, label unresolved, all frames excluded, or duplicate files; confirmation shows group/image/correction/exclusion counts.
+- One post-write reconciliation preserves unprocessed groups, staged corrections, excluded JPGs and review state. Write errors stop immediately and retain unprocessed JPGs; no transactional rollback of already saved PNGs is promised.
+- Added Windows offscreen regression tests for heterogeneous groups, deferred corrected labels, frame-level override, exclusion, unreviewed/unknown blocking, user cancellation and partial-write recovery. Real user gameplay footage and interaction feel still require separate verification.
