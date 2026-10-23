@@ -39,6 +39,9 @@
 
 ## Windows CI・DEVELOPMENT ZIP配布（2026-10-23）
 
+新チャットへ開発を引き継ぐ際の読み順と最新注意点は [開発引継ぎインデックス](docs/CURRENT_DEVELOPMENT_HANDOFF.md) に集約しています。
+
+
 **GitHub Actions ＋ GitHub Releases**。PRのWindows CIはすべてのオフラインテスト・Assistant/Collector両方のPyInstallerビルドとGUIスモークを実行するが、保存容量に制約のあるActions Artifactsへはアップロードしない。PRは最新SHAでworkflow全体と必須jobの`completed/success`を確認するまでマージ禁止（有料GitHub Proやブランチ保護は不要）。
 
 masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.github/workflows/windows-development-release.yml) が**masterのSHAを再ビルド・再スモーク**し、2つのZIPを[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases)の**DEVELOPMENT_ONLYプレリリース**として公開する。各ZIPの展開直下にEXEと`_internal`があり、二重ZIPはない。Release公開成功はmaster用workflowと2ZIPの実在で別途確認する。
