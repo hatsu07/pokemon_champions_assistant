@@ -78,17 +78,19 @@ class MergeReadinessTests(unittest.TestCase):
         runs[0]["event"] = "workflow_dispatch"
         self.assertTrue(verify(pr, runs, jobs))
 
-    def test_workflow_separates_manual_artifact_upload(self):
+    def test_workflow_builds_and_publishes_both_zip_artifacts(self):
         workflow = (ROOT / REQUIRED_WORKFLOW_PATH).read_text(encoding="utf-8")
-        self.assertIn("publish_artifacts:", workflow)
-        self.assertIn("type: boolean", workflow)
-        self.assertIn("default: false", workflow)
-        self.assertEqual(workflow.count(
-            "if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true"), 2)
         self.assertIn("  desktop-windows-validation:", workflow)
         self.assertIn("Run offline battle and settings tests on Windows", workflow)
+        self.assertIn("Test artifact cleanup script offline", workflow)
         self.assertIn("Smoke dataset collector GUI offline", workflow)
         self.assertIn("Verify PR head is still current", workflow)
+        self.assertIn("name: PokemonChampionsAssistant-DEVELOPMENT-windows-x64", workflow)
+        self.assertIn("name: PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64", workflow)
+        self.assertEqual(workflow.count("uses: actions/upload-artifact@v4"), 2)
+        self.assertEqual(workflow.count("retention-days: 2"), 2)
+        self.assertNotIn("publish_artifacts:", workflow)
+        self.assertNotIn("inputs.publish_artifacts", workflow)
         self.assertNotIn("continue-on-error: true", workflow)
 
 
