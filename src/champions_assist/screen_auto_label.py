@@ -18,6 +18,16 @@ from .screen_classifier import LABELS, ScreenClassifier
 
 
 @dataclass(frozen=True)
+class AutoLabelFrame:
+    """One frame's non-authoritative AI suggestion and review warnings."""
+    path: Path
+    predicted_label: str | None
+    confidence: float
+    margin: float
+    review_flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AutoLabelGroup:
     files: tuple[Path, ...]
     candidate: str | None
@@ -25,6 +35,7 @@ class AutoLabelGroup:
     margin: float
     representative: tuple[Path, ...]
     review_reason: str
+    frame_details: tuple[AutoLabelFrame, ...] = ()
 
     @property
     def count(self) -> int:
@@ -92,6 +103,7 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
 
     groups: list[AutoLabelGroup] = []
     active: list[Path] = []
+    active_details: list[AutoLabelFrame] = []
     previous_hash: int | None = None
     previous_small: np.ndarray | None = None
     previous_time: datetime | None = None
@@ -107,7 +119,8 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
         groups.append(AutoLabelGroup(tuple(active), label,
                                      min_conf if classifier else 0.0,
                                      min_margin if classifier else 0.0,
-                                     _representative(active), reason))
+                                     _representative(active), reason,
+                                     tuple(active_details)))
 
     for index, path in enumerate(files, start=1):
         # numpy.fromfile handles Windows paths containing Japanese characters.
@@ -122,10 +135,12 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
                       if previous_small is not None else 0.0)
         timestamp = _capture_time(path)
         current_label = None
+        raw_label = None
         confidence, margin = 0.0, 0.0
         if classifier is not None:
             prediction = classifier.predict(rgb, raw_label=True)
             confidence, margin = prediction.confidence, prediction.margin
+            raw_label = prediction.label
             if (prediction.label in LABELS and
                     confidence >= 0.90 and margin >= 0.20):
                 current_label = prediction.label
@@ -141,10 +156,24 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
         if boundary:
             emit_group()
             active = []
+            active_details = []
             label = current_label
             min_conf, min_margin = 1.0, 1.0
 
+        flags = []
+        if classifier is None:
+            flags.append("AI未設定")
+        elif current_label is None:
+            flags.append("AI予測の確信度不足")
+        elif current_label == "UNKNOWN":
+            flags.append("UNKNOWNは重点確認")
+        if previous_hash is not None and (previous_hash ^ current_hash).bit_count() >= 4:
+            flags.append("前画像との形状差")
+        if previous_small is not None and color_change >= 12.0:
+            flags.append("前画像との色差")
         active.append(path)
+        active_details.append(AutoLabelFrame(path, raw_label, confidence,
+                                             margin, tuple(flags)))
         min_conf = min(min_conf, confidence)
         min_margin = min(min_margin, margin)
         previous_hash, previous_small, previous_time = current_hash, current_small, timestamp
