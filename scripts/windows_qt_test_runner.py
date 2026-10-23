@@ -1,4 +1,4 @@
-"""Run GUI unit tests and exit by their result, not Qt DLL finalizer state.
+"""Run offline/Qt unit-test groups and exit by their real unittest results.
 
 On Windows CI, PySide6's offscreen platform occasionally returns exit status
 1 *after* unittest reports success, during interpreter/plugin shutdown. This
@@ -18,10 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main() -> None:
-    # Keep one legacy Qt suite in this process. Its own tearDownClass quits
-    # QApplication; combining UI suites previously made Windows exit nonzero
-    # despite every unittest assertion passing.
-    suite=unittest.defaultTestLoader.loadTestsFromName("tests.test_vision_preferences")
+    # Each invocation still runs a separately scoped test group. Preserve
+    # the test result while bypassing a nondeterministic interpreter/Qt DLL
+    # finalizer crash seen *after* unittest prints OK on Windows.
+    # Missing modules become unittest _FailedTest errors, not silent skips.
+    names=sys.argv[1:] or ["tests.test_vision_preferences"]
+    suite=unittest.defaultTestLoader.loadTestsFromNames(names)
     result=unittest.TextTestRunner(verbosity=2).run(suite)
     sys.stdout.flush()
     sys.stderr.flush()
