@@ -44,6 +44,13 @@ class GroupingTests(unittest.TestCase):
         self.assertEqual(self.dataset.audit()["total"],0)
         self.assertEqual(reports[-1],(7,7))
 
+    def test_brightness_change_splits_visually_different_solid_screens(self):
+        self._frames(3,value=20)
+        self._frames(3,value=245)
+        groups=analyze_staged_session(self.staging.session_files(SESSION))
+        self.assertEqual([g.count for g in groups],[3,3])
+        self.assertEqual(self.dataset.audit()["total"],0)
+
     def test_groups_limit_size_and_never_cross_sessions(self):
         self._frames(35)
         groups=analyze_staged_session(self.staging.session_files(SESSION),max_group=30)
