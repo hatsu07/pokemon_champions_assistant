@@ -96,6 +96,36 @@ class ScreenClassifierTests(unittest.TestCase):
         ScreenClassifier(self.model,self.meta,device="auto",session_factory=factory)
         self.assertEqual(options,["CPUExecutionProvider"])
 
+    def test_scene_fallback_is_bounded_without_any_model_weights(self):
+        from champions_assist.turn_capture import AutomaticVisualProbe
+        tick=[0.0]
+        probe=AutomaticVisualProbe(clock=lambda:tick[0],min_gap=2.0,
+                                   stable_frames=2,matchmaking_recheck=12.0)
+        first=np.zeros((100,180,3),dtype=np.uint8)
+        selection=np.full_like(first,255)
+        self.assertTrue(probe.observe(first,"MATCHMAKING"))
+        tick[0]=0.3
+        self.assertFalse(probe.observe(selection,"MATCHMAKING"))
+        tick[0]=2.1
+        self.assertFalse(probe.observe(selection,"MATCHMAKING"))
+        tick[0]=2.4
+        self.assertTrue(probe.observe(selection,"MATCHMAKING"))
+        tick[0]=2.7
+        self.assertFalse(probe.observe(selection,"MATCHMAKING"))
+        tick[0]=15.0
+        self.assertTrue(probe.observe(selection,"MATCHMAKING"))
+        self.assertFalse(probe.observe(selection,"SELECTION"))
+
+    def test_training_split_is_session_scoped(self):
+        from scripts.train_screen_classifier import split_by_session
+        samples=[(Path(f"{name}/match{sid}__{k}.png"),idx,f"match{sid}")
+                 for sid in range(20) for idx,name in enumerate(LABELS)
+                 for k in range(2)]
+        training,validation,held_out=split_by_session(samples)
+        self.assertTrue(held_out)
+        self.assertTrue({r[2] for r in validation}.isdisjoint({r[2] for r in training}))
+        self.assertEqual({r[1] for r in validation},set(range(len(LABELS))))
+
     def test_local_gate_detects_selection_after_two_frames_without_registration(self):
         gate=ClassifiedMenuGate(stable_frames=2)
         def predicted(label):
