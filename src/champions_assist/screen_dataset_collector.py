@@ -551,7 +551,7 @@ class ScreenDatasetCollector(QMainWindow):
         # Zero-width break opportunities after separators preserve the actual
         # path string while allowing wrapping as the window narrows.
         path=str(self.dataset.root)
-        display=path.replace("\\\\", "\\\\u200b").replace("/", "/\u200b")
+        display=path.replace("\\", "\\\u200b").replace("/", "/\u200b")
         self.directory_label.setText("保存先: "+display)
         self.directory_label.setToolTip(path)
 
