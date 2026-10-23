@@ -52,7 +52,7 @@ WindowsのオフラインCIは合成画像と一時保存先で保存・容量�
 `_UNLABELLED` は学習には使いません。7ラベルのPNGが各ラベルで独立した複数セッションに
 揃っていることを、学習前の検査で確認します。
 
-### CPU Docker学習
+### CPU / NVIDIA CUDA Docker学習
 
 WSLターミナルで次を実行します。`%LOCALAPPDATA%` 配下の `screens` は読み取り専用で
 Dockerへ渡され、ONNX、JSON、重みキャッシュはローカルの無視対象
@@ -66,17 +66,31 @@ trainer ではリポジトリ全体も読み取り専用です。`TRAINING_DATA_
 # 画像数・セッション分離・画像読取を先に検査する（ネットワーク不使用）
 ./scripts/train_screen_classifier_docker.sh --validate-only
 
-# CPUで実験モデルを学習する（ImageNet重みの取得なし）
+# CPU学習（既存の動作）
 ./scripts/train_screen_classifier_docker.sh --epochs 12
 
-# 明示的に同意した場合だけ、ImageNetの事前学習済み重みを取得して学習する
-./scripts/train_screen_classifier_docker.sh --epochs 12 --pretrained
+# GPU学習前にDocker内部でCUDA利用可否を確認
+./scripts/train_screen_classifier_docker.sh --gpu --check-gpu
+
+# GPUで1エポックの試験学習
+./scripts/train_screen_classifier_docker.sh --gpu --epochs 1
+
+# GPUで12エポック、ImageNet重みを明示的に利用
+./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained
 ```
 
 通常の `dev` イメージやWindows/WSLホストへ PyTorch/TorchVision/ONNX は導入しません。
-この `trainer` はCPU専用であり、`--device auto` もCPUを選びます。学習処理は画面、
+通常の `trainer` はCPU専用です。CUDA学習では独立した `trainer-gpu` と
+CUDA 12.1版PyTorchを使用します。Docker Compose `gpus: all` とDocker Desktop WSL2 GPU連携が必要です。
+WSLで `nvidia-smi` が成功してもDockerのGPU対応が保証されるわけではありません。
+`--gpu --check-gpu` の `"cuda_available": true` を確認してください。
+CUDAが使えない場合GPUモードはCPUにフォールバックせず失敗します。
+初回のGPUイメージは大容量なので空きディスク容量を確認してください。
+VRAM不足の場合は `--batch-size 8` を指定できます。
+画像検査は枚数・経過時間、学習・検証はバッチ進捗を表示します。
+学習時の画像全件チェックは1回だけにしました。学習処理は画面、
 ラベル、生成モデルを外部へ送信・アップロードしません。`--pretrained` を付けた場合だけ、
-第三者配布のImageNet重みをローカルキャッシュへ取得します。GPU構成は今回未検証です。
+第三者配布のImageNet重みをローカルキャッシュへ取得します。GPUの実機学習成功・高速化・精度は、RTX 3060 Ti実機で別途検証が必要です。
 実データを使わない専用CIは、7ラベル・4独立セッションの合成画像でCPU 1エポック学習、
 ONNX出力、SHA-256、未検証マニフェスト、ONNX Runtimeの7出力推論だけを確認します。
 通常のWindows検証には組み込みません。

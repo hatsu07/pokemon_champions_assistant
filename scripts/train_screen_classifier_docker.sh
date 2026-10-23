@@ -1,10 +1,28 @@
 #!/usr/bin/env bash
-# Run the optional local screen-classifier training stack inside Docker.
-# The source screenshots are mounted read-only and remain outside the repository.
+# Training screenshots are local read-only mounts; outputs remain git-ignored.
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
+
+gpu=0
+probe=0
+args=()
+for argument in "$@"; do
+    case "$argument" in
+        --gpu) gpu=1 ;;
+        --check-gpu) probe=1 ;;
+        --device|--device=*|--data-dir|--data-dir=*|--output-dir|--output-dir=*)
+            echo "Wrapper controls device/data/output; use --gpu for CUDA." >&2
+            exit 2
+            ;;
+        *) args+=("$argument") ;;
+    esac
+done
+if ((probe && !gpu)); then
+    echo "Use --gpu --check-gpu for the GPU diagnostic." >&2
+    exit 2
+fi
 
 if [[ -z "${TRAINING_DATA_DIR:-}" ]]; then
     if ! command -v powershell.exe >/dev/null || ! command -v wslpath >/dev/null; then
@@ -18,34 +36,36 @@ if [[ -z "${TRAINING_DATA_DIR:-}" ]]; then
     fi
     export TRAINING_DATA_DIR="$(wslpath -u "$local_appdata")/PokemonChampionsAssistant/private-training/screens"
 fi
-
 if [[ ! -d "$TRAINING_DATA_DIR" ]]; then
     echo "Training data directory does not exist: $TRAINING_DATA_DIR" >&2
     exit 2
 fi
 TRAINING_DATA_DIR="$(cd "$TRAINING_DATA_DIR" && pwd -P)"
 if [[ "$TRAINING_DATA_DIR" == "$repo_dir" || "$TRAINING_DATA_DIR" == "$repo_dir/"* ]]; then
-    echo "Training data must stay outside the workspace so it has no writable mount." >&2
+    echo "Training data must stay outside the workspace." >&2
     exit 2
 fi
 export TRAINING_DATA_DIR
 mkdir -p private-training/output private-training/.torch-cache
 
-for argument in "$@"; do
-    case "$argument" in
-        --data-dir|--data-dir=*|--output-dir|--output-dir=*)
-            echo "The Docker wrapper fixes data and output paths under local private-training/." >&2
-            exit 2
-            ;;
-    esac
-done
-
-exec docker compose --profile training run --rm --build \
-    --user "$(id -u):$(id -g)" \
-    trainer \
+profile=training
+service=trainer
+device=auto
+if ((gpu)); then
+    profile=training-gpu
+    service=trainer-gpu
+    device=cuda
+fi
+printf '[trainer] requested_device=%s\n' "$device" >&2
+if ((probe)); then
+    exec docker compose --profile "$profile" run --rm --build \
+        --user "$(id -u):$(id -g)" "$service" python scripts/check_training_gpu.py
+fi
+exec docker compose --profile "$profile" run --rm --build \
+    --user "$(id -u):$(id -g)" "$service" \
     python scripts/train_screen_classifier.py \
     --data-dir /training/screens \
     --output-dir private-training/output \
     --epochs 12 \
-    --device auto \
-    "$@"
+    --device "$device" \
+    "${args[@]}"

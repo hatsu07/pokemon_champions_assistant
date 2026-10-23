@@ -19,5 +19,11 @@ FROM dev AS trainer
 COPY requirements-training.txt /tmp/requirements-training.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-training.txt
 
+# CUDA stays isolated from both the ordinary dev and CPU trainer images.
+FROM dev AS trainer-gpu
+
+COPY requirements-training-gpu.txt /tmp/requirements-training-gpu.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-training-gpu.txt
+
 # Preserve the lean development image as the default target for direct builds.
 FROM dev AS default

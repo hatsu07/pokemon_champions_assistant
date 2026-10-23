@@ -8,6 +8,8 @@ on:
       - ".devcontainer/Dockerfile"
       - "compose.yaml"
       - "requirements-training.txt"
+      - "requirements-training-gpu.txt"
+      - "scripts/check_training_gpu.py"
       - "scripts/train_screen_classifier.py"
       - "scripts/train_screen_classifier_docker.sh"
       - "tests/training_pipeline_integration.py"
@@ -31,6 +33,10 @@ jobs:
           expected="${{ github.event.pull_request.head.sha || github.sha }}"
           actual="$(git rev-parse HEAD)"
           test "$actual" = "$expected"
+      - name: Check GPU Compose definition and shell syntax (no GPU runner)
+        run: |
+          docker compose --profile training-gpu config --quiet
+          bash -n scripts/train_screen_classifier_docker.sh
       - name: Build the isolated CPU trainer
         run: |
           mkdir -p "$RUNNER_TEMP/screen-training-data" private-training/output private-training/.torch-cache
