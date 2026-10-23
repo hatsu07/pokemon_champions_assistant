@@ -453,6 +453,9 @@ class ScreenDatasetCollector(QMainWindow):
         value=QFileDialog.getExistingDirectory(
             self,"保存先を選択",str(self.dataset.root.parent))
         if value:
+            # Cached proposals belong to the old dataset, even if a session id repeats.
+            self._clear_auto_groups()
+            self._review_session=None
             self.dataset=LabelledScreenDataset(value)
             self.staging=UnlabelledScreenStaging(value,
                        quota_bytes=int(self.quota_box.currentData())*1024**3)
@@ -561,15 +564,20 @@ class ScreenDatasetCollector(QMainWindow):
     def _review_session_changed(self,_index):
         if self._auto_thread is not None:
             return
-        self._clear_auto_groups()
-        self._review_session=self.review_session_box.currentData()
-        self._page=0
+        selected_session=self.review_session_box.currentData()
+        if selected_session!=self._review_session:
+            # A different match cannot reuse another match's AI suggestions.
+            self._clear_auto_groups()
+            self._page=0
+        self._review_session=selected_session
         self._reload_review_files()
 
     def _reload_review_files(self):
-        self._clear_auto_groups()
+        # A save changes staged JPGs, not the predictions of the remaining
+        # frames. Never discard all proposals and require an expensive re-run.
         self._current_files=(self.staging.session_files(self._review_session)
                              if self._review_session else [])
+        self._reconcile_auto_groups(set(self._current_files))
         self._show_review_page()
 
     def _show_review_page(self):
@@ -750,11 +758,8 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_progress.setText("自動解析失敗: "+reason)
 
     @Slot(object)
-    def _auto_on_proposals(self,groups):
-        self._auto_frame_overrides.clear()
-        self._auto_frame_exclusions.clear()
-        self._auto_reviewed_groups.clear()
-        self._auto_groups=list(groups)
+    def _render_auto_group_list(self, *, selection: int=0):
+        """Repaint from cached suggestions without invoking the model."""
         self.auto_list.clear()
         for index,group in enumerate(self._auto_groups):
             candidate=group.candidate or "要確認（AI推定なし）"
@@ -763,11 +768,72 @@ class ScreenDatasetCollector(QMainWindow):
                 f"信頼度下限 {group.confidence:.1%} | {group.review_reason}")
             row.setData(Qt.ItemDataRole.UserRole,index)
             self.auto_list.addItem(row)
+        if self._auto_groups:
+            self.auto_list.setCurrentRow(min(max(0,selection),len(self._auto_groups)-1))
+
+    def _reconcile_auto_groups(self, staged_files: set[Path]):
+        """Prune already promoted/deleted JPGs, retain all untouched proposals.
+
+        Remaining groups preserve their per-frame AI evidence and corrections.
+        Only modified groups lose their 'fully reviewed' acknowledgement.
+        No ONNX inference or grouping work is performed here.
+        """
+        if not self._auto_groups:
+            return
+        current,_=self._current_auto_group()
+        old_groups=self._auto_groups
+        old_reviewed=set(self._auto_reviewed_groups)
+        retained=[]
+        reviewed=set()
+        selected=None
+        for original_index,group in enumerate(old_groups):
+            files=tuple(path for path in group.files if path in staged_files)
+            if not files:
+                continue
+            if files==group.files:
+                remaining_group=group
+            else:
+                # Keep cached per-frame evidence and only recalculate the
+                # representative thumbnails / displayed minimum confidence.
+                details=tuple(d for d in group.frame_details if d.path in staged_files)
+                reps=(files if len(files)<3 else
+                      (files[0],files[len(files)//2],files[-1]))
+                remaining_group=replace(
+                    group, files=files, representative=tuple(reps),
+                    frame_details=details,
+                    confidence=(min(d.confidence for d in details)
+                                if details else group.confidence),
+                    margin=(min(d.margin for d in details)
+                            if details else group.margin))
+            new_index=len(retained)
+            retained.append(remaining_group)
+            if (original_index in old_reviewed and
+                    files==group.files):
+                reviewed.add(new_index)
+            if original_index==current:
+                selected=new_index
+        self._auto_groups=retained
+        live_group_paths={path for group in retained for path in group.files}
+        self._auto_frame_overrides={
+            path:label for path,label in self._auto_frame_overrides.items()
+            if path in live_group_paths}
+        self._auto_frame_exclusions.intersection_update(live_group_paths)
+        self._auto_reviewed_groups=reviewed
+        # If the selected group was completed, select the next group in place
+        # (or the previous one if the completed group was last).
+        self._render_auto_group_list(
+            selection=(selected if selected is not None else
+                       (current if current is not None else 0)))
+
+    def _auto_on_proposals(self,groups):
+        self._auto_frame_overrides.clear()
+        self._auto_frame_exclusions.clear()
+        self._auto_reviewed_groups.clear()
+        self._auto_groups=list(groups)
+        self._render_auto_group_list()
         self.auto_progress.setText(
             f"解析完了：{sum(g.count for g in groups)}枚 / {len(groups)}グループ。"
             "グループ内の全画像を一覧確認してから一括承認してください。")
-        if groups:
-            self.auto_list.setCurrentRow(0)
 
     @Slot()
     def _auto_on_finished(self):

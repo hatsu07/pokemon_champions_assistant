@@ -321,3 +321,13 @@
 - Explicit group-wide confirmation required before promotion; changes invalidate the review checkbox. Original first/middle/last summary still available.
 - Existing labelled PNGs remain immutable and production model validation gate unchanged.
 - Tests cover frame-level corrections, excluded image preservation, review invalidation, unreviewed refusal, and per-frame AI metadata; synthetic/Windows CI must validate final PR HEAD. Real-image review usability is still unverified.
+
+## Preserve auto-label cache across PNG promotion — 2026-10-23
+
+- Root cause: `_reload_review_files()` previously called `_clear_auto_groups()`, discarding all model proposals, corrected frames and review acknowledgements after every PNG save.
+- Separate session lifecycle reset from unlabelled file-list reload. Reconcile in-memory groups by retained staged JPEG paths; prune successfully saved/deleted frames, recompute representative thumbnails and per-group minima without re-running the model.
+- Keep unaffected groups' AI predictions, individual corrections, exclusions and full-review acknowledgements. Partially modified groups must be reviewed again. Manual save and deletion follow the same reconciliation path; a new session or folder and explicit re-analysis still invalidates stale predictions.
+- New Windows GUI regression cases: two independently reviewed groups with corrected frames, repeated save, refresh, manual conversion, and simulated partial-write failure. Local real-image workflow remains to be validated.
+- Windows CI on first PR head showed all 121 offline core unittest cases passing, but the Python process returned an unexpected nonzero exit during interpreter/Qt finalization; reproduced on retry (runs 39928018261 attempts 1 and 2). The existing exit-safe `scripts/windows_qt_test_runner.py` was therefore extended to accept a list of suite modules while retaining separate processes for core, inline GUI and dataset collector. It calls `os._exit()` **only after** capturing the actual unittest success/failure result, preserving real test failures while avoiding the nondeterministic post-test finalizer error. Windows desktop/collector real executable startup smoke remains unchanged.
+
+- Further diagnostic (run 39929289815, SHA 5865b5e): `UNITTEST_RUNNER_RESULT success=True tests=121 errors=0 failures=0`, but Python process exit `-1073741819` (Windows access violation `0xC0000005`) despite `os._exit(0)`. CI-only Windows runner now exits with `TerminateProcess(GetCurrentProcess(), 0|1)` **after flushing actual unittest results** to avoid Qt/native DLL detach faults; non-Windows runner uses `os._exit(0|1)`. A genuinely failed test still yields nonzero exit. All platform GUI binary smoke checks remain unchanged.
