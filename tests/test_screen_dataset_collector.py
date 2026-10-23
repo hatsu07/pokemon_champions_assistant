@@ -149,8 +149,21 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                        else QBoxLayout.Direction.LeftToRight)
             self.assertTrue(all(row.direction()==direction
                                 for row in self.gui._responsive_rows))
+            body_layout=scroll.widget().layout()
+            minimums=[]
+            for i in range(body_layout.count()):
+                child=body_layout.itemAt(i)
+                widget=child.widget()
+                title=(widget.text()[:75] if widget is not None and
+                       hasattr(widget,"text") else
+                       ("layout" if child.layout() is not None else "widget"))
+                minimums.append((child.minimumSize().width(),i,title))
+            minimums.sort(reverse=True)
             self.assertEqual(scroll.horizontalScrollBar().maximum(),0,
-                             f"Horizontal scrollbar visible at window width {width}")
+                             f"Horizontal scrollbar at {width}: "
+                             f"window={self.gui.width()}, viewport={scroll.viewport().width()}, "
+                             f"body min={scroll.widget().minimumSizeHint().width()}, "
+                             f"widest={minimums[:6]}")
             self.assertLessEqual(self.gui.preview.width(),
                                  scroll.viewport().width())
             self.assertLessEqual(self.gui.preview.pixmap().width(),
