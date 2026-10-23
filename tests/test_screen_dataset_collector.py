@@ -140,7 +140,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.directory_label.toolTip(),str(self.gui.dataset.root))
         # Windows path display has non-breaking token separators converted to
         # optional visual break points, without changing the underlying path.
-        self.assertIn("\\u200b",self.gui.directory_label.text())
+        self.assertIn(chr(0x200B),self.gui.directory_label.text())
         # Long runtime status strings must wrap, not expand the entire form.
         self.gui.auto_progress.setText("解析完了：300枚 / 15グループ。"
             "Ctrl/Shiftで複数選択して最後の確認画面で各ラベルを確定します。"
