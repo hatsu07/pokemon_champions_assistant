@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QBoxLayout
 
 from champions_assist.app_config import CaptureConfiguration
 from champions_assist.screen_dataset import (
@@ -129,6 +129,48 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.app.processEvents()
         del gui
         gc.collect()
+
+    def test_resize_stacks_controls_and_keeps_preview_inside_viewport(self):
+        """Regression: narrowing the window must not clip horizontal controls."""
+        self.gui.show()
+        self.app.processEvents()
+        scroll=self.gui.centralWidget()
+        self.assertIsInstance(scroll,QScrollArea)
+        self.gui._render_preview(np.full((260,800,3),144,dtype=np.uint8))
+        for width in (1020,690,540,940):
+            self.gui.resize(width,780)
+            self.app.processEvents()
+            direction=(QBoxLayout.Direction.TopToBottom if width<790
+                       else QBoxLayout.Direction.LeftToRight)
+            self.assertTrue(all(row.direction()==direction
+                                for row in self.gui._responsive_rows))
+            self.assertEqual(scroll.horizontalScrollBar().maximum(),0,
+                             f"Horizontal scrollbar visible at window width {width}")
+            self.assertLessEqual(self.gui.preview.width(),
+                                 scroll.viewport().width())
+            self.assertLessEqual(self.gui.preview.pixmap().width(),
+                                 self.gui.preview.width())
+
+    def test_group_save_requires_one_final_confirmation_but_not_checkbox(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        frame=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
+        self.gui._auto_on_proposals([
+            AutoLabelGroup((frame,),"RESULT",.98,.90,(frame,),"AI候補")])
+        self.gui.auto_list.setCurrentRow(0)
+        self.assertTrue(self.gui.auto_review_confirm.isHidden())
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.No) as confirm:
+            self.gui._approve_auto_groups(use_suggestion=True)
+        confirm.assert_called_once()
+        self.assertTrue(frame.exists())
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            self.gui._approve_auto_groups(use_suggestion=True)
+        confirm.assert_called_once()
+        self.assertFalse(frame.exists())
+        self.assertEqual(self.gui.dataset.audit()["counts"]["RESULT"],1)
 
     def test_gui_has_5fps_default_and_requires_disk_consent(self):
         self.assertEqual(self.gui.fps_box.currentData(),5)
@@ -447,35 +489,36 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
         self.assertIn("2グループ・5枚",self.gui.auto_progress.text())
 
-    def test_bulk_blocks_unreviewed_groups_atomically(self):
+    def test_unchecked_groups_can_save_with_one_final_confirmation(self):
+        """Per-group checkboxes are unnecessary; No still saves nothing."""
         from champions_assist.screen_auto_label import AutoLabelGroup
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                 for _ in range(4)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
-        groups=[AutoLabelGroup(tuple(frames[i:i+2]),"MOVE_MENU",.96,.84,
-                               (frames[i],frames[i+1]),"AI候補")
-                for i in (0,2)]
-        self.gui._auto_on_proposals(groups)
-        self.gui.auto_list.setCurrentRow(0)
-        self.gui.auto_review_confirm.setChecked(True)
-        self.gui.auto_list.setCurrentRow(1)
-        self.gui.auto_list.item(0).setSelected(True)
-        self.gui.auto_list.item(1).setSelected(True)
-        with patch.object(QMessageBox,"question") as confirm:
-            self.gui._approve_selected_auto_groups()
-        confirm.assert_not_called()
-        self.assertEqual(self.gui.dataset.audit()["total"],0)
-        self.assertEqual(len(self.gui.staging.session_files(self.gui.session_id)),4)
-        self.assertIn("未確認",self.gui.auto_progress.text())
-        self.gui.auto_review_confirm.setChecked(True)
+        self.gui._auto_on_proposals([
+            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.84,
+                           (frames[0],frames[1]),"AI候補"),
+            AutoLabelGroup(tuple(frames[2:]),"RESULT",.96,.84,
+                           (frames[2],frames[3]),"AI候補")])
+        self.gui.auto_list.selectAll()
+        self.assertFalse(self.gui.auto_review_confirm.isChecked())
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.No) as confirm:
             self.gui._approve_selected_auto_groups()
         confirm.assert_called_once()
         self.assertEqual(self.gui.dataset.audit()["total"],0)
-        self.assertEqual(self.gui.auto_list.count(),2)
+        self.assertTrue(all(frame.exists() for frame in frames))
+        prompt=confirm.call_args.args[2]
+        self.assertIn("グループ1: MOVE_MENU 2枚",prompt)
+        self.assertIn("グループ2: RESULT 2枚",prompt)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            self.gui._approve_selected_auto_groups()
+        confirm.assert_called_once()
+        self.assertEqual(self.gui.dataset.audit()["total"],4)
+        self.assertTrue(all(not frame.exists() for frame in frames))
 
-    def test_select_all_reviewed_skips_unchecked_groups(self):
+    def test_select_all_groups_does_not_require_separate_checks(self):
         from champions_assist.screen_auto_label import AutoLabelGroup
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                 for _ in range(6)]
@@ -484,21 +527,17 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             AutoLabelGroup(tuple(frames[i:i+2]),"MOVE_MENU",.99,.90,
                            (frames[i],frames[i+1]),"AI候補")
             for i in (0,2,4)])
-        for index in (0,2):
-            self.gui.auto_list.setCurrentRow(index)
-            self.gui.auto_review_confirm.setChecked(True)
         self.gui._select_all_reviewed_groups()
         selected={item.data(Qt.ItemDataRole.UserRole)
                   for item in self.gui.auto_list.selectedItems()}
-        self.assertEqual(selected,{0,2})
-        self.assertIn("2グループ",self.gui.auto_progress.text())
+        self.assertEqual(selected,{0,1,2})
+        self.assertIn("3グループ",self.gui.auto_progress.text())
         with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.Yes):
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
             self.gui._approve_selected_auto_groups()
-        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],4)
-        self.assertEqual(self.gui.auto_list.count(),1)
-        self.assertEqual(set(self.gui.staging.session_files(self.gui.session_id)),
-                         {frames[2],frames[3]})
+        confirm.assert_called_once()
+        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],6)
+        self.assertEqual(self.gui.auto_list.count(),0)
 
     def test_bulk_blocks_unknown_label_without_group_or_frame_correction(self):
         from champions_assist.screen_auto_label import AutoLabelGroup
@@ -649,7 +688,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertTrue(staged[4].exists())
         self.assertTrue(all(not p.exists() for i,p in enumerate(staged) if i!=4))
 
-    def test_changes_reset_review_and_block_accidental_save(self):
+    def test_changes_keep_final_confirmation_and_cancel_does_not_save(self):
         from champions_assist.screen_auto_label import AutoLabelGroup
         files=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                for _ in range(3)]
@@ -662,9 +701,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.gui._exclude_selected_auto_frames()
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
         with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+                          return_value=QMessageBox.StandardButton.No) as confirm:
             self.gui._approve_auto_groups(use_suggestion=True)
-        confirm.assert_not_called()
+        confirm.assert_called_once()
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertTrue(all(p.exists() for p in files))
         self.gui.auto_frames_list.setCurrentRow(1)
