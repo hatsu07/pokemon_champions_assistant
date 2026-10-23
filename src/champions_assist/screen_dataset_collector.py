@@ -26,6 +26,7 @@ from .app_config import AppSettingsStore, CaptureConfiguration, default_app_root
 from .auto_match_capture import AutoCaptureUnavailable, capture_for_chatgpt
 from .capture_settings import CapturePreviewService
 from .screen_classifier import LABELS
+from .screen_auto_label import analyze_staged_session, load_suggestion_model
 from .screen_dataset import (
     LabelledScreenDataset, UnlabelledScreenStaging, StagingLimitReached,
     new_session_id, MIB,
@@ -106,6 +107,33 @@ class _ReadOnlyCollectorWorker(QObject):
             self.finished.emit()
 
 
+class _AutoLabelWorker(QObject):
+    """Read-only, offline image analysis in a worker thread."""
+    progress=Signal(object)
+    error=Signal(str)
+    proposals=Signal(object)
+    finished=Signal()
+
+    def __init__(self, paths, model_path=None):
+        super().__init__()
+        self.paths=tuple(paths)
+        self.model_path=model_path
+
+    @Slot()
+    def run(self):
+        try:
+            classifier=(load_suggestion_model(self.model_path)
+                        if self.model_path is not None else None)
+            groups=analyze_staged_session(
+                self.paths,classifier=classifier,
+                progress=lambda done,total:self.progress.emit({"done":done,"total":total}))
+            self.proposals.emit(groups)
+        except (OSError,ValueError,RuntimeError,ImportError) as exc:
+            self.error.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            self.finished.emit()
+
+
 class ScreenDatasetCollector(QMainWindow):
     """Capture labelled data in two separate opt-in steps."""
 
@@ -129,6 +157,11 @@ class ScreenDatasetCollector(QMainWindow):
         self._current_files=[]
         self._review_session=None
         self._page=0
+        self._auto_thread=None
+        self._auto_worker=None
+        self._auto_groups=[]
+        self._auto_model_path=None
+        self._auto_error=None
         self._build()
         self._update_source_label()
         self._refresh_review_sessions()
@@ -225,6 +258,50 @@ class ScreenDatasetCollector(QMainWindow):
         self.review_list.setMinimumHeight(130)
         self.review_list.currentItemChanged.connect(self._show_current_frame)
         layout.addWidget(self.review_list)
+
+        layout.addWidget(QLabel("自動ラベル候補：AIは提案のみ。承認まで正解データには入りません"))
+        auto_buttons=QHBoxLayout()
+        self.model_select_button=QPushButton("実験ONNXモデルを選択")
+        self.model_select_button.clicked.connect(self._select_auto_model)
+        auto_buttons.addWidget(self.model_select_button)
+        self.auto_analyze_button=QPushButton("この対戦を解析・グループ化")
+        self.auto_analyze_button.clicked.connect(self._start_auto_analysis)
+        auto_buttons.addWidget(self.auto_analyze_button)
+        layout.addLayout(auto_buttons)
+        self.auto_model_label=QLabel("AI未設定：画像の類似グループ化のみ実行")
+        self.auto_model_label.setWordWrap(True)
+        layout.addWidget(self.auto_model_label)
+        self.auto_progress=QLabel("未解析")
+        layout.addWidget(self.auto_progress)
+        self.auto_list=QListWidget()
+        self.auto_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.auto_list.setMinimumHeight(160)
+        self.auto_list.currentItemChanged.connect(self._on_group_selected)
+        layout.addWidget(self.auto_list)
+        reps=QHBoxLayout()
+        self.auto_representatives=[]
+        for title in ("先頭","中央","末尾"):
+            column=QVBoxLayout()
+            column.addWidget(QLabel(title))
+            thumbnail=QLabel("未表示")
+            thumbnail.setMinimumSize(150,100)
+            thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            thumbnail.setStyleSheet("QLabel { background:#181b22;color:white; }")
+            self.auto_representatives.append(thumbnail)
+            column.addWidget(thumbnail)
+            reps.addLayout(column)
+        layout.addLayout(reps)
+        approve_buttons=QHBoxLayout()
+        self.auto_accept_button=QPushButton("選択グループをAI候補で承認・PNG保存")
+        self.auto_accept_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=True))
+        approve_buttons.addWidget(self.auto_accept_button)
+        self.auto_correct_button=QPushButton("選択ラベルに訂正してグループ保存")
+        self.auto_correct_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=False))
+        approve_buttons.addWidget(self.auto_correct_button)
+        layout.addLayout(approve_buttons)
+        self.gpu_retrain_button=QPushButton("承認済みデータでGPU再学習：コマンドを表示・コピー")
+        self.gpu_retrain_button.clicked.connect(self._show_retrain_instructions)
+        layout.addWidget(self.gpu_retrain_button)
         page=QHBoxLayout()
         self.previous_button=QPushButton("前の100枚")
         self.previous_button.clicked.connect(self._previous_page)
@@ -266,10 +343,14 @@ class ScreenDatasetCollector(QMainWindow):
         self._set_capture_busy(False)
 
     def _set_capture_busy(self, busy):
+        busy=busy or self._auto_thread is not None
         for item in (self.start_button,self.single_button,self.reload_button,
                      self.rebind_button,self.session_button,self.folder_button,
                      self.quota_box,self.fps_box,self.refresh_button,
-                     self.save_button,self.discard_button,self.relabel_button):
+                     self.save_button,self.discard_button,self.relabel_button,
+                     self.model_select_button,self.auto_analyze_button,
+                     self.auto_accept_button,self.auto_correct_button,
+                     self.gpu_retrain_button):
             item.setEnabled(not busy)
         self.stop_button.setEnabled(busy)
 
@@ -316,7 +397,7 @@ class ScreenDatasetCollector(QMainWindow):
         self.status.setText("対象ウィンドウ変更済み。撮影して確認してください")
 
     def _choose_folder(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._auto_thread is not None:return
         value=QFileDialog.getExistingDirectory(
             self,"保存先を選択",str(self.dataset.root.parent))
         if value:
@@ -328,14 +409,14 @@ class ScreenDatasetCollector(QMainWindow):
             self._update_counts()
 
     def _new_session(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._auto_thread is not None:return
         self.session_id=new_session_id()
         self.session_label.setText("記録対象の対戦セッションID: "+self.session_id)
         self.capture_count.setText("今回の収集0枚")
         self.status.setText("新しい対戦セッション作成済み。過去画像は残っています")
 
     def _start(self, *, one_shot: bool):
-        if self._thread is not None:return
+        if self._thread is not None or self._auto_thread is not None:return
         if not self.consent.isChecked():
             self.status.setText("未ラベル画像のディスク自動保存への同意が必要です")
             return
@@ -426,11 +507,15 @@ class ScreenDatasetCollector(QMainWindow):
         self._review_session_changed(0)
 
     def _review_session_changed(self,_index):
+        if self._auto_thread is not None:
+            return
+        self._clear_auto_groups()
         self._review_session=self.review_session_box.currentData()
         self._page=0
         self._reload_review_files()
 
     def _reload_review_files(self):
+        self._clear_auto_groups()
         self._current_files=(self.staging.session_files(self._review_session)
                              if self._review_session else [])
         self._show_review_page()
@@ -479,7 +564,7 @@ class ScreenDatasetCollector(QMainWindow):
         return [Path(i.data(Qt.ItemDataRole.UserRole)) for i in selected]
 
     def _save_selected(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._auto_thread is not None:return
         label=self.label_box.currentData()
         frames=self._selected_staged_paths()
         if label not in LABELS or not frames:
@@ -505,7 +590,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._update_counts()
 
     def _discard_selected(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._auto_thread is not None:return
         frames=self._selected_staged_paths()
         if not frames:return
         accepted=QMessageBox.question(
@@ -525,7 +610,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._reload_review_files()
 
     def _relabel_saved(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._auto_thread is not None:return
         path,_=QFileDialog.getOpenFileName(
             self,"保存済み画像の正解ラベルを訂正",str(self.dataset.root),"画像 (*.png)")
         if not path:return
@@ -548,7 +633,171 @@ class ScreenDatasetCollector(QMainWindow):
             f"保存済み合計 {audit['total']} 枚 / 対戦セッション {audit['all_sessions']} 件\n"
             +"  |  ".join(items))
 
+    def _clear_auto_groups(self):
+        self._auto_groups=[]
+        if hasattr(self,"auto_list"):
+            self.auto_list.clear()
+            for thumb in self.auto_representatives:
+                thumb.clear()
+                thumb.setText("未表示")
+
+    def _select_auto_model(self):
+        if self._thread is not None or self._auto_thread is not None:return
+        path,_=QFileDialog.getOpenFileName(
+            self,"実験用ONNXモデルを選択（同じ場所にJSON必須）",
+            str(self.dataset.root.parent),
+            "ONNX model (champions_screen_classifier.onnx)")
+        if path:
+            self._auto_model_path=Path(path)
+            self.auto_model_label.setText(
+                "開発用モデル: "+str(self._auto_model_path)+
+                " / validated=falseは候補生成にのみ使用")
+
+    def _start_auto_analysis(self):
+        if self._thread is not None or self._auto_thread is not None:return
+        if self._review_session is None:
+            self.auto_progress.setText("解析する対戦を選択してください")
+            return
+        paths=self.staging.session_files(self._review_session)
+        if not paths:
+            self.auto_progress.setText("未ラベルJPEGがありません")
+            return
+        self._clear_auto_groups()
+        self._auto_error=None
+        thread=QThread(self)
+        worker=_AutoLabelWorker(paths,self._auto_model_path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._auto_on_progress)
+        worker.error.connect(self._auto_on_error)
+        worker.proposals.connect(self._auto_on_proposals)
+        worker.finished.connect(thread.quit,Qt.ConnectionType.DirectConnection)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._auto_on_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._auto_thread=thread
+        self._auto_worker=worker
+        self._set_capture_busy(True)
+        self.review_session_box.setEnabled(False)
+        self.auto_progress.setText(f"解析開始: {len(paths)}枚（ローカル処理・画像送信なし）")
+        thread.start()
+
+    @Slot(object)
+    def _auto_on_progress(self,info):
+        self.auto_progress.setText(
+            f"解析中 {info['done']} / {info['total']}枚。未確認ラベルは保存しません")
+
+    @Slot(str)
+    def _auto_on_error(self,reason):
+        self._auto_error=reason
+        self.auto_progress.setText("自動解析失敗: "+reason)
+
+    @Slot(object)
+    def _auto_on_proposals(self,groups):
+        self._auto_groups=list(groups)
+        self.auto_list.clear()
+        for index,group in enumerate(self._auto_groups):
+            candidate=group.candidate or "要確認（AI推定なし）"
+            row=QListWidgetItem(
+                f"{index+1:03d} | {candidate} | {group.count}枚 | "
+                f"信頼度下限 {group.confidence:.1%} | {group.review_reason}")
+            row.setData(Qt.ItemDataRole.UserRole,index)
+            self.auto_list.addItem(row)
+        self.auto_progress.setText(
+            f"解析完了：{sum(g.count for g in groups)}枚 / {len(groups)}グループ。"
+            "代表画像を確認してから一括承認してください。")
+        if groups:
+            self.auto_list.setCurrentRow(0)
+
+    @Slot()
+    def _auto_on_finished(self):
+        self._auto_thread=None
+        self._auto_worker=None
+        self._set_capture_busy(False)
+        self.review_session_box.setEnabled(True)
+
+    @Slot(object,object)
+    def _on_group_selected(self,current,_previous):
+        for thumb in self.auto_representatives:
+            thumb.clear()
+            thumb.setText("未表示")
+        if current is None:return
+        index=current.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index,int) or index>=len(self._auto_groups):return
+        group=self._auto_groups[index]
+        for thumb,path in zip(self.auto_representatives,group.representative):
+            try:
+                frame=cv2.imdecode(np.fromfile(path,dtype=np.uint8),cv2.IMREAD_COLOR)
+                if frame is None:continue
+                rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+                height,width=rgb.shape[:2]
+                qimg=QImage(rgb.data,width,height,rgb.strides[0],
+                            QImage.Format.Format_RGB888).copy()
+                thumb.setPixmap(QPixmap.fromImage(qimg).scaled(
+                    170,110,Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation))
+            except (OSError,ValueError):
+                thumb.setText("画像読込不可")
+
+    def _approve_auto_groups(self, *, use_suggestion: bool):
+        if self._thread is not None or self._auto_thread is not None:return
+        items=self.auto_list.selectedItems()
+        if not items:
+            self.auto_progress.setText("確認するグループを選択してください")
+            return
+        indices=sorted({item.data(Qt.ItemDataRole.UserRole) for item in items})
+        label=None if use_suggestion else self.label_box.currentData()
+        if not use_suggestion and label not in LABELS:
+            self.auto_progress.setText("訂正先ラベルを下の正解ラベル欄で選択してください")
+            return
+        requested=[]
+        for index in indices:
+            group=self._auto_groups[index]
+            target=group.candidate if use_suggestion else label
+            if target not in LABELS:
+                self.auto_progress.setText("候補不明のグループは正解ラベルを選択して訂正してください")
+                return
+            requested.extend((path,target) for path in group.files)
+        if len({p for p,_ in requested})!=len(requested):
+            self.auto_progress.setText("グループに重複画像があります。再解析してください")
+            return
+        accepted=QMessageBox.question(
+            self,"AI候補を正解ラベルとして確定",
+            f"{len(indices)}グループ・{len(requested)}枚の先頭/中央/末尾を確認しましたか？\n"
+            "AI予測は正解とは限りません。承認すると学習用PNGに保存します。",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
+        if accepted!=QMessageBox.StandardButton.Yes:return
+        completed=0
+        for path,target in requested:
+            try:
+                self.staging.label(path,target,self.dataset)
+                completed+=1
+            except (OSError,ValueError) as exc:
+                self.auto_progress.setText(
+                    f"{completed}枚保存。{type(exc).__name__}により停止。残りは未ラベルで保持")
+                break
+        else:
+            self.auto_progress.setText(f"人間が承認した {completed}枚をPNGへ保存しました")
+        self._reload_review_files()
+        self._update_counts()
+
+    def _show_retrain_instructions(self):
+        if self._thread is not None or self._auto_thread is not None:return
+        command="bash ./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained"
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(command)
+        QMessageBox.information(
+            self,"GPU再学習（確認済みPNGのみ）",
+            "WSLのリポジトリで、コピーした次のコマンドを明示的に実行してください。\n"
+            +command+"\n"
+            "ラベルを承認したPNGのみ学習されます。生成モデルを自動採用せず、"
+            "検証指標と独立した対戦で比較してから次回の候補生成に使ってください。")
+
     def closeEvent(self,event):
+        if self._auto_thread is not None and self._auto_thread.isRunning():
+            event.ignore()
+            self.auto_progress.setText("解析中です。解析完了後に閉じてください")
+            return
         self._stop()
         if self._thread is not None and self._thread.isRunning():
             if not self._thread.wait(5000):
