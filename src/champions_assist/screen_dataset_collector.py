@@ -1052,6 +1052,10 @@ class ScreenDatasetCollector(QMainWindow):
 
     def _approve_auto_groups(self, *, use_suggestion: bool):
         """Preserve the existing current-group buttons for compatibility."""
+        # Keep the PR #30 multi-selection action compatible with this dedicated batch UI.
+        if use_suggestion and len(self.auto_list.selectedItems()) > 1:
+            self._approve_selected_auto_groups()
+            return
         index,group=self._current_auto_group()
         if group is None:
             self.auto_progress.setText("承認するグループを選択してください")
@@ -1076,6 +1080,10 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_progress.setText(
             f"確認済み{len(self.auto_list.selectedItems())}グループを選択しました。"
             "一括保存ボタンで保存前にラベルを検査します。")
+
+    def _select_all_reviewed_auto_groups(self):
+        """Compatibility with PR #30 select-all-reviewed control/tests."""
+        self._select_all_reviewed_groups()
 
     def _approve_selected_auto_groups(self):
         """Batch selected *individually reviewed* groups, preserving each label."""

@@ -331,6 +331,64 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui._auto_groups[1].candidate,"RESULT")
         self.assertTrue(all(p.exists() for p in frames[1:]))
 
+    def test_bulk_reviewed_groups_can_be_selected_and_saved_with_individual_labels(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+                for _ in range(5)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
+        self.gui._auto_on_proposals([
+            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.97,.91,
+                           (frames[0],frames[1]),"AI候補"),
+            AutoLabelGroup(tuple(frames[2:]),"TEAM_SELECTION",.97,.91,
+                           (frames[2],frames[3],frames[4]),"AI候補")])
+        self.assertEqual(
+            self.gui.auto_list.selectionMode(),
+            self.gui.auto_list.SelectionMode.ExtendedSelection)
+        self.gui.auto_list.setCurrentRow(0)
+        self.gui.auto_review_confirm.setChecked(True)
+        self.gui.auto_list.setCurrentRow(1)
+        self.gui.auto_frames_list.setCurrentRow(0)
+        self.gui.auto_label_box.setCurrentIndex(
+            self.gui.auto_label_box.findData("RESULT"))
+        self.gui._correct_selected_auto_frames()
+        self.gui.auto_review_confirm.setChecked(True)
+        self.gui._select_all_reviewed_auto_groups()
+        self.assertEqual(len(self.gui._selected_auto_groups()),2)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            self.gui._approve_auto_groups(use_suggestion=True)
+        confirm.assert_called_once()
+        counts=self.gui.dataset.audit()["counts"]
+        self.assertEqual(counts["MOVE_MENU"],2)
+        self.assertEqual(counts["TEAM_SELECTION"],2)
+        self.assertEqual(counts["RESULT"],1)
+        self.assertEqual(self.gui.auto_list.count(),0)
+
+    def test_bulk_unreviewed_or_unknown_group_blocks_entire_batch(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+                for _ in range(4)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
+        self.gui._auto_on_proposals([
+            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.9,
+                           (frames[0],frames[1]),"AI候補"),
+            AutoLabelGroup(tuple(frames[2:]),None,.2,.01,
+                           (frames[2],frames[3]),"要確認")])
+        self.gui.auto_list.setCurrentRow(0)
+        self.gui.auto_review_confirm.setChecked(True)
+        self.gui.auto_list.setCurrentRow(1)
+        self.gui.auto_list.selectAll()
+        with patch.object(QMessageBox,"question") as confirm:
+            self.gui._approve_auto_groups(use_suggestion=True)
+        confirm.assert_not_called()
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.gui.auto_review_confirm.setChecked(True)
+        with patch.object(QMessageBox,"question") as confirm:
+            self.gui._approve_auto_groups(use_suggestion=True)
+        confirm.assert_not_called()
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.assertTrue(all(path.exists() for path in frames))
+
     def test_bulk_reviewed_groups_save_in_one_confirmation_with_distinct_corrected_labels(self):
         from champions_assist.screen_auto_label import AutoLabelGroup
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
