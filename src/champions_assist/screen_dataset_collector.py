@@ -165,6 +165,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_frame_overrides={}
         self._auto_frame_exclusions=set()
         self._auto_reviewed_groups=set()
+        self._auto_group_label_overrides={}
         self._auto_model_path=None
         self._auto_error=None
         self._gpu_process=None
@@ -281,10 +282,15 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_progress=QLabel("未解析")
         layout.addWidget(self.auto_progress)
         self.auto_list=QListWidget()
-        self.auto_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.auto_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.auto_list.setToolTip(
+            "Ctrl/Shiftで複数グループを選択し、確認済みグループをまとめてPNG保存できます。")
         self.auto_list.setMinimumHeight(160)
         self.auto_list.currentItemChanged.connect(self._on_group_selected)
         layout.addWidget(self.auto_list)
+        layout.addWidget(QLabel(
+            "Ctrl/Shiftで複数グループを選択。各グループを表示して全画像確認済みにし、"
+            "選択したグループを一括保存できます。"))
         reps=QHBoxLayout()
         self.auto_representatives=[]
         for title in ("先頭","中央","末尾"):
@@ -330,6 +336,9 @@ class ScreenDatasetCollector(QMainWindow):
             "選択した画像だけの訂正と、グループ全体のラベル訂正に共通です。"
             "従来の手動保存用ラベルとは独立しています。")
         auto_label_controls.addWidget(self.auto_label_box)
+        self.auto_group_draft_button=QPushButton("グループラベルを訂正（保存は後で）")
+        self.auto_group_draft_button.clicked.connect(self._stage_auto_group_label)
+        auto_label_controls.addWidget(self.auto_group_draft_button)
         auto_label_controls.addStretch(1)
         layout.addLayout(auto_label_controls)
         correction_controls=QHBoxLayout()
@@ -354,6 +363,13 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_correct_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=False))
         approve_buttons.addWidget(self.auto_correct_button)
         layout.addLayout(approve_buttons)
+        self.auto_bulk_button=QPushButton("選択した確認済みグループをまとめて承認・PNG保存")
+        self.auto_bulk_button.setObjectName("autoBulkApproveReviewedGroups")
+        self.auto_bulk_button.setToolTip(
+            "Ctrl/Shiftで選択したグループを1度の確認で保存。"
+            "未確認・ラベル未確定のグループがあれば保存しません。")
+        self.auto_bulk_button.clicked.connect(self._approve_selected_auto_groups)
+        layout.addWidget(self.auto_bulk_button)
         gpu_controls=QHBoxLayout()
         self.gpu_retrain_button=QPushButton("承認済みデータをGPU再学習（WSLで明示実行）")
         self.gpu_retrain_button.clicked.connect(self._start_gpu_retrain)
@@ -419,7 +435,8 @@ class ScreenDatasetCollector(QMainWindow):
                      self.gpu_retrain_button,self.gpu_command_button,
                      self.auto_frame_fix_button,self.auto_frame_exclude_button,
                      self.auto_frame_reset_button,self.auto_review_confirm,
-                     self.auto_label_box):
+                     self.auto_label_box,self.auto_group_draft_button,
+                     self.auto_bulk_button):
             item.setEnabled(not busy)
         self.stop_button.setEnabled(self._thread is not None)
 
@@ -715,6 +732,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_frame_overrides.clear()
         self._auto_frame_exclusions.clear()
         self._auto_reviewed_groups.clear()
+        self._auto_group_label_overrides.clear()
         if hasattr(self,"auto_list"):
             self.auto_list.clear()
             self.auto_frames_list.clear()
@@ -775,14 +793,24 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_progress.setText("自動解析失敗: "+reason)
 
     @Slot(object)
+    def _auto_group_row_text(self, index: int) -> str:
+        group=self._auto_groups[index]
+        candidate=self._auto_group_label_overrides.get(index,group.candidate)
+        status="✓確認済" if index in self._auto_reviewed_groups else "要確認"
+        changed="（訂正済）" if index in self._auto_group_label_overrides else ""
+        return (f"{index+1:03d} | {status} | {candidate or '候補不明'}{changed} | "
+                f"{group.count}枚 | 信頼度下限 {group.confidence:.1%}")
+
+    def _update_auto_group_row(self,index: int):
+        item=self.auto_list.item(index)
+        if item is not None:
+            item.setText(self._auto_group_row_text(index))
+
     def _render_auto_group_list(self, *, selection: int=0):
         """Repaint from cached suggestions without invoking the model."""
         self.auto_list.clear()
-        for index,group in enumerate(self._auto_groups):
-            candidate=group.candidate or "要確認（AI推定なし）"
-            row=QListWidgetItem(
-                f"{index+1:03d} | {candidate} | {group.count}枚 | "
-                f"信頼度下限 {group.confidence:.1%} | {group.review_reason}")
+        for index,_group in enumerate(self._auto_groups):
+            row=QListWidgetItem(self._auto_group_row_text(index))
             row.setData(Qt.ItemDataRole.UserRole,index)
             self.auto_list.addItem(row)
         if self._auto_groups:
@@ -802,6 +830,7 @@ class ScreenDatasetCollector(QMainWindow):
         old_reviewed=set(self._auto_reviewed_groups)
         retained=[]
         reviewed=set()
+        remapped={}
         selected=None
         for original_index,group in enumerate(old_groups):
             files=tuple(path for path in group.files if path in staged_files)
@@ -824,6 +853,7 @@ class ScreenDatasetCollector(QMainWindow):
                             if details else group.margin))
             new_index=len(retained)
             retained.append(remaining_group)
+            remapped[original_index]=new_index
             if (original_index in old_reviewed and
                     files==group.files):
                 reviewed.add(new_index)
@@ -836,6 +866,10 @@ class ScreenDatasetCollector(QMainWindow):
             if path in live_group_paths}
         self._auto_frame_exclusions.intersection_update(live_group_paths)
         self._auto_reviewed_groups=reviewed
+        self._auto_group_label_overrides={
+            remapped[old_index]:label
+            for old_index,label in self._auto_group_label_overrides.items()
+            if old_index in remapped}
         # If the selected group was completed, select the next group in place
         # (or the previous one if the completed group was last).
         self._render_auto_group_list(
@@ -846,6 +880,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_frame_overrides.clear()
         self._auto_frame_exclusions.clear()
         self._auto_reviewed_groups.clear()
+        self._auto_group_label_overrides.clear()
         self._auto_groups=list(groups)
         self._render_auto_group_list()
         self.auto_progress.setText(
@@ -954,6 +989,7 @@ class ScreenDatasetCollector(QMainWindow):
         if group is None:return
         self._auto_reviewed_groups.discard(index)
         self.auto_review_confirm.setChecked(False)
+        self._update_auto_group_row(index)
         self._populate_auto_frames(group)
 
     def _set_auto_group_reviewed(self,checked):
@@ -961,6 +997,20 @@ class ScreenDatasetCollector(QMainWindow):
         if group is None:return
         if checked:self._auto_reviewed_groups.add(index)
         else:self._auto_reviewed_groups.discard(index)
+        self._update_auto_group_row(index)
+
+    def _stage_auto_group_label(self):
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
+        index,group=self._current_auto_group()
+        label=self.auto_label_box.currentData()
+        if group is None or label not in LABELS:
+            self.auto_progress.setText("グループと訂正先ラベルを選んでください")
+            return
+        self._auto_group_label_overrides[index]=label
+        self._invalidate_auto_review()
+        self.auto_progress.setText(
+            f"グループ{index+1}を{label}に仮訂正しました。"
+            "全画像を再確認してチェックすると、一括保存の対象にできます。")
 
     def _correct_selected_auto_frames(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
@@ -998,50 +1048,97 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_progress.setText(f"{len(paths)}枚をAI候補・未除外状態に戻しました")
 
     def _approve_auto_groups(self, *, use_suggestion: bool):
-        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
+        """Preserve the existing current-group buttons for compatibility."""
         index,group=self._current_auto_group()
         if group is None:
             self.auto_progress.setText("承認するグループを選択してください")
             return
-        if index not in self._auto_reviewed_groups:
-            self.auto_progress.setText("先頭/中央/末尾だけでなく全画像の一覧を確認して、確認済みにチェックしてください")
+        forced={}
+        if not use_suggestion:
+            label=self.auto_label_box.currentData()
+            if label not in LABELS:
+                self.auto_progress.setText("サムネイル直下の訂正先ラベルを選択してください")
+                return
+            forced[index]=label
+        self._commit_auto_groups([index],forced=forced)
+
+    def _approve_selected_auto_groups(self):
+        """Batch selected *individually reviewed* groups, preserving each label."""
+        indices=sorted({
+            item.data(Qt.ItemDataRole.UserRole) for item in self.auto_list.selectedItems()
+            if isinstance(item.data(Qt.ItemDataRole.UserRole),int)})
+        self._commit_auto_groups(indices)
+
+    def _commit_auto_groups(self,indices: list[int],*,forced: dict[int,str]|None=None):
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:
             return
-        label=None if use_suggestion else self.auto_label_box.currentData()
-        if not use_suggestion and label not in LABELS:
-            self.auto_progress.setText("訂正先ラベルを下の正解ラベル欄で選択してください")
+        if not indices:
+            self.auto_progress.setText("保存するグループをCtrl/Shiftで選択してください")
             return
-        base=group.candidate if use_suggestion else label
-        requested=[(path,self._auto_frame_overrides.get(path,base))
-                   for path in group.files if path not in self._auto_frame_exclusions]
-        if not requested:
-            self.auto_progress.setText("すべて除外されています。保存する画像がありません")
+        if len(set(indices))!=len(indices) or any(
+                index<0 or index>=len(self._auto_groups) for index in indices):
+            self.auto_progress.setText("グループ一覧が更新されました。選択し直してください")
             return
-        if any(target not in LABELS for _,target in requested):
-            self.auto_progress.setText("ラベル未判定の画像が残っています。個別訂正または除外してください")
-            return
-        corrected=sum(path in self._auto_frame_overrides for path,_ in requested)
-        excluded=len(group.files)-len(requested)
-        accepted=QMessageBox.question(
-            self,"画像ごとの正解ラベルを確認",
-            f"{len(group.files)}枚中、保存{len(requested)}枚（部分訂正{corrected}・除外{excluded}）。\n"
-            "全画像を確認し、画像別の正しいラベルで学習用PNGに保存しますか？\n"
-            "AI候補は正解を保証しません。除外画像のJPEGは保持されます。",
-            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
-        if accepted!=QMessageBox.StandardButton.Yes:return
-        completed=0
-        for path,target in requested:
-            try:
-                self.staging.label(path,target,self.dataset)
-                completed+=1
-            except (OSError,ValueError) as exc:
-                self.auto_progress.setText(
-                    f"{completed}枚成功後に{type(exc).__name__}で停止。未処理JPEGは保持")
-                break
-        else:
+        unchecked=[index+1 for index in indices
+                   if index not in self._auto_reviewed_groups]
+        if unchecked:
             self.auto_progress.setText(
-                f"人間が確認した{completed}枚を正解PNGとして保存しました。除外{excluded}枚は未ラベルのまま")
+                "未確認グループが含まれます："+", ".join(map(str,unchecked))+
+                "。各グループの全画像を確認してチェックしてください")
+            return
+        forced=forced or {}
+        requested=[]
+        corrected=0
+        excluded=0
+        for index in indices:
+            group=self._auto_groups[index]
+            base=forced.get(
+                index,self._auto_group_label_overrides.get(index,group.candidate))
+            group_paths=[
+                (path,self._auto_frame_overrides.get(path,base))
+                for path in group.files if path not in self._auto_frame_exclusions]
+            if not group_paths:
+                self.auto_progress.setText(
+                    f"グループ{index+1}は全画像が除外されています。保存できません")
+                return
+            if any(label not in LABELS for _,label in group_paths):
+                self.auto_progress.setText(
+                    f"グループ{index+1}にラベル未確定画像があります。"
+                    "グループまたは画像単位で訂正してください")
+                return
+            requested.extend(group_paths)
+            corrected+=sum(path in self._auto_frame_overrides for path,_ in group_paths)
+            excluded+=group.count-len(group_paths)
+        if len({path for path,_ in requested})!=len(requested):
+            self.auto_progress.setText("選択グループ間に画像の重複があります。再解析してください")
+            return
+        accepted=QMessageBox.question(
+            self,"確認済みグループを一括PNG保存",
+            f"{len(indices)}グループ・{len(requested)}枚をPNG保存します。"
+            f" 個別訂正{corrected}枚、除外{excluded}枚。\n"
+            "各グループの確定ラベルと個別訂正を使います。"
+            "選択グループの全画像を確認しましたか？\n"
+            "AIの予測だけでは正解とみなせません。"
+            "除外したJPEGは保存せず、そのまま保持します。",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
+        if accepted!=QMessageBox.StandardButton.Yes:
+            return
+        completed=0
+        try:
+            for path,label in requested:
+                self.staging.label(path,label,self.dataset)
+                completed+=1
+        except (OSError,ValueError) as exc:
+            message=(f"{len(indices)}グループ中{completed}/{len(requested)}枚保存後に"
+                     f"{type(exc).__name__}で停止。未保存JPEGは保持しました")
+        else:
+            message=(f"{len(indices)}グループ・{completed}枚をPNG保存しました。"
+                     f"除外{excluded}枚のJPEGは保持しました")
+        # Exactly one refresh after a successful/partially successful batch;
+        # per-group corrections for unaffected frames remain cached.
         self._reload_review_files()
         self._update_counts()
+        self.auto_progress.setText(message)
 
     def _show_retrain_instructions(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
