@@ -1,0 +1,7 @@
+# Dedicated NVIDIA CUDA 12.1 wheels for the GPU-only trainer.
+# The CPU trainer and normal dev image use their existing requirements.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+onnx==1.17.0
+onnxruntime==1.20.1

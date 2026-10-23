@@ -127,6 +127,19 @@ class ScreenClassifierTests(unittest.TestCase):
         self.assertTrue({r[2] for r in validation}.isdisjoint({r[2] for r in training}))
         self.assertEqual({r[1] for r in validation},set(range(len(LABELS))))
 
+    def test_cuda_device_choice_fails_closed(self):
+        from scripts.train_screen_classifier import _resolve_device
+        from types import SimpleNamespace
+        def torch_stub(available):
+            return SimpleNamespace(device=lambda kind:SimpleNamespace(type=kind),
+                                   cuda=SimpleNamespace(is_available=lambda:available))
+        self.assertEqual(_resolve_device(SimpleNamespace(device="cpu"),torch_stub(True)).type,"cpu")
+        self.assertEqual(_resolve_device(SimpleNamespace(device="auto"),torch_stub(False)).type,"cpu")
+        self.assertEqual(_resolve_device(SimpleNamespace(device="auto"),torch_stub(True)).type,"cuda")
+        self.assertEqual(_resolve_device(SimpleNamespace(device="cuda"),torch_stub(True)).type,"cuda")
+        with self.assertRaisesRegex(ValueError,"CUDA requested"):
+            _resolve_device(SimpleNamespace(device="cuda"),torch_stub(False))
+
     def test_dataset_preflight_reports_session_safe_labelled_data(self):
         from scripts.train_screen_classifier import validate_dataset
         root=self.root/"学習 データ"

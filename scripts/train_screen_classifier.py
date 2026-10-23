@@ -18,6 +18,8 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import random
+import sys
+from time import monotonic
 from typing import Any, Sequence
 
 from PIL import Image, UnidentifiedImageError
@@ -51,9 +53,13 @@ def _label_summary(records: Sequence[Sample]) -> dict[str,dict[str,int]]:
             for index,name in enumerate(LABELS)}
 
 
-def inspect_dataset(root: Path) -> DatasetInspection:
+def inspect_dataset(root: Path, *, progress: bool=False) -> DatasetInspection:
     """Read every labelled candidate and return a JSON-safe local audit."""
     root=Path(root)
+    started=monotonic()
+    scanned=0
+    if progress:
+        print("[preflight] checking labelled images",file=sys.stderr,flush=True)
     records: list[Sample]=[]
     issues: list[str]=[]
     for index,name in enumerate(LABELS):
@@ -65,6 +71,10 @@ def inspect_dataset(root: Path) -> DatasetInspection:
         for file in sorted(folder.rglob("*")):
             if not file.is_file() or file.suffix.lower() not in FORMATS:
                 continue
+            scanned+=1
+            if progress and (scanned==1 or scanned%100==0):
+                print(f"[preflight] scanned={scanned} class={name} elapsed={monotonic()-started:.1f}s",
+                      file=sys.stderr,flush=True)
             if file.is_symlink():
                 issues.append(f"Refusing symlinked training image: {file}")
                 continue
@@ -93,6 +103,9 @@ def inspect_dataset(root: Path) -> DatasetInspection:
         "unlabelled_directory_ignored":(root/"_UNLABELLED").is_dir(),
         "issues":issues,
     }
+    if progress:
+        print(f"[preflight] checked={scanned} readable={len(records)} elapsed={monotonic()-started:.1f}s",
+              file=sys.stderr,flush=True)
     return DatasetInspection(records,report)
 
 
@@ -175,9 +188,9 @@ def split_by_session(samples: Sequence[Sample], *, seed: int=42,
 
 
 def validate_dataset(root: Path, *, seed: int=42,
-                     fraction: float=0.2) -> dict[str,Any]:
+                     fraction: float=0.2, progress: bool=False) -> dict[str,Any]:
     """Report whether a local dataset is safe to train without touching Torch."""
-    inspection=inspect_dataset(root)
+    inspection=inspect_dataset(root,progress=progress)
     report=dict(inspection.report)
     if report["issues"]:
         report["ready"]=False
@@ -200,8 +213,10 @@ def validate_dataset(root: Path, *, seed: int=42,
 
 def _resolve_device(args,torch):
     if args.device=="cuda" and not torch.cuda.is_available():
-        raise ValueError("CUDA was requested but is unavailable in this CPU trainer; use --device cpu or auto")
-    return torch.device("cuda" if args.device=="cuda" else "cpu")
+        raise ValueError("CUDA requested but unavailable inside Docker. Run --gpu --check-gpu.")
+    if args.device=="cpu":
+        return torch.device("cpu")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def train_model(args):
@@ -210,14 +225,20 @@ def train_model(args):
     from torch.utils.data import DataLoader,Dataset
     from torchvision import models,transforms
 
-    preflight=validate_dataset(args.data_dir,seed=args.seed)
-    if not preflight["ready"]:
-        raise DatasetValidationError(preflight)
-    records=collect(args.data_dir)
-    training,testing,held_out=split_by_session(records,seed=args.seed)
+    device=_resolve_device(args,torch)
+    print(f"[device] selected={device} torch={torch.__version__} cuda_runtime={torch.version.cuda}",flush=True)
+    inspection=inspect_dataset(args.data_dir,progress=True)
+    if inspection.report["issues"]:
+        raise DatasetValidationError(inspection.report)
+    try:
+        training,testing,held_out=split_by_session(inspection.records,seed=args.seed)
+    except ValueError as exc:
+        raise DatasetValidationError({**inspection.report,"issues":[str(exc)]}) from exc
+    print(f"[split] train={len(training)} validation={len(testing)} held_out_sessions={len(held_out)}",flush=True)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
-    device=_resolve_device(args,torch)
+    if device.type=="cuda":
+        torch.cuda.manual_seed_all(args.seed)
     if args.pretrained:
         # Explicit opt-in; this is the only path that may download third-party weights.
         weights=models.MobileNet_V3_Small_Weights.IMAGENET1K_V1
@@ -258,14 +279,18 @@ def train_model(args):
     for epoch in range(args.epochs):
         model.train()
         loss_sum=0.0
-        for image,label in training_loader:
+        started=monotonic()
+        for step,(image,label) in enumerate(training_loader,start=1):
             image,label=image.to(device),label.to(device)
             optimizer.zero_grad()
             loss=objective(model(image),label)
             loss.backward()
             optimizer.step()
             loss_sum+=float(loss.item())*len(label)
-        print(f"epoch={epoch+1}/{args.epochs} train_loss={loss_sum/len(training):.4f}")
+            if step==1 or step%5==0 or step==len(training_loader):
+                print(f"[train] epoch={epoch+1}/{args.epochs} batch={step}/{len(training_loader)} "
+                      f"elapsed={monotonic()-started:.1f}s",flush=True)
+        print(f"epoch={epoch+1}/{args.epochs} train_loss={loss_sum/len(training):.4f}",flush=True)
 
     model.eval()
     correct=Counter()
@@ -273,8 +298,12 @@ def train_model(args):
     predicted=Counter()
     fp=Counter()
     with torch.no_grad():
-        for image,label in test_loader:
+        started=monotonic()
+        for step,(image,label) in enumerate(test_loader,start=1):
             guesses=model(image.to(device)).argmax(1).cpu().tolist()
+            if step==1 or step%5==0 or step==len(test_loader):
+                print(f"[validation] batch={step}/{len(test_loader)} elapsed={monotonic()-started:.1f}s",
+                      flush=True)
             for expected,guess in zip(label.tolist(),guesses):
                 total[expected]+=1
                 predicted[guess]+=1
@@ -357,13 +386,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None=None) -> int:
     args=build_parser().parse_args(argv)
     if args.validate_only:
-        report=validate_dataset(args.data_dir,seed=args.seed)
+        report=validate_dataset(args.data_dir,seed=args.seed,progress=True)
         print(json.dumps(report,ensure_ascii=False,indent=2))
         return 0 if report["ready"] else 2
     try:
         train_model(args)
     except DatasetValidationError as exc:
         print(json.dumps(exc.report,ensure_ascii=False,indent=2))
+        return 2
+    except ValueError as exc:
+        print(f"TRAINING_ERROR: {exc}",file=sys.stderr,flush=True)
         return 2
     return 0
 
