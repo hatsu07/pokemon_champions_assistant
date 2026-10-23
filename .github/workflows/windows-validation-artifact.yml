@@ -54,6 +54,7 @@ jobs:
           python scripts/windows_qt_test_runner.py
           if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
           python -m unittest tests.test_screen_dataset_collector -v
+          Write-Host "Private dataset collector Python process exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "private dataset collector tests failed" }
       - name: Check whether a validated screen model is available
         shell: pwsh
