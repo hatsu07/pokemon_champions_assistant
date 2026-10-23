@@ -156,12 +156,12 @@ class DatasetCollectorGuiTests(unittest.TestCase):
 
     def test_staged_review_is_paginated_and_labelling_requires_confirmation(self):
         files=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
-               for _ in range(PAGE_SIZE+3)]
+               for _ in range(PAGE_SIZE+75)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.assertEqual(self.gui.review_list.count(),PAGE_SIZE)
         self.assertTrue(self.gui.next_button.isEnabled())
         self.gui._next_page()
-        self.assertEqual(self.gui.review_list.count(),3)
+        self.assertEqual(self.gui.review_list.count(),75)
         self.gui.review_list.selectAll()
         self.gui._save_selected()
         self.assertEqual(self.gui.dataset.audit()["total"],0)
@@ -174,7 +174,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._save_selected()
-        self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],3)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],75)
         self.assertEqual(len(self.gui.staging.session_files(self.gui.session_id)),PAGE_SIZE)
         self.assertEqual(self.gui.review_list.count(),PAGE_SIZE)
         self.assertTrue(all(f.exists() for f in files[:PAGE_SIZE]))
