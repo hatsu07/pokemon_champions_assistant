@@ -86,6 +86,14 @@ class ReleasePruningSafetyTests(unittest.TestCase):
         self.assertIn("Verify PR head is still current", yaml)
         self.assertIn("Smoke dataset collector GUI offline", yaml)
 
+    def test_publisher_passes_both_zips_at_release_create_time(self):
+        publisher = (ROOT / "scripts/publish_windows_development_release.ps1").read_text(encoding="utf-8")
+        self.assertIn("'release', 'create', $tag,", publisher)
+        self.assertIn("$paths[0], $paths[1],", publisher)
+        self.assertNotIn("'--draft'", publisher)
+        self.assertIn("Assert-DevRelease -Release $release -RequireComplete $true", publisher)
+        self.assertIn("if ($release.draft -ne $false)", publisher)
+
     def test_master_release_and_cleanup_are_not_triggered_by_untrusted_pr(self):
         release_yaml = (ROOT / ".github/workflows/windows-development-release.yml").read_text(encoding="utf-8")
         cleanup_yaml = (ROOT / ".github/workflows/windows-development-release-cleanup.yml").read_text(encoding="utf-8")

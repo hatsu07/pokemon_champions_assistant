@@ -39,7 +39,7 @@ python3 scripts/prune_development_releases.py --apply
 - PRマージ判断：最新PR HEAD SHA・workflow_run.head_sha・実際checkout SHA・CI全体と必須job`completed/success`一致を確認。古い成功でマージしない。PRにRelease成果物がないことを失敗扱いしない。
 - masterにマージ後：**別workflow**のWindows本体ビルド、両スモーク、両ZIPの実際のReleaseへのアップロード成功とReleaseタグSHAを照合。masterリリース失敗は配布失敗であり、元PRの成功を公開成功と混同しない。
 - Windows CIのoffline smokeは実機のBlueStacks/ミラーリング画面、AI送信、モデル精度、ランクマでの勝率の証明ではない。
-- 失敗したDraft Releaseは自動削除の対象外。復旧は同じSHAのmaster用workflowを再実行し、検証済み2ZIPをアップロードし直す。普通のタグ・正式リリースを勝手に削除しない。
+- GitHub CLIの `gh release create <tag> <ZIP1> <ZIP2> --prerelease` は内部で一時Draftを作り、両ZIPをアップロードしてから公開する。**空のDraftを先に作成し、タグでそのDraftを照会しようとしない**（未公開のDraftは一時的な `untagged-...` URLとなり、tag APIからは取得できない）。途中失敗したDraftは自動削除対象外であり、同一SHAを再実行しても競合する場合がある。復旧時はその特定の失敗DraftのID/作成SHA/assetを検証したうえで管理者が個別に後始末し、masterのビルドワークフローを再実行する。普通のタグ・正式リリースを勝手に削除しない。
 - GitHub Actions実行時間・GitHub Releases権限やActionsワークフローが無効化される場合は、保存先の変更だけでは解決しない。その場合は現実のCI結果とエラーを報告する。
 
 公式資料：[GitHub Releases保存制限](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) / [gh release create](https://cli.github.com/manual/gh_release_create) / [gh release delete](https://cli.github.com/manual/gh_release_delete)。

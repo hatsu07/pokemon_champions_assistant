@@ -84,23 +84,25 @@ if ($null -eq $release) {
         'No raw screenshots, private battle logs or credentials are included.',
         'Trained screen-model accuracy, device capture and live battles are NOT validated.'
     ) | Set-Content -LiteralPath $notesPath -Encoding UTF8
-    $arguments = @('release','create',$tag,'--repo',$env:GITHUB_REPOSITORY,
-        '--target',$ExpectedSha,'--title',$title,'--notes-file',$notesPath,
-        '--prerelease','--draft','--latest=false')
+
+    # gh release create with asset arguments manages the draft lifecycle:
+    # internally create draft -> upload ALL assets -> publish prerelease.
+    # A draft is not visible through GET /releases/tags/<tag> until published.
+    # NEVER create an empty draft and then try to fetch it via the tag API.
+    $arguments = @('release', 'create', $tag,
+        $paths[0], $paths[1],
+        '--repo', $env:GITHUB_REPOSITORY,
+        '--target', $ExpectedSha,
+        '--title', $title,
+        '--notes-file', $notesPath,
+        '--prerelease', '--latest=false')
     & gh @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Could not create development draft: $tag" }
-    $release = Get-DevRelease
+    if ($LASTEXITCODE -ne 0) {
+        throw 'GitHub CLI did not complete all asset uploads and publish the prerelease.'
+    }
 }
-Assert-DevRelease -Release $release -RequireComplete $false
-if ($release.draft -ne $true) { throw 'Refusing to mutate a published release.' }
-& gh release upload $tag $paths[0] $paths[1] --clobber --repo $env:GITHUB_REPOSITORY
-if ($LASTEXITCODE -ne 0) { throw 'ZIP upload failed; draft remains unpublished.' }
+# Re-fetch the PUBLISHED prerelease by tag and verify both actual assets.
 $release = Get-DevRelease
 Assert-DevRelease -Release $release -RequireComplete $true
-if ($release.draft -ne $true) { throw 'Development release published unexpectedly.' }
-& gh release edit $tag --draft=false --repo $env:GITHUB_REPOSITORY
-if ($LASTEXITCODE -ne 0) { throw 'Draft publish failed after assets uploaded.' }
-$release = Get-DevRelease
-Assert-DevRelease -Release $release -RequireComplete $true
-if ($release.draft -ne $false) { throw 'Release still draft after publish.' }
-Write-Host "Verified Windows DEVELOPMENT prerelease: $tag"
+if ($release.draft -ne $false) { throw 'Release still draft after GitHub CLI publish.' }
+Write-Host "Published and verified Windows DEVELOPMENT prerelease: $tag"
