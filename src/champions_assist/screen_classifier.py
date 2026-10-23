@@ -151,6 +151,14 @@ class ClassifiedMenuGate:
         self.armed=True
         self.misses=0
 
+    def acknowledge(self, kind: str, phase: str) -> None:
+        """Explicit or template-triggered dispatch disarms duplicate model hits."""
+        self.reset()
+        self.phase=phase
+        self.candidate=kind
+        self.streak=self.stable_frames
+        self.armed=False
+
     def observe(self, prediction: ScreenPrediction, phase: str) -> str | None:
         if phase!=self.phase:
             self.reset()
