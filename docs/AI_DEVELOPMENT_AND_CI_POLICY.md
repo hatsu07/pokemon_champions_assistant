@@ -23,6 +23,14 @@ CI中に修正が必要になった場合：
 - CI結果、run ID、対象 SHA を照合し直す。必要であればこのサイクルを繰り返す。
 - 実行中に新しいコミットが混入した場合、以前の CI が成功しても古いリビジョンの結果として扱う。
 
+## 2026-10-23 マージ事故後の厳格な停止条件
+
+PR #30をCI全体がFailure（GitHub Actions Artifact容量超過）のままmasterへマージしたのは誤り。**これ以降、必須CI全体が最新SHAで`completed/success`以外なら理由を問わずマージ禁止。** さらにGitHubサーバー側でmaster向け必須チェックと管理者バイパス禁止が実際に有効であることを確認できなければ、エージェントによるマージも禁止。GitHubが`mergeable=true`でも例外は認めない。
+
+PRのCIテスト・Windowsビルド・両GUIスモークと、手動要求されたArtifactsの配布を分離する。ArtifactsはPRではアップロードしない（容量上限はコードテストと無関係）。`workflow_dispatch`の`publish_artifacts=true`で**明示的に別操作で**配布を試行する。配布に失敗した場合は配布失敗として報告する。CI成功を配布成功と混同しない。
+
+現在のGitHub privateリポジトリは`master.protected=false`。Rulesetsはプラン制限、GitHubコネクターには保護ルール書込権限/ツールがなく、保護実施を主張できない。管理者は対応プラン（GitHub Pro/Team等）と権限を確認してRequired check `desktop-windows-validation`、PR必須、admin bypass不可、最新ベース追従を有効化し、その後実際の保護を確認する。**この設定が有効になるまで、後続チャットでもマージ操作をしない。** 詳細・新チャット引継ぎは`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`。
+
 ## リポジトリ側で実装する保護
 
 `.github/workflows/windows-validation-artifact.yml` では、Ready PR の新規作成・再オープン・追加コミット（`synchronize`）・レビュー可能化で Windows 検証する。Draft では高額な Windows ビルドを開始しない。同一 PR の古い実行をキャンセルする。
