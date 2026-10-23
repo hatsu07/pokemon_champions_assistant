@@ -338,3 +338,19 @@
 - Added a dedicated `auto_label_box` in the **immediate layout row below the grouped thumbnail grid**. Both per-frame correction and group-level correction use this nearby selector; the original `label_box` stays in the manual file-save section.
 - The two dropdowns are independent to prevent accidentally applying a manual-save choice to an automatically grouped frame.
 - Added offscreen Windows regression tests for layout adjacency, independent selection, missing group label refusing a partial correction, and existing per-frame/batch functionality. Actual user's screen size / DPI usability still requires a native Windows check.
+
+## Bulk reviewed auto-label group PNG promotion — 2026-10-23 (PR #29)
+
+- Auto group QListWidget now allows Ctrl/Shift extended selection; previously only one selected group could be committed. A dedicated button approves and promotes **all selected, individually fully-reviewed** groups in one confirmation.
+- Introduced per-group staged label override (correct without immediate save), plus existing per-frame label overrides and exclusions; explicit re-review after group label edit. No model re-inference or private-data export.
+- Full preflight rejects the **entire batch** if any group unchecked, label unresolved, all frames excluded, or duplicate files; confirmation shows group/image/correction/exclusion counts.
+- One post-write reconciliation preserves unprocessed groups, staged corrections, excluded JPGs and review state. Write errors stop immediately and retain unprocessed JPGs; no transactional rollback of already saved PNGs is promised.
+- Added Windows offscreen regression tests for heterogeneous groups, deferred corrected labels, frame-level override, exclusion, unreviewed/unknown blocking, user cancellation and partial-write recovery. Real user gameplay footage and interaction feel still require separate verification.
+
+- Added a "select all reviewed groups" convenience action that selects only explicitly reviewed group IDs, not unchecked groups. The batch preflight still rejects unknown target labels and prevents silent promotion.
+
+## Windows collector smoke reliability — 2026-10-23 (PR #29)
+
+- WinCI run 39949231793: all regression tests and both builds passed, but the packaged collector smoke intermittently exited with Windows native fast-fail 0xC0000409 after launch, without a Python startup-error log. This has also been observed in earlier PRs; there is no evidence of a failure in the bulk PNG logic.
+- The disposable `--smoke` path now writes its report, explicitly closes the Qt window, then on frozen Windows uses `TerminateProcess(0)` to avoid PySide6/cv2 native DLL unload races. This is **only a startup/isolation/report smoke**, not a packaged DLL-teardown or graceful user-exit test. Ordinary application close behavior remains unchanged and requires separate real Windows validation.
+- Do not call this proof of full Windows usability, gameplay recognition, or graceful native shutdown. The end-user must still verify with actual mirror/BlueStacks setup.

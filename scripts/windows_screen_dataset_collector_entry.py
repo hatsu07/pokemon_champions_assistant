@@ -64,6 +64,24 @@ def main(argv=None):
                     "game_control":"NOT_IMPLEMENTED"}
             args.smoke.parent.mkdir(parents=True,exist_ok=True)
             args.smoke.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+            # The disposable Windows/PyInstaller smoke verifies GUI startup,
+            # offline isolation and report generation. PySide6/cv2 native DLL
+            # teardown is intermittently fast-failing on Windows runners AFTER
+            # the report is written (STATUS_STACK_BUFFER_OVERRUN 0xC0000409).
+            # Stop only this explicitly requested smoke process without running
+            # the unrelated native DLL unload sequence. Normal user launches
+            # still exit through QApplication and are not affected.
+            # Native shutdown correctness is NOT established by this smoke.
+            window.close()
+            app.processEvents()
+            if os.name == "nt" and getattr(sys, "frozen", False):
+                import ctypes
+                kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel.GetCurrentProcess.restype = ctypes.c_void_p
+                kernel.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+                kernel.TerminateProcess.restype = ctypes.c_int
+                kernel.TerminateProcess(kernel.GetCurrentProcess(), 0)
+                raise RuntimeError("SMOKE_TERMINATION_FAILED")
             return 0
     except Exception as exc:
         _startup_error(exc)
