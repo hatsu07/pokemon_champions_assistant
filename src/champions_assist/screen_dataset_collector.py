@@ -15,12 +15,13 @@ from time import monotonic
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, QProcess, Signal, Slot
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QObject, Qt, QThread, QProcess, Signal, Slot, QSize
+from PySide6.QtGui import QImage, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QInputDialog, QPushButton,
     QScrollArea, QVBoxLayout, QWidget, QAbstractItemView, QPlainTextEdit,
+    QListView,
 )
 
 from .app_config import AppSettingsStore, CaptureConfiguration, default_app_root
@@ -161,6 +162,9 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_thread=None
         self._auto_worker=None
         self._auto_groups=[]
+        self._auto_frame_overrides={}
+        self._auto_frame_exclusions=set()
+        self._auto_reviewed_groups=set()
         self._auto_model_path=None
         self._auto_error=None
         self._gpu_process=None
@@ -277,7 +281,7 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_progress=QLabel("未解析")
         layout.addWidget(self.auto_progress)
         self.auto_list=QListWidget()
-        self.auto_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.auto_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.auto_list.setMinimumHeight(160)
         self.auto_list.currentItemChanged.connect(self._on_group_selected)
         layout.addWidget(self.auto_list)
@@ -294,6 +298,38 @@ class ScreenDatasetCollector(QMainWindow):
             column.addWidget(thumbnail)
             reps.addLayout(column)
         layout.addLayout(reps)
+        all_frames_info=QLabel(
+            "グループ内の全画像（最大30枚）を時系列で表示。⚠はAIの弱い予測や画面差分の注意箇所です。"
+            "サムネイルをクリックすると上の大きなプレビューに表示されます。")
+        all_frames_info.setWordWrap(True)
+        layout.addWidget(all_frames_info)
+        self.auto_frames_list=QListWidget()
+        self.auto_frames_list.setViewMode(QListView.ViewMode.IconMode)
+        self.auto_frames_list.setFlow(QListView.Flow.LeftToRight)
+        self.auto_frames_list.setWrapping(True)
+        self.auto_frames_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.auto_frames_list.setIconSize(QSize(145,88))
+        self.auto_frames_list.setGridSize(QSize(175,134))
+        self.auto_frames_list.setSpacing(3)
+        self.auto_frames_list.setWordWrap(True)
+        self.auto_frames_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.auto_frames_list.setMinimumHeight(340)
+        self.auto_frames_list.currentItemChanged.connect(self._on_auto_frame_selected)
+        layout.addWidget(self.auto_frames_list)
+        correction_controls=QHBoxLayout()
+        self.auto_frame_fix_button=QPushButton("選択した画像だけラベル訂正")
+        self.auto_frame_fix_button.clicked.connect(self._correct_selected_auto_frames)
+        correction_controls.addWidget(self.auto_frame_fix_button)
+        self.auto_frame_exclude_button=QPushButton("選択画像を一括保存から除外（JPEGは保持）")
+        self.auto_frame_exclude_button.clicked.connect(self._exclude_selected_auto_frames)
+        correction_controls.addWidget(self.auto_frame_exclude_button)
+        self.auto_frame_reset_button=QPushButton("選択画像の訂正・除外を取り消す")
+        self.auto_frame_reset_button.clicked.connect(self._reset_selected_auto_frames)
+        correction_controls.addWidget(self.auto_frame_reset_button)
+        layout.addLayout(correction_controls)
+        self.auto_review_confirm=QCheckBox("このグループの全画像を一覧で確認した（AIの予測だけでは正解になりません）")
+        self.auto_review_confirm.toggled.connect(self._set_auto_group_reviewed)
+        layout.addWidget(self.auto_review_confirm)
         approve_buttons=QHBoxLayout()
         self.auto_accept_button=QPushButton("選択グループをAI候補で承認・PNG保存")
         self.auto_accept_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=True))
@@ -364,7 +400,9 @@ class ScreenDatasetCollector(QMainWindow):
                      self.save_button,self.discard_button,self.relabel_button,
                      self.model_select_button,self.auto_analyze_button,
                      self.auto_accept_button,self.auto_correct_button,
-                     self.gpu_retrain_button,self.gpu_command_button):
+                     self.gpu_retrain_button,self.gpu_command_button,
+                     self.auto_frame_fix_button,self.auto_frame_exclude_button,
+                     self.auto_frame_reset_button,self.auto_review_confirm):
             item.setEnabled(not busy)
         self.stop_button.setEnabled(self._thread is not None)
 
@@ -649,8 +687,13 @@ class ScreenDatasetCollector(QMainWindow):
 
     def _clear_auto_groups(self):
         self._auto_groups=[]
+        self._auto_frame_overrides.clear()
+        self._auto_frame_exclusions.clear()
+        self._auto_reviewed_groups.clear()
         if hasattr(self,"auto_list"):
             self.auto_list.clear()
+            self.auto_frames_list.clear()
+            self.auto_review_confirm.setChecked(False)
             for thumb in self.auto_representatives:
                 thumb.clear()
                 thumb.setText("未表示")
@@ -708,6 +751,9 @@ class ScreenDatasetCollector(QMainWindow):
 
     @Slot(object)
     def _auto_on_proposals(self,groups):
+        self._auto_frame_overrides.clear()
+        self._auto_frame_exclusions.clear()
+        self._auto_reviewed_groups.clear()
         self._auto_groups=list(groups)
         self.auto_list.clear()
         for index,group in enumerate(self._auto_groups):
@@ -719,7 +765,7 @@ class ScreenDatasetCollector(QMainWindow):
             self.auto_list.addItem(row)
         self.auto_progress.setText(
             f"解析完了：{sum(g.count for g in groups)}枚 / {len(groups)}グループ。"
-            "代表画像を確認してから一括承認してください。")
+            "グループ内の全画像を一覧確認してから一括承認してください。")
         if groups:
             self.auto_list.setCurrentRow(0)
 
@@ -732,9 +778,14 @@ class ScreenDatasetCollector(QMainWindow):
 
     @Slot(object,object)
     def _on_group_selected(self,current,_previous):
+        self.auto_frames_list.clear()
         for thumb in self.auto_representatives:
             thumb.clear()
             thumb.setText("未表示")
+        self.auto_review_confirm.blockSignals(True)
+        self.auto_review_confirm.setChecked(False if current is None else
+            current.data(Qt.ItemDataRole.UserRole) in self._auto_reviewed_groups)
+        self.auto_review_confirm.blockSignals(False)
         if current is None:return
         index=current.data(Qt.ItemDataRole.UserRole)
         if not isinstance(index,int) or index>=len(self._auto_groups):return
@@ -752,33 +803,146 @@ class ScreenDatasetCollector(QMainWindow):
                     Qt.TransformationMode.SmoothTransformation))
             except (OSError,ValueError):
                 thumb.setText("画像読込不可")
+        self._populate_auto_frames(group)
+
+    def _current_auto_group(self):
+        item=self.auto_list.currentItem()
+        if item is None:
+            return None,None
+        index=item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index,int) or not 0<=index<len(self._auto_groups):
+            return None,None
+        return index,self._auto_groups[index]
+
+    def _populate_auto_frames(self,group):
+        self.auto_frames_list.clear()
+        details={detail.path:detail for detail in group.frame_details}
+        for number,path in enumerate(group.files,start=1):
+            detail=details.get(path)
+            override=self._auto_frame_overrides.get(path)
+            excluded=path in self._auto_frame_exclusions
+            candidate=(override or
+                       (detail.predicted_label if detail is not None else group.candidate))
+            confidence=detail.confidence if detail is not None else group.confidence
+            warnings=detail.review_flags if detail is not None else ()
+            if excluded:
+                status="除外"
+            elif override is not None:
+                status="訂正済"
+            elif warnings or group.candidate is None:
+                status="⚠要確認"
+            else:
+                status="AI候補"
+            text=f"{number:02d} {status}\n{candidate or '未判定'} {confidence:.0%}"
+            item=QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole,str(path))
+            item.setToolTip(
+                f"{path.name}\n予測:{(detail.predicted_label if detail else group.candidate) or 'なし'}\n"
+                f"注意:{', '.join(warnings) if warnings else 'なし'}\n"
+                f"部分訂正:{override or 'なし'} / 除外:{excluded}")
+            try:
+                bgr=cv2.imdecode(np.fromfile(path,dtype=np.uint8),cv2.IMREAD_COLOR)
+                if bgr is None:
+                    item.setText(f"{number:02d} ⚠画像読込不可")
+                else:
+                    rgb=cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
+                    height,width=rgb.shape[:2]
+                    qimg=QImage(rgb.data,width,height,rgb.strides[0],
+                                QImage.Format.Format_RGB888).copy()
+                    item.setIcon(QIcon(QPixmap.fromImage(qimg).scaled(
+                        145,88,Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)))
+            except (OSError,ValueError):
+                item.setText(f"{number:02d} ⚠画像読込不可")
+            self.auto_frames_list.addItem(item)
+
+    @Slot(object,object)
+    def _on_auto_frame_selected(self,current,_previous):
+        if current is None:return
+        # Existing full-size preview lets users inspect any middle frame.
+        self._show_current_frame(current,None)
+
+    def _selected_auto_frame_paths(self):
+        return [Path(item.data(Qt.ItemDataRole.UserRole))
+                for item in self.auto_frames_list.selectedItems()]
+
+    def _invalidate_auto_review(self):
+        index,group=self._current_auto_group()
+        if group is None:return
+        self._auto_reviewed_groups.discard(index)
+        self.auto_review_confirm.setChecked(False)
+        self._populate_auto_frames(group)
+
+    def _set_auto_group_reviewed(self,checked):
+        index,group=self._current_auto_group()
+        if group is None:return
+        if checked:self._auto_reviewed_groups.add(index)
+        else:self._auto_reviewed_groups.discard(index)
+
+    def _correct_selected_auto_frames(self):
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
+        chosen=self.label_box.currentData()
+        paths=self._selected_auto_frame_paths()
+        if chosen not in LABELS or not paths:
+            self.auto_progress.setText("訂正する画像を選択し、正解ラベルをプルダウンで指定してください")
+            return
+        for path in paths:
+            self._auto_frame_overrides[path]=chosen
+            self._auto_frame_exclusions.discard(path)
+        self._invalidate_auto_review()
+        self.auto_progress.setText(f"{len(paths)}枚を{chosen}に部分訂正。全画像の再確認後に保存してください")
+
+    def _exclude_selected_auto_frames(self):
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
+        paths=self._selected_auto_frame_paths()
+        if not paths:
+            self.auto_progress.setText("除外する画像を選択してください")
+            return
+        self._auto_frame_exclusions.update(paths)
+        self._invalidate_auto_review()
+        self.auto_progress.setText(f"{len(paths)}枚を保存対象から除外。元のJPEGは保持します")
+
+    def _reset_selected_auto_frames(self):
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
+        paths=self._selected_auto_frame_paths()
+        if not paths:
+            self.auto_progress.setText("元に戻す画像を選択してください")
+            return
+        for path in paths:
+            self._auto_frame_overrides.pop(path,None)
+            self._auto_frame_exclusions.discard(path)
+        self._invalidate_auto_review()
+        self.auto_progress.setText(f"{len(paths)}枚をAI候補・未除外状態に戻しました")
 
     def _approve_auto_groups(self, *, use_suggestion: bool):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
-        items=self.auto_list.selectedItems()
-        if not items:
-            self.auto_progress.setText("確認するグループを選択してください")
+        index,group=self._current_auto_group()
+        if group is None:
+            self.auto_progress.setText("承認するグループを選択してください")
             return
-        indices=sorted({item.data(Qt.ItemDataRole.UserRole) for item in items})
+        if index not in self._auto_reviewed_groups:
+            self.auto_progress.setText("先頭/中央/末尾だけでなく全画像の一覧を確認して、確認済みにチェックしてください")
+            return
         label=None if use_suggestion else self.label_box.currentData()
         if not use_suggestion and label not in LABELS:
             self.auto_progress.setText("訂正先ラベルを下の正解ラベル欄で選択してください")
             return
-        requested=[]
-        for index in indices:
-            group=self._auto_groups[index]
-            target=group.candidate if use_suggestion else label
-            if target not in LABELS:
-                self.auto_progress.setText("候補不明のグループは正解ラベルを選択して訂正してください")
-                return
-            requested.extend((path,target) for path in group.files)
-        if len({p for p,_ in requested})!=len(requested):
-            self.auto_progress.setText("グループに重複画像があります。再解析してください")
+        base=group.candidate if use_suggestion else label
+        requested=[(path,self._auto_frame_overrides.get(path,base))
+                   for path in group.files if path not in self._auto_frame_exclusions]
+        if not requested:
+            self.auto_progress.setText("すべて除外されています。保存する画像がありません")
             return
+        if any(target not in LABELS for _,target in requested):
+            self.auto_progress.setText("ラベル未判定の画像が残っています。個別訂正または除外してください")
+            return
+        corrected=sum(path in self._auto_frame_overrides for path,_ in requested)
+        excluded=len(group.files)-len(requested)
         accepted=QMessageBox.question(
-            self,"AI候補を正解ラベルとして確定",
-            f"{len(indices)}グループ・{len(requested)}枚の先頭/中央/末尾を確認しましたか？\n"
-            "AI予測は正解とは限りません。承認すると学習用PNGに保存します。",
+            self,"画像ごとの正解ラベルを確認",
+            f"{len(group.files)}枚中、保存{len(requested)}枚（部分訂正{corrected}・除外{excluded}）。\n"
+            "全画像を確認し、画像別の正しいラベルで学習用PNGに保存しますか？\n"
+            "AI候補は正解を保証しません。除外画像のJPEGは保持されます。",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
         if accepted!=QMessageBox.StandardButton.Yes:return
         completed=0
@@ -788,10 +952,11 @@ class ScreenDatasetCollector(QMainWindow):
                 completed+=1
             except (OSError,ValueError) as exc:
                 self.auto_progress.setText(
-                    f"{completed}枚保存。{type(exc).__name__}により停止。残りは未ラベルで保持")
+                    f"{completed}枚成功後に{type(exc).__name__}で停止。未処理JPEGは保持")
                 break
         else:
-            self.auto_progress.setText(f"人間が承認した {completed}枚をPNGへ保存しました")
+            self.auto_progress.setText(
+                f"人間が確認した{completed}枚を正解PNGとして保存しました。除外{excluded}枚は未ラベルのまま")
         self._reload_review_files()
         self._update_counts()
 
