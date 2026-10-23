@@ -186,6 +186,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         from PySide6.QtWidgets import QMessageBox
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes), \
+             patch.object(QMessageBox,"warning",side_effect=AssertionError("unexpected warning dialog")), \
              patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
                    return_value=image) as cap, \
              patch.object(panel,"_queue_batch") as queue:
