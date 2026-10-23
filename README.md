@@ -39,11 +39,11 @@
 
 ## Windows配布とPR検証（2026-10-22）
 
-**2026-10-23の修正方針**：Required PR CIはWindows全テスト・2 GUIビルド・起動スモークのみを検証し、容量制限のあるGitHub Actions Artifactsアップロードをしません。配布用ZIPはActionsで`workflow_dispatch` + `publish_artifacts=true`を明示して別途生成し、アップロード失敗は配布失敗と扱います。マージは最新SHAの**CI全体と必須ジョブがcompleted/success**になるまで禁止します。ユーザー判断により有料GitHub Pro/Branch protectionは不要です。GitHub側の強制保護はないため、開発エージェントがPR最新HEADの成功を毎回確認します。詳細と新チャット開発手順は[CI・master保護・引継ぎ](docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md)。
+**2026-10-23の最新方針**：Ready PR CIがWindows全テスト・2 GUIビルド・起動スモークに加え、**両DEVELOPMENT ZIPをArtifactsへ自動アップロード**します。`retention-days: 2`で保持期間を短くし、WSLに導入したGitHub CLIの[安全な整理スクリプト](docs/WSL_GH_ARTIFACT_CLEANUP.md)で古い成果物を定期削除します。アップロード失敗時はCI全体Failureとして扱います。マージは最新SHAの**CI全体と必須ジョブがcompleted/success**になるまで禁止します。ユーザー判断により有料GitHub Pro/Branch protectionは不要です。GitHub側の強制保護はないため、開発エージェントがPR最新HEADの成功を毎回確認します。詳細と新チャット開発手順は[CI・master保護・引継ぎ](docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md)。
 
 
 - **PR #20のWindows CI成果物は開発・学習用の `PokemonChampionsAssistant-DEVELOPMENT-windows-x64` のみです。** 学習・実画面検証済みのONNXモデルがまだないため、正式リリースではありません。
-- GitHub Actions の Artifact をダウンロードすると1個のZIPになります。そのZIPを展開した直下の `PokemonChampionsAssistant.exe` を起動します。内部ZIPは含みません。
+- GitHub Actions のArtifactは`PokemonChampionsAssistant-DEVELOPMENT-windows-x64`と`PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64`の**2件**です。各ダウンロードZIPを展開した直下にそれぞれのEXEがあり、内部ZIPは含みません。GitHub保存期間は短いため必要なビルドは速やかにダウンロードしてください。
 - 開発PRは**Draft**で作成し、実装・テスト・修正・ドキュメントの**全コミットを確定後**に **Ready for review** に変更します。Ready PRへの新しいコミットでも `synchronize` でWindows CIを再実行し、古い実行はキャンセルします。DraftのPRではWindowsビルドを実施しません。masterへの単なるpushでは配布CIを起動しません。
 - CI失敗時はPRをDraftに戻して修正し、全コミット後にReadyで再検証します。**旧SHAのCI再試行を新SHAの検証として扱わないこと。** CIはPRのHEAD SHAを明示的にcheckoutし、成果物公開前に最新PR HEADが変わっていないか再確認します。配布ZIPには `BUILD_REVISION.txt` を同梱します。
 - 開発エージェントの必須手順は [AI開発・CI検証方針](docs/AI_DEVELOPMENT_AND_CI_POLICY.md) と [AGENTS.md](AGENTS.md) を参照してください。最終報告では **PR最新HEAD SHA・CI対象SHA・CI結果** の一致を示します。
