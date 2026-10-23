@@ -230,6 +230,17 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             self.gui._approve_auto_groups(use_suggestion=True)
         self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],1)
 
+    @unittest.skipUnless(os.name=="nt","WSL process is Windows-native")
+    def test_gpu_retrain_requires_explicit_user_confirmation(self):
+        with patch("champions_assist.screen_dataset_collector.QInputDialog.getText",
+                   return_value=("/home/test/pokemon_champions_assistant",True)):
+            with patch.object(QMessageBox,"question",
+                              return_value=QMessageBox.StandardButton.No):
+                with patch("champions_assist.screen_dataset_collector.QProcess") as process:
+                    self.gui._start_gpu_retrain()
+                    process.assert_not_called()
+                    self.assertIsNone(self.gui._gpu_process)
+
     def test_selected_file_discard_needs_confirmation(self):
         first=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
         self.gui._refresh_review_sessions(select=self.gui.session_id)
