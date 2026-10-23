@@ -174,6 +174,66 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIn("再接続完了",self.window.recommendation_label.text())
         self.assertEqual(panel._turn_buffer.templates,{})
 
+    def test_live_capture_explains_no_ai_dispatch_until_menu_is_registered(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
+        panel.assets=object()
+        panel.capture_config=CaptureConfiguration(
+            backend="WINDOWS_NATIVE",selected_window_identity={"hwnd":7},
+            game_viewport_normalized=(0,0,1,1))
+        image=np.zeros((120,200,3),dtype=np.uint8)
+        image[60:,100:]=200
+        from PySide6.QtWidgets import QMessageBox
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes), \
+             patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=image) as cap, \
+             patch.object(panel,"_queue_batch") as queue:
+            panel._start_auto()
+            panel._poll_timer.stop()
+            self.assertEqual(panel._ai_request_attempts,0)
+            self.assertIn("メニュー未登録",panel.ai_status_label.text())
+            self.assertIn("メニュー未登録",self.window.header_labels["ai"].text())
+            self.assertIn("登録: なし",panel.menu_detection_label.text())
+            self.assertIsNotNone(panel.capture_preview.pixmap())
+            queue.assert_not_called()
+            panel._calibrate("TEAM_SELECTION")
+            self.assertIn("選出画面",panel.menu_detection_label.text())
+            queue.assert_called_once()
+            self.assertLessEqual(len(queue.call_args.args[0]),4)
+            self.assertTrue(np.array_equal(queue.call_args.args[0][-1],image))
+            self.assertFalse(panel._turn_buffer._armed)
+            for _ in range(3):
+                panel._capture_next()
+            queue.assert_called_once()
+            self.assertEqual(cap.call_count,5)
+        panel._stop_auto()
+
+    def test_ai_dispatch_attempt_and_response_are_visible_in_main_header(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
+        panel.assets=object()
+        panel._auto_running=True
+        panel._pending_batch=[np.zeros((80,100,3),dtype=np.uint8)]
+        with patch("champions_assist.match_replay_dialog.QThread") as mock_thread, \
+             patch("champions_assist.match_replay_dialog._ReplayWorker") as mock_worker:
+            panel._send_pending()
+            self.assertEqual(panel.entries[-1]["status"],"AI_REQUEST_QUEUED")
+            self.assertEqual(panel.entries[-1]["image_count"],1)
+            self.assertIn("処理を起動中",panel.ai_status_label.text())
+            self.assertEqual(self.window.header_labels["ai"].text(),panel.ai_status_label.text())
+            mock_thread.return_value.start.assert_called_once()
+            mock_worker.return_value.progress.connect.assert_called_once()
+        panel._on_ai_progress("AI画像送信処理中（結果待ち）")
+        self.assertIn("画像送信処理中",self.window.header_labels["ai"].text())
+        panel._completed({"state":{"phase":"SELECTION","matrix_compatible":False},
+                          "report":{"status":"TEST_ONLY","recommendation":"選出：ピカチュウ"}})
+        self.assertIn("応答受信",self.window.header_labels["ai"].text())
+        self.assertEqual(panel.entries[-1]["status"],"TEST_ONLY")
+        panel._thread=None
+        panel._worker=None
+        panel._stop_auto()
+
     def test_legacy_controller_refresh_never_clobbers_live_recommendation(self):
         panel = self.window._match_panel
         panel.state = {"phase": "BATTLE", "matrix_compatible": False}
