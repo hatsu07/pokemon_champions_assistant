@@ -25,9 +25,14 @@ def main() -> None:
     names=sys.argv[1:] or ["tests.test_vision_preferences"]
     suite=unittest.defaultTestLoader.loadTestsFromNames(names)
     result=unittest.TextTestRunner(verbosity=2).run(suite)
+    success=result.wasSuccessful()
+    # CI diagnostic: distinguish assertion failure from Windows native process
+    # termination. TextTestRunner prints "OK" only for successful assertions.
+    print(f"UNITTEST_RUNNER_RESULT success={success} tests={result.testsRun} "
+          f"errors={len(result.errors)} failures={len(result.failures)}",flush=True)
     sys.stdout.flush()
     sys.stderr.flush()
-    os._exit(0 if result.wasSuccessful() else 1)
+    os._exit(0 if success else 1)
 
 
 if __name__=="__main__":
