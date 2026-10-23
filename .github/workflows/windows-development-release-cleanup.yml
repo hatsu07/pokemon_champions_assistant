@@ -1,0 +1,42 @@
+name: Prune old Windows DEVELOPMENT GitHub Releases
+
+# No Actions artifacts, no changes to stable releases or their tags.
+# A manual dispatch is preview-only unless apply=true.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Permanently delete only eligible old DEVELOPMENT releases and generated tags'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: windows-development-release-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prune-windows-development-releases:
+    if: github.repository == 'hatsu07/pokemon_champions_assistant' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test release retention rules offline
+        run: python -m unittest tests.test_prune_development_releases -v
+      - name: Show eligible old DEVELOPMENT releases (dry run)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/prune_development_releases.py --min-age-days 14 --keep 3
+      - name: Delete old DEVELOPMENT releases and generated tags
+        if: github.event_name == 'schedule' || inputs.apply == true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/prune_development_releases.py --min-age-days 14 --keep 3 --apply
