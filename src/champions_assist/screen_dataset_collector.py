@@ -9,17 +9,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import os
 from threading import Event
 from time import monotonic
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QProcess, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QInputDialog, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget, QAbstractItemView,
+    QScrollArea, QVBoxLayout, QWidget, QAbstractItemView, QPlainTextEdit,
 )
 
 from .app_config import AppSettingsStore, CaptureConfiguration, default_app_root
@@ -162,6 +163,8 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_groups=[]
         self._auto_model_path=None
         self._auto_error=None
+        self._gpu_process=None
+        self._gpu_repo=""
         self._build()
         self._update_source_label()
         self._refresh_review_sessions()
@@ -299,9 +302,20 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_correct_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=False))
         approve_buttons.addWidget(self.auto_correct_button)
         layout.addLayout(approve_buttons)
-        self.gpu_retrain_button=QPushButton("承認済みデータでGPU再学習：コマンドを表示・コピー")
-        self.gpu_retrain_button.clicked.connect(self._show_retrain_instructions)
-        layout.addWidget(self.gpu_retrain_button)
+        gpu_controls=QHBoxLayout()
+        self.gpu_retrain_button=QPushButton("承認済みデータをGPU再学習（WSLで明示実行）")
+        self.gpu_retrain_button.clicked.connect(self._start_gpu_retrain)
+        gpu_controls.addWidget(self.gpu_retrain_button)
+        self.gpu_command_button=QPushButton("GPU再学習コマンドをコピー")
+        self.gpu_command_button.clicked.connect(self._show_retrain_instructions)
+        gpu_controls.addWidget(self.gpu_command_button)
+        layout.addLayout(gpu_controls)
+        self.gpu_log=QPlainTextEdit()
+        self.gpu_log.setReadOnly(True)
+        self.gpu_log.setMaximumBlockCount(90)
+        self.gpu_log.setMinimumHeight(100)
+        self.gpu_log.setPlaceholderText("GPU再学習の出力・モデル保存先を表示します")
+        layout.addWidget(self.gpu_log)
         page=QHBoxLayout()
         self.previous_button=QPushButton("前の100枚")
         self.previous_button.clicked.connect(self._previous_page)
@@ -343,16 +357,16 @@ class ScreenDatasetCollector(QMainWindow):
         self._set_capture_busy(False)
 
     def _set_capture_busy(self, busy):
-        busy=busy or self._auto_thread is not None
+        busy=busy or self._auto_thread is not None or self._gpu_process is not None
         for item in (self.start_button,self.single_button,self.reload_button,
                      self.rebind_button,self.session_button,self.folder_button,
                      self.quota_box,self.fps_box,self.refresh_button,
                      self.save_button,self.discard_button,self.relabel_button,
                      self.model_select_button,self.auto_analyze_button,
                      self.auto_accept_button,self.auto_correct_button,
-                     self.gpu_retrain_button):
+                     self.gpu_retrain_button,self.gpu_command_button):
             item.setEnabled(not busy)
-        self.stop_button.setEnabled(busy)
+        self.stop_button.setEnabled(self._thread is not None)
 
     def _quota_changed(self, _index):
         if self._thread is None:
@@ -397,7 +411,7 @@ class ScreenDatasetCollector(QMainWindow):
         self.status.setText("対象ウィンドウ変更済み。撮影して確認してください")
 
     def _choose_folder(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         value=QFileDialog.getExistingDirectory(
             self,"保存先を選択",str(self.dataset.root.parent))
         if value:
@@ -409,14 +423,14 @@ class ScreenDatasetCollector(QMainWindow):
             self._update_counts()
 
     def _new_session(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         self.session_id=new_session_id()
         self.session_label.setText("記録対象の対戦セッションID: "+self.session_id)
         self.capture_count.setText("今回の収集0枚")
         self.status.setText("新しい対戦セッション作成済み。過去画像は残っています")
 
     def _start(self, *, one_shot: bool):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         if not self.consent.isChecked():
             self.status.setText("未ラベル画像のディスク自動保存への同意が必要です")
             return
@@ -564,7 +578,7 @@ class ScreenDatasetCollector(QMainWindow):
         return [Path(i.data(Qt.ItemDataRole.UserRole)) for i in selected]
 
     def _save_selected(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         label=self.label_box.currentData()
         frames=self._selected_staged_paths()
         if label not in LABELS or not frames:
@@ -590,7 +604,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._update_counts()
 
     def _discard_selected(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         frames=self._selected_staged_paths()
         if not frames:return
         accepted=QMessageBox.question(
@@ -610,7 +624,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._reload_review_files()
 
     def _relabel_saved(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         path,_=QFileDialog.getOpenFileName(
             self,"保存済み画像の正解ラベルを訂正",str(self.dataset.root),"画像 (*.png)")
         if not path:return
@@ -642,7 +656,7 @@ class ScreenDatasetCollector(QMainWindow):
                 thumb.setText("未表示")
 
     def _select_auto_model(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         path,_=QFileDialog.getOpenFileName(
             self,"実験用ONNXモデルを選択（同じ場所にJSON必須）",
             str(self.dataset.root.parent),
@@ -654,7 +668,7 @@ class ScreenDatasetCollector(QMainWindow):
                 " / validated=falseは候補生成にのみ使用")
 
     def _start_auto_analysis(self):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         if self._review_session is None:
             self.auto_progress.setText("解析する対戦を選択してください")
             return
@@ -740,7 +754,7 @@ class ScreenDatasetCollector(QMainWindow):
                 thumb.setText("画像読込不可")
 
     def _approve_auto_groups(self, *, use_suggestion: bool):
-        if self._thread is not None or self._auto_thread is not None:return
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         items=self.auto_list.selectedItems()
         if not items:
             self.auto_progress.setText("確認するグループを選択してください")
@@ -782,8 +796,8 @@ class ScreenDatasetCollector(QMainWindow):
         self._update_counts()
 
     def _show_retrain_instructions(self):
-        if self._thread is not None or self._auto_thread is not None:return
-        command="bash ./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained"
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
+        command="bash ./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained --archive-output"
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(command)
         QMessageBox.information(
@@ -791,9 +805,81 @@ class ScreenDatasetCollector(QMainWindow):
             "WSLのリポジトリで、コピーした次のコマンドを明示的に実行してください。\n"
             +command+"\n"
             "ラベルを承認したPNGのみ学習されます。生成モデルを自動採用せず、"
-            "検証指標と独立した対戦で比較してから次回の候補生成に使ってください。")
+            "検証指標と独立した対戦で比較してから次回の候補生成に使ってください。"
+            "新しいモデルは private-training/output/run-*/ に保存されます。")
+
+    def _start_gpu_retrain(self):
+        # Explicit user-initiated WSL action: no unattended model retraining.
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:
+            return
+        if os.name != "nt":
+            self.gpu_log.appendPlainText(
+                "Windowsの収集アプリで使用してください。WSLではコピーしたコマンドを実行します。")
+            return
+        repo,accepted=QInputDialog.getText(
+            self,"WSLのリポジトリパス",
+            "WSLのLinux絶対パスを入力（WSLターミナルの pwd の結果）",
+            text=self._gpu_repo)
+        if not accepted:return
+        repo=repo.strip()
+        if not repo.startswith("/") or "\x00" in repo or "\n" in repo:
+            self.gpu_log.appendPlainText("WSLの絶対パスが必要です")
+            return
+        yes=QMessageBox.question(
+            self,"GPUで再学習しますか？",
+            "人間が承認したPNGでGPU学習します（ImageNet事前学習済み重み使用）。"
+            "ユーザーの画像はアップロードしません。"
+            "出力はWSLのprivate-training/output/run-*/に別保存されます。"
+            "結果は自動採用されません。開始しますか？",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
+        if yes!=QMessageBox.StandardButton.Yes:return
+        self._gpu_repo=repo
+        self.gpu_log.clear()
+        self.gpu_log.appendPlainText("GPU学習を起動します / WSL: "+repo)
+        proc=QProcess(self)
+        proc.setProgram("wsl.exe")
+        proc.setArguments([
+            "--cd",repo,"--exec","bash","./scripts/train_screen_classifier_docker.sh",
+            "--gpu","--epochs","12","--pretrained","--archive-output"])
+        proc.readyReadStandardOutput.connect(
+            lambda:self._append_gpu_output(bytes(proc.readAllStandardOutput())))
+        proc.readyReadStandardError.connect(
+            lambda:self._append_gpu_output(bytes(proc.readAllStandardError())))
+        proc.errorOccurred.connect(self._gpu_error)
+        proc.finished.connect(self._gpu_finished)
+        self._gpu_process=proc
+        self._set_capture_busy(True)
+        proc.start()
+
+    def _append_gpu_output(self,data):
+        if not data:return
+        self.gpu_log.appendPlainText(data.decode("utf-8",errors="replace").strip())
+
+    @Slot(object)
+    def _gpu_error(self,error):
+        self.gpu_log.appendPlainText(f"WSL GPU学習エラー: {error}")
+        if (self._gpu_process is not None and
+                self._gpu_process.state()==QProcess.ProcessState.NotRunning):
+            self._gpu_process.deleteLater()
+            self._gpu_process=None
+            self._set_capture_busy(False)
+
+    @Slot(int,object)
+    def _gpu_finished(self,code,_status):
+        self.gpu_log.appendPlainText(
+            "GPU学習終了: "+("成功（出力先と指標を確認してください）" if code==0
+                         else f"失敗 exit={code}（出力ログを確認してください）"))
+        if self._gpu_process is not None:
+            self._gpu_process.deleteLater()
+            self._gpu_process=None
+        self._set_capture_busy(False)
 
     def closeEvent(self,event):
+        if (self._gpu_process is not None and
+                self._gpu_process.state()!=QProcess.ProcessState.NotRunning):
+            event.ignore()
+            self.gpu_log.appendPlainText("GPU再学習中です。学習終了後にウィンドウを閉じてください。")
+            return
         if self._auto_thread is not None and self._auto_thread.isRunning():
             event.ignore()
             self.auto_progress.setText("解析中です。解析完了後に閉じてください")
