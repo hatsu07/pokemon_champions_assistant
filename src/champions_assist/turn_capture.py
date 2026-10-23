@@ -6,6 +6,7 @@ Use calibration under the actual game window/ROI. No automatic game input.
 from __future__ import annotations
 
 from collections import deque
+from time import monotonic
 import cv2
 import numpy as np
 
@@ -103,3 +104,96 @@ class TurnCaptureBuffer:
         # Preserve chronological order; always include the latest command screen.
         previous=list(self.frames)[-(limit-1):]
         return previous+[current.copy()]
+
+
+class AutomaticVisualProbe:
+    """Built-in candidate screen detection requiring NO user calibration.
+
+    Local frame differences identify probable scene transitions; the existing
+    AI observation schema, rather than this pixel heuristic, determines UI
+    identity. This is a request gate, not a claim of reliable UI recognition.
+    """
+
+    def __init__(self, *, clock=monotonic, min_gap=2.0,
+                 scene_delta=0.065, stable_frames=2, matchmaking_recheck=12.0):
+        self.clock=clock
+        self.min_gap=min_gap
+        self.scene_delta=scene_delta
+        self.stable_frames=stable_frames
+        self.matchmaking_recheck=matchmaking_recheck
+        self.reset()
+
+    def reset(self):
+        self._phase=None
+        self._last_sent=None
+        self._last_sent_at=None
+        self._candidate=None
+        self._candidate_streak=0
+
+    @staticmethod
+    def _small(image):
+        # Full-viewport signature, not a per-user chosen menu patch.
+        gray=cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
+        return (cv2.resize(gray,(64,36),interpolation=cv2.INTER_AREA)
+                .astype(np.float32)/255.0)
+
+    def acknowledge(self, image, phase):
+        """Record an explicitly registered menu to suppress an auto duplicate."""
+        self._phase=phase
+        self._last_sent=self._small(image)
+        self._last_sent_at=self.clock()
+        self._candidate=None
+        self._candidate_streak=0
+
+    def recently_submitted(self, image, *, within=4.0):
+        if self._last_sent is None or self._last_sent_at is None:
+            return False
+        return (self.clock()-self._last_sent_at < within
+                and float(np.mean(np.abs(self._small(image)-self._last_sent)))
+                    < self.scene_delta)
+
+    def observe(self, image, phase):
+        """True means inspect this already captured frame with AI once.
+
+        - Initial eligible screenshot is inspected immediately, even if the
+          screen was already open before monitoring started.
+        - Matchmaking rechecks at bounded intervals because its animations
+          may be too subtle to clear the scene-change threshold.
+        - Selection UI already recognized in the current match isn't re-sent:
+          the next event is user's actual selection confirmation.
+        - In battle, only stable major changes initiate new observation, not
+          every flickering frame or timer animation.
+        """
+        if phase not in ("MATCHMAKING","PREP","BATTLE"):
+            return False
+        now=self.clock()
+        small=self._small(image)
+        if self._phase != phase:
+            self._phase=phase
+            self._last_sent=None
+            self._last_sent_at=None
+            self._candidate=None
+            self._candidate_streak=0
+        if self._last_sent is None:
+            self.acknowledge(image,phase)
+            return True
+        if now-self._last_sent_at < self.min_gap:
+            return False
+        delta=float(np.mean(np.abs(small-self._last_sent)))
+        if delta>=self.scene_delta:
+            if self._candidate is None or float(
+                np.mean(np.abs(small-self._candidate)))>0.025:
+                self._candidate=small
+                self._candidate_streak=1
+            else:
+                self._candidate_streak+=1
+            if self._candidate_streak>=self.stable_frames:
+                self.acknowledge(image,phase)
+                return True
+            return False
+        self._candidate=None
+        self._candidate_streak=0
+        if phase=="MATCHMAKING" and now-self._last_sent_at>=self.matchmaking_recheck:
+            self.acknowledge(image,phase)
+            return True
+        return False
