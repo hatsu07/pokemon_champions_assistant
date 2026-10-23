@@ -7,6 +7,7 @@ repo="hatsu07/pokemon_champions_assistant"
 min_age_days=1
 keep_per_name=1
 mode="dry-run"
+include_legacy=false
 
 usage() {
   cat <<'HELP'
@@ -14,14 +15,22 @@ Usage: bash scripts/prune_actions_artifacts.sh [options]
   --repo OWNER/REPO         Repository to clean
   --min-age-days N          Eligible artifacts must be this old (default 1)
   --keep-per-name N         Keep this many newest copies PER name (default 1)
+  --include-legacy          Also remove the 3 older validation/assistant artifact names
+                            (all versions; these are not the two current ZIP names)
   --apply                   Delete eligible items (without --apply: preview only)
   --help                    Print help
 
-Only two exact names are eligible:
+By default only two exact current names are eligible, keeping newest N:
   PokemonChampionsAssistant-DEVELOPMENT-windows-x64
   PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64
 
-Other artifacts, workflow runs, source files, and private data are unaffected.
+With --include-legacy these THREE obsolete names are ALSO eligible:
+  PokemonChampionsAssistant-windows-x64
+  PokemonChampionsSettingsValidation-windows-x64
+  PokemonChampionsValidation-windows-x64
+All copies of those legacy names older than --min-age-days are eligible;
+--keep-per-name only protects the two current DEVELOPMENT names.
+Other artifacts, workflow runs, source files and private data are unaffected.
 GitHub Actions quota updates may lag after deletion.
 HELP
 }
@@ -30,6 +39,7 @@ while (($#)); do
     --repo) (($# >= 2)) || exit 2; repo="$2"; shift 2 ;;
     --min-age-days) (($# >= 2)) || exit 2; min_age_days="$2"; shift 2 ;;
     --keep-per-name) (($# >= 2)) || exit 2; keep_per_name="$2"; shift 2 ;;
+    --include-legacy) include_legacy=true; shift ;;
     --apply) mode="apply"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -69,6 +79,8 @@ while IFS=$'\t' read -r name created id size; do
     PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64)
       collector_seen="$((collector_seen+1))"
       ((collector_seen > keep_per_name)) || continue ;;
+    PokemonChampionsAssistant-windows-x64|PokemonChampionsSettingsValidation-windows-x64|PokemonChampionsValidation-windows-x64)
+      [[ "$include_legacy" == true ]] || continue ;;
     *) continue ;;
   esac
   [[ "$id" =~ ^[0-9]+$ && "$size" =~ ^[0-9]+$ ]] || {
@@ -83,8 +95,8 @@ while IFS=$'\t' read -r name created id size; do
   bytes="$((bytes+size))"
 done < "$tmp/sorted.tsv"
 
-printf 'Repo: %s | Mode: %s | Older than %s days | Keep latest %s per name\n' \
-  "$repo" "$mode" "$min_age_days" "$keep_per_name"
+printf 'Repo: %s | Mode: %s | Older than %s days | Keep latest %s current builds/name | Include legacy: %s\n' \
+  "$repo" "$mode" "$min_age_days" "$keep_per_name" "$include_legacy"
 printf 'Eligible: %s artifact(s), approx %s MiB\n' "$items" "$((bytes / 1048576))"
 while IFS=$'\t' read -r name created id size; do
   printf '  %s  %s  created=%s  size=%s MiB\n' "$id" "$name" "$created" "$((size/1048576))"
