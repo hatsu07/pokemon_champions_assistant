@@ -19,7 +19,7 @@ jobs:
   desktop-windows-validation:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,6 +53,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "inline GUI regression suites failed" }
           python scripts/windows_qt_test_runner.py
           if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
+          python -m unittest tests.test_screen_dataset_collector -v
+          if ($LASTEXITCODE -ne 0) { throw "private dataset collector tests failed" }
       - name: Check whether a validated screen model is available
         shell: pwsh
         run: |
@@ -85,6 +87,12 @@ jobs:
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
           --add-data "build\\desktop-assets\\masters;masters"
           scripts/windows_desktop_entry.py
+      - name: Build standalone local dataset collector GUI
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
+          --name PokemonChampionsScreenDataCollector --paths src
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
+          scripts/windows_screen_dataset_collector_entry.py
       - name: Smoke desktop GUI headlessly with isolated local settings, no capture/API
         shell: pwsh
         run: |
@@ -110,6 +118,22 @@ jobs:
           $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
           if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED") {
             throw "desktop GUI startup smoke returned unexpected report"
+          }
+          Remove-Item Env:QT_QPA_PLATFORM
+      - name: Smoke dataset collector GUI offline (no actual screen access)
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = Resolve-Path .\\dist\\PokemonChampionsScreenDataCollector\\PokemonChampionsScreenDataCollector.exe
+          $report = Join-Path $env:RUNNER_TEMP "collector-smoke.json"
+          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "dataset collector GUI startup smoke failed" }
+          if (-not (Test-Path -LiteralPath $report)) { throw "missing dataset collector smoke report" }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($result.status -ne "SCREEN_DATASET_COLLECTOR_SMOKE_OK" -or
+              $result.network -ne "NOT_USED" -or
+              $result.screenshot_files -ne "NOT_CREATED") {
+            throw "dataset collector smoke produced an unexpected result"
           }
           Remove-Item Env:QT_QPA_PLATFORM
       - name: Verify PR head is still current before releasing artifact
@@ -147,6 +171,20 @@ jobs:
             "artifact_type=DEVELOPMENT_ONLY"
             "screen_model_release_validated=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
+          @(
+            "commit_sha=$built"
+            "workflow_run_id=${{ github.run_id }}"
+            "workflow_run_attempt=${{ github.run_attempt }}"
+            "artifact_type=SCREEN_DATASET_COLLECTOR_DEVELOPMENT"
+            "screenshots_auto_saved=false"
+            "network_upload=false"
+          ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
+      - name: Upload local screen dataset collector Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64
+          path: dist/PokemonChampionsScreenDataCollector/
+          if-no-files-found: error
       - name: Upload diagnostic-only Windows portable artifact
         uses: actions/upload-artifact@v4
         with:
