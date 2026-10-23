@@ -1,4 +1,4 @@
-"""Offline, deterministic screen dataset review tests (no real capture/AI)."""
+"""Offline, deterministic staging and GUI tests: no real capture or uploads."""
 from __future__ import annotations
 
 import os
@@ -14,9 +14,10 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from champions_assist.app_config import CaptureConfiguration
 from champions_assist.screen_dataset import (
-    TrainingFrame, LabelledScreenDataset, ReviewBuffer, validate_session)
+    LabelledScreenDataset, UnlabelledScreenStaging, StagingLimitReached,
+    ReviewBuffer, validate_session, MIB)
 from champions_assist.screen_dataset_collector import (
-    ScreenDatasetCollector, _ReadOnlyCollectorWorker)
+    ScreenDatasetCollector, _ReadOnlyCollectorWorker, PAGE_SIZE)
 
 
 class DatasetCoreTests(unittest.TestCase):
@@ -24,64 +25,74 @@ class DatasetCoreTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
-        self.store=LabelledScreenDataset(self.root/"screens")
+        self.dataset=LabelledScreenDataset(self.root/"screens")
+        self.staging=UnlabelledScreenStaging(self.dataset.root)
+        self.frame=np.full((70,110,3),170,dtype=np.uint8)
 
-    def test_no_disk_write_until_explicit_label(self):
-        queue=ReviewBuffer(max_frames=2,max_edge=640)
-        sample=queue.append(np.full((800,1300,3),100,dtype=np.uint8))
-        self.assertFalse(self.store.root.exists())
-        self.assertLessEqual(max(sample.image.shape[:2]),640)
-        path=self.store.save(sample,"TEAM_SELECTION")
-        self.assertTrue(path.is_file())
-        self.assertIn(sample.session_id+"__",path.name)
-        self.assertEqual(path.parent.name,"TEAM_SELECTION")
-        data=self.store.audit()
-        self.assertEqual(data["counts"]["TEAM_SELECTION"],1)
-        self.assertEqual(data["all_sessions"],1)
-        with self.assertRaises(FileExistsError):
-            self.store.save(sample,"TEAM_SELECTION")
-        queue.remove({sample.id})
-        self.assertEqual(queue.frames,[])
+    def test_staged_image_is_not_labelled_until_human_confirmation(self):
+        session="match20261023T111111_abc12345"
+        staged=self.staging.save_unlabelled(self.frame,session)
+        self.assertEqual(staged.suffix,".jpg")
+        self.assertEqual(staged.parent.name,session)
+        self.assertEqual(self.dataset.audit()["total"],0)
+        self.assertEqual(self.staging.sessions(),[session])
+        self.assertEqual(self.staging.session_files(session),[staged])
+        labelled=self.staging.label(staged,"TEAM_SELECTION",self.dataset)
+        self.assertFalse(staged.exists())
+        self.assertEqual(labelled.suffix,".png")
+        self.assertEqual(labelled.parent.name,"TEAM_SELECTION")
+        self.assertEqual(self.dataset.audit()["counts"]["TEAM_SELECTION"],1)
+        self.assertEqual(self.dataset.audit()["all_sessions"],1)
 
-    def test_correct_human_labels_and_reject_outside_dataset_paths(self):
-        queue=ReviewBuffer()
-        saved=self.store.save(queue.append(np.zeros((30,70,3),dtype=np.uint8)),"UNKNOWN")
-        moved=self.store.relabel(saved,"MOVE_MENU")
-        self.assertFalse(saved.exists())
-        self.assertTrue(moved.exists())
-        self.assertEqual(self.store.audit()["counts"]["MOVE_MENU"],1)
+    def test_disk_quota_never_deletes_old_frame_and_no_silent_eviction(self):
+        session="match20261023T111111_abc12345"
+        staged=self.staging.save_unlabelled(self.frame,session)
+        bytes_written=self.staging.used_bytes()
+        tiny=UnlabelledScreenStaging(self.dataset.root,quota_bytes=bytes_written+100)
+        self.assertEqual(tiny.used_bytes(),bytes_written)
+        with self.assertRaisesRegex(StagingLimitReached,"STAGING_QUOTA_REACHED"):
+            tiny.save_unlabelled(self.frame,session)
+        self.assertTrue(staged.exists())
+        self.assertEqual(len(tiny.session_files(session)),1)
+        tiny.remove_staged(staged)
+        self.assertFalse(staged.exists())
+        self.assertEqual(tiny.used_bytes(),0)
+
+    def test_staged_dataset_rejects_path_escape_and_invalid_labels(self):
+        session="match20261023T111111_abc12345"
+        staged=self.staging.save_unlabelled(self.frame,session)
         with self.assertRaises(ValueError):
-            self.store.relabel(self.root/"outside.png","TEAM_SELECTION")
+            self.staging.label(staged,"WRONG_LABEL",self.dataset)
         with self.assertRaises(ValueError):
-            self.store.save(queue.append(np.zeros((10,10,3),dtype=np.uint8)),"BAD_LABEL")
+            self.staging.remove_staged(self.root/"not-my-file.jpg")
         with self.assertRaises(ValueError):
-            validate_session("../../other")
+            validate_session("../other")
+        self.assertTrue(staged.exists())
+        self.staging.label(staged,"UNKNOWN",self.dataset)
+        item=next((self.dataset.root/"UNKNOWN").glob("*.png"))
+        moved=self.dataset.relabel(item,"MOVE_MENU")
+        self.assertEqual(moved.parent.name,"MOVE_MENU")
 
-    def test_memory_bounded_and_session_ids_keep_matches_separate(self):
-        queue=ReviewBuffer(max_frames=1)
-        first=queue.append(np.zeros((40,70,3),dtype=np.uint8))
-        with self.assertRaises(BufferError):
-            queue.append(np.ones((40,70,3),dtype=np.uint8))
-        self.assertEqual(len(queue.frames),1)
-        self.assertEqual(queue.dropped,1)
-        session=first.session_id
-        queue.new_session()
-        self.assertNotEqual(queue.session_id,session)
-        self.assertEqual(len(queue.frames),0)
-        second=queue.append(np.ones((40,70,3),dtype=np.uint8))
-        self.store.save(first,"TEAM_SELECTION")
-        self.store.save(second,"TEAM_SELECTION")
-        self.assertEqual(self.store.audit()["session_counts"]["TEAM_SELECTION"],2)
+    def test_recordings_are_separate_sessions_and_old_labels_unchanged(self):
+        a="match20261023T111111_abc12345"
+        b="match20261023T111112_abc12345"
+        first=self.staging.save_unlabelled(self.frame,a)
+        other=self.staging.save_unlabelled(self.frame,b)
+        self.assertEqual(set(self.staging.sessions()),{a,b})
+        out=self.staging.label(first,"RESULT",self.dataset)
+        self.assertEqual(self.staging.session_files(a),[])
+        self.assertEqual(self.staging.session_files(b),[other])
+        self.staging.save_unlabelled(self.frame,a)
+        self.assertTrue(out.exists())
+        self.assertEqual(self.dataset.audit()["counts"]["RESULT"],1)
 
-    def test_dataset_supports_training_script_session_split(self):
-        from scripts.train_screen_classifier import split_by_session
-        rows=[]
-        for sid in range(20):
-            for label in range(7):
-                rows.append((Path(f"sample{sid}_{label}.png"),label,f"match{sid}"))
-        train,valid,held=split_by_session(rows)
-        self.assertTrue(held)
-        self.assertTrue({x[2] for x in train}.isdisjoint({x[2] for x in valid}))
+    def test_training_script_ignores_unlabelled_folder(self):
+        from scripts.train_screen_classifier import collect
+        session="match20261023T111111_abc12345"
+        self.staging.save_unlabelled(self.frame,session)
+        with self.assertRaisesRegex(ValueError,"Missing class directory"):
+            collect(self.dataset.root)
+        self.assertEqual(self.dataset.audit()["total"],0)
 
 
 class DatasetCollectorGuiTests(unittest.TestCase):
@@ -91,9 +102,6 @@ class DatasetCollectorGuiTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # The PySide6 offscreen platform plugin may fault during interpreter
-        # shutdown if the QApplication singleton is left as a live Python ref.
-        # Match the proven legacy Qt test runner teardown.
         import gc
         cls.app.closeAllWindows()
         cls.app.quit()
@@ -103,10 +111,12 @@ class DatasetCollectorGuiTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        root=Path(self.temp.name)
-        self.gui=ScreenDatasetCollector(config_path=root/"config"/"settings.json",
-                                        dataset_root=root/"screens",
-                                        capture=lambda cfg: np.full((120,200,3),150,dtype=np.uint8))
+        self.root=Path(self.temp.name)
+        self.gui=ScreenDatasetCollector(
+            config_path=self.root/"config"/"settings.json",
+            dataset_root=self.root/"screens",
+            capture=lambda cfg:np.full((85,155,3),145,dtype=np.uint8))
+        self.image=np.full((85,155,3),145,dtype=np.uint8)
 
     def tearDown(self):
         import gc
@@ -118,61 +128,79 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         del gui
         gc.collect()
 
-    def test_gui_does_not_capture_or_save_on_startup_or_without_consent(self):
-        self.assertFalse(self.gui.dataset.root.exists())
+    def test_gui_has_5fps_default_and_requires_disk_consent(self):
+        self.assertEqual(self.gui.fps_box.currentData(),5)
+        self.assertEqual(self.gui.quota_box.currentData(),2)
         self.assertFalse(self.gui.consent.isChecked())
+        self.assertFalse(self.gui.dataset.root.exists())
         self.gui._start(one_shot=True)
         self.assertIsNone(self.gui._thread)
-        self.assertIn("明示的",self.gui.status.text())
+        self.assertIn("同意",self.gui.status.text())
+        self.assertFalse(self.gui.dataset.root.exists())
 
-    def test_preview_and_multiselect_save_requires_human_confirmed_label(self):
-        self.gui._on_frame(np.full((75,130,3),190,dtype=np.uint8))
-        self.gui._on_frame(np.full((75,130,3),70,dtype=np.uint8))
-        self.assertEqual(self.gui.review_list.count(),2)
-        self.assertFalse(self.gui.dataset.root.exists())
-        self.assertFalse(self.gui.preview.pixmap().isNull())
-        self.gui.review_list.selectAll()
-        self.gui._save_selected()
-        self.assertFalse(self.gui.dataset.root.exists())
-        idx=self.gui.label_box.findData("TEAM_SELECTION")
-        self.gui.label_box.setCurrentIndex(idx)
-        with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.No):
-            self.gui._save_selected()
-        self.assertFalse(self.gui.dataset.root.exists())
-        with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.Yes):
-            self.gui._save_selected()
-        self.assertEqual(self.gui.review_list.count(),0)
-        self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],2)
-        self.assertEqual(self.gui.dataset.audit()["all_sessions"],1)
-        self.assertIn("保存済み合計 2 枚",self.gui.audit_label.text())
-
-    def test_capture_worker_produces_local_frame_no_network(self):
+    def test_worker_one_shot_creates_single_unlabelled_file_offline(self):
         config=CaptureConfiguration(
             backend="WINDOWS_NATIVE",selected_window_identity={"hwnd":123},
             game_viewport_normalized=(0,0,1,1))
+        before=self.gui.dataset.audit()["total"]
+        worker=_ReadOnlyCollectorWorker(
+            config,session_id=self.gui.session_id,staging=self.gui.staging,
+            one_shot=True,fps=10,capture=lambda _:self.image)
         observed=[]
-        worker=_ReadOnlyCollectorWorker(config,one_shot=True,
-                   capture=lambda _:np.zeros((32,64,3),dtype=np.uint8))
-        worker.frame.connect(observed.append)
+        worker.progress.connect(observed.append)
         worker.run()
-        self.assertEqual(len(observed),1)
-        self.assertEqual(observed[0].shape,(32,64,3))
+        self.assertEqual(worker.saved,1)
+        self.assertGreaterEqual(observed[-1]["bytes"],1)
+        self.assertEqual(self.gui.dataset.audit()["total"],before)
+        self.assertEqual(len(self.gui.staging.session_files(self.gui.session_id)),1)
 
-    def test_relabel_saved_file_and_new_session_does_not_discard_saved_data(self):
-        self.gui._on_frame(np.zeros((55,88,3),dtype=np.uint8))
-        first_session=self.gui.buffer.session_id
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("UNKNOWN"))
+    def test_staged_review_is_paginated_and_labelling_requires_confirmation(self):
+        files=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+               for _ in range(PAGE_SIZE+3)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
+        self.assertEqual(self.gui.review_list.count(),PAGE_SIZE)
+        self.assertTrue(self.gui.next_button.isEnabled())
+        self.gui._next_page()
+        self.assertEqual(self.gui.review_list.count(),3)
+        self.gui.review_list.selectAll()
+        self.gui._save_selected()
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.gui.label_box.setCurrentIndex(
+            self.gui.label_box.findData("TEAM_SELECTION"))
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.No):
+            self.gui._save_selected()
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._save_selected()
-        saved=next(self.gui.dataset.root.glob("UNKNOWN/*.png"))
-        dest=self.gui.dataset.relabel(saved,"RESULT")
-        self.assertTrue(dest.exists())
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],3)
+        self.assertEqual(len(self.gui.staging.session_files(self.gui.session_id)),PAGE_SIZE)
+        self.assertEqual(self.gui.review_list.count(),PAGE_SIZE)
+        self.assertTrue(all(f.exists() for f in files[:PAGE_SIZE]))
+
+    def test_new_session_does_not_destroy_unlabelled_or_labelled_files(self):
+        before=self.gui.session_id
+        first=self.gui.staging.save_unlabelled(self.image,before)
         self.gui._new_session()
-        self.assertNotEqual(self.gui.buffer.session_id,first_session)
-        self.assertEqual(self.gui.dataset.audit()["counts"]["RESULT"],1)
+        self.assertNotEqual(self.gui.session_id,before)
+        self.assertTrue(first.exists())
+        self.gui._refresh_review_sessions(select=before)
+        self.assertEqual(self.gui.review_session_box.currentData(),before)
+        self.assertEqual(self.gui.review_list.count(),1)
+
+    def test_selected_file_discard_needs_confirmation(self):
+        first=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.No):
+            self.gui._discard_selected()
+        self.assertTrue(first.exists())
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            self.gui._discard_selected()
+        self.assertFalse(first.exists())
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
 
 
 if __name__=="__main__":
