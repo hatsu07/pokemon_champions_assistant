@@ -201,7 +201,10 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.gui._approve_auto_groups(use_suggestion=True)
         self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.assertEqual(self.gui.auto_frames_list.count(),6)
+        self.assertFalse(self.gui.auto_review_confirm.isChecked())
         self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("MOVE_MENU"))
+        self.gui.auto_review_confirm.setChecked(True)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.No):
             self.gui._approve_auto_groups(use_suggestion=False)
@@ -225,10 +228,62 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             self.gui._approve_auto_groups(use_suggestion=True)
         self.assertTrue(staged.exists())
         self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.gui.auto_review_confirm.setChecked(True)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._approve_auto_groups(use_suggestion=True)
         self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],1)
+
+    def test_middle_frame_can_be_corrected_without_mislabeling_group(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        staged=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+                for _ in range(6)]
+        group=AutoLabelGroup(tuple(staged),"TEAM_SELECTION",.97,.85,
+                             (staged[0],staged[3],staged[-1]),"AI候補・代表画像を確認")
+        self.gui._auto_on_proposals([group])
+        self.gui.auto_list.setCurrentRow(0)
+        self.assertEqual(self.gui.auto_frames_list.count(),6)
+        self.gui.auto_frames_list.setCurrentRow(2)
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("PARTY_MENU"))
+        self.gui._correct_selected_auto_frames()
+        self.assertEqual(self.gui._auto_frame_overrides[staged[2]],"PARTY_MENU")
+        self.assertFalse(self.gui.auto_review_confirm.isChecked())
+        self.gui.auto_frames_list.setCurrentRow(4)
+        self.gui._exclude_selected_auto_frames()
+        self.assertIn(staged[4],self.gui._auto_frame_exclusions)
+        self.gui.auto_review_confirm.setChecked(True)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            self.gui._approve_auto_groups(use_suggestion=True)
+        counts=self.gui.dataset.audit()["counts"]
+        self.assertEqual(counts["TEAM_SELECTION"],4)
+        self.assertEqual(counts["PARTY_MENU"],1)
+        self.assertEqual(sum(counts.values()),5)
+        self.assertTrue(staged[4].exists())
+        self.assertTrue(all(not p.exists() for i,p in enumerate(staged) if i!=4))
+
+    def test_changes_reset_review_and_block_accidental_save(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        files=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+               for _ in range(3)]
+        group=AutoLabelGroup(tuple(files),"MOVE_MENU",.99,.90,
+                             (files[0],files[1],files[-1]),"AI候補")
+        self.gui._auto_on_proposals([group])
+        self.gui.auto_list.setCurrentRow(0)
+        self.gui.auto_review_confirm.setChecked(True)
+        self.gui.auto_frames_list.setCurrentRow(1)
+        self.gui._exclude_selected_auto_frames()
+        self.assertFalse(self.gui.auto_review_confirm.isChecked())
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            self.gui._approve_auto_groups(use_suggestion=True)
+        confirm.assert_not_called()
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.assertTrue(all(p.exists() for p in files))
+        self.gui.auto_frames_list.setCurrentRow(1)
+        self.gui._reset_selected_auto_frames()
+        self.assertFalse(self.gui._auto_frame_exclusions)
+        self.assertEqual(self.gui.auto_frames_list.count(),3)
 
     @unittest.skipUnless(os.name=="nt","WSL process is Windows-native")
     def test_gpu_retrain_requires_explicit_user_confirmation(self):
