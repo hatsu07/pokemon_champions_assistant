@@ -60,6 +60,9 @@ jobs:
           python scripts/windows_qt_test_runner.py tests.test_screen_dataset_collector
           Write-Host "Private dataset collector Python process exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "private dataset collector tests failed" }
+      - name: Test artifact cleanup script offline (no GitHub deletions)
+        shell: bash
+        run: bash tests/test_prune_actions_artifacts.sh
       - name: Check whether a validated screen model is available
         shell: pwsh
         run: |
