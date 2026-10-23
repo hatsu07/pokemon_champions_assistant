@@ -23,6 +23,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify checked-out commit matches the triggering revision
+        shell: bash
+        run: |
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
       - name: Build the isolated CPU trainer
         run: |
           mkdir -p "$RUNNER_TEMP/screen-training-data" private-training/output private-training/.torch-cache
