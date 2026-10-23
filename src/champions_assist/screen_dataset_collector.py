@@ -223,8 +223,11 @@ class ScreenDatasetCollector(QMainWindow):
         self.rebind_button.clicked.connect(self._rebind_window)
         row.addWidget(self.rebind_button)
         layout.addLayout(row)
-        self.directory_label=QLabel("保存先: "+str(self.dataset.root))
+        self.directory_label=QLabel()
         self.directory_label.setWordWrap(True)
+        self.directory_label.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                           QSizePolicy.Policy.Preferred)
+        self._refresh_directory_label()
         layout.addWidget(self.directory_label)
         self.folder_button=QPushButton("保存先を変更")
         self.folder_button.clicked.connect(self._choose_folder)
@@ -543,6 +546,15 @@ class ScreenDatasetCollector(QMainWindow):
         self._update_source_label()
         self.status.setText("対象ウィンドウ変更済み。撮影して確認してください")
 
+    def _refresh_directory_label(self):
+        # Bare Windows/WSL paths are long unbreakable tokens in a QLabel.
+        # Zero-width break opportunities after separators preserve the actual
+        # path string while allowing wrapping as the window narrows.
+        path=str(self.dataset.root)
+        display=path.replace("\\\\", "\\\\u200b").replace("/", "/\u200b")
+        self.directory_label.setText("保存先: "+display)
+        self.directory_label.setToolTip(path)
+
     def _choose_folder(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
         value=QFileDialog.getExistingDirectory(
@@ -554,7 +566,7 @@ class ScreenDatasetCollector(QMainWindow):
             self.dataset=LabelledScreenDataset(value)
             self.staging=UnlabelledScreenStaging(value,
                        quota_bytes=int(self.quota_box.currentData())*1024**3)
-            self.directory_label.setText("保存先: "+str(self.dataset.root))
+            self._refresh_directory_label()
             self._refresh_review_sessions()
             self._update_counts()
 
