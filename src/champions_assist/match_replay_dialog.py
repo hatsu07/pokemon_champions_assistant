@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from threading import Event
+from uuid import uuid4
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
@@ -117,13 +118,30 @@ class _ReplayWorker(QObject):
 
 
 class MatchReplayDialog(QDialog):
+    """One live-session engine and UI; also embeddable in the main window.
+
+    This widget owns the ONLY active visual replay state and its 4-file preload.
+    The main window observes state_changed and never constructs another FSM.
+    """
+    state_changed = Signal(object, object)
+
     def __init__(self, *, model: str, master_directory: str, team_path: str,
                  capture_config: CaptureConfiguration | None = None,
                  store_root: str | Path | None = None, parent: QWidget | None = None,
-                 reasoning_effort: str = "auto"):
+                 reasoning_effort: str = "auto", embedded: bool = False,
+                 before_new_match=None):
         super().__init__(parent)
-        self.setWindowTitle("マッチング～対戦終了 自動キャプチャ・AI支援（ゲーム操作なし）")
-        self.setMinimumSize(790,620)
+        self.embedded = embedded
+        self.before_new_match = before_new_match
+        self.match_id = None
+        if embedded:
+            # A QDialog ordinarily becomes a separate native window even with
+            # a parent. Qt.Widget keeps the existing tested controls inline.
+            from PySide6.QtCore import Qt
+            self.setWindowFlags(Qt.WindowType.Widget)
+        else:
+            self.setWindowTitle("マッチング～対戦終了 自動キャプチャ・AI支援（ゲーム操作なし）")
+            self.setMinimumSize(790,620)
         self.model=model
         self.reasoning_effort=reasoning_effort
         self.master_directory=master_directory
@@ -158,7 +176,7 @@ class MatchReplayDialog(QDialog):
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         row=QHBoxLayout()
-        self.start_button=QPushButton("新しいテスト対戦を開始（4ファイル事前読込）")
+        self.start_button=QPushButton("対戦開始（4ファイル事前読込）")
         self.start_button.clicked.connect(self._new_match)
         self.reset_button=QPushButton("テスト終了・リセット")
         self.reset_button.clicked.connect(self._reset)
@@ -215,11 +233,14 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self, "停止が必要", "自動送信を停止してから新しい対戦を開始してください。")
             return
         try:
+            if self.before_new_match is not None:
+                self.before_new_match()
             if not self.master_directory or not self.team_path:
                 raise ValueError("次戦用の構築を先に選択してください。")
             self.assets=MasterPreloader(self.master_directory,
                                         team_source=self.team_path).load_for_new_match()
             self.state=new_replay(self.assets)
+            self.match_id="capture-"+uuid4().hex
             self.entries=[]
             self.actual_three.clear()
             self.actual_lead.clear()
@@ -230,6 +251,7 @@ class MatchReplayDialog(QDialog):
         except Exception as exc:
             self.assets=None
             self.state=None
+            self.match_id=None
             QMessageBox.warning(self,"テスト開始不可",str(exc))
 
     def _reset(self):
@@ -243,6 +265,7 @@ class MatchReplayDialog(QDialog):
         self.actual_three.clear()
         self.actual_lead.clear()
         self._render({"status":"RESET"})
+        self.match_id=None
 
     def _start_auto(self):
         if self._thread is not None or self._auto_running:
@@ -486,6 +509,8 @@ class MatchReplayDialog(QDialog):
             line+json.dumps({"latest":report,"replay_state":state,
                              "timeline":self.entries},ensure_ascii=False,indent=2))
         self.output.verticalScrollBar().setValue(0)
+        # Only observed UI reports; no hidden controller state is inferred.
+        self.state_changed.emit(dict(state), dict(report))
 
     def _export(self):
         if self.state is None:return
