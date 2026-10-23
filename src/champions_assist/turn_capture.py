@@ -45,6 +45,24 @@ class TurnCaptureBuffer:
         self._candidate=None
         self._streak=0
 
+    def acknowledge_calibrated_current(self, kind: str, image: np.ndarray) -> None:
+        """User explicitly identified the current screen as a known menu.
+
+        A single opted-in dispatch may start immediately from this frame.
+        Disarm the transition gate until two non-menu frames appear so that
+        the next 300 ms polls cannot send that same menu a second time.
+        """
+        self.calibrate(kind, image)
+        self._last=_menu_patch(image)
+        self._last_full=cv2.resize(
+            cv2.cvtColor(image,cv2.COLOR_RGB2GRAY),(96,54),
+            interpolation=cv2.INTER_AREA).astype(np.float32)/255.0
+        self._candidate=kind
+        self._streak=self.stable_frames
+        self._armed=False
+        self._misses=0
+        self.frames.append(image.copy())
+
     def _classify(self, patch: np.ndarray) -> str | None:
         candidates=[(float(np.mean(np.abs(patch-v))),k) for k,v in self.templates.items()]
         if not candidates:
