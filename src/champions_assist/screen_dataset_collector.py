@@ -328,8 +328,9 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_select_reviewed_button.clicked.connect(self._select_all_reviewed_groups)
         layout.addWidget(self.auto_select_reviewed_button)
         bulk_help=QLabel(
-            "Ctrl/Shiftで複数選択、または「すべてのグループを選択」。"
-            "AI候補は仮ラベルです。画像を確認・必要なら訂正し、最後の確認画面で一括保存を確定します。")
+            "Ctrl/Shiftで1件以上を選択。複数グループを同じラベルに訂正する場合は"
+            "下の「選択グループのラベルを一括訂正」を使います。"
+            "訂正せずAI候補のままでも、最後にラベルを確認してPNG保存できます。")
         bulk_help.setWordWrap(True)
         layout.addWidget(bulk_help)
         reps=QHBoxLayout()
@@ -374,10 +375,13 @@ class ScreenDatasetCollector(QMainWindow):
             self.auto_label_box.addItem(f"{label} — {SCREEN_LABELS[label]}",label)
         self.auto_label_box.setMinimumWidth(280)
         self.auto_label_box.setToolTip(
-            "選択した画像だけの訂正と、グループ全体のラベル訂正に共通です。"
+            "選択した複数グループの一括ラベル訂正と、選択した画像だけの訂正に共通です。"
             "従来の手動保存用ラベルとは独立しています。")
         auto_label_controls.addWidget(self.auto_label_box)
-        self.auto_group_draft_button=QPushButton("グループラベルを訂正（保存は後で）")
+        self.auto_group_draft_button=QPushButton("選択グループのラベルを一括訂正")
+        self.auto_group_draft_button.setToolTip(
+            "Ctrl/Shiftで選択した複数グループに同じラベルを適用します。"
+            "ここではPNGを保存しません。")
         self.auto_group_draft_button.clicked.connect(self._stage_auto_group_label)
         auto_label_controls.addWidget(self.auto_group_draft_button)
         auto_label_controls.addStretch(1)
@@ -398,18 +402,13 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_review_confirm=QCheckBox("任意の確認メモ",body)
         self.auto_review_confirm.toggled.connect(self._set_auto_group_reviewed)
         self.auto_review_confirm.hide()
-        approve_buttons=QHBoxLayout()
-        self.auto_accept_button=QPushButton("選択グループをAI候補で承認・PNG保存")
-        self.auto_accept_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=True))
-        approve_buttons.addWidget(self.auto_accept_button)
-        self.auto_correct_button=QPushButton("選択ラベルに訂正してグループ保存")
-        self.auto_correct_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=False))
-        approve_buttons.addWidget(self.auto_correct_button)
-        layout.addLayout(approve_buttons)
-        self.auto_bulk_button=QPushButton("選択したグループをまとめてPNG保存")
+        # Exactly one PNG save action for the grouped review workflow.
+        # Label corrections happen separately, never as an implicit save.
+        self.auto_bulk_button=QPushButton("選択グループをPNG保存")
         self.auto_bulk_button.setObjectName("autoBulkApproveReviewedGroups")
         self.auto_bulk_button.setToolTip(
-            "Ctrl/Shiftで選択したグループを1回の最終確認で保存。"
+            "Ctrl/Shiftで選択した1件以上のグループを、"
+            "グループ別ラベル・枚数の最終確認後にPNG保存します。"
             "ラベル未確定や全画像除外のグループは保存できません。")
         self.auto_bulk_button.clicked.connect(self._approve_selected_auto_groups)
         layout.addWidget(self.auto_bulk_button)
@@ -465,7 +464,7 @@ class ScreenDatasetCollector(QMainWindow):
         layout.addWidget(note)
         self._responsive_rows=[
             row,controls,buttons,rev,auto_buttons,reps,auto_label_controls,
-            correction_controls,approve_buttons,gpu_controls,page,labels]
+            correction_controls,gpu_controls,page,labels]
         scroll.setWidget(body)
         self.setCentralWidget(scroll)
         self._apply_responsive_layout(scroll.viewport().width())
@@ -495,7 +494,6 @@ class ScreenDatasetCollector(QMainWindow):
                      self.quota_box,self.fps_box,self.refresh_button,
                      self.save_button,self.discard_button,self.relabel_button,
                      self.model_select_button,self.auto_analyze_button,
-                     self.auto_accept_button,self.auto_correct_button,
                      self.gpu_retrain_button,self.gpu_command_button,
                      self.auto_frame_fix_button,self.auto_frame_exclude_button,
                      self.auto_frame_reset_button,self.auto_review_confirm,
@@ -1005,18 +1003,22 @@ class ScreenDatasetCollector(QMainWindow):
     def _populate_auto_frames(self,group):
         self.auto_frames_list.clear()
         details={detail.path:detail for detail in group.frame_details}
+        index,_=self._current_auto_group()
+        group_override=self._auto_group_label_overrides.get(index)
         for number,path in enumerate(group.files,start=1):
             detail=details.get(path)
             override=self._auto_frame_overrides.get(path)
             excluded=path in self._auto_frame_exclusions
-            candidate=(override or
+            candidate=(override or group_override or
                        (detail.predicted_label if detail is not None else group.candidate))
             confidence=detail.confidence if detail is not None else group.confidence
             warnings=detail.review_flags if detail is not None else ()
             if excluded:
                 status="除外"
             elif override is not None:
-                status="訂正済"
+                status="画像訂正済"
+            elif group_override is not None:
+                status="グループ訂正済"
             elif warnings or group.candidate is None:
                 status="⚠要確認"
             else:
@@ -1027,6 +1029,7 @@ class ScreenDatasetCollector(QMainWindow):
             item.setToolTip(
                 f"{path.name}\n予測:{(detail.predicted_label if detail else group.candidate) or 'なし'}\n"
                 f"注意:{', '.join(warnings) if warnings else 'なし'}\n"
+                f"グループ訂正:{group_override or 'なし'} / "
                 f"部分訂正:{override or 'なし'} / 除外:{excluded}")
             try:
                 bgr=cv2.imdecode(np.fromfile(path,dtype=np.uint8),cv2.IMREAD_COLOR)
@@ -1070,16 +1073,30 @@ class ScreenDatasetCollector(QMainWindow):
         self._update_auto_group_row(index)
 
     def _stage_auto_group_label(self):
-        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
-        index,group=self._current_auto_group()
-        label=self.auto_label_box.currentData()
-        if group is None or label not in LABELS:
-            self.auto_progress.setText("グループと訂正先ラベルを選んでください")
+        """Stage one label for all selected groups; do not write PNGs."""
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:
             return
-        self._auto_group_label_overrides[index]=label
-        self._invalidate_auto_review()
+        label=self.auto_label_box.currentData()
+        indices=[index for index,_ in self._selected_auto_groups()]
+        if not indices or label not in LABELS:
+            self.auto_progress.setText(
+                "訂正するグループを選択し、サムネイル直下の訂正先ラベルを指定してください")
+            return
+        # A staged group label applies to every frame WITHOUT a more specific
+        # per-frame correction; excluded JPEGs remain excluded.
+        for index in indices:
+            self._auto_group_label_overrides[index]=label
+            self._auto_reviewed_groups.discard(index)
+            self._update_auto_group_row(index)
+        index,group=self._current_auto_group()
+        self.auto_review_confirm.blockSignals(True)
+        self.auto_review_confirm.setChecked(index in self._auto_reviewed_groups)
+        self.auto_review_confirm.blockSignals(False)
+        if group is not None and index in indices:
+            self._populate_auto_frames(group)
         self.auto_progress.setText(
-            f"グループ{index+1}を{label}に仮訂正しました。保存時にラベルを最終確認します。")
+            f"選択した{len(indices)}グループを{label}に仮訂正しました。"
+            "PNGは未保存です。保存時に各グループのラベルと枚数を確認してください。")
 
     def _correct_selected_auto_frames(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return

@@ -41,6 +41,8 @@
 
 新チャットへ開発を引き継ぐ際の読み順と最新注意点は [開発引継ぎインデックス](docs/CURRENT_DEVELOPMENT_HANDOFF.md) に集約しています。
 
+画面収集のグループ操作は、Ctrl/Shift複数選択→必要なら「選択グループのラベルを一括訂正」→「選択グループをPNG保存」1ボタン→ラベル・枚数の最終確認に統一しています。詳細は[画面データ収集手順](docs/screen_dataset_collection.md)。
+
 
 **GitHub Actions ＋ GitHub Releases**。PRのWindows CIはすべてのオフラインテスト・Assistant/Collector両方のPyInstallerビルドとGUIスモークを実行するが、保存容量に制約のあるActions Artifactsへはアップロードしない。PRは最新SHAでworkflow全体と必須jobの`completed/success`を確認するまでマージ禁止（有料GitHub Proやブランチ保護は不要）。
 

@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QBoxLayout
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QBoxLayout, QPushButton
 
 from champions_assist.app_config import CaptureConfiguration
 from champions_assist.screen_dataset import (
@@ -254,6 +254,87 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.gui._refresh_review_sessions(select=before)
         self.assertEqual(self.gui.review_session_box.currentData(),before)
         self.assertEqual(self.gui.review_list.count(),1)
+
+    def test_group_review_displays_exactly_one_png_save_button(self):
+        """No redundant AI-accept vs corrected-save vs batch-save actions."""
+        self.assertFalse(hasattr(self.gui,"auto_accept_button"))
+        self.assertFalse(hasattr(self.gui,"auto_correct_button"))
+        self.assertEqual(self.gui.auto_bulk_button.text(),"選択グループをPNG保存")
+        self.assertEqual(self.gui.auto_group_draft_button.text(),
+                         "選択グループのラベルを一括訂正")
+        # Manual per-image PNG saving remains a separate workflow.
+        self.assertEqual(self.gui.save_button.text(),"選択画像を正解ラベルでPNG保存")
+        grouped=[widget for widget in self.gui.findChildren(QPushButton)
+                 if widget.text() in (
+                     "選択グループをAI候補で承認・PNG保存",
+                     "選択ラベルに訂正してグループ保存",
+                     "選択したグループをまとめてPNG保存",
+                     "選択グループをPNG保存")]
+        self.assertEqual(grouped,[self.gui.auto_bulk_button])
+
+    def test_bulk_relabel_selected_groups_keeps_per_frame_corrections_and_stages_only(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+                for _ in range(6)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
+        self.gui._auto_on_proposals([
+            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.9,
+                           (frames[0],frames[1]),"AI候補"),
+            AutoLabelGroup(tuple(frames[2:4]),"TEAM_SELECTION",.98,.9,
+                           (frames[2],frames[3]),"AI候補"),
+            AutoLabelGroup(tuple(frames[4:]),"RESULT",.95,.9,
+                           (frames[4],frames[5]),"AI候補")])
+        # A previous per-frame correction must beat the later group correction.
+        self.gui._auto_frame_overrides[frames[4]]="UNKNOWN"
+        self.gui.auto_list.setCurrentRow(2)
+        self.gui.auto_list.item(0).setSelected(True)
+        self.gui.auto_list.item(2).setSelected(True)
+        self.assertEqual({i for i,_ in self.gui._selected_auto_groups()},{0,2})
+        self.gui.auto_label_box.setCurrentIndex(
+            self.gui.auto_label_box.findData("PARTY_MENU"))
+        self.gui.auto_group_draft_button.click()
+        self.assertEqual(self.gui._auto_group_label_overrides,
+                         {0:"PARTY_MENU",2:"PARTY_MENU"})
+        self.assertIn("2グループ",self.gui.auto_progress.text())
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.assertTrue(all(f.exists() for f in frames))
+        # Current group's thumbnails show the effective saved labels.
+        labels=[self.gui.auto_frames_list.item(i).text()
+                for i in range(self.gui.auto_frames_list.count())]
+        self.assertTrue(any("画像訂正済" in t and "UNKNOWN" in t for t in labels))
+        self.assertTrue(any("グループ訂正済" in t and "PARTY_MENU" in t for t in labels))
+        # One save button saves just the selected groups, in one dialog.
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes) as confirmation:
+            self.gui.auto_bulk_button.click()
+        confirmation.assert_called_once()
+        prompt=confirmation.call_args.args[2]
+        self.assertIn("グループ1: PARTY_MENU 2枚",prompt)
+        self.assertIn("グループ3:",prompt)
+        counts=self.gui.dataset.audit()["counts"]
+        self.assertEqual(counts["PARTY_MENU"],3)
+        self.assertEqual(counts["UNKNOWN"],1)
+        self.assertEqual(sum(counts.values()),4)
+        self.assertEqual(set(self.gui.staging.session_files(self.gui.session_id)),
+                         set(frames[2:4]))
+        self.assertEqual(len(self.gui._auto_groups),1)
+        self.assertEqual(self.gui._auto_groups[0].candidate,"TEAM_SELECTION")
+
+    def test_bulk_label_correction_rejects_missing_label_or_selection(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        path=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+        self.gui._auto_on_proposals([
+            AutoLabelGroup((path,),None,.0,.0,(path,),"要確認")])
+        self.gui.auto_list.setCurrentRow(0)
+        self.gui.auto_group_draft_button.click()
+        self.assertFalse(self.gui._auto_group_label_overrides)
+        self.assertTrue(path.exists())
+        self.gui.auto_label_box.setCurrentIndex(
+            self.gui.auto_label_box.findData("RESULT"))
+        self.gui.auto_list.clearSelection()
+        self.gui.auto_group_draft_button.click()
+        self.assertFalse(self.gui._auto_group_label_overrides)
+        self.assertTrue(path.exists())
 
     def test_group_label_choice_is_directly_below_thumbnails_and_separate_from_manual(self):
         parent_layout=self.gui.centralWidget().widget().layout()
@@ -583,6 +664,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertIn("未確定",self.gui.auto_progress.text())
         self.gui.auto_label_box.setCurrentIndex(
             self.gui.auto_label_box.findData("UNKNOWN"))
+        # Isolate group 2 when changing only this label.
+        self.gui.auto_list.clearSelection()
+        self.gui.auto_list.setCurrentRow(1)
         self.gui._stage_auto_group_label()
         self.gui.auto_review_confirm.setChecked(True)
         self.gui.auto_list.item(0).setSelected(True)
