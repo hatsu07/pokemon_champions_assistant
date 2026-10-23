@@ -69,14 +69,16 @@ def _representative(files: Sequence[Path]) -> tuple[Path, ...]:
 
 def analyze_staged_session(files: Sequence[Path], *, classifier=None,
                            progress: Callable[[int, int], None] | None=None,
-                           max_group: int=30, max_hash_distance: int=7
+                           max_group: int=30, max_hash_distance: int=7,
+                           max_color_distance: float=25.0
                            ) -> list[AutoLabelGroup]:
     """Compute *draft* groups; approval is explicitly out of scope.
 
     Continuity needs same parent, consecutive capture time, similarity, and
     consistent raw model prediction. Ambiguous predictions are not UNKNOWN truth.
     """
-    if not 1 <= max_group <= 100 or not 0 <= max_hash_distance <= 64:
+    if (not 1 <= max_group <= 100 or not 0 <= max_hash_distance <= 64
+            or not 0 <= max_color_distance <= 255):
         raise ValueError("INVALID_AUTOLABEL_GROUP_SETTINGS")
     if not files:
         return []
@@ -91,6 +93,7 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
     groups: list[AutoLabelGroup] = []
     active: list[Path] = []
     previous_hash: int | None = None
+    previous_small: np.ndarray | None = None
     previous_time: datetime | None = None
     label: str | None = None
     min_conf = 1.0
@@ -114,6 +117,9 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
             raise ValueError(f"UNREADABLE_STAGED_JPEG: {path.name}")
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         current_hash = _visual_hash(rgb)
+        current_small = cv2.resize(rgb,(24,24),interpolation=cv2.INTER_AREA).astype(np.float32)
+        color_change=(float(np.abs(current_small-previous_small).mean())
+                      if previous_small is not None else 0.0)
         timestamp = _capture_time(path)
         current_label = None
         confidence, margin = 0.0, 0.0
@@ -129,6 +135,7 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
         boundary = (not active or len(active) >= max_group or
                     (previous_hash is not None and
                      (previous_hash ^ current_hash).bit_count() > max_hash_distance) or
+                    (previous_small is not None and color_change > max_color_distance) or
                     (gap is not None and not 0 <= gap <= 2.0) or
                     (classifier is not None and label != current_label))
         if boundary:
@@ -140,7 +147,7 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
         active.append(path)
         min_conf = min(min_conf, confidence)
         min_margin = min(min_margin, margin)
-        previous_hash, previous_time = current_hash, timestamp
+        previous_hash, previous_small, previous_time = current_hash, current_small, timestamp
         if progress is not None and (index == 1 or index % 25 == 0 or index == len(files)):
             progress(index, len(files))
 
