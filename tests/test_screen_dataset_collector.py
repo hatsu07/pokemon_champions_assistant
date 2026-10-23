@@ -374,11 +374,19 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(counts["MOVE_MENU"],3)
         self.assertEqual(counts["TEAM_SELECTION"],1)
         self.assertEqual(counts["PARTY_MENU"],1)
-        self.assertEqual(self.gui.auto_list.count(),1)
-        self.assertEqual(self.gui._auto_groups[0].candidate,None)
+        # Excluded JPG remains staged in the corrected group; only saved
+        # frames disappear. The unselected UNKNOWN group is untouched.
+        self.assertEqual(self.gui.auto_list.count(),2)
+        self.assertEqual(
+            [g.files for g in self.gui._auto_groups],
+            [(frames[5],),(frames[6],frames[7])])
+        self.assertEqual(self.gui._auto_groups[0].candidate,"RESULT")
+        self.assertIsNone(self.gui._auto_groups[1].candidate)
         self.assertEqual(set(self.gui.staging.session_files(self.gui.session_id)),
                          {frames[5],frames[6],frames[7]})
-        self.assertNotIn(1,self.gui._auto_group_label_overrides)
+        self.assertIn(frames[5],self.gui._auto_frame_exclusions)
+        self.assertEqual(self.gui._auto_group_label_overrides[0],"TEAM_SELECTION")
+        self.assertFalse(self.gui.auto_review_confirm.isChecked())
         self.assertIn("2グループ・5枚",self.gui.auto_progress.text())
 
     def test_bulk_blocks_unreviewed_groups_atomically(self):
