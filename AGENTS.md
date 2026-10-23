@@ -2,12 +2,14 @@
 
 
 ## Mandatory AI development / CI policy (2026-10-23)
-- **Read and follow `docs/AI_DEVELOPMENT_AND_CI_POLICY.md` before changing code or reporting a result.** This requirement applies to Codex, ChatGPT, other development agents and human contributors.
+- **Read and follow `docs/AI_DEVELOPMENT_AND_CI_POLICY.md` and `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md` before changing code or reporting a result.** This requirement applies to Codex, ChatGPT, other development agents and human contributors.
 - Use a Draft PR while implementing, testing, documenting and committing. **Freeze the final commit before triggering/accepting release CI.**
 - When CI fails, add commits, or HEAD moves: ignore the old run for completion; ensure a new CI run validates the **latest PR HEAD SHA** from the start.
 - A successful result is relevant only if the `workflow_run.head_sha`, actual checkout SHA, and current PR head are identical and all required jobs succeeded. Keep run ID + SHA in the completion report.
 - A CI run on an old SHA is never proof that newer code works. Do not merge, publish an artifact as verified, or tell the user the work is complete without checking the final revision. Never claim game-device/real API correctness from offline tests.
-- The Windows workflow is configured to rerun on PR commits, cancel superseded jobs and block uploading artifacts for a stale PR head. Required status checks still need repository ruleset/branch protection; a passing check is not the same as actual merge protection.
+- The Windows workflow reruns on Ready PR commits, cancels superseded jobs, verifies the exact PR SHA, and tests Windows builds without uploading ZIPs. Explicit manual artifact publishing is separate, can fail when the Actions quota is exhausted, and is never silently reported as complete.
+- **HARD MERGE STOP:** Never merge if the *entire* latest-HEAD PR CI is anything other than `completed/success`, even if all code tests passed, an upload failure seems unrelated, or GitHub reports `mergeable: true`. Additionally, never merge while GitHub's server-side `master` protection / required Windows check and no-admin-bypass rules are absent or cannot be verified. See `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`. This applies to this and **every later chat/agent**.
+- **Confirmed blocker as of 2026-10-23:** `master.protected=false`; private-repo Rulesets returned a plan restriction, and the installed GitHub connector cannot write protection. A Markdown policy does NOT physically disable GitHub's Merge button. Document the blocker and stop; do not make a discretionary exception.
 
 
 
