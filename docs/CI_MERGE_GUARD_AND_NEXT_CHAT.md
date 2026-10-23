@@ -30,6 +30,19 @@ PRの成功と配布物の存在は別に報告する。実機BlueStacks/Champio
 
 `skipped`チェックをGitHubが合格相当と扱う場合があるため、エージェント側では**明示的に`completed/success`**であることも別途必須条件とする。Draft PRはCIがスキップするが、Readyへ移すまでマージ対象にしない。
 
+## 読み取り専用の事前マージ検証スクリプト
+
+`scripts/verify_merge_ready.py` はPR・最新Windows Actions run・Required job・master branch保護ルール・管理者例外禁止をGitHub REST APIから検査し、一箇所でも未確認なら**BLOCKED**で終了する。GitHubトークンの権限が不十分でprotection APIが403でもfail closed。これはAIエージェントによる事故防止の追加層であり、サーバー側の保護機能そのものではない。ユーザーのトークンをリポジトリやチャットへ貼り付けない。
+
+WSLホストにPythonを入れず、Docker devコンテナー内で実行する例：
+
+```bash
+# トークンは安全なシェル環境変数 GH_TOKEN として設定済みとする
+docker compose run --rm -e GH_TOKEN dev python scripts/verify_merge_ready.py --pr <PR番号>
+```
+
+ローカル単体テスト：`docker compose run --rm dev python -m unittest tests.test_verify_merge_ready -v`。接続なしでも、失敗CI・旧SHA・保護不備がBLOCKEDになることを検証できる。**スクリプトのPASSが出ても、マージ直前にGitHub側の最新HEAD/保護設定とCIを再確認**する。
+
 ## すべてのチャット・エージェント共通の厳格マージゲート
 
 - 新しい作業は新ブランチ + **Draft PR**。まずコード、テスト、ドキュメントを完成。Latest HEAD SHAを固定する。
