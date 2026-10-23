@@ -1,0 +1,40 @@
+name: Synthetic screen-classifier training
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [ready_for_review, synchronize]
+    paths:
+      - ".devcontainer/Dockerfile"
+      - "compose.yaml"
+      - "requirements-training.txt"
+      - "scripts/train_screen_classifier.py"
+      - "scripts/train_screen_classifier_docker.sh"
+      - "tests/training_pipeline_integration.py"
+      - ".github/workflows/screen-classifier-training.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-training-pipeline:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify checked-out commit matches the triggering revision
+        shell: bash
+        run: |
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
+      - name: Build the isolated CPU trainer
+        run: |
+          mkdir -p "$RUNNER_TEMP/screen-training-data" private-training/output private-training/.torch-cache
+          TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" docker compose --profile training build trainer
+      - name: Train synthetic sessions and validate the ONNX model
+        run: |
+          TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" docker compose --profile training run --rm --user "$(id -u):$(id -g)" trainer python -m unittest tests.training_pipeline_integration -v

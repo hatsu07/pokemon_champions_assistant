@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS dev
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -11,3 +11,13 @@ RUN apt-get update \
 WORKDIR /workspace
 COPY requirements-baseline.txt /tmp/requirements-baseline.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-baseline.txt
+
+# Keep the large, optional model-training stack out of the ordinary development
+# image.  The Compose `trainer` service explicitly selects this stage.
+FROM dev AS trainer
+
+COPY requirements-training.txt /tmp/requirements-training.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-training.txt
+
+# Preserve the lean development image as the default target for direct builds.
+FROM dev AS default

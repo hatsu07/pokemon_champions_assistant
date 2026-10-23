@@ -266,3 +266,41 @@
 - **First-frame checkpoint accepted on device:** the operator supplied and visually confirmed a local native `PrintWindow` PNG containing the Champions title screen, with its report values (2254 × 1298 client/image pixels, Win32 DPI 192, 47 ms first acquisition). This workspace still has no direct Windows/BlueStacks control. OCR accuracy, UI coordinates, battle event phrases, timers, capture stability, GUI handoff and gameplay readiness remain unverified and blocked.
 - Required before Phase 7 human review: run and retain both read-only capture reports; label local footage for every listed scenario; replay it through the existing SQLite/FSM path; compare false/missed OCR/events and GUI latency; verify random forced switch, pivot, faint replacement, actual correction and stale response suppression; decide a backend manually; confirm game/platform terms.
 - Still separate Phase 7 work: run the Windows artifact on a real PC, validate PyInstaller DLL/Qt/OCR inclusion, then build/test the per-user WiX MSI including install/upgrade/uninstall/data retention and Windows credential protection. No paid OpenAI request was made, and no automatic gameplay operation was added.
+
+## Local screen-classifier training Docker support — 2026-10-23
+
+### Changed files
+
+- Optional trainer image and dependencies: `.devcontainer/Dockerfile`, `requirements-training.txt`, `compose.yaml`.
+- Dataset preflight and safe WSL entrypoint: `scripts/train_screen_classifier.py`, `scripts/train_screen_classifier_docker.sh`.
+- Regression and synthetic-pipeline coverage: `tests/test_screen_classifier.py`, `tests/training_pipeline_integration.py`, `.github/workflows/screen-classifier-training.yml`.
+- GUI lifecycle cleanup discovered by full-suite termination: `src/champions_assist/desktop.py`, `tests/test_screen_dataset_collector.py`, `tests/test_vision_preferences.py`.
+- Operator instructions: `docs/screen_dataset_collection.md`, `README.md`.
+
+### Implemented
+
+- Rebased the training branch onto `c762b34` (PR #22). The only conflict was in `docs/screen_dataset_collection.md`; its 5fps default, 2/5/10fps selection, disk-backed `_UNLABELLED` JPEGs, quota handling, 100-image review pages, and post-battle human labelling flow were retained. Existing labelled and unlabelled data layouts were not changed.
+- Added a dedicated Compose `trainer` profile whose Dockerfile stage contains optional CPU PyTorch, TorchVision, ONNX, and ONNX Runtime only. The ordinary `dev` target remains free of these dependencies.
+- The trainer mounts the code and labelled source data read-only. Only ignored `private-training/output` and `private-training/.torch-cache` mounts are writable. The WSL wrapper resolves `%LOCALAPPDATA%`, rejects a data directory inside the workspace, handles whitespace/Japanese paths, and fixes the output to `private-training/output`.
+- Added local preflight for exactly seven labels: image and independent-session counts, image readability, `_UNLABELLED` exclusion, a deterministic session-disjoint split, and clear insufficient-label/session diagnostics. A label must occur in at least two independent sessions, and every label must occur in both train and validation; evaluation frames are never reused for training.
+- CPU is the only implemented training path. `auto` selects CPU even if a CUDA runtime happens to exist. No-pretrained training is the default; only explicit `--pretrained` can obtain ImageNet weights. The trainer never uploads captures, labels, results, or model files.
+- Added a separate synthetic CPU workflow, triggered on Ready/synchronize for trainer changes. It explicitly checks out and compares the PR head SHA, then makes seven-class, four-session synthetic data, trains one epoch without pretrained weights, verifies the ONNX SHA-256 and unvalidated manifest, and runs ONNX Runtime inference with a `(1, 7)` output. It does not use private captures or publish artifacts.
+- Full-suite investigation also fixed two independent cleanup faults: a closed legacy dashboard disconnects before its SQLite store can close, and GUI tests keep the shared `QApplication` alive while explicitly disposing benchmark dialogs. These changes remove the prior SQLite traceback, Qt warning, and exit-139 termination.
+
+### Verification
+
+- `bash -n scripts/train_screen_classifier_docker.sh`: PASS.
+- `docker compose config --quiet` and `docker compose --profile training config --quiet`: PASS.
+- `docker compose build`: PASS; ordinary development image remains separate from the trainer.
+- `docker compose --profile training build trainer`: PASS; CPU-only `torch 2.5.1+cpu`, `torchvision 0.20.1+cpu`, `onnx 1.17.0`, and `onnxruntime 1.20.1` installed in the dedicated image.
+- An external temporary path containing whitespace and Japanese characters: PASS. `/workspace` and `/training/screens` were non-writable; only output/cache mounts were writable. The wrapper's `--help` completed with that mount.
+- `docker compose --profile training run ... python -m unittest tests.training_pipeline_integration -v`: PASS, 1/1. CPU one-epoch synthetic training exported a loadable 7-class ONNX model; the resulting manifest was intentionally `validated=false`.
+- `docker compose run --rm dev python scripts/verify_package.py`: PASS; required files + 892 effect records.
+- `docker compose run --rm dev python -m unittest discover -s baseline_v2_3 -p 'test_*.py' -v`: PASS; 16/16.
+- The existing Windows-workflow test selection was run in Docker/offscreen: PASS, exit 0, 113/113.
+- `docker compose run --rm -e QT_QPA_PLATFORM=offscreen dev python -m unittest discover -s tests -p 'test_*.py' -v`: PASS, exit 0, 175/175; no SQLite closed-database traceback or Qt cleanup warning.
+
+### Remaining uncertainty
+
+- No private Champions capture was read, trained, uploaded, committed, or included in CI. Therefore preflight and CPU training are exercised only with synthetic data; actual-data trainability, label distribution, ImageNet-weight use, model quality, latency, and BlueStacks recognition accuracy remain unverified.
+- The dedicated trainer intentionally uses CPU-only PyTorch wheels. CUDA/NVIDIA Docker Desktop support is not implemented or verified.

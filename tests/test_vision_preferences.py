@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QCoreApplication, QEvent
 from champions_assist.vision_preferences import VisionPreferenceStore
 from champions_assist.vision_benchmark_dialog import VisionBenchmarkDialog
 from champions_assist.desktop import ensure_application
@@ -26,12 +27,16 @@ class VisionPersistenceTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Ensure the Qt singleton is released before interpreter shutdown,
-        # avoiding a platform-plugin destructor race on Windows offscreen CI.
-        import gc
-        cls.app.quit()
-        cls.app = None
-        gc.collect()
+        # QApplication is shared by GUI test modules.  Do not quit it here:
+        # doing so deletes shared Qt state while PySide wrappers still exist.
+        cls.app.closeAllWindows()
+        cls.app.processEvents()
+
+    def _dispose_dialog(self, dialog):
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+        self.app.processEvents()
 
     def test_model_preference_survives_disk_reload_without_storing_secrets(self):
         with tempfile.TemporaryDirectory() as root:
@@ -54,7 +59,7 @@ class VisionPersistenceTests(unittest.TestCase):
                     first.model.setCurrentIndex(first.model.findData("gpt-5.6-terra"))
                     self.assertEqual(first.preferences.selected_model(),"gpt-5.6-terra")
                 finally:
-                    first.close()
+                    self._dispose_dialog(first)
                 later=VisionBenchmarkDialog(store_root=root)
                 try:
                     later._restore_model_options(list(reversed(MODELS)))
@@ -64,7 +69,7 @@ class VisionPersistenceTests(unittest.TestCase):
                     self.assertIsNone(later.model.currentData())
                     self.assertEqual(later.preferences.selected_model(),"gpt-5.6-terra")
                 finally:
-                    later.close()
+                    self._dispose_dialog(later)
 
 if __name__=="__main__":
     unittest.main()

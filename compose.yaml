@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
+      target: dev
     working_dir: /workspace
     volumes:
       - .:/workspace
@@ -13,3 +14,33 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/workspace/src"
+  trainer:
+    profiles: ["training"]
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      target: trainer
+    working_dir: /workspace
+    volumes:
+      # Training code is immutable in this service.  Only the explicitly
+      # ignored output/cache mounts below are writable.
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: ./private-training/output
+        target: /workspace/private-training/output
+      - type: bind
+        source: ./private-training/.torch-cache
+        target: /training-cache
+      - type: bind
+        source: ${TRAINING_DATA_DIR:-./private-training/screens}
+        target: /training/screens
+        read_only: true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/workspace/src"
+      TORCH_HOME: "/training-cache"
+    command: ["sleep", "infinity"]

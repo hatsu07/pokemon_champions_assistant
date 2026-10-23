@@ -48,10 +48,39 @@ WindowsのオフラインCIは合成画像と一時保存先で保存・容量�
 
 ## 学習開始
 
-7ラベルが学習/評価の各セッションに揃ったら、リポジトリ直下の学習環境で次のように実行します（CUDAが使える場合は自動でGPU学習）。
+データ収集GUIは、未ラベルJPEGを収集・対戦後に人がラベルを確定するところまでを担当します。
+`_UNLABELLED` は学習には使いません。7ラベルのPNGが各ラベルで独立した複数セッションに
+揃っていることを、学習前の検査で確認します。
 
-```powershell
-python scripts/train_screen_classifier.py --data-dir "$env:LOCALAPPDATA/PokemonChampionsAssistant/private-training/screens" --output-dir private-training/output --epochs 12 --device auto
+### CPU Docker学習
+
+WSLターミナルで次を実行します。`%LOCALAPPDATA%` 配下の `screens` は読み取り専用で
+Dockerへ渡され、ONNX、JSON、重みキャッシュはローカルの無視対象
+`private-training/` 配下だけに作成されます。パスに空白または日本語が含まれていても、
+起動スクリプトが一つの bind mount として扱います。
+trainer ではリポジトリ全体も読み取り専用です。`TRAINING_DATA_DIR` を指定する場合も、
+データをワークスペース外に置いてください。出力とTorchのキャッシュだけが
+`private-training/` の個別書込み mount です。
+
+```bash
+# 画像数・セッション分離・画像読取を先に検査する（ネットワーク不使用）
+./scripts/train_screen_classifier_docker.sh --validate-only
+
+# CPUで実験モデルを学習する（ImageNet重みの取得なし）
+./scripts/train_screen_classifier_docker.sh --epochs 12
+
+# 明示的に同意した場合だけ、ImageNetの事前学習済み重みを取得して学習する
+./scripts/train_screen_classifier_docker.sh --epochs 12 --pretrained
 ```
 
-詳細は `scripts/train_screen_classifier.py`、正式同梱前チェックは `scripts/check_screen_model_release.py --release` を参照してください。モデルの検証・正式版への同梱は本GUIとは別工程です。
+通常の `dev` イメージやWindows/WSLホストへ PyTorch/TorchVision/ONNX は導入しません。
+この `trainer` はCPU専用であり、`--device auto` もCPUを選びます。学習処理は画面、
+ラベル、生成モデルを外部へ送信・アップロードしません。`--pretrained` を付けた場合だけ、
+第三者配布のImageNet重みをローカルキャッシュへ取得します。GPU構成は今回未検証です。
+実データを使わない専用CIは、7ラベル・4独立セッションの合成画像でCPU 1エポック学習、
+ONNX出力、SHA-256、未検証マニフェスト、ONNX Runtimeの7出力推論だけを確認します。
+通常のWindows検証には組み込みません。
+
+詳細は `scripts/train_screen_classifier.py`、正式同梱前チェックは
+`scripts/check_screen_model_release.py --release` を参照してください。合成データによる
+学習パイプラインの確認と、実機Champions画像の精度・速度検証は別工程です。
