@@ -191,6 +191,41 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.review_session_box.currentData(),before)
         self.assertEqual(self.gui.review_list.count(),1)
 
+    def test_group_label_choice_is_directly_below_thumbnails_and_separate_from_manual(self):
+        parent_layout=self.gui.centralWidget().widget().layout()
+        thumbnails_index=parent_layout.indexOf(self.gui.auto_frames_list)
+        self.assertGreaterEqual(thumbnails_index,0)
+        # Label selector is the immediate next row, not below the GPU,
+        # pagination and ordinary manual-save controls.
+        adjacent_row=parent_layout.itemAt(thumbnails_index+1).layout()
+        self.assertIsNotNone(adjacent_row)
+        self.assertGreaterEqual(adjacent_row.indexOf(self.gui.auto_label_box),0)
+        self.assertGreater(parent_layout.indexOf(self.gui.label_box),thumbnails_index+1)
+        self.assertIsNone(self.gui.auto_label_box.currentData())
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("RESULT"))
+        self.assertIsNone(self.gui.auto_label_box.currentData())
+        self.gui.auto_label_box.setCurrentIndex(
+            self.gui.auto_label_box.findData("PARTY_MENU"))
+        self.assertEqual(self.gui.auto_label_box.currentData(),"PARTY_MENU")
+        self.assertEqual(self.gui.label_box.currentData(),"RESULT")
+
+    def test_manual_label_does_not_accidentally_correct_an_auto_frame(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        staged=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+        group=AutoLabelGroup((staged,),"MOVE_MENU",.99,.90,(staged,),"AI候補")
+        self.gui._auto_on_proposals([group])
+        self.gui.auto_list.setCurrentRow(0)
+        self.gui.auto_frames_list.setCurrentRow(0)
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("RESULT"))
+        self.gui._correct_selected_auto_frames()
+        self.assertNotIn(staged,self.gui._auto_frame_overrides)
+        self.gui.auto_label_box.setCurrentIndex(
+            self.gui.auto_label_box.findData("PARTY_MENU"))
+        self.gui._correct_selected_auto_frames()
+        self.assertEqual(self.gui._auto_frame_overrides[staged],"PARTY_MENU")
+        # Ordinary manual label remains unchanged for its separate workflow.
+        self.assertEqual(self.gui.label_box.currentData(),"RESULT")
+
     def test_png_save_keeps_other_groups_predictions_corrections_and_review(self):
         from champions_assist.screen_auto_label import AutoLabelGroup, AutoLabelFrame
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
@@ -207,7 +242,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         # Prepare the second group with a corrected image and review it first.
         self.gui.auto_list.setCurrentRow(1)
         self.gui.auto_frames_list.setCurrentRow(1)
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("RESULT"))
+        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("RESULT"))
         self.gui._correct_selected_auto_frames()
         self.gui.auto_review_confirm.setChecked(True)
         self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"RESULT")
@@ -309,7 +344,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertEqual(self.gui.auto_frames_list.count(),6)
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("MOVE_MENU"))
+        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("MOVE_MENU"))
         self.gui.auto_review_confirm.setChecked(True)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.No):
@@ -350,7 +385,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.gui.auto_list.setCurrentRow(0)
         self.assertEqual(self.gui.auto_frames_list.count(),6)
         self.gui.auto_frames_list.setCurrentRow(2)
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("PARTY_MENU"))
+        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("PARTY_MENU"))
         self.gui._correct_selected_auto_frames()
         self.assertEqual(self.gui._auto_frame_overrides[staged[2]],"PARTY_MENU")
         self.assertFalse(self.gui.auto_review_confirm.isChecked())

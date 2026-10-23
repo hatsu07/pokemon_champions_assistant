@@ -316,6 +316,22 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_frames_list.setMinimumHeight(340)
         self.auto_frames_list.currentItemChanged.connect(self._on_auto_frame_selected)
         layout.addWidget(self.auto_frames_list)
+        # Keep the auto-label edit choice immediately beside the grouped
+        # thumbnail grid. The old label_box below is for manual review only.
+        auto_label_controls=QHBoxLayout()
+        auto_label_controls.addWidget(QLabel("グループ／選択画像の訂正先ラベル"))
+        self.auto_label_box=QComboBox()
+        self.auto_label_box.setObjectName("autoGroupCorrectionLabel")
+        self.auto_label_box.addItem("訂正先を選択",None)
+        for label in LABELS:
+            self.auto_label_box.addItem(f"{label} — {SCREEN_LABELS[label]}",label)
+        self.auto_label_box.setMinimumWidth(280)
+        self.auto_label_box.setToolTip(
+            "選択した画像だけの訂正と、グループ全体のラベル訂正に共通です。"
+            "従来の手動保存用ラベルとは独立しています。")
+        auto_label_controls.addWidget(self.auto_label_box)
+        auto_label_controls.addStretch(1)
+        layout.addLayout(auto_label_controls)
         correction_controls=QHBoxLayout()
         self.auto_frame_fix_button=QPushButton("選択した画像だけラベル訂正")
         self.auto_frame_fix_button.clicked.connect(self._correct_selected_auto_frames)
@@ -402,7 +418,8 @@ class ScreenDatasetCollector(QMainWindow):
                      self.auto_accept_button,self.auto_correct_button,
                      self.gpu_retrain_button,self.gpu_command_button,
                      self.auto_frame_fix_button,self.auto_frame_exclude_button,
-                     self.auto_frame_reset_button,self.auto_review_confirm):
+                     self.auto_frame_reset_button,self.auto_review_confirm,
+                     self.auto_label_box):
             item.setEnabled(not busy)
         self.stop_button.setEnabled(self._thread is not None)
 
@@ -947,7 +964,7 @@ class ScreenDatasetCollector(QMainWindow):
 
     def _correct_selected_auto_frames(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
-        chosen=self.label_box.currentData()
+        chosen=self.auto_label_box.currentData()
         paths=self._selected_auto_frame_paths()
         if chosen not in LABELS or not paths:
             self.auto_progress.setText("訂正する画像を選択し、正解ラベルをプルダウンで指定してください")
@@ -989,7 +1006,7 @@ class ScreenDatasetCollector(QMainWindow):
         if index not in self._auto_reviewed_groups:
             self.auto_progress.setText("先頭/中央/末尾だけでなく全画像の一覧を確認して、確認済みにチェックしてください")
             return
-        label=None if use_suggestion else self.label_box.currentData()
+        label=None if use_suggestion else self.auto_label_box.currentData()
         if not use_suggestion and label not in LABELS:
             self.auto_progress.setText("訂正先ラベルを下の正解ラベル欄で選択してください")
             return

@@ -331,3 +331,10 @@
 - Windows CI on first PR head showed all 121 offline core unittest cases passing, but the Python process returned an unexpected nonzero exit during interpreter/Qt finalization; reproduced on retry (runs 39928018261 attempts 1 and 2). The existing exit-safe `scripts/windows_qt_test_runner.py` was therefore extended to accept a list of suite modules while retaining separate processes for core, inline GUI and dataset collector. It calls `os._exit()` **only after** capturing the actual unittest success/failure result, preserving real test failures while avoiding the nondeterministic post-test finalizer error. Windows desktop/collector real executable startup smoke remains unchanged.
 
 - Further diagnostic (run 39929289815, SHA 5865b5e): `UNITTEST_RUNNER_RESULT success=True tests=121 errors=0 failures=0`, but Python process exit `-1073741819` (Windows access violation `0xC0000005`) despite `os._exit(0)`. CI-only Windows runner now exits with `TerminateProcess(GetCurrentProcess(), 0|1)` **after flushing actual unittest results** to avoid Qt/native DLL detach faults; non-Windows runner uses `os._exit(0|1)`. A genuinely failed test still yields nonzero exit. All platform GUI binary smoke checks remain unchanged.
+
+## Inline group correction label — 2026-10-23
+
+- User feedback: the existing group thumbnails were far above the manual JPEG save label combobox, forcing repeated long scrolling between a selected frame and the label field.
+- Added a dedicated `auto_label_box` in the **immediate layout row below the grouped thumbnail grid**. Both per-frame correction and group-level correction use this nearby selector; the original `label_box` stays in the manual file-save section.
+- The two dropdowns are independent to prevent accidentally applying a manual-save choice to an automatically grouped frame.
+- Added offscreen Windows regression tests for layout adjacency, independent selection, missing group label refusing a partial correction, and existing per-frame/batch functionality. Actual user's screen size / DPI usability still requires a native Windows check.
