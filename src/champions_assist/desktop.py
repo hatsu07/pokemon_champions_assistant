@@ -664,18 +664,28 @@ class DesktopMainWindow(QMainWindow):
         self.settings_validation_only = settings_validation_only
         self._settings_dialog = None
         self._auto_match_dialog = None
+        # On the actual desktop use one visually observed match session; the
+        # legacy controller dashboard remains available only in validation mode.
+        self._unified = self.settings_service is not None and not settings_validation_only
+        self._unified_match_id = None
+        self._unified_last_report_key = None
+        self._unified_event_number = 0
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
         self._build_ui()
         self.preferences.restore(self)
         self.on_top_box.setChecked(self.preferences.always_on_top())
         self.compact_box.setChecked(self.preferences.compact())
-        self.controller.presentation_changed.connect(self.render)
-        self.render(self.controller.presentation())
+        if not self._unified:
+            self.controller.presentation_changed.connect(self.render)
+            self.render(self.controller.presentation())
         if self.settings_service is not None and self.settings_service.first_launch:
             QTimer.singleShot(0, self._open_settings)
 
     def _build_ui(self) -> None:
+        if self._unified:
+            self._build_unified_ui()
+            return
         root = QWidget(self)
         layout = QVBoxLayout(root)
         recommendation_box = QGroupBox("OpenAI 推奨（ユーザーが手動で実行）")
@@ -731,7 +741,184 @@ class DesktopMainWindow(QMainWindow):
         layout.addLayout(controls)
         self.setCentralWidget(root)
 
+    def _build_unified_ui(self) -> None:
+        """Real user-facing UI, driven exclusively by MatchReplayDialog.state."""
+        from .match_replay_dialog import MatchReplayDialog
+        from .app_config import default_app_root
+
+        root = QWidget(self)
+        layout = QVBoxLayout(root)
+        recommendation_box = QGroupBox("AI推奨（ゲーム操作はユーザーが実行）")
+        rec_layout = QVBoxLayout(recommendation_box)
+        self.recommendation_label = QLabel("推奨: 試合開始待ち")
+        font = QFont()
+        font.setPointSize(17)
+        font.setBold(True)
+        self.recommendation_label.setFont(font)
+        self.recommendation_label.setWordWrap(True)
+        self.recommendation_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        rec_layout.addWidget(self.recommendation_label)
+        layout.addWidget(recommendation_box)
+
+        self.header_labels = {}
+        header = QGridLayout()
+        for index, (key, heading) in enumerate((
+            ("phase", "フェーズ"), ("capture", "画面監視"), ("preload", "4ファイル"),
+            ("prep", "PREP"), ("selected", "選出"), ("model", "モデル"),
+            ("report", "最新結果"), ("records", "ログ記録数"),
+        )):
+            header.addWidget(QLabel(heading), (index // 4) * 2, index % 4)
+            value = QLabel("—")
+            value.setWordWrap(True)
+            value.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
+            header.addWidget(value, (index // 4) * 2 + 1, index % 4)
+            self.header_labels[key] = value
+        layout.addLayout(header)
+
+        self.tabs = QTabWidget()
+        self._match_panel = MatchReplayDialog(
+            model="", reasoning_effort="auto",
+            master_directory=str(self.settings_service.master_directory),
+            team_path="", capture_config=self.settings_service.settings.capture,
+            store_root=default_app_root(), parent=self.tabs,
+            embedded=True, before_new_match=self._prepare_unified_match,
+        )
+        self._match_panel.state_changed.connect(self._on_unified_state)
+        self.tabs.addTab(self._match_panel, "対戦支援")
+        state_tab = QWidget()
+        state_layout = QVBoxLayout(state_tab)
+        self.state_tree = QTreeWidget()
+        self.state_tree.setHeaderLabels(["情報", "現在値", "根拠"])
+        self.state_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        state_layout.addWidget(self.state_tree)
+        self.tabs.addTab(state_tab, "観測状態")
+        self.tabs.addTab(self._history_tab(), "試合履歴")
+        layout.addWidget(self.tabs, 1)
+
+        controls = QHBoxLayout()
+        self.on_top_box = QCheckBox("最前面")
+        self.on_top_box.toggled.connect(self._set_on_top)
+        self.compact_box = QCheckBox("コンパクト")
+        self.compact_box.toggled.connect(self._set_compact)
+        controls.addWidget(self.on_top_box)
+        controls.addWidget(self.compact_box)
+        settings_button = QPushButton("設定")
+        settings_button.clicked.connect(self._open_settings)
+        controls.addWidget(settings_button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+        self.setCentralWidget(root)
+        self._on_unified_state({}, {"status": "NOT_STARTED"})
+
+    def _prepare_unified_match(self) -> None:
+        """Apply current model/team/capture selection BEFORE the four reads."""
+        from .app_config import default_app_root, ConfigurationError
+        from .vision_preferences import VisionPreferenceStore
+
+        if self.controller.session is not None:
+            raise ConfigurationError("別の対戦状態が進行中です。既存の運用機能を併用できません。")
+        preferences = VisionPreferenceStore(default_app_root())
+        model = preferences.selected_model()
+        if not model:
+            raise ConfigurationError("設定 → ChatGPTでモデルを選択してください。")
+        team_id = self.settings_service.settings.teams.active_team_id
+        if not team_id:
+            raise ConfigurationError("設定 → 自軍構築で次戦の構築を選択してください。")
+        team_path = self.settings_service.teams.path_for_next_match(team_id)
+        self._match_panel.model = model
+        self._match_panel.reasoning_effort = preferences.reasoning_effort()
+        self._match_panel.team_path = str(team_path)
+        self._match_panel.capture_config = self.settings_service.settings.capture
+
+    def _halt_unified_capture(self) -> None:
+        """Saving a changed capture target never silently retargets a live match."""
+        self._match_panel._stop_auto()
+        self.controller.emergency_stop()
+
+    @Slot(object, object)
+    def _on_unified_state(self, state: dict, report: dict) -> None:
+        """One replay snapshot drives advice, labels, evidence and SQLite history."""
+        panel = self._match_panel
+        phase = state.get("phase", "S00_WAIT_START")
+        self.header_labels["phase"].setText(str(phase))
+        self.header_labels["capture"].setText(
+            "再取得待機" if panel._auto_running and panel._capture_paused
+            else "監視中" if panel._auto_running else "停止")
+        self.header_labels["preload"].setText("4/4 読込済み" if panel.assets is not None and state else "未実行")
+        self.header_labels["prep"].setText(str(state.get("prep_status", "未開始")))
+        selected = state.get("selected_three") or []
+        self.header_labels["selected"].setText(
+            " / ".join(selected) if selected else "未確定")
+        self.header_labels["model"].setText(panel.model or "未設定")
+        self.header_labels["report"].setText(str(report.get("status", "—")))
+        self.header_labels["records"].setText(str(len(panel.entries)))
+
+        status = report.get("status", "")
+        suggestion = str(report.get("recommendation") or "")
+        if status in ("TEST_ONLY", "ADVICE", "OK") and suggestion:
+            if status == "TEST_ONLY":
+                suggestion = "【機能試験・戦術未検証】" + suggestion
+            self.recommendation_label.setText(suggestion)
+        elif status in ("MATCH_STARTED", "RESET"):
+            self.recommendation_label.setText("推奨: 試合開始待ち")
+        elif status == "CONFIRMED":
+            self.recommendation_label.setText("選出確定。相手初手・行動選択を待機")
+        elif status in ("BLOCKED", "NO_ACTION", "DEADLINE_EXCEEDED", "ERROR",
+                        "CAPTURE_PAUSED", "SUPERSEDED", "PREP_UNAVAILABLE"):
+            self.recommendation_label.setText("行動推奨なし：" + str(report.get("reason") or status))
+        elif status == "MATCH_END":
+            self.recommendation_label.setText(suggestion or "対戦終了")
+        elif status in ("OBSERVED", "RESULT_UNCONFIRMED"):
+            self.recommendation_label.setText("行動推奨待ち（現在の画面を認識中）")
+
+        observations = state.get("image_observations_unverified") or []
+        last_obs = observations[-1] if observations else {}
+        rows = [
+            ("自軍選出", " / ".join(selected) or "未確定", "手動確定"),
+            ("初手", str(state.get("lead") or "不明"), "手動確定"),
+            ("相手6匹", " / ".join(state.get("opponent_six") or []) or "未判明", "画像観測"),
+            ("現在の自軍", str(state.get("our_active") or "不明"), "画像候補"),
+            ("現在の相手", str(state.get("opponent_active") or "不明"), "画像候補"),
+            ("HP", json.dumps(state.get("observed_hp") or {}, ensure_ascii=False), "画像候補"),
+            ("前回の観測UI", str(last_obs.get("ui") or "未観測"), "画像候補・未検証"),
+            ("最終イベント", str(state.get("last_event") or "NONE"), "画像候補"),
+            ("勝敗", str(state.get("result") or "UNKNOWN"), "画像候補"),
+            ("マトリクス", "対応" if state.get("matrix_compatible") else "不一致・TEST_ONLY", "4ファイル"),
+        ]
+        self.state_tree.clear()
+        for a,b,c in rows:
+            self.state_tree.addTopLevelItem(QTreeWidgetItem([a,b,c]))
+
+        # The panel's snapshot is the only active match. This database writes
+        # an audit/history copy; it never creates or controls a second FSM.
+        if panel.match_id and panel.assets is not None:
+            try:
+                if self._unified_match_id != panel.match_id:
+                    self.controller.store.freeze_match_assets(
+                        panel.match_id, contents=panel.assets.contents,
+                        sha256=panel.assets.sha256)
+                    self._unified_match_id = panel.match_id
+                    self._unified_event_number = 0
+                    self._unified_last_report_key = None
+                key = json.dumps(report, ensure_ascii=False, sort_keys=True)
+                if key != self._unified_last_report_key:
+                    self._unified_event_number += 1
+                    self.controller.store.append_event(
+                        panel.match_id, f"live:{self._unified_event_number:06d}",
+                        "NOTE", {"source": "CAPTURE_SUPPORT", "phase": phase,
+                                 "report": report, "observed_state": dict(state)})
+                    self._unified_last_report_key = key
+                self._refresh_history()
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.header_labels["records"].setText("SQLite記録失敗: " + type(exc).__name__)
+        elif status == "RESET":
+            self._unified_match_id = None
+            self._unified_last_report_key = None
+
     def _match_active_for_settings(self) -> bool:
+        if self._unified and self._match_panel.state is not None:
+            if self._match_panel.state.get("phase") != "ENDED":
+                return True
         session = self.controller.session
         return session is not None and session.phase not in {MatchPhase.S00_WAIT_START, MatchPhase.S08_NEXT_MATCH_READY}
 
@@ -747,59 +934,24 @@ class DesktopMainWindow(QMainWindow):
             self.settings_service,
             match_active=self._match_active_for_settings,
             first_launch=self.settings_service.first_launch,
-            on_active_capture_change=self.controller.emergency_stop,
+            on_active_capture_change=(self._halt_unified_capture
+                                      if self._unified else self.controller.emergency_stop),
             parent=self,
         )
         self._settings_dialog = dialog
 
         def closed(_result: int) -> None:
             self._settings_dialog = None
-            self.controller.refresh()
+            if not self._unified:
+                self.controller.refresh()
 
         dialog.finished.connect(closed)
         dialog.open()
 
     def _open_auto_match_support(self) -> None:
-        """Open the single user-opt-in ChatGPT capture session from desktop."""
-        if self.settings_service is None or self.settings_validation_only:
-            return
-        if self._auto_match_dialog is not None:
-            self._auto_match_dialog.show()
-            self._auto_match_dialog.raise_()
-            return
-        if self._match_active_for_settings():
-            QMessageBox.warning(self, "対戦中",
-                                "別の対戦セッションが進行中です。終了してから自動支援を開始してください。")
-            return
-        from .match_replay_dialog import MatchReplayDialog
-        from .app_config import default_app_root, ConfigurationError
-        from .vision_preferences import VisionPreferenceStore
-        preferences = VisionPreferenceStore(default_app_root())
-        model = preferences.selected_model()
-        reasoning_effort = preferences.reasoning_effort()
-        if not model:
-            QMessageBox.warning(self, "モデル未設定",
-                                "設定 → ChatGPT でログインし、使用モデルを選択してください。")
-            return
-        active_id = self.settings_service.settings.teams.active_team_id
-        if not active_id:
-            QMessageBox.warning(self, "構築未設定",
-                                "設定 → 自軍構築で次戦に使用する構築を選択してください。")
-            return
-        try:
-            team_path=self.settings_service.teams.path_for_next_match(active_id)
-        except ConfigurationError as exc:
-            QMessageBox.warning(self, "構築未設定", str(exc))
-            return
-        dialog=MatchReplayDialog(
-            model=model,reasoning_effort=reasoning_effort,
-            master_directory=str(self.settings_service.master_directory),
-            team_path=str(team_path),capture_config=self.settings_service.settings.capture,
-            store_root=default_app_root(),parent=self,
-        )
-        self._auto_match_dialog=dialog
-        dialog.finished.connect(lambda _result: setattr(self,"_auto_match_dialog",None))
-        dialog.open()
+        """Focus the ONLY live support view; never create a second window."""
+        if self._unified:
+            self.tabs.setCurrentWidget(self._match_panel)
 
     def _state_tab(self) -> QWidget:
         tab = QWidget()
@@ -923,6 +1075,10 @@ class DesktopMainWindow(QMainWindow):
 
     @Slot(object)
     def render(self, presentation: DesktopPresentation) -> None:
+        if self._unified:
+            # A detached legacy DesktopController must never overwrite the
+            # visible state of the live screenshot-based match.
+            return
         self.recommendation_label.setText(presentation.recommendation)
         self.selection_label.setText(f"選出: {presentation.selection}")
         self.counterparty_label.setText(f"対戦相手の区分: {presentation.counterparty}")
@@ -946,6 +1102,11 @@ class DesktopMainWindow(QMainWindow):
         self.show()
 
     def _set_compact(self, enabled: bool) -> None:
+        if self._unified:
+            # Never hide the active input/stop controls, even in compact mode.
+            self._match_panel.output.setVisible(not enabled)
+            self.resize(self.width(), 360 if enabled else max(650, self.height()))
+            return
         self.tabs.setVisible(not enabled)
         self.selection_label.setVisible(not enabled)
         self.counterparty_label.setVisible(not enabled)
@@ -1036,6 +1197,12 @@ class DesktopMainWindow(QMainWindow):
             QMessageBox.warning(self, "削除されませんでした", str(exc))
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt callback name
+        if self._unified:
+            self._match_panel._stop_auto()
+            if self._match_panel._thread is not None:
+                # Do not destroy the API worker until it terminates.
+                event.ignore()
+                return
         self.preferences.save(self, compact=self.compact_box.isChecked(), always_on_top=self.on_top_box.isChecked())
         super().closeEvent(event)
 
