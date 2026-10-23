@@ -304,3 +304,12 @@
 
 - No private Champions capture was read, trained, uploaded, committed, or included in CI. Therefore preflight and CPU training are exercised only with synthetic data; actual-data trainability, label distribution, ImageNet-weight use, model quality, latency, and BlueStacks recognition accuracy remain unverified.
 - The dedicated trainer intentionally uses CPU-only PyTorch wheels. CUDA/NVIDIA Docker Desktop support is not implemented or verified.
+
+## Offline auto-label proposal & GPU retrain handoff — PR #25 (2026-10-23)
+
+- New `src/champions_assist/screen_auto_label.py`: per-session timestamp/dHash grouping, 30-frame cap, experimental ONNX raw predictions, abstention on low confidence/margin; model load remains checksum-checked.
+- Dataset collector adds background analysis, progress, candidate group list and first/center/last visual previews, explicit multi-group human approval or correction to labelled PNG. Old manual review and data layout kept.
+- Main runtime's validated-only model gate remains intact. Experimental `validated=false` model allowed only via explicit offline collector class option. No screen data or model uploaded.
+- GUI provides explicit WSL GPU retraining command handoff with pretrained option; this is NOT automatic background retraining or automatic model release. User must retrain, compare independent heldout results and select the updated model.
+- Tests cover session boundaries, grouping size, abstention, synthetic low-confidence experimental ONNX, negative human confirmation, and label batch save. Windows build collects onnxruntime for the standalone dataset collector.
+- Real Pokémon Champions accuracy, Windows file copy path, grouping review time and GPU retraining quality on additional sessions remain unverified until human field tests.
