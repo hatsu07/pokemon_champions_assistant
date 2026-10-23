@@ -1,3 +1,5 @@
+> 新チャットで始める場合は、最初に `docs/CURRENT_DEVELOPMENT_HANDOFF.md` と参照先の正本を読み、最新の GitHub PR・CI・Releases を実際に確認してください。GitHub Pro/有料保護は使わず、最終PR HEADのCI全体成功まではマージ禁止です。
+
 # Codexへの最初の依頼（WSL2 + Docker開発／Windows MSI配布 v2.7）
 
 このリポジトリの `docs/V2_7_SOURCE_COMPLETENESS_AND_AUTHORITY.md`、`docs/Pokemon_Champions_Project_User_Guidance_Reconstructed_v2_7.md`、`docs/Pokemon_Champions_CODEX_OX_Postmatch_Method_v2_7.md`、`knowledge/README.md`、`AGENTS.md`、`docs/AI_DEVELOPMENT_AND_CI_POLICY.md`、`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`、`BUILD_PLAN.md`、`WSL_DOCKER_VSCODE_CODEX_SETUP.md`、`docs/Pokemon_Champions_Contract_And_State_Reconciliation_v2_3.md`、`docs/Pokemon_Champions_Integrated_Architecture_v2_0.md`、`docs/Pokemon_Champions_WSL_Docker_Windows_MSI_Design_v2_6.md` を読んでください。
