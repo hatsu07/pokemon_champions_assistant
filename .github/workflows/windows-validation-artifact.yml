@@ -1,17 +1,11 @@
 name: Windows desktop development validation
 
-# Required PR CI validates code, Windows builds and both smoke tests, without
-# uploading distribution ZIPs. Artifact quota must never mask a test outcome.
-# Optional DEVELOPMENT_ONLY package publishing is an explicit manual operation.
+# Ready PR CI validates and publishes two DEVELOPMENT_ONLY Windows ZIPs.
+# Retention is short; old artifacts are periodically removed from WSL gh CLI.
+# Never claim CI success or merge when quota prevents either ZIP uploading.
 # Draft PRs do not run the expensive Windows job; Ready/updates do.
 on:
   workflow_dispatch:
-    inputs:
-      publish_artifacts:
-        description: "Upload both DEVELOPMENT_ONLY Windows packages (requires free Actions artifact quota)"
-        type: boolean
-        required: false
-        default: false
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
@@ -200,18 +194,17 @@ jobs:
             "screenshots_auto_saved=false"
             "network_upload=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
-      # PR CI always tests the Windows EXEs but DOES NOT publish files.
-      # Actions storage quota is a delivery failure, not a software test failure.
-      # Manual workflow_dispatch with publish_artifacts=true explicitly opts in.
+      # GitHub Actions' ZIP is the downloadable DEVELOPMENT artifact. A quota
+      # failure here intentionally fails CI; never merge a partially verified PR.
+      # Short retention reduces storage pressure; WSL gh prunes older versions.
       - name: Upload local screen dataset collector Windows artifact
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true
         uses: actions/upload-artifact@v4
         with:
           name: PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64
           path: dist/PokemonChampionsScreenDataCollector/
           if-no-files-found: error
+          retention-days: 2
       - name: Upload diagnostic-only Windows portable artifact
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true
         uses: actions/upload-artifact@v4
         with:
           # GitHub Actions wraps this folder into ONE download ZIP. Do not
@@ -219,3 +212,4 @@ jobs:
           name: PokemonChampionsAssistant-DEVELOPMENT-windows-x64
           path: dist/PokemonChampionsAssistant/
           if-no-files-found: error
+          retention-days: 2
