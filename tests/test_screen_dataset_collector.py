@@ -137,6 +137,11 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         scroll=self.gui.centralWidget()
         self.assertIsInstance(scroll,QScrollArea)
         self.gui._render_preview(np.full((260,800,3),144,dtype=np.uint8))
+        # Long runtime status strings must wrap, not expand the entire form.
+        self.gui.auto_progress.setText("解析完了：300枚 / 15グループ。"
+            "Ctrl/Shiftで複数選択して最後の確認画面で各ラベルを確定します。"
+            "ラベル未確定画像は個別に訂正してください。")
+        self.gui.capture_count.setText("今回の収集 150 枚 / 未ラベル領域 950 MiB / 容量上限 2 GB")
         for width in (1020,690,540,940):
             self.gui.resize(width,780)
             self.app.processEvents()
