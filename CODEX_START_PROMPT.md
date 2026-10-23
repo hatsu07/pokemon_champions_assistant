@@ -30,5 +30,5 @@
 
 ## 2026-10-23 CI・マージ事故再発防止
 - 必須Windows PR CIは最新PR HEADで全テスト・両Windows GUIビルド・起動スモークの成功を検証。Artifact配布は明示的な手動実行と分離（Actions容量不足のため）。
-- CI全体がcompleted/success以外なら絶対にマージしない。GitHubのmaster保護・Required status check・管理者例外禁止が有効であることを確認できない場合も、マージは停止する（2026-10-23時点でmasterは未保護）。
+- 最新PR HEADに対するCI全体と必須Windowsジョブがcompleted/success以外なら絶対にマージしない。ユーザー判断でGitHub Pro/Branch protectionは不要とし、GitHub上の強制保護ではなく厳格な手動CIゲートで運用する。
 - 新チャットでは `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md` とGitHubの現状を必ず再読込する。必要なら `scripts/verify_merge_ready.py` による読み取り専用ゲート検証を行う。
