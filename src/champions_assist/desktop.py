@@ -1221,6 +1221,13 @@ class DesktopMainWindow(QMainWindow):
                 # Do not destroy the API worker until it terminates.
                 event.ignore()
                 return
+        else:
+            # A closed legacy dashboard must not render a queued presentation
+            # after its test/runtime owner has closed the SQLite store.
+            try:
+                self.controller.presentation_changed.disconnect(self.render)
+            except (RuntimeError, TypeError):
+                pass
         self.preferences.save(self, compact=self.compact_box.isChecked(), always_on_top=self.on_top_box.isChecked())
         super().closeEvent(event)
 

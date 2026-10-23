@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from champions_assist.screen_classifier import (
     LABELS,ClassifiedMenuGate,ScreenClassifier,ScreenClassifierError,
@@ -125,6 +126,36 @@ class ScreenClassifierTests(unittest.TestCase):
         self.assertTrue(held_out)
         self.assertTrue({r[2] for r in validation}.isdisjoint({r[2] for r in training}))
         self.assertEqual({r[1] for r in validation},set(range(len(LABELS))))
+
+    def test_dataset_preflight_reports_session_safe_labelled_data(self):
+        from scripts.train_screen_classifier import validate_dataset
+        root=self.root/"学習 データ"
+        for session_index in range(4):
+            session=f"match20261023T120{session_index}00_abc123{session_index}"
+            for label_index,label in enumerate(LABELS):
+                target=root/label/f"{session}__{label_index}.png"
+                target.parent.mkdir(parents=True,exist_ok=True)
+                Image.new("RGB",(12,12),(label_index*20,session_index*30,80)).save(target)
+        staged=root/"_UNLABELLED"/"match20261023T120000_abc12300"/"raw.jpg"
+        staged.parent.mkdir(parents=True)
+        Image.new("RGB",(12,12),(1,2,3)).save(staged)
+        report=validate_dataset(root)
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["unlabelled_directory_ignored"])
+        self.assertEqual(report["labels"]["TEAM_SELECTION"],{"images":4,"sessions":4})
+        self.assertEqual(report["split"]["validation"]["labels"]["UNKNOWN"]["images"],1)
+
+    def test_split_explains_when_a_label_has_only_one_session(self):
+        from scripts.train_screen_classifier import split_by_session
+        samples=[]
+        for session_index in range(4):
+            for label_index,label in enumerate(LABELS):
+                if label=="TEAM_SELECTION" and session_index:
+                    continue
+                samples.append((Path(f"{label}/match{session_index}__{label_index}.png"),
+                                label_index,f"match{session_index}"))
+        with self.assertRaisesRegex(ValueError,"TEAM_SELECTION"):
+            split_by_session(samples)
 
     def test_local_gate_detects_selection_after_two_frames_without_registration(self):
         gate=ClassifiedMenuGate(stable_frames=2)

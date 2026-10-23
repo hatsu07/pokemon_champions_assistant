@@ -1,85 +1,225 @@
-"""Train an *experimental* Champions UI classifier from consented local captures.
+"""Train an experimental Champions UI classifier from consented local captures.
 
-Run only in the Docker development environment (torch/torchvision/onnx are
-optional training dependencies, NEVER installed on the user's Windows host).
+Run only in the Docker ``trainer`` environment. The seven human-labelled PNG
+classes are read from ``screens/<LABEL>/<session>__<frame>.png``. The separate
+``screens/_UNLABELLED`` JPEG staging area is deliberately never scanned.
 
-Layout:
-  private-training/screens/TEAM_SELECTION/session01__001.png
-  private-training/screens/MOVE_MENU/session01__002.png
-  ...
-Each filename prefix before '__' is a recording/session ID. Train/validation
-splits hold out whole sessions to prevent near-identical video frame leakage.
-
-This script does not label or acquire data, download screenshots, or certify
-a model. --pretrained opts into downloading third-party weights explicitly.
+Training and validation hold out whole recorded sessions. ``--validate-only``
+performs all local dataset checks without importing PyTorch or using a network.
+``--pretrained`` is the sole opt-in that lets TorchVision obtain ImageNet
+weights; the script never uploads images, labels, models, or metrics.
 """
 from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
 import random
-from typing import Sequence
+from typing import Any, Sequence
+
+from PIL import Image, UnidentifiedImageError
+
 
 LABELS=("MATCHMAKING","TEAM_SELECTION","MOVE_MENU","PARTY_MENU",
         "BATTLE_EVENT","RESULT","UNKNOWN")
 FORMATS={".png",".jpg",".jpeg",".webp"}
 SIZE=(160,160)
+Sample=tuple[Path,int,str]
 
 
-def collect(root: Path):
-    samples=[]
-    for name in LABELS:
+@dataclass(frozen=True)
+class DatasetInspection:
+    records: list[Sample]
+    report: dict[str,Any]
+
+
+class DatasetValidationError(ValueError):
+    def __init__(self, report: dict[str,Any]):
+        self.report=report
+        issues=report.get("issues",[])
+        super().__init__("Dataset validation failed:\n- "+"\n- ".join(issues))
+
+
+def _label_summary(records: Sequence[Sample]) -> dict[str,dict[str,int]]:
+    counts=Counter(label for _,label,_ in records)
+    sessions={index:{session for _,label,session in records if label==index}
+              for index in range(len(LABELS))}
+    return {name:{"images":counts[index],"sessions":len(sessions[index])}
+            for index,name in enumerate(LABELS)}
+
+
+def inspect_dataset(root: Path) -> DatasetInspection:
+    """Read every labelled candidate and return a JSON-safe local audit."""
+    root=Path(root)
+    records: list[Sample]=[]
+    issues: list[str]=[]
+    for index,name in enumerate(LABELS):
         folder=root/name
         if not folder.is_dir():
-            raise ValueError(f"Missing class directory: {folder}")
-        for file in folder.rglob("*"):
-            if file.suffix.lower() not in FORMATS:
+            issues.append(f"Missing class directory: {folder}")
+            continue
+        readable=0
+        for file in sorted(folder.rglob("*")):
+            if not file.is_file() or file.suffix.lower() not in FORMATS:
                 continue
-            if "__" not in file.stem:
-                raise ValueError(f"Frame must carry session prefix '__': {file}")
+            if file.is_symlink():
+                issues.append(f"Refusing symlinked training image: {file}")
+                continue
+            if "__" not in file.stem or not file.stem.split("__",1)[0]:
+                issues.append(f"Frame must carry session prefix '__': {file}")
+                continue
+            try:
+                with Image.open(file) as image:
+                    image.verify()
+                with Image.open(file) as image:
+                    image.convert("RGB").load()
+            except (OSError,UnidentifiedImageError) as exc:
+                issues.append(f"Unreadable image: {file} ({type(exc).__name__})")
+                continue
             session=file.stem.split("__",1)[0]
-            if not session:
-                raise ValueError(f"Missing session ID: {file}")
-            samples.append((file,LABELS.index(name),session))
-    if not samples:
-        raise ValueError("No training images available")
-    return samples
+            records.append((file,index,session))
+            readable+=1
+        if not readable:
+            issues.append(f"No readable labelled images for {name}; label more frames from independent matches")
+    report={
+        "schema_version":1,
+        "data_dir":str(root),
+        "labels":_label_summary(records),
+        "total_images":len(records),
+        "total_sessions":len({session for _,_,session in records}),
+        "unlabelled_directory_ignored":(root/"_UNLABELLED").is_dir(),
+        "issues":issues,
+    }
+    return DatasetInspection(records,report)
 
 
-def split_by_session(samples, *, seed=42, fraction=0.2):
-    sessions=sorted({r[2] for r in samples})
+def collect(root: Path) -> list[Sample]:
+    inspection=inspect_dataset(root)
+    if inspection.report["issues"]:
+        raise DatasetValidationError(inspection.report)
+    return inspection.records
+
+
+def _partition_summary(records: Sequence[Sample]) -> dict[str,Any]:
+    return {
+        "images":len(records),
+        "sessions":len({session for _,_,session in records}),
+        "labels":_label_summary(records),
+    }
+
+
+def split_by_session(samples: Sequence[Sample], *, seed: int=42,
+                     fraction: float=0.2) -> tuple[list[Sample],list[Sample],set[str]]:
+    """Create a deterministic, session-disjoint split with every label on both sides."""
+    if not 0.0<fraction<1.0:
+        raise ValueError("Validation fraction must be between zero and one")
+    sessions=sorted({record[2] for record in samples})
     if len(sessions)<4:
-        raise ValueError("Need at least four distinct recorded matches")
-    random.Random(seed).shuffle(sessions)
-    holdout=set(sessions[:max(1,round(len(sessions)*fraction))])
-    train=[r for r in samples if r[2] not in holdout]
-    test=[r for r in samples if r[2] in holdout]
-    for part,values in (("training",train),("validation",test)):
-        counts=Counter(x[1] for x in values)
-        if any(counts[i]==0 for i in range(len(LABELS))):
-            raise ValueError(f"Missing label in {part}: {dict(counts)}")
-    return train,test,holdout
+        raise ValueError(f"Need at least four distinct recorded matches; found {len(sessions)}")
+    by_label={index:{session for _,label,session in samples if label==index}
+              for index in range(len(LABELS))}
+    missing=[LABELS[index] for index,values in by_label.items() if not values]
+    if missing:
+        raise ValueError("Missing labelled samples for: "+", ".join(missing))
+    insufficient=[LABELS[index] for index,values in by_label.items() if len(values)<2]
+    if insufficient:
+        raise ValueError("Need at least two independent sessions for each label; "
+                         "record another match containing: "+", ".join(insufficient))
+
+    labels_by_session={session:{label for _,label,item_session in samples
+                                if item_session==session}
+                       for session in sessions}
+    shuffled=list(sessions)
+    random.Random(seed).shuffle(shuffled)
+    priority={session:index for index,session in enumerate(shuffled)}
+    held_out: set[str]=set()
+    uncovered=set(range(len(LABELS)))
+
+    def can_hold_out(session: str) -> bool:
+        candidate=held_out|{session}
+        return all(not by_label[label].issubset(candidate)
+                   for label in labels_by_session[session])
+
+    while uncovered:
+        choices=[session for session in sessions if session not in held_out
+                 and can_hold_out(session)
+                 and labels_by_session[session]&uncovered]
+        if not choices:
+            names=", ".join(LABELS[index] for index in sorted(uncovered))
+            raise ValueError("Could not create a session-disjoint validation split for: "+names)
+        session=max(choices,key=lambda item:(len(labels_by_session[item]&uncovered),
+                                             -priority[item]))
+        held_out.add(session)
+        uncovered-=labels_by_session[session]
+
+    target=max(1,round(len(sessions)*fraction))
+    for session in sorted(sessions,key=lambda item:priority[item]):
+        if len(held_out)>=target:
+            break
+        if session not in held_out and can_hold_out(session):
+            held_out.add(session)
+
+    training=[record for record in samples if record[2] not in held_out]
+    validation=[record for record in samples if record[2] in held_out]
+    for part,values in (("training",training),("validation",validation)):
+        counts=Counter(label for _,label,_ in values)
+        absent=[LABELS[index] for index in range(len(LABELS)) if not counts[index]]
+        if absent:
+            raise ValueError(f"Missing label in {part}: "+", ".join(absent))
+    if {record[2] for record in training}&{record[2] for record in validation}:
+        raise AssertionError("Session leakage between training and validation")
+    return training,validation,held_out
+
+
+def validate_dataset(root: Path, *, seed: int=42,
+                     fraction: float=0.2) -> dict[str,Any]:
+    """Report whether a local dataset is safe to train without touching Torch."""
+    inspection=inspect_dataset(root)
+    report=dict(inspection.report)
+    if report["issues"]:
+        report["ready"]=False
+        return report
+    try:
+        training,validation,held_out=split_by_session(inspection.records,seed=seed,
+                                                        fraction=fraction)
+    except ValueError as exc:
+        report["issues"]=[str(exc)]
+        report["ready"]=False
+        return report
+    report["split"]={
+        "training":_partition_summary(training),
+        "validation":_partition_summary(validation),
+        "held_out_sessions":len(held_out),
+    }
+    report["ready"]=True
+    return report
+
+
+def _resolve_device(args,torch):
+    if args.device=="cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA was requested but is unavailable in this CPU trainer; use --device cpu or auto")
+    return torch.device("cuda" if args.device=="cuda" else "cpu")
 
 
 def train_model(args):
     import torch
-    from PIL import Image
     from torch import nn
     from torch.utils.data import DataLoader,Dataset
     from torchvision import models,transforms
 
+    preflight=validate_dataset(args.data_dir,seed=args.seed)
+    if not preflight["ready"]:
+        raise DatasetValidationError(preflight)
     records=collect(args.data_dir)
     training,testing,held_out=split_by_session(records,seed=args.seed)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+    device=_resolve_device(args,torch)
     if args.pretrained:
-        # Explicit opt-in; downloads/cache and weight license should be
-        # evaluated by the maintainer before redistribution.
+        # Explicit opt-in; this is the only path that may download third-party weights.
         weights=models.MobileNet_V3_Small_Weights.IMAGENET1K_V1
         mean=[0.485,0.456,0.406]
         std=[0.229,0.224,0.225]
@@ -87,6 +227,7 @@ def train_model(args):
         weights=None
         mean=[0.0]*3
         std=[1.0]*3
+
     def pipeline(training: bool):
         steps=[transforms.Resize((SIZE[1],SIZE[0]))]
         if training:
@@ -98,12 +239,11 @@ def train_model(args):
         def __init__(self,items,augmentation):
             self.items=items
             self.transform=pipeline(augmentation)
-        def __len__(self):return len(self.items)
+        def __len__(self): return len(self.items)
         def __getitem__(self,index):
             path,label,_=self.items[index]
             with Image.open(path) as img:
-                rgb=img.convert("RGB")
-                return self.transform(rgb),label
+                return self.transform(img.convert("RGB")),label
 
     training_loader=DataLoader(ScreenData(training,True),batch_size=args.batch_size,
                                shuffle=True,num_workers=0)
@@ -112,8 +252,6 @@ def train_model(args):
     model=models.mobilenet_v3_small(weights=weights)
     in_features=model.classifier[-1].in_features
     model.classifier[-1]=nn.Linear(in_features,len(LABELS))
-    device=torch.device("cuda" if args.device=="auto" and torch.cuda.is_available()
-                        else args.device if args.device!="auto" else "cpu")
     model.to(device)
     optimizer=torch.optim.AdamW(model.parameters(),lr=args.lr)
     objective=nn.CrossEntropyLoss()
@@ -145,21 +283,19 @@ def train_model(args):
                 else:
                     fp[guess]+=1
     metrics={
-        LABELS[i]:{
-            "support":total[i],
-            "recall":round(correct[i]/total[i],5) if total[i] else 0,
-            "precision":round(correct[i]/predicted[i],5) if predicted[i] else 0,
-            "false_positives":fp[i],
-        } for i in range(len(LABELS))
+        LABELS[index]:{
+            "support":total[index],
+            "recall":round(correct[index]/total[index],5) if total[index] else 0,
+            "precision":round(correct[index]/predicted[index],5) if predicted[index] else 0,
+            "false_positives":fp[index],
+        } for index in range(len(LABELS))
     }
     selected=metrics["TEAM_SELECTION"]
     validated=(len(held_out)>=5 and selected["support"]>=100
                and selected["recall"]>=0.99
                and selected["precision"]>=0.995)
-    # Other labels must be evaluated before any real release; accepting one
-    # class alone is deliberately forbidden by the optional guard.
     validated=validated and all(
-        m["support"]>=30 and m["recall"]>=0.95 for m in metrics.values())
+        item["support"]>=30 and item["recall"]>=0.95 for item in metrics.values())
     args.output_dir.mkdir(parents=True,exist_ok=True)
     model_path=args.output_dir/"champions_screen_classifier.onnx"
     model_cpu=model.cpu()
@@ -178,24 +314,30 @@ def train_model(args):
         "validated":bool(validated and args.approve_if_thresholds_pass),
         "holdout_sessions":len(held_out),
         "metrics":metrics,
+        "training_device":str(device),
+        "pretrained":bool(args.pretrained),
         "provenance":"locally labelled Pokémon Champions sessions",
     }
     manifest_path=args.output_dir/"champions_screen_classifier.json"
     manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
-    print(json.dumps({
+    result={
         "training_images":len(training),
         "held_out_images":len(testing),
         "held_out_sessions":len(held_out),
         "metrics":metrics,
         "quality_gate_passed":validated,
         "manifest_validated":manifest["validated"],
+        "device":str(device),
+        "pretrained":bool(args.pretrained),
         "output":str(args.output_dir),
-    },ensure_ascii=False,indent=2))
+    }
+    print(json.dumps(result,ensure_ascii=False,indent=2))
     if not validated:
         print("EXPERIMENTAL ONLY: thresholds or held-out sample counts were not met.")
+    return result
 
 
-if __name__=="__main__":
+def build_parser() -> argparse.ArgumentParser:
     parser=argparse.ArgumentParser()
     parser.add_argument("--data-dir",type=Path,required=True)
     parser.add_argument("--output-dir",type=Path,required=True)
@@ -207,4 +349,24 @@ if __name__=="__main__":
     parser.add_argument("--pretrained",action="store_true")
     parser.add_argument("--approve-if-thresholds-pass",action="store_true")
     parser.add_argument("--device",choices=["auto","cpu","cuda"],default="auto")
-    train_model(parser.parse_args())
+    parser.add_argument("--validate-only",action="store_true",
+                        help="inspect labelled local data and session split without training")
+    return parser
+
+
+def main(argv: Sequence[str] | None=None) -> int:
+    args=build_parser().parse_args(argv)
+    if args.validate_only:
+        report=validate_dataset(args.data_dir,seed=args.seed)
+        print(json.dumps(report,ensure_ascii=False,indent=2))
+        return 0 if report["ready"] else 2
+    try:
+        train_model(args)
+    except DatasetValidationError as exc:
+        print(json.dumps(exc.report,ensure_ascii=False,indent=2))
+        return 2
+    return 0
+
+
+if __name__=="__main__":
+    raise SystemExit(main())

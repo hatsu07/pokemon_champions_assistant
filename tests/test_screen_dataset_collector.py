@@ -103,8 +103,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import gc
+        # QApplication is shared by subsequent GUI test modules.
         cls.app.closeAllWindows()
-        cls.app.quit()
+        cls.app.processEvents()
         cls.app=None
         gc.collect()
 

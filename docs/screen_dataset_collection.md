@@ -58,6 +58,9 @@ WSLターミナルで次を実行します。`%LOCALAPPDATA%` 配下の `screens
 Dockerへ渡され、ONNX、JSON、重みキャッシュはローカルの無視対象
 `private-training/` 配下だけに作成されます。パスに空白または日本語が含まれていても、
 起動スクリプトが一つの bind mount として扱います。
+trainer ではリポジトリ全体も読み取り専用です。`TRAINING_DATA_DIR` を指定する場合も、
+データをワークスペース外に置いてください。出力とTorchのキャッシュだけが
+`private-training/` の個別書込み mount です。
 
 ```bash
 # 画像数・セッション分離・画像読取を先に検査する（ネットワーク不使用）
@@ -74,6 +77,9 @@ Dockerへ渡され、ONNX、JSON、重みキャッシュはローカルの無視
 この `trainer` はCPU専用であり、`--device auto` もCPUを選びます。学習処理は画面、
 ラベル、生成モデルを外部へ送信・アップロードしません。`--pretrained` を付けた場合だけ、
 第三者配布のImageNet重みをローカルキャッシュへ取得します。GPU構成は今回未検証です。
+実データを使わない専用CIは、7ラベル・4独立セッションの合成画像でCPU 1エポック学習、
+ONNX出力、SHA-256、未検証マニフェスト、ONNX Runtimeの7出力推論だけを確認します。
+通常のWindows検証には組み込みません。
 
 詳細は `scripts/train_screen_classifier.py`、正式同梱前チェックは
 `scripts/check_screen_model_release.py --release` を参照してください。合成データによる

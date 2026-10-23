@@ -23,6 +23,22 @@ if [[ ! -d "$TRAINING_DATA_DIR" ]]; then
     echo "Training data directory does not exist: $TRAINING_DATA_DIR" >&2
     exit 2
 fi
+TRAINING_DATA_DIR="$(cd "$TRAINING_DATA_DIR" && pwd -P)"
+if [[ "$TRAINING_DATA_DIR" == "$repo_dir" || "$TRAINING_DATA_DIR" == "$repo_dir/"* ]]; then
+    echo "Training data must stay outside the workspace so it has no writable mount." >&2
+    exit 2
+fi
+export TRAINING_DATA_DIR
+mkdir -p private-training/output private-training/.torch-cache
+
+for argument in "$@"; do
+    case "$argument" in
+        --data-dir|--data-dir=*|--output-dir|--output-dir=*)
+            echo "The Docker wrapper fixes data and output paths under local private-training/." >&2
+            exit 2
+            ;;
+    esac
+done
 
 exec docker compose --profile training run --rm --build \
     --user "$(id -u):$(id -g)" \
@@ -32,5 +48,4 @@ exec docker compose --profile training run --rm --build \
     --output-dir private-training/output \
     --epochs 12 \
     --device auto \
-    --pretrained \
     "$@"

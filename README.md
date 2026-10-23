@@ -89,15 +89,15 @@
 - 訓練済み・検証済み重みがある場合は `champions_assist/data/champions_screen_classifier.onnx` と `champions_assist/data/champions_screen_classifier.json` をアプリに同梱します。実行時は **ONNX Runtime CPUExecutionProvider** が既定です。初期段階でGPU用の別モデルを要求せず、CPU/GPUで同じONNXを使用する設計です。`auto` もCPUを優先します。GPUは今後の計測で必要と確認した場合のみ明示選択可能な拡張ポイントであり、現行の設定画面にGPU切替は追加していません。
 - モデルは `MATCHMAKING`, `TEAM_SELECTION`, `MOVE_MENU`, `PARTY_MENU`, `BATTLE_EVENT`, `RESULT`, `UNKNOWN` の7画面種別を識別します。これは画面判別だけで、ポケモン/技/HPの読み取りや戦術判断は行いません。`UNKNOWN` や低信頼度の場合は無理にメニュー扱いしません。
 - モデルを同梱する前に、スマホミラーリング環境の実画面（許可されたキャプチャ）から **対戦セッションごとに分離した** 学習/検証データを作ります。非公開の `private-training/screens/<LABEL>/<session_id>__<frame>.png` に整理します。生画像は通常のログ・GitHub・CIへアップロードせず、学習時のみローカルの明示操作で保存します。
-- 学習は `./scripts/train_screen_classifier_docker.sh` で起動します。PyTorch/TorchVision/ONNX は **学習専用の Docker `trainer` イメージ** にのみ入り、Windows/WSL ホストや通常の `dev` イメージには導入されません。画像は `%LOCALAPPDATA%` から読み取り専用でマウントします。オプション `--pretrained` は既存の重みの取得が可能な環境だけで使い、配布前に元データと重みのライセンスを必ず確認してください。通常のアプリでは学習依存や重みのダウンロードは行いません。
-- スクリプトは最低4セッションを要求し、同一試合の類似フレームが学習・評価の両方に入らないよう**セッション単位で分割**します。画像だけのランダム分割はしません。7ラベルすべての評価データがなければ中断します。
+- 学習は `./scripts/train_screen_classifier_docker.sh` で起動します。PyTorch/TorchVision/ONNX/ONNX Runtime は **学習専用の Docker `trainer` イメージ** にのみ入り、Windows/WSLホストや通常の `dev` イメージには導入されません。画像はワークスペース外の `%LOCALAPPDATA%` から読み取り専用でマウントし、trainer のリポジトリ本体も読み取り専用です。生成物は無視対象の `private-training/output` にのみ保存します。まず `--validate-only` で検査し、既定のCPU学習は重みをダウンロードしません。`--pretrained` はImageNet重みの取得を明示的に許可する場合だけ指定します。
+- スクリプトは7ラベルごとの画像数・独立セッション数・画像読取可否を出力し、最低4対戦かつ各ラベル2対戦以上を要求します。同一試合の類似フレームが学習・評価の両方に入らないよう**セッション単位で分割**し、両側のラベル不足は不足ラベルと追加すべき対戦を表示して中断します。`_UNLABELLED` のJPEGは学習に含めません。
 - 初期検証の合格ゲートは、独立検証5セッション以上、選出画面100フレーム以上・再現率99%以上・適合率99.5%以上、他の種別も30フレーム以上・再現率95%以上です。これは**開発ゲートの案**であり、本番の90秒制限を満たした証拠にはなりません。
 - スクリプトの生成物は初期状態で `validated=false` です。基準達成時に限り `--approve-if-thresholds-pass` を指定できます。モデルのSHA-256や画面分類ラベルが一致しない場合、アプリはモデルを読み込まず、安全なフォールバックと警告を使います。検証したモデルだけをリリースの成果物に同梱してください。
 - 実機で選出検出まで1秒以内、CPU推論P95 50ms以下、見逃し率/誤検出率、AIへの重複送信を記録し、**モデル追加後の別SHAでWindows CIとミラーリング実機検証**を必ず実施します。このPRでその目標を達成したとは主張しません。
 
 ### 開発用・正式リリース用の区別
 
-このPRのビルドは **DEVELOPMENT_ONLY** と明示し、ユーザーへの正式配布とは区別します。モデル同梱なしで開発用アプリを起動できても、その状態を「画面判別モデル搭載版」として公開してはいけません。CI内の `scripts/check_screen_model_release.py` は開発用診断を表示し、正式リリースの前には **`python scripts/check_screen_model_release.py --release`** が成功することを必須条件とします。未配置・未検証・ハッシュ不一致・推論環境不備のいずれでも正式リリースチェックは失敗します。学習用GUIの画像収集・ラベル補正は未実装で、現段階はCLIの学習・検証基盤です。
+このPRのビルドは **DEVELOPMENT_ONLY** と明示し、ユーザーへの正式配布とは区別します。モデル同梱なしで開発用アプリを起動できても、その状態を「画面判別モデル搭載版」として公開してはいけません。CI内の `scripts/check_screen_model_release.py` は開発用診断を表示し、正式リリースの前には **`python scripts/check_screen_model_release.py --release`** が成功することを必須条件とします。未配置・未検証・ハッシュ不一致・推論環境不備のいずれでも正式リリースチェックは失敗します。収集GUIは未ラベル画像のディスク保存と人手ラベル付けを提供しますが、実データでの学習精度・速度は未検証です。
 
 ## 画面認識モデル用学習データ収集アプリ（開発用・PR #21）
 
