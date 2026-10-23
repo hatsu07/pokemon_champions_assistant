@@ -2,6 +2,7 @@
 
 
 ## Mandatory AI development / CI policy (2026-10-23)
+- **New chat handoff: read `docs/CURRENT_DEVELOPMENT_HANDOFF.md` first, then the canonical policies it lists.** Confirm the current GitHub master, PRs, latest Windows CI and Releases directly; historical summary is never enough.
 - **Read and follow `docs/AI_DEVELOPMENT_AND_CI_POLICY.md` and `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md` before changing code or reporting a result.** This requirement applies to Codex, ChatGPT, other development agents and human contributors.
 - Use a Draft PR while implementing, testing, documenting and committing. **Freeze the final commit before triggering/accepting release CI.**
 - When CI fails, add commits, or HEAD moves: ignore the old run for completion; ensure a new CI run validates the **latest PR HEAD SHA** from the start.
