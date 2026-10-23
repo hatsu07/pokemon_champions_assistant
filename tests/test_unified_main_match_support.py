@@ -139,7 +139,8 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIn("最後に取得した画像",panel.capture_preview_info.text())
         self.assertEqual(self.window.header_labels["capture"].text(),"再取得待機")
         panel._stop_auto()
-        self.assertIsNone(panel.capture_preview.pixmap())
+        cleared=panel.capture_preview.pixmap()
+        self.assertTrue(cleared is None or cleared.isNull())
         self.assertIn("監視停止中",panel.capture_preview.text())
 
     def test_explicit_mirror_reconnect_persists_selected_window_and_keeps_preload(self):
@@ -156,8 +157,8 @@ class UnifiedMainWindowTests(unittest.TestCase):
             hwnd=82,pid=888,process_name="PhoneLink.exe",
             title="スマートフォンの画面",client_bbox=(0,0,250,170),
             dpi=96,minimized=False)
-        with patch("champions_assist.match_replay_dialog.CapturePreviewService") as service, \\
-             patch.object(QInputDialog,"getItem",return_value=(candidate.display_name(),True)), \\
+        with patch("champions_assist.match_replay_dialog.CapturePreviewService") as service, \
+             patch.object(QInputDialog,"getItem",return_value=(candidate.display_name(),True)), \
              patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
                    return_value=np.full((170,250,3),55,dtype=np.uint8)) as cap:
             service.return_value.list_windows.return_value=(candidate,)
