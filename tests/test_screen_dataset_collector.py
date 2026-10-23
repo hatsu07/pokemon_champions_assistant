@@ -195,6 +195,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         from champions_assist.screen_auto_label import AutoLabelGroup, AutoLabelFrame
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                 for _ in range(6)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
         def group(paths,label):
             return AutoLabelGroup(
                 tuple(paths),label,.97,.91,
@@ -245,6 +246,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         from champions_assist.screen_auto_label import AutoLabelGroup
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                 for _ in range(4)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
             AutoLabelGroup(tuple(frames),"MOVE_MENU",.98,.94,
                            (frames[0],frames[2],frames[3]),"AI候補")])
@@ -273,6 +275,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         from champions_assist.screen_auto_label import AutoLabelGroup
         frames=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                 for _ in range(4)]
+        self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
             AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.9,
                            (frames[0],frames[1]),"AI候補"),
