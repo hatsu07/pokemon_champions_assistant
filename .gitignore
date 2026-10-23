@@ -44,3 +44,7 @@ validation-reports/
 # OS file-manager metadata
 .DS_Store
 Thumbs.db
+
+# Human-verified private capture frames and locally trained model candidates.
+# Never commit game video, training screenshots, or unreviewed model weights.
+private-training/
