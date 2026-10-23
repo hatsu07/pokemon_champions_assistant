@@ -119,14 +119,16 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._auto_running=True
         panel._render({"status": "AUTO_STARTED"})
         image=np.full((80, 140, 3), 180, dtype=np.uint8)
-        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt", return_value=image) as capture:
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt", return_value=image) as capture, \
+             patch.object(panel,"_queue_batch") as queued:
             panel._capture_next()
+        queued.assert_called_once()  # The first live frame now initiates an AI candidate.
         capture.assert_called_once()
         self.assertIsNotNone(panel.capture_preview.pixmap())
         self.assertFalse(panel.capture_preview.pixmap().isNull())
         self.assertIn("140×80 px",panel.capture_preview_info.text())
         self.assertEqual(self.window.header_labels["capture"].text(),"監視中")
-        self.assertEqual(panel.entries,[])  # Rendering never sends/records an AI decision.
+        self.assertEqual(panel.entries,[])  # The mocked queue has no network side effects.
         self.assertIsNone(panel._thread)
         last_pixmap=panel.capture_preview.pixmap().cacheKey()
 
