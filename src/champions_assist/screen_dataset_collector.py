@@ -287,7 +287,9 @@ class ScreenDatasetCollector(QMainWindow):
         thread.started.connect(worker.run)
         worker.frame.connect(self._on_frame)
         worker.error.connect(self._on_capture_error)
-        worker.finished.connect(thread.quit)
+        # Quit the Qt event loop from the worker thread immediately; a
+        # queued quit on the main UI thread may deadlock during closeEvent.wait.
+        worker.finished.connect(thread.quit,Qt.ConnectionType.DirectConnection)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(self._on_worker_finished)
         thread.finished.connect(thread.deleteLater)
