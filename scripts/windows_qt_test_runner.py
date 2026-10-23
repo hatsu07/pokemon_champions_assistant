@@ -32,7 +32,19 @@ def main() -> None:
           f"errors={len(result.errors)} failures={len(result.failures)}",flush=True)
     sys.stdout.flush()
     sys.stderr.flush()
-    os._exit(0 if success else 1)
+    exit_code=0 if success else 1
+    if os.name=="nt":
+        # A test run with 121/121 PASS returned 0xC0000005 while Windows
+        # unloaded Qt/native libraries even after os._exit(0). Stop the
+        # disposable CI test process before native DLL detach/finalizers.
+        # This uses the *actual unittest result*, never a forced success.
+        import ctypes
+        kernel=ctypes.WinDLL("kernel32",use_last_error=True)
+        kernel.GetCurrentProcess.restype=ctypes.c_void_p
+        kernel.TerminateProcess.argtypes=(ctypes.c_void_p,ctypes.c_uint)
+        kernel.TerminateProcess.restype=ctypes.c_int
+        kernel.TerminateProcess(kernel.GetCurrentProcess(),exit_code)
+    os._exit(exit_code)
 
 
 if __name__=="__main__":
