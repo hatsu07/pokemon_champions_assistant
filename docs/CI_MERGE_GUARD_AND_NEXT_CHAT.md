@@ -10,16 +10,16 @@ master.protected=falseは既知の制約。GitHubのMergeボタンは自動的�
 
 ## Required PR CIと手動Artifacts配布
 
-Ready PRのWindows CIは、オフラインテスト、両Windows PyInstallerビルド、両GUI起動スモーク、最新PR HEADの検証をすべて実施する。必須job名は desktop-windows-validation。
-PR CIではArtifactsをアップロードしない。Actions保存容量の制限をCI品質チェックと分離するためであり、コード検証は省略しない。
-配布用Windows ZIPが必要な場合は、GitHub ActionsのWindows desktop development validationをworkflow_dispatchで手動実行し、publish_artifacts=trueを明示する。容量超過なら配布失敗と報告する。CI成功とWindows成果物ダウンロード成功を混同しない。
+Ready PRのWindows CIは、オフラインテスト、両Windows PyInstallerビルド、両GUI起動スモーク、最新PR HEADの検証、**両DEVELOPMENT ZIPのArtifacts自動アップロード**をすべて実施する。必須job名は desktop-windows-validation。
+ユーザーはWSLにGitHub CLIを導入済み。古いWindows ZIP Artifactsは `scripts/prune_actions_artifacts.sh` をWSLで定期的に実行し整理する。最新1件/名称を残し、初回はドライラン、削除には`--apply`を必須とする。ArtifactsのGitHub保存期間は2日。詳細は `docs/WSL_GH_ARTIFACT_CLEANUP.md`。
+アップロード容量超過はCI全体のFailureとして扱う。CI全体Successと両アップロード手順のSuccessを確認できるまで絶対にマージしない。
 BlueStacksの実機確認・画面分類精度・正式MSIは別工程であり、WindowsオフラインCIでは証明できない。
 
 ## 手動・AIエージェントによる例外なしマージ判定
 
 1. 開発は作業ブランチ + Draft PRで行い、変更をすべてコミットし最新HEADを確定したあとReadyへ切り替える。
 2. PR HEAD、CI workflow_run.head_sha、実際にcheckout/buildしたSHAが完全一致することを確認。古い成功は使わない。
-3. **PR最新HEADに対する最新Windows workflow run全体** とjob desktop-windows-validation がともに status=completed、conclusion=success を確認する。全必須ジョブがSuccess以外ならマージしない。
+3. **PR最新HEADに対する最新Windows workflow run全体** とjob desktop-windows-validation がともに status=completed、conclusion=success を確認し、さらに **2件のUpload artifact手順がSuccess** であることを確認する。全必須ジョブがSuccess以外ならマージしない。
 4. Failure、Skipped、Pending、Cancelled、Timeout、Unknown、部分成功ではマージしない。Actions Artifactアップロードが原因でCI全体がFailureでもマージ不可。
 5. PRがReady、master宛て、コンフリクトなし、未解決の重要なレビュー指摘なしであることを確認。必要な統合・修正を行ったら再度最新HEADのCIを通す。
 6. 以上を満たした場合のみマージし、後からPR.merged=trueとmasterの更新を実際に検証する。ユーザーは有料ブランチ保護を不要と指定済み。
