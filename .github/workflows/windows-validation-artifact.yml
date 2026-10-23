@@ -129,7 +129,17 @@ jobs:
           $exe = Resolve-Path .\\dist\\PokemonChampionsScreenDataCollector\\PokemonChampionsScreenDataCollector.exe
           $report = Join-Path $env:RUNNER_TEMP "collector-smoke.json"
           $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
-          if ($proc.ExitCode -ne 0) { throw "dataset collector GUI startup smoke failed" }
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "Dataset collector GUI smoke exit code: $($proc.ExitCode)"
+            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\diagnostics"
+            if (Test-Path -LiteralPath $diagnostics) {
+              Get-ChildItem -LiteralPath $diagnostics -Filter "dataset-collector-startup-*.log" -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 3 |
+                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
+            }
+            throw "dataset collector GUI startup smoke failed"
+          }
           if (-not (Test-Path -LiteralPath $report)) { throw "missing dataset collector smoke report" }
           $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
           if ($result.status -ne "SCREEN_DATASET_COLLECTOR_SMOKE_OK" -or
