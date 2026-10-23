@@ -251,8 +251,7 @@ class ScreenDatasetCollector(QMainWindow):
         self.quota_box.currentIndexChanged.connect(self._quota_changed)
         controls.addWidget(self.quota_box)
         layout.addLayout(controls)
-        self.consent=QCheckBox(
-            "このゲーム画面を未ラベル画像としてローカルディスクに自動保存することに同意する")
+        self.consent=QCheckBox("未ラベル画像のローカル自動保存に同意する")
         layout.addWidget(self.consent)
         buttons=QHBoxLayout()
         self.start_button=QPushButton("自動収集開始（未ラベル保存）")
