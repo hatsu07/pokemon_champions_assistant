@@ -103,8 +103,12 @@
 
 画面認識をユーザーの手動登録に依存しない正式版にするため、スマホミラーリング画面の**正解ラベル付き実画像**を収集する専用Windows GUIを追加しました。
 
-Windows CIの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64` を展開し、`PokemonChampionsScreenDataCollector.exe` を実行します。対戦支援アプリとは別のローカルアプリで、保存済みキャプチャ設定とROIを共有します。画像収集開始には明示的な許可が必要で、最大150枚をメモリに保持し、ラベルと保存を人が確定するまで画像ファイルを書きません。ゲーム操作・AI/クラウド送信は行いません。モデル学習済みという意味ではありません。
+Windows CIの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64` を展開し、`PokemonChampionsScreenDataCollector.exe` を実行します。対戦支援アプリとは別のローカルアプリで、保存済みキャプチャ設定とROIを共有します。未ラベルJPEGのローカル自動保存には明示的な許可が必要です。標準5fps（2/5/10fps選択）で150枚に達しても自動収集を止めず、2/5/10GBの容量上限と最低空き容量を確認します。学習用の正解ラベルPNGに変換するのは人間が確定した画像のみです。ゲーム操作・AI/クラウド送信は行いません。モデル学習済みという意味ではありません。
 
 **操作手順・ラベル定義・プライバシー・学習への引き渡し：** [docs/screen_dataset_collection.md](docs/screen_dataset_collection.md)
 
 このツールの完成後に、複数試合のラベル済み実画面で軽量CPU分類モデルを学習し、独立した試合で精度と画面検出速度を検証します。モデル同梱済みの正式版とは区別します。
+
+### 連続画面収集の改良（PR #22）
+
+旧版の「1秒間隔・メモリ150枚で強制停止」を解消しました。**5fps標準（2/5/10fps選択）、未ラベル画像をローカルJPEGへ自動保存、対戦後に100枚ずつ確認して人手ラベル付け**する方式です。従来の学習済み正解ラベルPNGはそのまま保持します。容量上限・残容量不足時は理由を明示して停止し、自動で過去画像を削除しません。詳細は [docs/screen_dataset_collection.md](docs/screen_dataset_collection.md) を参照してください。
