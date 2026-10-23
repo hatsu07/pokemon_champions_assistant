@@ -27,6 +27,7 @@ from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep, run_replay_batch
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
+from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
@@ -162,6 +163,11 @@ class MatchReplayDialog(QDialog):
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
         self._automatic_probe=AutomaticVisualProbe()
+        self._screen_gate=ClassifiedMenuGate()
+        # Missing/unvalidated training weights are not silently treated as
+        # a working visual model. Default CPU is cheap and deterministic.
+        self._screen_model,self._screen_model_status=load_bundled_classifier(device="cpu")
+        self._last_local_class=None
         self._pending_batch=None
         self._manual_submission=False
         self._latest_image=None
@@ -198,6 +204,9 @@ class MatchReplayDialog(QDialog):
         self.menu_detection_label=QLabel("メニュー登録: なし")
         self.menu_detection_label.setWordWrap(True)
         panel.addWidget(self.menu_detection_label)
+        self.local_classifier_label=QLabel(self._local_classifier_message())
+        self.local_classifier_label.setWordWrap(True)
+        panel.addWidget(self.local_classifier_label)
         # Render the same frames that go to AI, without another acquisition.
         self.capture_preview_title=QLabel("キャプチャプレビュー（ChatGPT送信対象のゲーム領域）")
         panel.addWidget(self.capture_preview_title)
@@ -287,6 +296,8 @@ class MatchReplayDialog(QDialog):
             self._capture_gate.reset()
             self._turn_buffer.reset_turn()
             self._automatic_probe.reset()
+            self._screen_gate.reset()
+            self._last_local_class=None
             self._pending_batch=None
             self._ai_request_attempts=0
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
@@ -303,6 +314,8 @@ class MatchReplayDialog(QDialog):
         self._stop_auto()
         self._turn_buffer.reset_turn()
         self._automatic_probe.reset()
+        self._screen_gate.reset()
+        self._last_local_class=None
         self._pending_batch=None
         self.assets=None
         self.state=None
@@ -377,6 +390,8 @@ class MatchReplayDialog(QDialog):
             # Recalibrate command screens if target/window content changed.
             self._turn_buffer=TurnCaptureBuffer()
             self._automatic_probe.reset()
+            self._screen_gate.reset()
+            self._last_local_class=None
             self._update_menu_detection_label()
             self._set_ai_status("AI未送信（再接続後、画面登録をやり直してください）")
             self._show_capture_preview(frame,force=True)
@@ -389,6 +404,12 @@ class MatchReplayDialog(QDialog):
             self._render(report)
         except (AutoCaptureUnavailable,OSError,ValueError) as exc:
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
+
+    def _local_classifier_message(self) -> str:
+        if self._screen_model is not None:
+            return "画面判別: 検証用ONNX分類器 / CPU / 画面登録不要"
+        return ("画面判別: 学習済みモデル未配置（"+self._screen_model_status+
+                "）。CPU画像変化検出 → ChatGPT確認。精度未検証")
 
     def _set_ai_status(self, status: str) -> None:
         """Status of the AI workflow, separate from local capture state."""
@@ -438,6 +459,8 @@ class MatchReplayDialog(QDialog):
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
         self._automatic_probe.reset()
+        self._screen_gate.reset()
+        self._last_local_class=None
         self._pending_batch=None
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         self._poll_timer.start()
@@ -457,6 +480,7 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._latest_image=None
         self._automatic_probe.reset()
+        self._screen_gate.reset()
         self._clear_capture_preview("監視停止中")
         if self._thread is None:
             self._set_ai_status("AI監視停止（新規画像送信なし）")
@@ -476,6 +500,7 @@ class MatchReplayDialog(QDialog):
                 self._render({"status":"MENU_CALIBRATED","kind":kind})
                 if not self._automatic_probe.recently_submitted(image):
                     self._automatic_probe.acknowledge(image,self.state["phase"])
+                    self._screen_gate.acknowledge(kind,self.state["phase"])
                     self._queue_batch(self._turn_buffer.batch(image))
             else:
                 self._turn_buffer.calibrate(kind,image)
@@ -593,10 +618,37 @@ class MatchReplayDialog(QDialog):
         phase=self.state.get("phase")
         if kind is not None and self._eligible_menu(kind):
             self._automatic_probe.acknowledge(image,phase)
+            self._screen_gate.acknowledge(kind,phase)
             self._queue_batch(self._turn_buffer.batch(image))
-        elif self._automatic_probe.observe(image,phase):
-            # Default path: no per-user menu training. AI determines whether
-            # this candidate is matchmaking, team selection, or a command menu.
+            return
+
+        if self._screen_model is not None:
+            try:
+                prediction=self._screen_model.predict(image)
+            except (ValueError,RuntimeError,TypeError) as exc:
+                # Do not disable capture or fabricate a classification.
+                self._screen_model=None
+                self._screen_model_status="MODEL_RUNTIME_ERROR_"+type(exc).__name__
+                self.local_classifier_label.setText(self._local_classifier_message())
+                self._automatic_probe.reset()
+            else:
+                if prediction.label!=self._last_local_class:
+                    self._last_local_class=prediction.label
+                    self.local_classifier_label.setText(
+                        f"ローカル画面判別: {prediction.label} / "
+                        f"確信度 {prediction.confidence:.2f} / "
+                        f"{prediction.latency_ms:.1f}ms / {prediction.source}")
+                classified=self._screen_gate.observe(prediction,phase)
+                if classified is not None:
+                    self._automatic_probe.acknowledge(image,phase)
+                    self._queue_batch(self._turn_buffer.batch(image))
+                # A validated installed model is the default trigger. Do not
+                # also fire an unrelated image-change gate for UNKNOWN frames.
+                return
+
+        if self._automatic_probe.observe(image,phase):
+            # No bundled trained model: bounded fallback only. ChatGPT must
+            # classify the screenshot before generating any tactical choice.
             self._queue_batch(self._turn_buffer.batch(image))
 
     @Slot(object)
