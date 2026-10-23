@@ -98,3 +98,44 @@ ONNX出力、SHA-256、未検証マニフェスト、ONNX Runtimeの7出力推�
 詳細は `scripts/train_screen_classifier.py`、正式同梱前チェックは
 `scripts/check_screen_model_release.py --release` を参照してください。合成データによる
 学習パイプラインの確認と、実機Champions画像の精度・速度検証は別工程です。
+
+## 対戦後の自動ラベル候補・一括承認（PR #25）
+
+この機能は**正解ラベルの自動確定ではありません**。収集済みの未ラベルJPEGを、
+対戦セッション単位で画像類似度・時刻・AI予測の一致性によりグループ化し、
+人間が確認したグループだけを正解ラベルPNGへ保存します。
+
+1. 対戦後に収集を停止し、対象の対戦セッションを選択します。
+2. AIなしでも「この対戦を解析・グループ化」を押すと、画像の類似性だけで連続グループを作れます。この場合ラベルは「要確認」のままで、AIの代わりに人がラベルを選びます。
+3. AI推定するには、まず本プロジェクトのDocker GPU学習結果
+   `private-training/output/champions_screen_classifier.onnx` と
+   `private-training/output/champions_screen_classifier.json` を、
+   **両方セットで**Windows PC上のローカル専用フォルダーへコピーします。
+   WSLのリポジトリ内から実行する例：
+
+   ```bash
+   APPDATA_PATH="$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("LocalApplicationData")' | tr -d '\r')"
+   MODEL_DIR="$(wslpath -u "$APPDATA_PATH")/PokemonChampionsAssistant/private-training/models"
+   mkdir -p "$MODEL_DIR"
+   cp private-training/output/champions_screen_classifier.onnx private-training/output/champions_screen_classifier.json "$MODEL_DIR/"
+   ```
+
+4. Windows収集アプリの「実験ONNXモデルを選択」から上記 `.onnx` を開きます。対応する `.json` が同じフォルダーに必要です。マニフェストのSHA-256・正規化パラメータ等を検証し、不一致なら推定しません。開発用の候補生成に限って `validated=false` のモデルを使えます。通常の対戦支援アプリは引き続き未検証モデルを拒否します。
+5. 「この対戦を解析・グループ化」を押すと**オフライン・別スレッド**で解析し、処理枚数を表示します。最大30枚ごと・画像差分・撮影時刻の飛び・モデル予測変化によりグループを区切ります。弱い予測は「要確認」として扱い、実際の `UNKNOWN` と区別します。
+6. グループを選ぶと代表画像（先頭・中央・末尾）を表示します。必ず画面切替境界とラベルを人が確認してください。複数のグループを選択し、同一AI候補なら「AI候補で承認」、候補が誤り・不明なら下の「正解ラベル」を選び「選択ラベルに訂正してグループ保存」を押します。**Yesで明示承認するまで学習画像へ変換されません。**
+7. 保存には従来の安全な `UnlabelledScreenStaging.label()` を使用します。PNG保存成功後だけ対応JPEGを削除し、既存ラベル・未承認画像を変更しません。保存後は古い提案を破棄して、必要なら再解析します。
+8. 承認済みデータを使って学習し直すときは「GPU再学習：コマンドを表示・コピー」を押します。自動実行はせずWSLのDocker環境で明示的に次を実行します。
+
+   ```bash
+   bash ./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained
+   ```
+
+   既定の出力先は `private-training/output` なので、以前のONNXとJSONを保存するなら先にバックアップしてください。再学習後は**別の独立した対戦**で精度を検証し、モデルをWindowsのローカルフォルダーへ再コピーしてから次の候補生成に使用します。未検証モデルを自動的に正式アプリへ同梱・昇格させません。
+
+**精度上の注意:** ユーザーの初回GPU事前学習済み12エポック結果では、
+`TEAM_SELECTION` の適合率約95.5%、`BATTLE_EVENT` 約44%、
+`MATCHMAKING` の再現率0%、`UNKNOWN` の再現率約20.5%でした。
+独立した検証セッションは2件のため、将来の対戦への汎化は未検証です。
+予測信頼度0.90以上でも正解とは保証しません。**一括承認前の目視確認を省かないでください。**
+
+すべてローカル処理で画像・モデルをAPI、GitHub、CIに送信しません。GPUは**学習**に使用し、Windows GUIでのONNX推論はCPUで実行します。ミラーリング実機での分類精度、総処理時間、人間の確認負担の削減率は別途計測が必要です。
