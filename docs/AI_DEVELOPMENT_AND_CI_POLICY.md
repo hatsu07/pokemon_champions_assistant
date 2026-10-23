@@ -25,11 +25,11 @@ CI中に修正が必要になった場合：
 
 ## 2026-10-23 マージ事故後の厳格な停止条件
 
-PR #30をCI全体がFailure（GitHub Actions Artifact容量超過）のままmasterへマージしたのは誤り。**これ以降、必須CI全体が最新SHAで`completed/success`以外なら理由を問わずマージ禁止。** さらにGitHubサーバー側でmaster向け必須チェックと管理者バイパス禁止が実際に有効であることを確認できなければ、エージェントによるマージも禁止。GitHubが`mergeable=true`でも例外は認めない。
+PR #30をCI全体がFailure（GitHub Actions Artifact容量超過）のままmasterへマージしたのは誤り。**これ以降、必須CI全体が最新SHAで`completed/success`以外なら理由を問わずマージ禁止。** ユーザーの最新判断により有料GitHubのBranch protectionは不要。サーバー側のマージ禁止設定をCI検証の前提にせず、最新SHAに対するCI workflow全体・必須ジョブのSuccessを厳守する。GitHubが`mergeable=true`でもCI未成功なら例外を認めない。
 
 PRのCIテスト・Windowsビルド・両GUIスモークと、手動要求されたArtifactsの配布を分離する。ArtifactsはPRではアップロードしない（容量上限はコードテストと無関係）。`workflow_dispatch`の`publish_artifacts=true`で**明示的に別操作で**配布を試行する。配布に失敗した場合は配布失敗として報告する。CI成功を配布成功と混同しない。
 
-現在のGitHub privateリポジトリは`master.protected=false`。Rulesetsはプラン制限、GitHubコネクターには保護ルール書込権限/ツールがなく、保護実施を主張できない。管理者は対応プラン（GitHub Pro/Team等）と権限を確認してRequired check `desktop-windows-validation`、PR必須、admin bypass不可、最新ベース追従を有効化し、その後実際の保護を確認する。**この設定が有効になるまで、後続チャットでもマージ操作をしない。** 詳細・新チャット引継ぎは`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`。
+GitHub privateリポジトリの`master.protected=false`は既知の制約で、ユーザーは有料プランや物理的マージ保護を希望しない。**GitHub側の自動マージ拒否はない**。エージェントが最新PR HEAD・CI全体・必須Windowsジョブの`completed/success`を毎回確認する。詳細・新チャット引継ぎは`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`。
 
 ## リポジトリ側で実装する保護
 
