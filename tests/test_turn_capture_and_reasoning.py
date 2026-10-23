@@ -50,6 +50,21 @@ class MemoryAndReasoningTests(unittest.TestCase):
         gate.observe(menu)
         self.assertEqual(gate.observe(menu),"MOVE_MENU")
 
+    def test_explicit_menu_acknowledgement_suppresses_duplicate_menu_send(self):
+        buffer=TurnCaptureBuffer(stable_frames=2)
+        menu=np.zeros((120,200,3),dtype=np.uint8)
+        menu[60:,100:]=200
+        idle=np.zeros_like(menu)
+        buffer.acknowledge_calibrated_current("TEAM_SELECTION",menu)
+        self.assertIn("TEAM_SELECTION",buffer.templates)
+        self.assertFalse(buffer._armed)
+        self.assertIsNone(buffer.observe(menu))
+        self.assertIsNone(buffer.observe(menu))
+        self.assertIsNone(buffer.observe(idle))
+        self.assertIsNone(buffer.observe(idle))
+        self.assertIsNone(buffer.observe(menu))
+        self.assertEqual(buffer.observe(menu),"TEAM_SELECTION")
+
     def test_batch_uses_one_stream_call_and_rejects_unsupported_action(self):
         own=["ピカチュウ","ドドゲザン","ガブリアス"]
         assets=FrozenMatchAssets(

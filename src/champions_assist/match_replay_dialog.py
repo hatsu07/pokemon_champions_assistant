@@ -26,7 +26,8 @@ from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep, run_replay_batch
-from .turn_capture import TurnCaptureBuffer
+from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
+from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
@@ -34,6 +35,7 @@ from .app_config import CaptureConfiguration
 
 class _ReplayWorker(QObject):
     finished = Signal(object)
+    progress = Signal(str)
 
     def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
                  reasoning_effort='auto',
@@ -66,7 +68,9 @@ class _ReplayWorker(QObject):
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
+                self.progress.emit("ChatGPT認証確認中")
                 token=auth.access_token()
+                self.progress.emit("AI画像送信処理中（結果待ち）")
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
                     # Team preview needs the exact six LIVE matrix rows AFTER
                     # reading the opponent icons; do not guess selection in
@@ -131,6 +135,7 @@ class MatchReplayDialog(QDialog):
     The main window observes state_changed and never constructs another FSM.
     """
     state_changed = Signal(object, object)
+    ai_status_changed = Signal(str)
 
     def __init__(self, *, model: str, master_directory: str, team_path: str,
                  capture_config: CaptureConfiguration | None = None,
@@ -157,6 +162,12 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
+        self._automatic_probe=AutomaticVisualProbe()
+        self._screen_gate=ClassifiedMenuGate()
+        # Missing/unvalidated training weights are not silently treated as
+        # a working visual model. Default CPU is cheap and deterministic.
+        self._screen_model,self._screen_model_status=load_bundled_classifier(device="cpu")
+        self._last_local_class=None
         self._pending_batch=None
         self._manual_submission=False
         self._latest_image=None
@@ -175,6 +186,8 @@ class MatchReplayDialog(QDialog):
         self._thread=None
         self._worker=None
         self._active_job=None
+        self._ai_request_attempts=0
+        self._ai_last_status="AI未送信（撮影・メニュー認識待ち）"
         panel=QVBoxLayout(self)
         intro=QLabel(
             "開始を一度押すと、設定したゲーム画面を自動キャプチャしてChatGPTに送信します。\\n"
@@ -184,6 +197,16 @@ class MatchReplayDialog(QDialog):
         panel.addWidget(intro)
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
+        self.ai_status_label=QLabel(self._ai_last_status)
+        self.ai_status_label.setObjectName("ai_dispatch_status")
+        self.ai_status_label.setWordWrap(True)
+        panel.addWidget(self.ai_status_label)
+        self.menu_detection_label=QLabel("メニュー登録: なし")
+        self.menu_detection_label.setWordWrap(True)
+        panel.addWidget(self.menu_detection_label)
+        self.local_classifier_label=QLabel(self._local_classifier_message())
+        self.local_classifier_label.setWordWrap(True)
+        panel.addWidget(self.local_classifier_label)
         # Render the same frames that go to AI, without another acquisition.
         self.capture_preview_title=QLabel("キャプチャプレビュー（ChatGPT送信対象のゲーム領域）")
         panel.addWidget(self.capture_preview_title)
@@ -272,7 +295,13 @@ class MatchReplayDialog(QDialog):
             self.actual_lead.clear()
             self._capture_gate.reset()
             self._turn_buffer.reset_turn()
+            self._automatic_probe.reset()
+            self._screen_gate.reset()
+            self._last_local_class=None
             self._pending_batch=None
+            self._ai_request_attempts=0
+            self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
+            self._update_menu_detection_label()
             self._render({"status":"MATCH_STARTED","message":"4ファイル事前読込完了。自動キャプチャ開始で進めます。"})
         except Exception as exc:
             self.assets=None
@@ -284,12 +313,16 @@ class MatchReplayDialog(QDialog):
         if self._thread is not None:return
         self._stop_auto()
         self._turn_buffer.reset_turn()
+        self._automatic_probe.reset()
+        self._screen_gate.reset()
+        self._last_local_class=None
         self._pending_batch=None
         self.assets=None
         self.state=None
         self.entries=[]
         self.actual_three.clear()
         self.actual_lead.clear()
+        self._set_ai_status("AI未送信（対戦未開始）")
         self._render({"status":"RESET"})
         self.match_id=None
 
@@ -356,6 +389,11 @@ class MatchReplayDialog(QDialog):
             self._capture_gate.reset()
             # Recalibrate command screens if target/window content changed.
             self._turn_buffer=TurnCaptureBuffer()
+            self._automatic_probe.reset()
+            self._screen_gate.reset()
+            self._last_local_class=None
+            self._update_menu_detection_label()
+            self._set_ai_status("AI未送信（再接続後、画面登録をやり直してください）")
             self._show_capture_preview(frame,force=True)
             self.capture_preview_info.setText(
                 self.capture_preview_info.text()+" / 撮影対象の再接続済み・監視は停止中")
@@ -366,6 +404,33 @@ class MatchReplayDialog(QDialog):
             self._render(report)
         except (AutoCaptureUnavailable,OSError,ValueError) as exc:
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
+
+    def _local_classifier_message(self) -> str:
+        if self._screen_model is not None:
+            return "画面判別: 検証用ONNX分類器 / CPU / 画面登録不要"
+        return ("画面判別: 学習済みモデル未配置（"+self._screen_model_status+
+                "）。CPU画像変化検出 → ChatGPT確認。精度未検証")
+
+    def _set_ai_status(self, status: str) -> None:
+        """Status of the AI workflow, separate from local capture state."""
+        self._ai_last_status=status
+        self.ai_status_label.setText(status)
+        self.ai_status_changed.emit(status)
+
+    def _update_menu_detection_label(self) -> None:
+        names={"TEAM_SELECTION":"選出画面",
+               "MOVE_MENU":"技選択画面","PARTY_MENU":"交代画面"}
+        found=[names[k] for k in names if k in self._turn_buffer.templates]
+        self.menu_detection_label.setText(
+            "標準自動認識: 有効 / 補助登録: "+
+            (" / ".join(found) if found else "なし（登録不要）"))
+
+    def _eligible_menu(self, kind: str) -> bool:
+        phase=(self.state or {}).get("phase")
+        return (
+            kind=="TEAM_SELECTION" and phase in ("MATCHMAKING","SELECTION")
+            or kind in ("MOVE_MENU","PARTY_MENU") and phase in ("PREP","BATTLE")
+        )
 
     def _start_auto(self):
         if self._thread is not None or self._auto_running:
@@ -393,11 +458,16 @@ class MatchReplayDialog(QDialog):
         self._cancel_event.clear()
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
+        self._automatic_probe.reset()
+        self._screen_gate.reset()
+        self._last_local_class=None
         self._pending_batch=None
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         self._poll_timer.start()
         # Starting capture must update the status before a menu triggers AI.
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
+        self._update_menu_detection_label()
+        self._set_ai_status("標準自動判定有効（最初の画面からAI確認を開始）")
         self._capture_next()
 
     def _stop_auto(self):
@@ -409,7 +479,11 @@ class MatchReplayDialog(QDialog):
         self._poll_timer.setInterval(300)
         self._pending_batch=None
         self._latest_image=None
+        self._automatic_probe.reset()
+        self._screen_gate.reset()
         self._clear_capture_preview("監視停止中")
+        if self._thread is None:
+            self._set_ai_status("AI監視停止（新規画像送信なし）")
         # Previously the UI could still say "自動送信中" after stopping.
         if self.state is not None:
             self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
@@ -420,8 +494,20 @@ class MatchReplayDialog(QDialog):
             return
         try:
             image=capture_for_chatgpt(self.capture_config)
-            self._turn_buffer.calibrate(kind,image)
-            self._render({"status":"MENU_CALIBRATED","kind":kind})
+            if self._auto_running and self._thread is None and self._eligible_menu(kind):
+                self._turn_buffer.acknowledge_calibrated_current(kind,image)
+                self._update_menu_detection_label()
+                self._render({"status":"MENU_CALIBRATED","kind":kind})
+                if not self._automatic_probe.recently_submitted(image):
+                    self._automatic_probe.acknowledge(image,self.state["phase"])
+                    self._screen_gate.acknowledge(kind,self.state["phase"])
+                    self._queue_batch(self._turn_buffer.batch(image))
+            else:
+                self._turn_buffer.calibrate(kind,image)
+                self._update_menu_detection_label()
+                self._render({"status":"MENU_CALIBRATED","kind":kind})
+                if self._auto_running and self._thread is None:
+                    self._set_ai_status("AI未送信（現在のフェーズでは登録画面を送信しません）")
         except (AutoCaptureUnavailable,ValueError) as exc:
             QMessageBox.warning(self,"画面登録不可",str(exc))
 
@@ -458,6 +544,16 @@ class MatchReplayDialog(QDialog):
         frames=self._pending_batch
         self._pending_batch=None
         self._turn_buffer.reset_turn()
+        self._ai_request_attempts+=1
+        self._set_ai_status(
+            f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
+        request_report={
+            "step":len(self.entries)+1, "status":"AI_REQUEST_QUEUED",
+            "ai_request_attempt":self._ai_request_attempts,
+            "image_count":len(frames),
+            "message":"AI処理を起動しました。送信成功はまだ確認できていません。"}
+        self.entries.append(request_report)
+        self._render(request_report)
         self._set_busy(True)
         self._active_job="batch"
         self._thread=QThread(self)
@@ -468,6 +564,7 @@ class MatchReplayDialog(QDialog):
             frames=frames,cancel_event=self._cancel_event,
         )
         self._worker.moveToThread(self._thread)
+        self._worker.progress.connect(self._on_ai_progress)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._completed)
         self._worker.finished.connect(self._thread.quit)
@@ -475,6 +572,10 @@ class MatchReplayDialog(QDialog):
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
+
+    @Slot(str)
+    def _on_ai_progress(self, progress: str) -> None:
+        self._set_ai_status(f"{progress} / 試行 #{self._ai_request_attempts}")
 
     def _capture_next(self):
         if not self._auto_running:
@@ -514,11 +615,40 @@ class MatchReplayDialog(QDialog):
         self._latest_image=image
         self._show_capture_preview(image)
         kind=self._turn_buffer.observe(image)
-        if kind is not None:
-            if self.state.get("phase")=="SELECTION" and kind!="TEAM_SELECTION":
+        phase=self.state.get("phase")
+        if kind is not None and self._eligible_menu(kind):
+            self._automatic_probe.acknowledge(image,phase)
+            self._screen_gate.acknowledge(kind,phase)
+            self._queue_batch(self._turn_buffer.batch(image))
+            return
+
+        if self._screen_model is not None:
+            try:
+                prediction=self._screen_model.predict(image)
+            except (ValueError,RuntimeError,TypeError) as exc:
+                # Do not disable capture or fabricate a classification.
+                self._screen_model=None
+                self._screen_model_status="MODEL_RUNTIME_ERROR_"+type(exc).__name__
+                self.local_classifier_label.setText(self._local_classifier_message())
+                self._automatic_probe.reset()
+            else:
+                if prediction.label!=self._last_local_class:
+                    self._last_local_class=prediction.label
+                    self.local_classifier_label.setText(
+                        f"ローカル画面判別: {prediction.label} / "
+                        f"確信度 {prediction.confidence:.2f} / "
+                        f"{prediction.latency_ms:.1f}ms / {prediction.source}")
+                classified=self._screen_gate.observe(prediction,phase)
+                if classified is not None:
+                    self._automatic_probe.acknowledge(image,phase)
+                    self._queue_batch(self._turn_buffer.batch(image))
+                # A validated installed model is the default trigger. Do not
+                # also fire an unrelated image-change gate for UNKNOWN frames.
                 return
-            if self.state.get("phase") in ("PREP","BATTLE") and kind=="TEAM_SELECTION":
-                return
+
+        if self._automatic_probe.observe(image,phase):
+            # No bundled trained model: bounded fallback only. ChatGPT must
+            # classify the screenshot before generating any tactical choice.
             self._queue_batch(self._turn_buffer.batch(image))
 
     @Slot(object)
@@ -537,6 +667,12 @@ class MatchReplayDialog(QDialog):
             self._stop_auto()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED"):
             self.state=payload["state"]
+        if report.get("status")=="ERROR":
+            self._set_ai_status(f"AI処理エラー / {report.get('reason','UNKNOWN')}")
+        elif report.get("status")=="CANCELLED":
+            self._set_ai_status("AI処理キャンセル")
+        else:
+            self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}")
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
         if report.get("screen")=="TEAM_SELECTION" and report.get("selected_three"):

@@ -767,6 +767,7 @@ class DesktopMainWindow(QMainWindow):
             ("phase", "フェーズ"), ("capture", "画面監視"), ("preload", "4ファイル"),
             ("prep", "PREP"), ("selected", "選出"), ("model", "モデル"),
             ("report", "最新結果"), ("records", "ログ記録数"),
+            ("ai", "AI通信状態"),
         )):
             header.addWidget(QLabel(heading), (index // 4) * 2, index % 4)
             value = QLabel("—")
@@ -789,6 +790,8 @@ class DesktopMainWindow(QMainWindow):
             on_capture_reconnected=self._persist_reconnected_capture,
         )
         self._match_panel.state_changed.connect(self._on_unified_state)
+        self._match_panel.ai_status_changed.connect(
+            self.header_labels["ai"].setText)
         self._match_scroll.setWidget(self._match_panel)
         self.tabs.addTab(self._match_scroll, "対戦支援")
         state_tab = QWidget()
@@ -862,6 +865,7 @@ class DesktopMainWindow(QMainWindow):
         self.header_labels["model"].setText(panel.model or "未設定")
         self.header_labels["report"].setText(str(report.get("status", "—")))
         self.header_labels["records"].setText(str(len(panel.entries)))
+        self.header_labels["ai"].setText(panel._ai_last_status)
 
         status = report.get("status", "")
         suggestion = str(report.get("recommendation") or "")

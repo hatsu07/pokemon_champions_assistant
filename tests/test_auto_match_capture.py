@@ -105,8 +105,10 @@ class AutoCaptureTests(unittest.TestCase):
 
             frame = np.zeros((60,100,3), dtype=np.uint8)
             with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
-                       return_value=frame):
+                       return_value=frame), \
+                 patch.object(dialog, "_queue_batch") as queued:
                 dialog._capture_next()
+            queued.assert_called_once()  # Auto probing resumes with valid frames.
             self.assertTrue(dialog._auto_running)
             self.assertFalse(dialog._capture_paused)
             self.assertEqual(dialog._poll_timer.interval(), 300)
