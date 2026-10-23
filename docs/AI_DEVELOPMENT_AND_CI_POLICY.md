@@ -27,7 +27,7 @@ CI中に修正が必要になった場合：
 
 PR #30をCI全体がFailure（GitHub Actions Artifact容量超過）のままmasterへマージしたのは誤り。**これ以降、必須CI全体が最新SHAで`completed/success`以外なら理由を問わずマージ禁止。** ユーザーの最新判断により有料GitHubのBranch protectionは不要。サーバー側のマージ禁止設定をCI検証の前提にせず、最新SHAに対するCI workflow全体・必須ジョブのSuccessを厳守する。GitHubが`mergeable=true`でもCI未成功なら例外を認めない。
 
-PRのCIテスト・Windowsビルド・両GUIスモークと、手動要求されたArtifactsの配布を分離する。ArtifactsはPRではアップロードしない（容量上限はコードテストと無関係）。`workflow_dispatch`の`publish_artifacts=true`で**明示的に別操作で**配布を試行する。配布に失敗した場合は配布失敗として報告する。CI成功を配布成功と混同しない。
+ユーザーの最新方針は、Windows CIで**テスト・両GUIビルド・起動スモーク・2種類のDEVELOPMENT ZIPを自動アップロード**すること。WSLの`gh`で古いArtifactsを定期的に整理し、保存期間は2日とする。アップロードが失敗・SkippedならCI全体Successと判定せずマージしない。詳細は`docs/WSL_GH_ARTIFACT_CLEANUP.md`。
 
 GitHub privateリポジトリの`master.protected=false`は既知の制約で、ユーザーは有料プランや物理的マージ保護を希望しない。**GitHub側の自動マージ拒否はない**。エージェントが最新PR HEAD・CI全体・必須Windowsジョブの`completed/success`を毎回確認する。詳細・新チャット引継ぎは`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`。
 
