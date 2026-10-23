@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_terminology tests.test_phase_2 -v
+          python -m unittest tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_screen_auto_label tests.test_terminology tests.test_phase_2 -v
           if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
           # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
           # finalization after mixing unrelated test lifecycles.
@@ -92,7 +92,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name PokemonChampionsScreenDataCollector --paths src
-          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all PySide6
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-all PySide6
           scripts/windows_screen_dataset_collector_entry.py
       - name: Smoke desktop GUI headlessly with isolated local settings, no capture/API
         shell: pwsh

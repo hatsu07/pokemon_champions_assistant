@@ -41,13 +41,16 @@ class ScreenClassifier:
     """ImageNet-style RGB NCHW logits model with a pinned manifest."""
 
     def __init__(self, model_path: str | Path, manifest_path: str | Path,
-                 *, device: str="cpu", session_factory=None):
+                 *, device: str="cpu", session_factory=None,
+                 experimental_for_labelling: bool=False):
         path=Path(model_path)
         info=json.loads(Path(manifest_path).read_text(encoding="utf-8"))
         if not isinstance(info,dict) or info.get("schema_version")!=1:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_MANIFEST")
-        if info.get("validated") is not True:
+        if info.get("validated") is not True and not experimental_for_labelling:
             raise ScreenClassifierError("SCREEN_MODEL_NOT_VALIDATED")
+        # Explicit offline-only opt-in. load_bundled_classifier never enables it.
+        self.experimental=info.get("validated") is not True
         labels=info.get("labels")
         if (not isinstance(labels,list) or len(labels)!=len(LABELS)
                 or set(labels)!=set(LABELS) or len(set(labels))!=len(labels)):
@@ -101,7 +104,7 @@ class ScreenClassifier:
                 not 0<=self.min_margin<1.0):
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_THRESHOLDS")
 
-    def predict(self, image: np.ndarray) -> ScreenPrediction:
+    def predict(self, image: np.ndarray, *, raw_label: bool=False) -> ScreenPrediction:
         if image.ndim!=3 or image.shape[2]!=3 or image.size==0:
             raise ScreenClassifierError("INVALID_SCREEN_IMAGE")
         started=perf_counter()
@@ -122,8 +125,9 @@ class ScreenClassifier:
         top=int(order[0])
         confidence=float(probabilities[top])
         margin=confidence-float(probabilities[int(order[1])])
-        label=(self.labels[top] if confidence>=self.min_confidence
-               and margin>=self.min_margin else "UNKNOWN")
+        label=(self.labels[top] if (raw_label or
+               (confidence>=self.min_confidence and margin>=self.min_margin))
+               else "UNKNOWN")
         return ScreenPrediction(
             label,confidence,margin,(perf_counter()-started)*1000,
             "ONNX_GPU" if self.device=="gpu" else "ONNX_CPU")

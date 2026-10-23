@@ -41,6 +41,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/screen-training-data" private-training/output private-training/.torch-cache
           TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" docker compose --profile training build trainer
+      - name: Check offline grouping and human-approval safety
+        run: |
+          TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" docker compose --profile training run --rm --user "$(id -u):$(id -g)" trainer python -m unittest tests.test_screen_auto_label -v
       - name: Train synthetic sessions and validate the ONNX model
         run: |
           TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" docker compose --profile training run --rm --user "$(id -u):$(id -g)" trainer python -m unittest tests.training_pipeline_integration -v

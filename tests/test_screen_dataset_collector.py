@@ -190,6 +190,57 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.review_session_box.currentData(),before)
         self.assertEqual(self.gui.review_list.count(),1)
 
+    def test_auto_groups_require_explicit_human_confirmation(self):
+        from champions_assist.screen_auto_label import analyze_staged_session
+        staged=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+                for _ in range(6)]
+        groups=analyze_staged_session(self.gui.staging.session_files(self.gui.session_id))
+        self.gui._auto_on_proposals(groups)
+        self.assertEqual(self.gui.auto_list.count(),1)
+        self.gui.auto_list.setCurrentRow(0)
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.gui._approve_auto_groups(use_suggestion=True)
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("MOVE_MENU"))
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.No):
+            self.gui._approve_auto_groups(use_suggestion=False)
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            self.gui._approve_auto_groups(use_suggestion=False)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],6)
+        self.assertTrue(all(not f.exists() for f in staged))
+        self.assertEqual(self.gui.auto_list.count(),0)
+
+    def test_ai_suggestion_approval_without_confirmation_keeps_staging(self):
+        from champions_assist.screen_auto_label import AutoLabelGroup
+        staged=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
+        group=AutoLabelGroup((staged,),"TEAM_SELECTION",.99,.93,(staged,),
+                             "AI候補・代表画像を確認")
+        self.gui._auto_on_proposals([group])
+        self.gui.auto_list.setCurrentRow(0)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.No):
+            self.gui._approve_auto_groups(use_suggestion=True)
+        self.assertTrue(staged.exists())
+        self.assertEqual(self.gui.dataset.audit()["total"],0)
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            self.gui._approve_auto_groups(use_suggestion=True)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TEAM_SELECTION"],1)
+
+    @unittest.skipUnless(os.name=="nt","WSL process is Windows-native")
+    def test_gpu_retrain_requires_explicit_user_confirmation(self):
+        with patch("champions_assist.screen_dataset_collector.QInputDialog.getText",
+                   return_value=("/home/test/pokemon_champions_assistant",True)):
+            with patch.object(QMessageBox,"question",
+                              return_value=QMessageBox.StandardButton.No):
+                with patch("champions_assist.screen_dataset_collector.QProcess") as process:
+                    self.gui._start_gpu_retrain()
+                    process.assert_not_called()
+                    self.assertIsNone(self.gui._gpu_process)
+
     def test_selected_file_discard_needs_confirmation(self):
         first=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
         self.gui._refresh_review_sessions(select=self.gui.session_id)

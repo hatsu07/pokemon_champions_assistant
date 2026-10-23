@@ -7,11 +7,13 @@ cd "$repo_dir"
 
 gpu=0
 probe=0
+archive=0
 args=()
 for argument in "$@"; do
     case "$argument" in
         --gpu) gpu=1 ;;
         --check-gpu) probe=1 ;;
+        --archive-output) archive=1 ;;
         --device|--device=*|--data-dir|--data-dir=*|--output-dir|--output-dir=*)
             echo "Wrapper controls device/data/output; use --gpu for CUDA." >&2
             exit 2
@@ -48,6 +50,13 @@ fi
 export TRAINING_DATA_DIR
 mkdir -p private-training/output private-training/.torch-cache
 
+output="private-training/output"
+if ((archive && !probe)); then
+    # Separate each training model/manifest for safe manual comparison.
+    run_dir="$(mktemp -d "private-training/output/run-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")"
+    output="$run_dir"
+    printf '[trainer] archived_output=%s\n' "$output" >&2
+fi
 profile=training
 service=trainer
 device=auto
@@ -65,7 +74,7 @@ exec docker compose --profile "$profile" run --rm --build \
     --user "$(id -u):$(id -g)" "$service" \
     python scripts/train_screen_classifier.py \
     --data-dir /training/screens \
-    --output-dir private-training/output \
+    --output-dir "$output" \
     --epochs 12 \
     --device "$device" \
     "${args[@]}"
