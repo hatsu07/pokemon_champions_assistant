@@ -1085,11 +1085,17 @@ class ScreenDatasetCollector(QMainWindow):
         """Compatibility with PR #30 select-all-reviewed control/tests."""
         self._select_all_reviewed_groups()
 
-    def _approve_selected_auto_groups(self):
-        """Batch selected *individually reviewed* groups, preserving each label."""
+    def _selected_auto_groups(self):
+        """Return selected (index, group) pairs for bulk action and regression compatibility."""
         indices=sorted({
             item.data(Qt.ItemDataRole.UserRole) for item in self.auto_list.selectedItems()
-            if isinstance(item.data(Qt.ItemDataRole.UserRole),int)})
+            if isinstance(item.data(Qt.ItemDataRole.UserRole),int)
+            and 0<=item.data(Qt.ItemDataRole.UserRole)<len(self._auto_groups)})
+        return [(index,self._auto_groups[index]) for index in indices]
+
+    def _approve_selected_auto_groups(self):
+        """Batch selected *individually reviewed* groups, preserving each label."""
+        indices=[index for index,_ in self._selected_auto_groups()]
         self._commit_auto_groups(indices)
 
     def _commit_auto_groups(self,indices: list[int],*,forced: dict[int,str]|None=None):
