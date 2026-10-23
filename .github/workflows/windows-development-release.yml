@@ -1,0 +1,209 @@
+name: Windows DEVELOPMENT GitHub Release
+
+# Trusted master only: never publish code from a pull_request with write token.
+# PR validation is handled by windows-validation-artifact.yml.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-development-release-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows-development-release:
+    if: github.repository == 'hatsu07/pokemon_champions_assistant' && github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify trusted master revision
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          if ($sha -ne $env:GITHUB_SHA) { throw "Checked-out SHA does not match triggered master commit" }
+          Write-Host "Publishing DEVELOPMENT builds from master commit $sha"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pyinstaller .
+      - name: Run offline battle and settings tests on Windows
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
+          Write-Host "offline core unittest process exit code: $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
+          # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
+          # finalization after mixing unrelated test lifecycles.
+          python scripts/windows_qt_test_runner.py tests.test_chatgpt_settings_inline tests.test_unified_main_match_support
+          if ($LASTEXITCODE -ne 0) { throw "inline GUI regression suites failed" }
+          python scripts/windows_qt_test_runner.py
+          if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
+          python scripts/windows_qt_test_runner.py tests.test_screen_dataset_collector
+          Write-Host "Private dataset collector Python process exit code: $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { throw "private dataset collector tests failed" }
+      - name: Test release lifecycle scripts without GitHub mutations
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_prune_development_releases -v
+          if ($LASTEXITCODE -ne 0) { throw "release lifecycle tests failed" }
+      - name: Test legacy Actions artifact cleanup script offline
+        shell: bash
+        run: bash tests/test_prune_actions_artifacts.sh
+      - name: Check whether a validated screen model is available
+        shell: pwsh
+        run: |
+          python scripts/check_screen_model_release.py
+          if ($LASTEXITCODE -ne 0) { throw "model diagnostic failed" }
+          # Development CI may run with no trained model, but that build is
+          # never labelled as releasable. A real release must call --release.
+      - name: Stage non-private live assets for the desktop GUI
+        shell: pwsh
+        run: |
+          $destination = ".\\build\\desktop-assets\\masters"
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          $files = @(
+            "Pokemon_Champions_MC_live_decision_gate.txt",
+            "Pokemon_Champions_MC_live_selection_matrix.txt",
+            "Pokemon_Champions_MC_60sec_lookup_master.txt",
+            "Pokemon_Champions_MC_usable_pokemon.csv",
+            "Pokemon_Champions_MC_move_master.csv",
+            "Pokemon_Champions_MC_usable_held_items.csv",
+            "Pokemon_Champions_MC_ability_master.csv",
+            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv"
+          )
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath (Join-Path ".\\masters" $file) -Destination (Join-Path $destination $file) -Force
+          }
+      - name: Build portable Windows desktop GUI (not MSI)
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
+          --name PokemonChampionsAssistant --paths src
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
+          --add-data "build\\desktop-assets\\masters;masters"
+          scripts/windows_desktop_entry.py
+      - name: Build standalone local dataset collector GUI
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
+          --name PokemonChampionsScreenDataCollector --paths src
+          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-all PySide6
+          scripts/windows_screen_dataset_collector_entry.py
+      - name: Smoke desktop GUI headlessly with isolated local settings, no capture/API
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = Resolve-Path .\\dist\\PokemonChampionsAssistant\\PokemonChampionsAssistant.exe
+          $report = Join-Path $env:RUNNER_TEMP "desktop-smoke.json"
+          # GUI-subsystem Windows executables must be explicitly waited for.
+          # In PowerShell, direct '& $exe' may return before a windowed process
+          # finishes, leaving $LASTEXITCODE unset or stale from another program.
+          $process = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
+          Write-Host "Desktop GUI smoke exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\\diagnostics"
+            if (Test-Path -LiteralPath $diagnostics) {
+              Get-ChildItem -LiteralPath $diagnostics -Filter "startup-*.log" -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 3 |
+                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
+            }
+            throw "portable desktop GUI startup smoke failed (actual exit code $($process.ExitCode))"
+          }
+          if (-not (Test-Path -LiteralPath $report)) { throw "missing desktop startup smoke report" }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED") {
+            throw "desktop GUI startup smoke returned unexpected report"
+          }
+          Remove-Item Env:QT_QPA_PLATFORM
+      - name: Smoke dataset collector GUI offline (no actual screen access)
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = Resolve-Path .\\dist\\PokemonChampionsScreenDataCollector\\PokemonChampionsScreenDataCollector.exe
+          $report = Join-Path $env:RUNNER_TEMP "collector-smoke.json"
+          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "Dataset collector GUI smoke exit code: $($proc.ExitCode)"
+            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\diagnostics"
+            if (Test-Path -LiteralPath $diagnostics) {
+              Get-ChildItem -LiteralPath $diagnostics -Filter "dataset-collector-startup-*.log" -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 3 |
+                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
+            }
+            throw "dataset collector GUI startup smoke failed"
+          }
+          if (-not (Test-Path -LiteralPath $report)) { throw "missing dataset collector smoke report" }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($result.status -ne "SCREEN_DATASET_COLLECTOR_SMOKE_OK" -or
+              $result.network -ne "NOT_USED" -or
+              $result.screenshot_files -ne "NOT_CREATED") {
+            throw "dataset collector smoke produced an unexpected result"
+          }
+          Remove-Item Env:QT_QPA_PLATFORM
+      - name: Embed build revision into portable distribution
+        shell: pwsh
+        run: |
+          $built = (git rev-parse HEAD).Trim()
+          @(
+            "commit_sha=$built"
+            "workflow_run_id=${{ github.run_id }}"
+            "workflow_run_attempt=${{ github.run_attempt }}"
+            "artifact_type=DEVELOPMENT_ONLY"
+            "screen_model_release_validated=false"
+          ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
+          @(
+            "commit_sha=$built"
+            "workflow_run_id=${{ github.run_id }}"
+            "workflow_run_attempt=${{ github.run_attempt }}"
+            "artifact_type=SCREEN_DATASET_COLLECTOR_DEVELOPMENT"
+            "screenshots_auto_saved=false"
+            "network_upload=false"
+          ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
+
+      - name: Package and validate both Windows ZIPs
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          New-Item -ItemType Directory -Force "release-zips" | Out-Null
+          foreach ($app in @("PokemonChampionsAssistant", "PokemonChampionsScreenDataCollector")) {
+            $root = Join-Path "dist" $app
+            $exe = Join-Path $root "$app.exe"
+            $revision = Join-Path $root "BUILD_REVISION.txt"
+            if (-not (Test-Path $exe) -or -not (Test-Path $revision)) {
+              throw "Missing tested executable or revision metadata for $app"
+            }
+            $metadata = Get-Content $revision -Raw
+            if (-not $metadata.Contains("commit_sha=$env:GITHUB_SHA")) {
+              throw "Revision metadata differs from current master: $app"
+            }
+            $name = "$app-DEVELOPMENT-windows-x64.zip"
+            $zipPath = Join-Path "release-zips" $name
+            Compress-Archive -Path (Join-Path $root "*") -DestinationPath $zipPath -CompressionLevel Optimal
+            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath).Path)
+            try {
+              $members = @($zip.Entries | ForEach-Object FullName)
+              if ("$app.exe" -notin $members -or "BUILD_REVISION.txt" -notin $members) {
+                throw "ZIP root does not contain EXE and revision file: $name"
+              }
+            }
+            finally { $zip.Dispose() }
+            if ((Get-Item $zipPath).Length -ge 2GB) { throw "GitHub Release asset exceeds 2GiB limit" }
+            Write-Host "Verified: $name"
+          }
+      - name: Publish verified DEVELOPMENT prerelease (no Actions Artifacts)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          & ./scripts/publish_windows_development_release.ps1 -ExpectedSha $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "Development Release publishing failed" }

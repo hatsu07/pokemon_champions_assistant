@@ -37,17 +37,18 @@
 
 最初に `docs/V2_7_SOURCE_COMPLETENESS_AND_AUTHORITY.md` と `AGENTS.md` を読んでから `BUILD_PLAN.md` に従う。
 
-## Windows配布とPR検証（2026-10-22）
+## Windows CI・DEVELOPMENT ZIP配布（2026-10-23）
 
-**2026-10-23の修正方針**：Required PR CIはWindows全テスト・2 GUIビルド・起動スモークのみを検証し、容量制限のあるGitHub Actions Artifactsアップロードをしません。配布用ZIPはActionsで`workflow_dispatch` + `publish_artifacts=true`を明示して別途生成し、アップロード失敗は配布失敗と扱います。マージは最新SHAの**CI全体と必須ジョブがcompleted/success**になるまで禁止します。ユーザー判断により有料GitHub Pro/Branch protectionは不要です。GitHub側の強制保護はないため、開発エージェントがPR最新HEADの成功を毎回確認します。詳細と新チャット開発手順は[CI・master保護・引継ぎ](docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md)。
+**GitHub Actions ＋ GitHub Releases**。PRのWindows CIはすべてのオフラインテスト・Assistant/Collector両方のPyInstallerビルドとGUIスモークを実行するが、保存容量に制約のあるActions Artifactsへはアップロードしない。PRは最新SHAでworkflow全体と必須jobの`completed/success`を確認するまでマージ禁止（有料GitHub Proやブランチ保護は不要）。
 
+masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.github/workflows/windows-development-release.yml) が**masterのSHAを再ビルド・再スモーク**し、2つのZIPを[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases)の**DEVELOPMENT_ONLYプレリリース**として公開する。各ZIPの展開直下にEXEと`_internal`があり、二重ZIPはない。Release公開成功はmaster用workflowと2ZIPの実在で別途確認する。
 
-- **PR #20のWindows CI成果物は開発・学習用の `PokemonChampionsAssistant-DEVELOPMENT-windows-x64` のみです。** 学習・実画面検証済みのONNXモデルがまだないため、正式リリースではありません。
-- GitHub Actions の Artifact をダウンロードすると1個のZIPになります。そのZIPを展開した直下の `PokemonChampionsAssistant.exe` を起動します。内部ZIPは含みません。
-- 開発PRは**Draft**で作成し、実装・テスト・修正・ドキュメントの**全コミットを確定後**に **Ready for review** に変更します。Ready PRへの新しいコミットでも `synchronize` でWindows CIを再実行し、古い実行はキャンセルします。DraftのPRではWindowsビルドを実施しません。masterへの単なるpushでは配布CIを起動しません。
-- CI失敗時はPRをDraftに戻して修正し、全コミット後にReadyで再検証します。**旧SHAのCI再試行を新SHAの検証として扱わないこと。** CIはPRのHEAD SHAを明示的にcheckoutし、成果物公開前に最新PR HEADが変わっていないか再確認します。配布ZIPには `BUILD_REVISION.txt` を同梱します。
-- 開発エージェントの必須手順は [AI開発・CI検証方針](docs/AI_DEVELOPMENT_AND_CI_POLICY.md) と [AGENTS.md](AGENTS.md) を参照してください。最終報告では **PR最新HEAD SHA・CI対象SHA・CI結果** の一致を示します。
-- GitHubのRequired status checks（失敗PRのマージ禁止）はリポジトリの保護ルールで別途有効化する必要があります。保護ルール未設定のときは、GitHub画面のマージボタンをCIが自動的に無効化するものではありません。
+- `PokemonChampionsAssistant-DEVELOPMENT-windows-x64.zip`
+- `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64.zip`
+
+[古いDEVELOPMENTリリースを整理するworkflow](.github/workflows/windows-development-release-cleanup.yml)が、作成後14日以上かつ新しい3件以外の**特定開発プレリリースのみ**毎日削除する。通常の正式リリース・他タグ・Draftは削除しない。[詳細運用・手順](docs/WINDOWS_DEVELOPMENT_RELEASES.md)。WSLの`gh`で古い**Actions Artifacts**を消す方式は履歴用途に変更した。
+
+新方式はGitHub Releasesの保存機構を使い、Actions Artifactsストレージ上限に影響されない。ただしWindows Actions実行時間、GitHub認証・権限・GitHub側障害には別途依存する。正式MSI、学習済み画面モデル、実機でのランクマ認識精度は未検証。以前のPR #20などのActionsダウンロード案内は**過去の成果物向け**であり、最新版はReleasesから取得する。
 
 ## 自動キャプチャによるフル対戦AI試験
 
@@ -106,7 +107,7 @@
 
 画面認識をユーザーの手動登録に依存しない正式版にするため、スマホミラーリング画面の**正解ラベル付き実画像**を収集する専用Windows GUIを追加しました。
 
-Windows CIの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64` を展開し、`PokemonChampionsScreenDataCollector.exe` を実行します。対戦支援アプリとは別のローカルアプリで、保存済みキャプチャ設定とROIを共有します。未ラベルJPEGのローカル自動保存には明示的な許可が必要です。標準5fps（2/5/10fps選択）で150枚に達しても自動収集を止めず、2/5/10GBの容量上限と最低空き容量を確認します。学習用の正解ラベルPNGに変換するのは人間が確定した画像のみです。ゲーム操作・AI/クラウド送信は行いません。モデル学習済みという意味ではありません。
+GitHub Releasesの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64.zip` を展開し、`PokemonChampionsScreenDataCollector.exe` を実行します。対戦支援アプリとは別のローカルアプリで、保存済みキャプチャ設定とROIを共有します。未ラベルJPEGのローカル自動保存には明示的な許可が必要です。標準5fps（2/5/10fps選択）で150枚に達しても自動収集を止めず、2/5/10GBの容量上限と最低空き容量を確認します。学習用の正解ラベルPNGに変換するのは人間が確定した画像のみです。ゲーム操作・AI/クラウド送信は行いません。モデル学習済みという意味ではありません。
 
 **操作手順・ラベル定義・プライバシー・学習への引き渡し：** [docs/screen_dataset_collection.md](docs/screen_dataset_collection.md)
 

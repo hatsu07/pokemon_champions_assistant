@@ -1,21 +1,15 @@
 name: Windows desktop development validation
 
-# Required PR CI validates code, Windows builds and both smoke tests, without
-# uploading distribution ZIPs. Artifact quota must never mask a test outcome.
-# Optional DEVELOPMENT_ONLY package publishing is an explicit manual operation.
+# Ready PR CI validates tests, Windows EXE builds, and both GUI smoke tests.
+# PR builds never upload Actions Artifacts or publish GitHub Releases.
+# Trusted master builds and pre-release ZIP publication use the separate
+# windows-development-release.yml workflow with contents:write.
 # Draft PRs do not run the expensive Windows job; Ready/updates do.
 on:
-  workflow_dispatch:
-    inputs:
-      publish_artifacts:
-        description: "Upload both DEVELOPMENT_ONLY Windows packages (requires free Actions artifact quota)"
-        type: boolean
-        required: false
-        default: false
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
-# Superseded runs must not publish artifacts or count as current validation.
+# Superseded runs must not count as current validation.
 concurrency:
   group: desktop-windows-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -66,6 +60,14 @@ jobs:
           python scripts/windows_qt_test_runner.py tests.test_screen_dataset_collector
           Write-Host "Private dataset collector Python process exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "private dataset collector tests failed" }
+      - name: Test release lifecycle scripts without GitHub mutations
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_prune_development_releases -v
+          if ($LASTEXITCODE -ne 0) { throw "release lifecycle tests failed" }
+      - name: Test legacy Actions artifact cleanup script offline
+        shell: bash
+        run: bash tests/test_prune_actions_artifacts.sh
       - name: Check whether a validated screen model is available
         shell: pwsh
         run: |
@@ -157,7 +159,7 @@ jobs:
             throw "dataset collector smoke produced an unexpected result"
           }
           Remove-Item Env:QT_QPA_PLATFORM
-      - name: Verify PR head is still current before releasing artifact
+      - name: Verify PR head is still current before accepting validation
         if: github.event_name == 'pull_request'
         shell: pwsh
         env:
@@ -167,7 +169,7 @@ jobs:
         run: |
           $checkedOut = (git rev-parse HEAD).Trim()
           if ($checkedOut -ne $env:EXPECTED_SHA) {
-            throw "Checkout SHA changed during build; refusing stale artifact"
+            throw "Checkout SHA changed during validation"
           }
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
@@ -178,7 +180,7 @@ jobs:
           $url = "https://api.github.com/repos/${{ github.repository }}/pulls/$env:PR_NUMBER"
           $current = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
           if ($current.head.sha -ne $checkedOut) {
-            throw "PR HEAD moved to $($current.head.sha) while building $checkedOut; refusing stale artifact"
+            throw "PR HEAD moved to $($current.head.sha) while validating $checkedOut"
           }
           Write-Host "Verified current PR head SHA: $checkedOut"
       - name: Embed build revision into portable distribution
@@ -200,22 +202,3 @@ jobs:
             "screenshots_auto_saved=false"
             "network_upload=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
-      # PR CI always tests the Windows EXEs but DOES NOT publish files.
-      # Actions storage quota is a delivery failure, not a software test failure.
-      # Manual workflow_dispatch with publish_artifacts=true explicitly opts in.
-      - name: Upload local screen dataset collector Windows artifact
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true
-        uses: actions/upload-artifact@v4
-        with:
-          name: PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64
-          path: dist/PokemonChampionsScreenDataCollector/
-          if-no-files-found: error
-      - name: Upload diagnostic-only Windows portable artifact
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true
-        uses: actions/upload-artifact@v4
-        with:
-          # GitHub Actions wraps this folder into ONE download ZIP. Do not
-          # Compress-Archive inside it: that created the double ZIP problem.
-          name: PokemonChampionsAssistant-DEVELOPMENT-windows-x64
-          path: dist/PokemonChampionsAssistant/
-          if-no-files-found: error
