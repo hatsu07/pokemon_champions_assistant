@@ -26,7 +26,7 @@ from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep, run_replay_batch
-from .turn_capture import TurnCaptureBuffer
+from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
@@ -161,6 +161,7 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
+        self._automatic_probe=AutomaticVisualProbe()
         self._pending_batch=None
         self._manual_submission=False
         self._latest_image=None
@@ -285,6 +286,7 @@ class MatchReplayDialog(QDialog):
             self.actual_lead.clear()
             self._capture_gate.reset()
             self._turn_buffer.reset_turn()
+            self._automatic_probe.reset()
             self._pending_batch=None
             self._ai_request_attempts=0
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
@@ -300,6 +302,7 @@ class MatchReplayDialog(QDialog):
         if self._thread is not None:return
         self._stop_auto()
         self._turn_buffer.reset_turn()
+        self._automatic_probe.reset()
         self._pending_batch=None
         self.assets=None
         self.state=None
@@ -373,6 +376,7 @@ class MatchReplayDialog(QDialog):
             self._capture_gate.reset()
             # Recalibrate command screens if target/window content changed.
             self._turn_buffer=TurnCaptureBuffer()
+            self._automatic_probe.reset()
             self._update_menu_detection_label()
             self._set_ai_status("AI未送信（再接続後、画面登録をやり直してください）")
             self._show_capture_preview(frame,force=True)
@@ -397,7 +401,8 @@ class MatchReplayDialog(QDialog):
                "MOVE_MENU":"技選択画面","PARTY_MENU":"交代画面"}
         found=[names[k] for k in names if k in self._turn_buffer.templates]
         self.menu_detection_label.setText(
-            "メニュー登録: "+(" / ".join(found) if found else "なし（AI自動送信は始まりません）"))
+            "標準自動認識: 有効 / 補助登録: "+
+            (" / ".join(found) if found else "なし（登録不要）"))
 
     def _eligible_menu(self, kind: str) -> bool:
         phase=(self.state or {}).get("phase")
@@ -432,16 +437,14 @@ class MatchReplayDialog(QDialog):
         self._cancel_event.clear()
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
+        self._automatic_probe.reset()
         self._pending_batch=None
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         self._poll_timer.start()
         # Starting capture must update the status before a menu triggers AI.
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
         self._update_menu_detection_label()
-        self._set_ai_status(
-            "AI未送信（メニュー未登録。「選出画面を登録」を押してください）"
-            if not self._turn_buffer.templates else
-            "AI未送信（登録済みメニューを検出待ち）")
+        self._set_ai_status("標準自動判定有効（最初の画面からAI確認を開始）")
         self._capture_next()
 
     def _stop_auto(self):
@@ -453,6 +456,7 @@ class MatchReplayDialog(QDialog):
         self._poll_timer.setInterval(300)
         self._pending_batch=None
         self._latest_image=None
+        self._automatic_probe.reset()
         self._clear_capture_preview("監視停止中")
         if self._thread is None:
             self._set_ai_status("AI監視停止（新規画像送信なし）")
@@ -470,7 +474,9 @@ class MatchReplayDialog(QDialog):
                 self._turn_buffer.acknowledge_calibrated_current(kind,image)
                 self._update_menu_detection_label()
                 self._render({"status":"MENU_CALIBRATED","kind":kind})
-                self._queue_batch(self._turn_buffer.batch(image))
+                if not self._automatic_probe.recently_submitted(image):
+                    self._automatic_probe.acknowledge(image,self.state["phase"])
+                    self._queue_batch(self._turn_buffer.batch(image))
             else:
                 self._turn_buffer.calibrate(kind,image)
                 self._update_menu_detection_label()
@@ -583,13 +589,14 @@ class MatchReplayDialog(QDialog):
             self._render(report)
         self._latest_image=image
         self._show_capture_preview(image)
-        if not self._turn_buffer.templates:
-            # An active preview is NOT an AI request.
-            return
         kind=self._turn_buffer.observe(image)
-        if kind is not None:
-            if not self._eligible_menu(kind):
-                return
+        phase=self.state.get("phase")
+        if kind is not None and self._eligible_menu(kind):
+            self._automatic_probe.acknowledge(image,phase)
+            self._queue_batch(self._turn_buffer.batch(image))
+        elif self._automatic_probe.observe(image,phase):
+            # Default path: no per-user menu training. AI determines whether
+            # this candidate is matchmaking, team selection, or a command menu.
             self._queue_batch(self._turn_buffer.batch(image))
 
     @Slot(object)
