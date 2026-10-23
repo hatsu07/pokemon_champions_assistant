@@ -112,3 +112,9 @@ Windows CIの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64` を�
 ### 連続画面収集の改良（PR #22）
 
 旧版の「1秒間隔・メモリ150枚で強制停止」を解消しました。**5fps標準（2/5/10fps選択）、未ラベル画像をローカルJPEGへ自動保存、対戦後に100枚ずつ確認して人手ラベル付け**する方式です。従来の学習済み正解ラベルPNGはそのまま保持します。容量上限・残容量不足時は理由を明示して停止し、自動で過去画像を削除しません。詳細は [docs/screen_dataset_collection.md](docs/screen_dataset_collection.md) を参照してください。
+
+### 開発用：自動ラベル候補と一括確認（PR #25）
+
+`PokemonChampionsScreenDataCollector` には、対戦終了後に未ラベルJPEGをグループ化し、実験用ONNXモデルで7画面ラベルの**候補だけ**を推定するオフラインGUIを追加しました。グループの先頭・中央・末尾画像を目視確認して一括承認・訂正した場合だけ、従来の人間確認済みPNGに変換します。 `validated=false` のモデル利用は開発用収集アプリのみで、通常の対戦支援側は未検証モデルを拒否したままです。
+
+学習にはマージ済みのGPU学習スクリプトを引き続き利用します。承認済みデータの再学習は明示操作・WSL実行で、モデルは自動昇格しません。操作と実験モデルのWindowsへのコピー方法は [収集・ラベル付け手順](docs/screen_dataset_collection.md) を参照してください。
