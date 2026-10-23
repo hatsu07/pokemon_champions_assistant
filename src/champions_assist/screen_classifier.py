@@ -46,6 +46,8 @@ class ScreenClassifier:
         info=json.loads(Path(manifest_path).read_text(encoding="utf-8"))
         if not isinstance(info,dict) or info.get("schema_version")!=1:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_MANIFEST")
+        if info.get("validated") is not True:
+            raise ScreenClassifierError("SCREEN_MODEL_NOT_VALIDATED")
         labels=info.get("labels")
         if (not isinstance(labels,list) or len(labels)!=len(LABELS)
                 or set(labels)!=set(LABELS) or len(set(labels))!=len(labels)):
