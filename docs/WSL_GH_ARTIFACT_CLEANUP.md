@@ -25,7 +25,30 @@ bash scripts/prune_actions_artifacts.sh --apply
 
 既定では**対象2名称に一致するArtifactsだけ**を対象とし、**各名称の最新1件を残し、作成から1日以上たった古いものだけ**を削除する。1行目のドライランは削除しない。2行目の`--apply`だけが実際に削除する。削除対象数・名前・ID・作成日・サイズを先に表示する。GitHub Actionsの**workflow run履歴は削除しない**。
 
-保存容量を緊急に解放したい場合でも、最新版1件の保護は維持する。`--min-age-days 0`を明示すれば、残す最新版を除く古い成果物を作成当日でも対象にできる（必ず先にドライランを実行）。削除は復元できないため、特に必要な古いビルドは**事前に`gh run download`などでローカル退避**しておく。
+## 2026-10-23の初回一括整理：旧3名称も対象
+
+2026-10-23のユーザー提供CLI一覧では**計130件、約18.46 GiB**のArtifactsが存在。内訳：現行DEVELOPMENT 19件、旧 `PokemonChampionsAssistant-windows-x64` 41件、`PokemonChampionsSettingsValidation-windows-x64` 34件、`PokemonChampionsValidation-windows-x64` 36件。既定のスクリプトは現行2名称しか扱わず、`--min-age-days 1`のため当日分も除外していた。
+
+最新版を残して初回の古い形式も整理する場合は、**PRブランチの最新版のスクリプト**を使い、`--include-legacy`を明示する。以下の実行は、旧3名称の全バージョンと、現行DEVELOPMENT 2名称の最新版1件ずつを除いた旧バージョンを対象にする。
+
+```bash
+git fetch origin fix/restore-ci-artifacts-gh-prune-20261023
+git show origin/fix/restore-ci-artifacts-gh-prune-20261023:scripts/prune_actions_artifacts.sh > /tmp/pokemon-artifact-prune.sh
+
+# 削除前の必須プレビュー：現行2件を保護し、旧バージョンは当日分も対象
+bash /tmp/pokemon-artifact-prune.sh --include-legacy --min-age-days 0
+
+# 一覧が意図した内容であることを人間が確認してからだけ実行
+bash /tmp/pokemon-artifact-prune.sh --include-legacy --min-age-days 0 --apply
+```
+
+2026-10-23の一覧が変わっていなければ、約128件が候補。最新版である
+`PokemonChampionsAssistant-DEVELOPMENT-windows-x64`（ID 12492401875）と
+`PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64`（ID 12491438458）は保護される。ただし削除対象数・IDは毎回GitHubの最新データを使用する。旧名称の成果物が必要なら**削除前にローカル退避**すること。削除は復元できない。
+
+通常の定期運用では**`--include-legacy`を指定しない**。これにより現行2名称の古い版だけを整理し、その他の成果物を触らない。
+
+保存容量を緊急に解放したい場合でも、最新版1件の保護は維持する。`--min-age-days 0`は当日生成分を対象にするが、最新版の保護は解除しない。削除は復元できないため、必要な古いビルドは**事前に`gh run download`などでローカル退避**しておく。
 
 全アカウント共通のActionsストレージ上限には、このリポジトリ以外のArtifactsも影響し得る。本スクリプトは他のリポジトリや、異なる名称のArtifactsを一切削除しない。容量使用量の反映は即時とは限らない。最新版だけでも容量を使い切る場合は追加の整理方針が必要。
 
