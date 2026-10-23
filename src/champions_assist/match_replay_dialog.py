@@ -145,7 +145,6 @@ class MatchReplayDialog(QDialog):
         if embedded:
             # A QDialog ordinarily becomes a separate native window even with
             # a parent. Qt.Widget keeps the existing tested controls inline.
-            from PySide6.QtCore import Qt
             self.setWindowFlags(Qt.WindowType.Widget)
         else:
             self.setWindowTitle("マッチング～対戦終了 自動キャプチャ・AI支援（ゲーム操作なし）")
