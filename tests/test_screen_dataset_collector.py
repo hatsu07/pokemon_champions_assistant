@@ -107,7 +107,16 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.gui=ScreenDatasetCollector(config_path=root/"config"/"settings.json",
                                         dataset_root=root/"screens",
                                         capture=lambda cfg: np.full((120,200,3),150,dtype=np.uint8))
-        self.addCleanup(self.gui.close)
+
+    def tearDown(self):
+        import gc
+        gui=self.gui
+        gui.close()
+        gui.deleteLater()
+        self.gui=None
+        self.app.processEvents()
+        del gui
+        gc.collect()
 
     def test_gui_does_not_capture_or_save_on_startup_or_without_consent(self):
         self.assertFalse(self.gui.dataset.root.exists())
