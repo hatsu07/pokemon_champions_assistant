@@ -56,6 +56,13 @@ class ScreenClassifier:
         if (not isinstance(input_size,list) or len(input_size)!=2
                 or any(type(v) is not int or not 32<=v<=512 for v in input_size)):
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_INPUT_SIZE")
+        mean=info.get("mean",[0.0,0.0,0.0])
+        std=info.get("std",[1.0,1.0,1.0])
+        if (not isinstance(mean,list) or not isinstance(std,list)
+                or len(mean)!=3 or len(std)!=3
+                or any(not isinstance(v,(int,float)) or not np.isfinite(v) for v in mean+std)
+                or any(v<=0 for v in std)):
+            raise ScreenClassifierError("INVALID_SCREEN_MODEL_NORMALIZATION")
         digest=info.get("sha256")
         if not isinstance(digest,str) or len(digest)!=64:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_CHECKSUM")
@@ -85,6 +92,8 @@ class ScreenClassifier:
         self.input_name=inputs[0].name
         self.labels=tuple(labels)
         self.size=tuple(input_size)
+        self.mean=np.asarray(mean,dtype=np.float32).reshape(1,3,1,1)
+        self.std=np.asarray(std,dtype=np.float32).reshape(1,3,1,1)
         self.device="gpu" if providers[0]=="CUDAExecutionProvider" else "cpu"
         self.min_confidence=float(info.get("min_confidence",0.90))
         self.min_margin=float(info.get("min_margin",0.20))
@@ -99,6 +108,7 @@ class ScreenClassifier:
         # Explicit contract: normalized RGB [0,1], NCHW, logits [1,K].
         scaled=cv2.resize(image,self.size,interpolation=cv2.INTER_AREA)
         tensor=np.transpose(scaled.astype(np.float32)/255.0,(2,0,1))[None,...]
+        tensor=(tensor-self.mean)/self.std
         outputs=self.session.run(None,{self.input_name:np.ascontiguousarray(tensor)})
         if not outputs:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_OUTPUT")
