@@ -33,6 +33,9 @@ nameB=PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64
   printf '%s\t%s\t%s\t%s\n' "$nameB" "$recent" 201 80000
   printf '%s\t%s\t%s\t%s\n' "$nameA" "$old" 102 70000
   printf '%s\t%s\t%s\t%s\n' "$nameB" "$old" 202 60000
+  printf '%s\t%s\t%s\t%s\n' PokemonChampionsAssistant-windows-x64 "$old" 301 55555
+  printf '%s\t%s\t%s\t%s\n' PokemonChampionsSettingsValidation-windows-x64 "$old" 302 55555
+  printf '%s\t%s\t%s\t%s\n' PokemonChampionsValidation-windows-x64 "$old" 303 55555
   printf '%s\t%s\t%s\t%s\n' Other-Private-Artifact "$old" 999 55555
 } > "$MOCK_GH_LIST"
 
@@ -49,7 +52,95 @@ grep -q '/102$' "$MOCK_GH_LOG"
 grep -q '/202$' "$MOCK_GH_LOG"
 ! grep -q '/101$' "$MOCK_GH_LOG"
 ! grep -q '/201$' "$MOCK_GH_LOG"
-! grep -q '/999$' "$MOCK_GH_LOG"
+! grep -q '/301 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
+! grep -q '/302 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
+! grep -q '/303 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
+! grep -q '/999 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
+
+# Explicit legacy mode: all three known obsolete types are eligible,
+# while current versions and unknown names stay protected.
+: > "$MOCK_GH_LOG"
+bash "$script" --include-legacy --min-age-days 0 > "$tmp/legacy-preview.log"
+grep -q 'Eligible: 5 artifact' "$tmp/legacy-preview.log"
+test ! -s "$MOCK_GH_LOG"
+bash "$script" --include-legacy --min-age-days 0 --apply > "$tmp/legacy-apply.log"
+test "$(wc -l < "$MOCK_GH_LOG")" -eq 5
+for id in 102 202 301 302 303; do
+  grep -q "/$id$" "$MOCK_GH_LOG"
+done
+! grep -q '/101 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
+! grep -q '/201 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
+! grep -q '/999 must not delete anything if the authenticated list fails.
+: > "$MOCK_GH_LOG"
+export MOCK_GH_FAIL="1"
+if bash "$script" --apply > "$tmp/fail.log" 2>&1; then
+  echo 'Expected API failure' >&2
+  exit 1
+fi
+test ! -s "$MOCK_GH_LOG"
+
+echo 'WSL GitHub artifact cleanup tests passed'
+ "$MOCK_GH_LOG"
 
 # Even --apply must not delete anything if the authenticated list fails.
 : > "$MOCK_GH_LOG"
