@@ -178,6 +178,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
         panel.assets=object()
+        panel.model="test-model"
         panel.capture_config=CaptureConfiguration(
             backend="WINDOWS_NATIVE",selected_window_identity={"hwnd":7},
             game_viewport_normalized=(0,0,1,1))
