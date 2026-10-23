@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
+      target: dev
     working_dir: /workspace
     volumes:
       - .:/workspace
@@ -13,3 +14,22 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/workspace/src"
+  trainer:
+    profiles: ["training"]
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      target: trainer
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - type: bind
+        source: ${TRAINING_DATA_DIR:-./private-training/screens}
+        target: /training/screens
+        read_only: true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/workspace/src"
+      TORCH_HOME: "/workspace/private-training/.torch-cache"
+    command: ["sleep", "infinity"]

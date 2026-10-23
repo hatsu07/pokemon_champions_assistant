@@ -1,0 +1,7 @@
+# Optional local-only dependencies for scripts/train_screen_classifier.py.
+# They are installed only in the Docker Compose `trainer` image.  The CPU
+# wheels keep the optional image practical for the lightweight classifier.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+onnx==1.17.0

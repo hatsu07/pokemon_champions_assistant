@@ -266,3 +266,33 @@
 - **First-frame checkpoint accepted on device:** the operator supplied and visually confirmed a local native `PrintWindow` PNG containing the Champions title screen, with its report values (2254 × 1298 client/image pixels, Win32 DPI 192, 47 ms first acquisition). This workspace still has no direct Windows/BlueStacks control. OCR accuracy, UI coordinates, battle event phrases, timers, capture stability, GUI handoff and gameplay readiness remain unverified and blocked.
 - Required before Phase 7 human review: run and retain both read-only capture reports; label local footage for every listed scenario; replay it through the existing SQLite/FSM path; compare false/missed OCR/events and GUI latency; verify random forced switch, pivot, faint replacement, actual correction and stale response suppression; decide a backend manually; confirm game/platform terms.
 - Still separate Phase 7 work: run the Windows artifact on a real PC, validate PyInstaller DLL/Qt/OCR inclusion, then build/test the per-user WiX MSI including install/upgrade/uninstall/data retention and Windows credential protection. No paid OpenAI request was made, and no automatic gameplay operation was added.
+
+## Local screen-classifier training Docker support — 2026-10-23
+
+### Changed files
+
+- Optional trainer image and dependencies: `.devcontainer/Dockerfile`, `requirements-training.txt`, `compose.yaml`.
+- Safe WSL entrypoint and operator instructions: `scripts/train_screen_classifier_docker.sh`, `docs/screen_dataset_collection.md`, `README.md`.
+
+### Implemented
+
+- Added a dedicated Compose `trainer` profile that uses a Dockerfile stage containing only the optional PyTorch, TorchVision, and ONNX dependencies. The ordinary `dev` target remains free of those dependencies.
+- The trainer exposes the labelled Windows data only at `/training/screens` as a read-only bind mount. `TORCH_HOME` and all generated ONNX/manifest output remain under ignored `private-training/` paths in the local workspace.
+- The WSL entrypoint resolves `%LOCALAPPDATA%` through PowerShell, validates the expected local-only screens directory before Docker starts, runs the trainer under the caller UID/GID, and preserves the requested 12-epoch, auto-device, pretrained invocation. It neither captures data nor uploads screenshots, weights, or model output.
+
+### Verification
+
+- `bash -n scripts/train_screen_classifier_docker.sh`: PASS.
+- `docker compose config --quiet` and `docker compose --profile training config --quiet`: PASS.
+- `docker compose --profile training build trainer`: PASS; CPU-only `torch 2.5.1+cpu`, `torchvision 0.20.1+cpu`, and `onnx 1.17.0` installed in the dedicated image.
+- Trainer smoke: minimal `torch.onnx.export(..., opset_version=17)` followed by `onnx.load(...)`: PASS; `cuda=False` as designed for this CPU-only image.
+- `TRAINING_DATA_DIR=/tmp ./scripts/train_screen_classifier_docker.sh --help`: PASS; validates the Docker entrypoint without reading a user dataset or training a model.
+- `docker compose build`: PASS.
+- `docker compose run --rm dev python scripts/verify_package.py`: PASS; required files + 892 effect records.
+- `docker compose run --rm dev python -m unittest discover -s baseline_v2_3 -p 'test_*.py' -v`: PASS; 16/16.
+- `docker compose run --rm -e QT_QPA_PLATFORM=offscreen dev python -m unittest discover -s tests -p 'test_*.py' -v`: PASS; 171/171.
+
+### Remaining uncertainty
+
+- The dedicated trainer intentionally uses CPU-only PyTorch wheels; GPU training needs a separately validated Docker Desktop/NVIDIA configuration. `--pretrained` downloads third-party ImageNet weights at the user's explicit training invocation and does not establish model quality, game accuracy, or release readiness.
+- The 171-test process exited successfully, but its output includes a Qt/SQLite closed-database cleanup traceback and a QObject cleanup warning. This Docker-training change did not touch that GUI path; it remains uninvestigated rather than being treated as a clean GUI shutdown result.

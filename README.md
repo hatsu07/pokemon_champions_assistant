@@ -89,7 +89,7 @@
 - 訓練済み・検証済み重みがある場合は `champions_assist/data/champions_screen_classifier.onnx` と `champions_assist/data/champions_screen_classifier.json` をアプリに同梱します。実行時は **ONNX Runtime CPUExecutionProvider** が既定です。初期段階でGPU用の別モデルを要求せず、CPU/GPUで同じONNXを使用する設計です。`auto` もCPUを優先します。GPUは今後の計測で必要と確認した場合のみ明示選択可能な拡張ポイントであり、現行の設定画面にGPU切替は追加していません。
 - モデルは `MATCHMAKING`, `TEAM_SELECTION`, `MOVE_MENU`, `PARTY_MENU`, `BATTLE_EVENT`, `RESULT`, `UNKNOWN` の7画面種別を識別します。これは画面判別だけで、ポケモン/技/HPの読み取りや戦術判断は行いません。`UNKNOWN` や低信頼度の場合は無理にメニュー扱いしません。
 - モデルを同梱する前に、スマホミラーリング環境の実画面（許可されたキャプチャ）から **対戦セッションごとに分離した** 学習/検証データを作ります。非公開の `private-training/screens/<LABEL>/<session_id>__<frame>.png` に整理します。生画像は通常のログ・GitHub・CIへアップロードせず、学習時のみローカルの明示操作で保存します。
-- 開発用Docker環境でPyTorch/TorchVision/ONNXを **任意の学習専用依存** として用意してから `python scripts/train_screen_classifier.py --data-dir private-training/screens --output-dir private-training/output --epochs 12 --pretrained` を実行します。オプション `--pretrained` は既存の重みの取得が可能な環境だけで使い、配布前に元データと重みのライセンスを必ず確認してください。通常のアプリでは学習依存や重みのダウンロードは行いません。
+- 学習は `./scripts/train_screen_classifier_docker.sh` で起動します。PyTorch/TorchVision/ONNX は **学習専用の Docker `trainer` イメージ** にのみ入り、Windows/WSL ホストや通常の `dev` イメージには導入されません。画像は `%LOCALAPPDATA%` から読み取り専用でマウントします。オプション `--pretrained` は既存の重みの取得が可能な環境だけで使い、配布前に元データと重みのライセンスを必ず確認してください。通常のアプリでは学習依存や重みのダウンロードは行いません。
 - スクリプトは最低4セッションを要求し、同一試合の類似フレームが学習・評価の両方に入らないよう**セッション単位で分割**します。画像だけのランダム分割はしません。7ラベルすべての評価データがなければ中断します。
 - 初期検証の合格ゲートは、独立検証5セッション以上、選出画面100フレーム以上・再現率99%以上・適合率99.5%以上、他の種別も30フレーム以上・再現率95%以上です。これは**開発ゲートの案**であり、本番の90秒制限を満たした証拠にはなりません。
 - スクリプトの生成物は初期状態で `validated=false` です。基準達成時に限り `--approve-if-thresholds-pass` を指定できます。モデルのSHA-256や画面分類ラベルが一致しない場合、アプリはモデルを読み込まず、安全なフォールバックと警告を使います。検証したモデルだけをリリースの成果物に同梱してください。
