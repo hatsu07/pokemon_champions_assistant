@@ -89,6 +89,17 @@ class DatasetCollectorGuiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app=QApplication.instance() or QApplication([])
 
+    @classmethod
+    def tearDownClass(cls):
+        # The PySide6 offscreen platform plugin may fault during interpreter
+        # shutdown if the QApplication singleton is left as a live Python ref.
+        # Match the proven legacy Qt test runner teardown.
+        import gc
+        cls.app.closeAllWindows()
+        cls.app.quit()
+        cls.app=None
+        gc.collect()
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
