@@ -774,7 +774,9 @@ class DesktopMainWindow(QMainWindow):
         from .match_replay_dialog import MatchReplayDialog
         from .app_config import default_app_root, ConfigurationError
         from .vision_preferences import VisionPreferenceStore
-        model = VisionPreferenceStore(default_app_root()).selected_model()
+        preferences = VisionPreferenceStore(default_app_root())
+        model = preferences.selected_model()
+        reasoning_effort = preferences.reasoning_effort()
         if not model:
             QMessageBox.warning(self, "モデル未設定",
                                 "設定 → ChatGPT でログインし、使用モデルを選択してください。")
@@ -790,7 +792,8 @@ class DesktopMainWindow(QMainWindow):
             QMessageBox.warning(self, "構築未設定", str(exc))
             return
         dialog=MatchReplayDialog(
-            model=model,master_directory=str(self.settings_service.master_directory),
+            model=model,reasoning_effort=reasoning_effort,
+            master_directory=str(self.settings_service.master_directory),
             team_path=str(team_path),capture_config=self.settings_service.settings.capture,
             store_root=default_app_root(),parent=self,
         )

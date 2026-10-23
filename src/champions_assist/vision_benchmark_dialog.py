@@ -2,7 +2,8 @@
 from __future__ import annotations
 import json
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
+from typing import Callable
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QComboBox,
     QPushButton,QFileDialog,QPlainTextEdit,QMessageBox,QWidget)
 from .vision_api_benchmark import OpenAIVisionBenchmark,read_image,SUPPORTED_UI
@@ -53,11 +54,14 @@ class _Worker(QObject):
         self.finished.emit(result)
 
 
-class VisionBenchmarkDialog(QDialog):
-    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
+class VisionBenchmarkPanel(QWidget):
+    """Reusable inline ChatGPT settings/benchmark interface (no extra dialog)."""
+
+    busy_changed = Signal(bool)
+
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None,context_provider: Callable|None=None):
         super().__init__(parent)
-        self.setWindowTitle("ChatGPTでログイン・画像認識実測")
-        self.setMinimumSize(760,540)
+        self._context_provider=context_provider
         self.store_root=Path(store_root) if store_root else default_app_root()
         self.preferences=VisionPreferenceStore(self.store_root)
         self._pending_model_refresh=False
@@ -67,8 +71,8 @@ class VisionBenchmarkDialog(QDialog):
         self._thread=None
         self._worker=None
         self._report=None
-        self._match_replay_dialog=None
         form=QVBoxLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)
         form.addWidget(QLabel("ChatGPT Plus等の利用可能なモデルで画像認識を実測します。キー入力・従量APIキー不要。\n"
                               "ログインと画像送信は各ボタンの明示操作時のみ。プラン利用可否はログイン後に確認します。"))
         self.connection=QLabel("未接続")
@@ -117,13 +121,25 @@ class VisionBenchmarkDialog(QDialog):
         self.save.clicked.connect(self._save_report)
         row.addWidget(self.send);row.addWidget(self.save);form.addLayout(row)
         form.addWidget(self.selection_button)
-        self.replay_button=QPushButton("マッチングから対戦終了までのAI再現テスト")
-        self.replay_button.clicked.connect(self._open_replay)
-        form.addWidget(self.replay_button)
+        operational_hint=QLabel("対戦全体の自動キャプチャ支援はメイン画面の「自動キャプチャ対戦支援」から開始します。")
+        operational_hint.setWordWrap(True)
+        form.addWidget(operational_hint)
         self.output=QPlainTextEdit();self.output.setReadOnly(True);form.addWidget(self.output,1)
         if self._refresh_status():
             # Refresh the model list asynchronously after reopening the dialog.
             QTimer.singleShot(0, lambda: self._start_job("models"))
+    @property
+    def busy(self) -> bool:
+        return self._thread is not None
+
+    def _refresh_match_context(self) -> None:
+        if self._context_provider is None:
+            return
+        master_directory, team_path, capture_config = self._context_provider()
+        self.master_directory=str(master_directory or "")
+        self.team_path=str(team_path or "")
+        self.capture_config=capture_config
+
     def _auth(self):
         return ChatGPTSignIn(ProtectedSessionStore(self.store_root))
     def _refresh_status(self) -> bool:
@@ -177,22 +193,6 @@ class VisionBenchmarkDialog(QDialog):
             self.model.blockSignals(was_blocked)
         if preferred is None:
             self._remember_model(self.model.currentIndex())
-    def _open_replay(self):
-        from .match_replay_dialog import MatchReplayDialog
-        if not self.model.currentData():
-            QMessageBox.warning(self,"モデル未選択","ChatGPTのモデルを選択してください。")
-            return
-        if not self.master_directory or not self.team_path:
-            QMessageBox.warning(self,"構築未設定","次戦用の構築を先に選択してください。")
-            return
-        self._match_replay_dialog=MatchReplayDialog(
-            model=str(self.model.currentData()),
-            reasoning_effort=str(self.reasoning_effort.currentData()),
-            master_directory=self.master_directory,
-            team_path=self.team_path, capture_config=self.capture_config,
-            store_root=self.store_root,parent=self)
-        self._match_replay_dialog.show()
-
     def _choose_image(self):
         path,_=QFileDialog.getOpenFileName(self,"ゲーム領域の保存画像","","Images (*.png *.jpg *.jpeg)")
         if path:self.path.setText(path)
@@ -211,6 +211,7 @@ class VisionBenchmarkDialog(QDialog):
               QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
         self._start_job("bench")
     def _start_selection(self):
+        self._refresh_match_context()
         if not self.path.text() or not Path(self.path.text()).is_file() or not self.model.currentData():
             QMessageBox.warning(self,"選出不可","画像とモデルを指定してください。")
             return
@@ -241,6 +242,7 @@ class VisionBenchmarkDialog(QDialog):
     def _set_busy(self,busy):
         for widget in (self.login_button,self.refresh_button,self.logout_button,self.send,self.selection_button):
             widget.setEnabled(not busy)
+        self.busy_changed.emit(busy)
     @Slot(object)
     def _complete(self,result):
         if result.get("operation") == "selection":
@@ -287,3 +289,21 @@ class VisionBenchmarkDialog(QDialog):
             QMessageBox.warning(self,"上書き不可","既存ファイルは上書きしません。")
         except OSError:
             QMessageBox.warning(self,"保存失敗","書き込みできません。")
+
+class VisionBenchmarkDialog(VisionBenchmarkPanel):
+    """Backward-compatible standalone window for existing callers/tests.
+
+    Settings itself embeds VisionBenchmarkPanel; no new window is opened.
+    """
+    def __init__(self,parent: QWidget|None=None,store_root: str|Path|None=None,master_directory: str|Path|None=None,team_path: str|Path|None=None,capture_config=None):
+        super().__init__(parent=parent,store_root=store_root,master_directory=master_directory,
+                         team_path=team_path,capture_config=capture_config)
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.setWindowTitle("ChatGPTでログイン・画像認識実測")
+        self.setMinimumSize(760,540)
+
+    def closeEvent(self,event) -> None:
+        if self.busy:
+            event.ignore()
+            return
+        super().closeEvent(event)
