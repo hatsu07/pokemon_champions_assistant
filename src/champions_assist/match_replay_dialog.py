@@ -7,13 +7,19 @@ The four frozen match assets are loaded once, never re-read during battle.
 from __future__ import annotations
 
 import json
+from dataclasses import replace as dataclass_replace
+from datetime import datetime
 from pathlib import Path
 from threading import Event
+from time import monotonic
 from uuid import uuid4
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
+
+import numpy as np
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QPlainTextEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from .app_config import default_app_root
@@ -22,6 +28,7 @@ from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep, run_replay_batch
 from .turn_capture import TurnCaptureBuffer
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
+from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
 
 
@@ -129,15 +136,15 @@ class MatchReplayDialog(QDialog):
                  capture_config: CaptureConfiguration | None = None,
                  store_root: str | Path | None = None, parent: QWidget | None = None,
                  reasoning_effort: str = "auto", embedded: bool = False,
-                 before_new_match=None):
+                 before_new_match=None, on_capture_reconnected=None):
         super().__init__(parent)
         self.embedded = embedded
         self.before_new_match = before_new_match
+        self.on_capture_reconnected = on_capture_reconnected
         self.match_id = None
         if embedded:
             # A QDialog ordinarily becomes a separate native window even with
             # a parent. Qt.Widget keeps the existing tested controls inline.
-            from PySide6.QtCore import Qt
             self.setWindowFlags(Qt.WindowType.Widget)
         else:
             self.setWindowTitle("マッチング～対戦終了 自動キャプチャ・AI支援（ゲーム操作なし）")
@@ -153,6 +160,8 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._manual_submission=False
         self._latest_image=None
+        self._preview_last_at=None
+        self._preview_last_clock=None
         self._capture_error_count=0
         self._capture_paused=False
         self._cancel_event=Event()
@@ -175,6 +184,20 @@ class MatchReplayDialog(QDialog):
         panel.addWidget(intro)
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
+        # Render the same frames that go to AI, without another acquisition.
+        self.capture_preview_title=QLabel("キャプチャプレビュー（ChatGPT送信対象のゲーム領域）")
+        panel.addWidget(self.capture_preview_title)
+        self.capture_preview=QLabel("監視開始後にここへ撮影画像を表示します")
+        self.capture_preview.setObjectName("live_capture_preview")
+        self.capture_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.capture_preview.setMinimumHeight(110)
+        self.capture_preview.setMaximumHeight(220)
+        self.capture_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.capture_preview.setStyleSheet(
+            "QLabel#live_capture_preview { background-color: #171c24; color: #e8e8e8; border: 1px solid #727880; }")
+        panel.addWidget(self.capture_preview)
+        self.capture_preview_info=QLabel("撮影待機中 / 画像は保存されません")
+        panel.addWidget(self.capture_preview_info)
         row=QHBoxLayout()
         self.start_button=QPushButton("対戦開始（4ファイル事前読込）")
         self.start_button.clicked.connect(self._new_match)
@@ -191,6 +214,9 @@ class MatchReplayDialog(QDialog):
         row.addWidget(self.auto_button)
         row.addWidget(self.stop_button)
         panel.addLayout(row)
+        self.reconnect_button=QPushButton("撮影対象ウィンドウを再選択（ミラーリング対応）")
+        self.reconnect_button.clicked.connect(self._reconnect_capture_window)
+        panel.addWidget(self.reconnect_button)
         panel.addWidget(QLabel("実際に使った3匹と初手（選出提案を確認後、手動で確定）"))
         row=QHBoxLayout()
         self.actual_three=QLineEdit()
@@ -267,6 +293,80 @@ class MatchReplayDialog(QDialog):
         self._render({"status":"RESET"})
         self.match_id=None
 
+    def _show_capture_preview(self, image: np.ndarray, *, force: bool = False) -> None:
+        """Render an already captured RGB frame; no new screenshot or API call."""
+        now=monotonic()
+        if not force and self._preview_last_at is not None and now-self._preview_last_at<0.5:
+            return
+        rgb=np.ascontiguousarray(image)
+        height,width=rgb.shape[:2]
+        rendered=QImage(rgb.data,width,height,rgb.strides[0],QImage.Format.Format_RGB888).copy()
+        size=self.capture_preview.size()
+        pixmap=QPixmap.fromImage(rendered).scaled(
+            max(1,size.width()-8),max(1,size.height()-8),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.capture_preview.setPixmap(pixmap)
+        self._preview_last_at=now
+        self._preview_last_clock=datetime.now().strftime("%H:%M:%S")
+        self.capture_preview_info.setText(
+            f"撮影成功 {self._preview_last_clock} / 送信範囲 {width}×{height} px / "
+            "プレビューは最大2回/秒・画像ファイル保存なし")
+
+    def _clear_capture_preview(self, message: str) -> None:
+        self._preview_last_at=None
+        self._preview_last_clock=None
+        self.capture_preview.clear()
+        self.capture_preview.setText(message)
+        self.capture_preview_info.setText("取得画像なし / 画像ファイル保存なし")
+
+    def _reconnect_capture_window(self) -> None:
+        """Explicitly select and validate the CURRENT window, no auto-retarget."""
+        if self._thread is not None:
+            QMessageBox.information(self,"AI処理中","画像認識処理が終わってから撮影対象を変更してください。")
+            return
+        if self.capture_config is None or self.capture_config.backend!="WINDOWS_NATIVE":
+            QMessageBox.warning(self,"撮影方式が違います","Windowsネイティブ方式の対象ウィンドウを選択してください。")
+            return
+        try:
+            candidates=CapturePreviewService().list_windows()
+            if not candidates:
+                raise AutoCaptureUnavailable("WINDOW_LIST_EMPTY")
+            labels=[candidate.display_name() for candidate in candidates]
+            current=self.capture_config.selected_window_identity
+            selected_index=next((i for i,item in enumerate(candidates)
+                                 if item.identity()==current),0)
+            picked,ok=QInputDialog.getItem(
+                self,"撮影対象の再接続",
+                "現在表示されているスマホのミラーリング画面を明示的に選択してください。\n"
+                "選択後はそのウィンドウだけを撮影確認し、別対象へ自動切替しません。",
+                labels,selected_index,False)
+            if not ok:
+                return
+            candidate=candidates[labels.index(picked)]
+            config=dataclass_replace(
+                self.capture_config,selected_window_identity=candidate.identity())
+            # Identical capture path to the running loop.
+            frame=capture_for_chatgpt(config)
+            if self.on_capture_reconnected is not None:
+                self.on_capture_reconnected(config)
+            self._stop_auto()
+            self.capture_config=config
+            self._capture_gate.reset()
+            # Recalibrate command screens if target/window content changed.
+            self._turn_buffer=TurnCaptureBuffer()
+            self._show_capture_preview(frame,force=True)
+            self.capture_preview_info.setText(
+                self.capture_preview_info.text()+" / 撮影対象の再接続済み・監視は停止中")
+            report={"step":len(self.entries)+1,"status":"CAPTURE_TARGET_RECONNECTED",
+                    "message":"選択したウィンドウの撮影に成功しました。"
+                              "必要な画面登録をし直し、明示的に自動キャプチャを再開してください。"}
+            self.entries.append(report)
+            self._render(report)
+        except (AutoCaptureUnavailable,OSError,ValueError) as exc:
+            QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
+
     def _start_auto(self):
         if self._thread is not None or self._auto_running:
             return
@@ -294,6 +394,7 @@ class MatchReplayDialog(QDialog):
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
         self._pending_batch=None
+        self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         self._poll_timer.start()
         # Starting capture must update the status before a menu triggers AI.
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
@@ -307,6 +408,8 @@ class MatchReplayDialog(QDialog):
         self._poll_timer.stop()
         self._poll_timer.setInterval(300)
         self._pending_batch=None
+        self._latest_image=None
+        self._clear_capture_preview("監視停止中")
         # Previously the UI could still say "自動送信中" after stopping.
         if self.state is not None:
             self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
@@ -395,6 +498,10 @@ class MatchReplayDialog(QDialog):
                         "message":"画面取得に失敗しました。自動送信は停止せず、2秒間隔で再試行します。"}
                 self.entries.append(report)
                 self._render(report)
+                stale=("最後に取得した画像 "+self._preview_last_clock
+                       if self._preview_last_clock else "取得できた画像なし")
+                self.capture_preview_info.setText(
+                    f"画面取得失敗: {exc} / {stale} / 2秒間隔で再試行")
             return
         self._capture_error_count=0
         if self._capture_paused:
@@ -405,6 +512,7 @@ class MatchReplayDialog(QDialog):
             self.entries.append(report)
             self._render(report)
         self._latest_image=image
+        self._show_capture_preview(image)
         kind=self._turn_buffer.observe(image)
         if kind is not None:
             if self.state.get("phase")=="SELECTION" and kind!="TEAM_SELECTION":
@@ -481,7 +589,7 @@ class MatchReplayDialog(QDialog):
         self._thread.start()
 
     def _set_busy(self,busy):
-        for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button):
+        for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button,self.reconnect_button):
             widget.setEnabled(not busy)
 
     @Slot()
