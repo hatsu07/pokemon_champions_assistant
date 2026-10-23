@@ -346,3 +346,5 @@
 - Full preflight rejects the **entire batch** if any group unchecked, label unresolved, all frames excluded, or duplicate files; confirmation shows group/image/correction/exclusion counts.
 - One post-write reconciliation preserves unprocessed groups, staged corrections, excluded JPGs and review state. Write errors stop immediately and retain unprocessed JPGs; no transactional rollback of already saved PNGs is promised.
 - Added Windows offscreen regression tests for heterogeneous groups, deferred corrected labels, frame-level override, exclusion, unreviewed/unknown blocking, user cancellation and partial-write recovery. Real user gameplay footage and interaction feel still require separate verification.
+
+- Added a "select all reviewed groups" convenience action that selects only explicitly reviewed group IDs, not unchecked groups. The batch preflight still rejects unknown target labels and prevents silent promotion.
