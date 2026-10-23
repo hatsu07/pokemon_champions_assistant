@@ -78,6 +78,25 @@ class GroupingTests(unittest.TestCase):
         self.assertTrue(all(seen))
         self.assertEqual(self.dataset.audit()["total"],0)
 
+    def test_every_group_includes_individual_predictions_and_uncertainty(self):
+        paths=self._frames(4)
+        calls=[]
+        class Model:
+            def predict(self,image,*,raw_label=False):
+                calls.append(raw_label)
+                if len(calls)==3:
+                    return ScreenPrediction("UNKNOWN",0.97,0.95,0.1)
+                return ScreenPrediction("TEAM_SELECTION",0.96,0.89,0.1)
+        groups=analyze_staged_session(self.staging.session_files(SESSION),classifier=Model())
+        self.assertEqual(sum(g.count for g in groups),4)
+        self.assertEqual([d.path for g in groups for d in g.frame_details],paths)
+        self.assertEqual([d.predicted_label for g in groups for d in g.frame_details],
+                         ["TEAM_SELECTION","TEAM_SELECTION","UNKNOWN","TEAM_SELECTION"])
+        flagged=[d for g in groups for d in g.frame_details if d.review_flags]
+        self.assertTrue(any("UNKNOWNは重点確認" in d.review_flags for d in flagged))
+        self.assertTrue(all(calls))
+        self.assertEqual(self.dataset.audit()["total"],0)
+
     def test_cannot_use_bad_staged_paths(self):
         external=Path(self.temp.name)/"external.jpg"
         external.write_bytes(b"bad")

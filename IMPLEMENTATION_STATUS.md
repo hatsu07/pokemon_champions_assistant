@@ -313,3 +313,11 @@
 - GUI supports explicit WSL/Docker GPU retraining from the Windows collector with progress logs and copyable command fallback. Each training run can archive its outputs with --archive-output; promotion to production is never automatic. User must retrain, compare independent heldout results and select the updated model.
 - Tests cover session boundaries, grouping size, abstention, synthetic low-confidence experimental ONNX, negative human confirmation, and label batch save. Windows build collects onnxruntime for the standalone dataset collector.
 - Real Pokémon Champions accuracy, Windows file copy path, grouping review time and GPU retraining quality on additional sessions remain unverified until human field tests.
+
+## Full-frame group review improvements — 2026-10-23 (PR)
+
+- Every group of at most 30 frames now shows all thumbnails with individual raw predicted labels, confidence, and warnings for low-confidence, UNKNOWN, or notable image differences; click to inspect full-size.
+- Per-frame label overrides and non-destructive exclusion can be selected in contiguous or non-contiguous ranges. Other frames retain base labels; excluded JPEGs remain unmodified.
+- Explicit group-wide confirmation required before promotion; changes invalidate the review checkbox. Original first/middle/last summary still available.
+- Existing labelled PNGs remain immutable and production model validation gate unchanged.
+- Tests cover frame-level corrections, excluded image preservation, review invalidation, unreviewed refusal, and per-frame AI metadata; synthetic/Windows CI must validate final PR HEAD. Real-image review usability is still unverified.
