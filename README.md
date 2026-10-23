@@ -117,4 +117,4 @@ Windows CIの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64` を�
 
 `PokemonChampionsScreenDataCollector` には、対戦終了後に未ラベルJPEGをグループ化し、実験用ONNXモデルで7画面ラベルの**候補だけ**を推定するオフラインGUIを追加しました。グループの先頭・中央・末尾画像を目視確認して一括承認・訂正した場合だけ、従来の人間確認済みPNGに変換します。 `validated=false` のモデル利用は開発用収集アプリのみで、通常の対戦支援側は未検証モデルを拒否したままです。
 
-学習にはマージ済みのGPU学習スクリプトを引き続き利用します。承認済みデータの再学習は明示操作・WSL実行で、モデルは自動昇格しません。操作と実験モデルのWindowsへのコピー方法は [収集・ラベル付け手順](docs/screen_dataset_collection.md) を参照してください。
+学習にはマージ済みのGPU学習スクリプトを引き続き利用します。承認済みデータの再学習はWindows収集アプリから明示的にWSL/Docker GPU学習を開始し、ログを確認できます（WSLのLinuxリポジトリパスを入力）。`--archive-output` でモデルを個別保存し、モデルは自動昇格しません。操作と実験モデルのWindowsへのコピー方法は [収集・ラベル付け手順](docs/screen_dataset_collection.md) を参照してください。
