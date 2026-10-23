@@ -321,3 +321,10 @@
 - Explicit group-wide confirmation required before promotion; changes invalidate the review checkbox. Original first/middle/last summary still available.
 - Existing labelled PNGs remain immutable and production model validation gate unchanged.
 - Tests cover frame-level corrections, excluded image preservation, review invalidation, unreviewed refusal, and per-frame AI metadata; synthetic/Windows CI must validate final PR HEAD. Real-image review usability is still unverified.
+
+## Preserve auto-label cache across PNG promotion — 2026-10-23
+
+- Root cause: `_reload_review_files()` previously called `_clear_auto_groups()`, discarding all model proposals, corrected frames and review acknowledgements after every PNG save.
+- Separate session lifecycle reset from unlabelled file-list reload. Reconcile in-memory groups by retained staged JPEG paths; prune successfully saved/deleted frames, recompute representative thumbnails and per-group minima without re-running the model.
+- Keep unaffected groups' AI predictions, individual corrections, exclusions and full-review acknowledgements. Partially modified groups must be reviewed again. Manual save and deletion follow the same reconciliation path; a new session or folder and explicit re-analysis still invalidates stale predictions.
+- New Windows GUI regression cases: two independently reviewed groups with corrected frames, repeated save, refresh, manual conversion, and simulated partial-write failure. Local real-image workflow remains to be validated.
