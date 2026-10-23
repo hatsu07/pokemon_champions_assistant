@@ -513,6 +513,9 @@ class MatchReplayDialog(QDialog):
         frames=self._pending_batch
         self._pending_batch=None
         self._turn_buffer.reset_turn()
+        self._ai_request_attempts+=1
+        self._set_ai_status(
+            f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
         self._set_busy(True)
         self._active_job="batch"
         self._thread=QThread(self)
@@ -523,6 +526,7 @@ class MatchReplayDialog(QDialog):
             frames=frames,cancel_event=self._cancel_event,
         )
         self._worker.moveToThread(self._thread)
+        self._worker.progress.connect(self._on_ai_progress)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._completed)
         self._worker.finished.connect(self._thread.quit)
@@ -530,6 +534,10 @@ class MatchReplayDialog(QDialog):
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
+
+    @Slot(str)
+    def _on_ai_progress(self, progress: str) -> None:
+        self._set_ai_status(f"{progress} / 試行 #{self._ai_request_attempts}")
 
     def _capture_next(self):
         if not self._auto_running:
@@ -568,11 +576,12 @@ class MatchReplayDialog(QDialog):
             self._render(report)
         self._latest_image=image
         self._show_capture_preview(image)
+        if not self._turn_buffer.templates:
+            # An active preview is NOT an AI request.
+            return
         kind=self._turn_buffer.observe(image)
         if kind is not None:
-            if self.state.get("phase")=="SELECTION" and kind!="TEAM_SELECTION":
-                return
-            if self.state.get("phase") in ("PREP","BATTLE") and kind=="TEAM_SELECTION":
+            if not self._eligible_menu(kind):
                 return
             self._queue_batch(self._turn_buffer.batch(image))
 
@@ -592,6 +601,12 @@ class MatchReplayDialog(QDialog):
             self._stop_auto()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED"):
             self.state=payload["state"]
+        if report.get("status")=="ERROR":
+            self._set_ai_status(f"AI処理エラー / {report.get('reason','UNKNOWN')}")
+        elif report.get("status")=="CANCELLED":
+            self._set_ai_status("AI処理キャンセル")
+        else:
+            self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}")
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
         if report.get("screen")=="TEAM_SELECTION" and report.get("selected_three"):
