@@ -516,6 +516,13 @@ class MatchReplayDialog(QDialog):
         self._ai_request_attempts+=1
         self._set_ai_status(
             f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
+        request_report={
+            "step":len(self.entries)+1, "status":"AI_REQUEST_QUEUED",
+            "ai_request_attempt":self._ai_request_attempts,
+            "image_count":len(frames),
+            "message":"AI処理を起動しました。送信成功はまだ確認できていません。"}
+        self.entries.append(request_report)
+        self._render(request_report)
         self._set_busy(True)
         self._active_job="batch"
         self._thread=QThread(self)
