@@ -1,6 +1,6 @@
 # Codexへの最初の依頼（WSL2 + Docker開発／Windows MSI配布 v2.7）
 
-このリポジトリの `docs/V2_7_SOURCE_COMPLETENESS_AND_AUTHORITY.md`、`docs/Pokemon_Champions_Project_User_Guidance_Reconstructed_v2_7.md`、`docs/Pokemon_Champions_CODEX_OX_Postmatch_Method_v2_7.md`、`knowledge/README.md`、`AGENTS.md`、`BUILD_PLAN.md`、`WSL_DOCKER_VSCODE_CODEX_SETUP.md`、`docs/Pokemon_Champions_Contract_And_State_Reconciliation_v2_3.md`、`docs/Pokemon_Champions_Integrated_Architecture_v2_0.md`、`docs/Pokemon_Champions_WSL_Docker_Windows_MSI_Design_v2_6.md` を読んでください。
+このリポジトリの `docs/V2_7_SOURCE_COMPLETENESS_AND_AUTHORITY.md`、`docs/Pokemon_Champions_Project_User_Guidance_Reconstructed_v2_7.md`、`docs/Pokemon_Champions_CODEX_OX_Postmatch_Method_v2_7.md`、`knowledge/README.md`、`AGENTS.md`、`docs/AI_DEVELOPMENT_AND_CI_POLICY.md`、`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`、`BUILD_PLAN.md`、`WSL_DOCKER_VSCODE_CODEX_SETUP.md`、`docs/Pokemon_Champions_Contract_And_State_Reconciliation_v2_3.md`、`docs/Pokemon_Champions_Integrated_Architecture_v2_0.md`、`docs/Pokemon_Champions_WSL_Docker_Windows_MSI_Design_v2_6.md` を読んでください。
 
 目的：Windows上のBlueStacks 5で動作するPokémon Championsシングルランクマッチを、**画面監視だけでリアルタイム支援するアプリ**を開発してください。戦術判断は必ずOpenAI APIが担当し、Pythonは画面認識、状態計算、効果エンジン、イベント記録、API入力・回答の検証、表示、SQLite保存のみを担当します。ゲームの操作自動化は実装しません。
 
@@ -26,3 +26,9 @@
 - O/Xはレビュー機能の仕様として扱い、LIVEの戦術判断や時間制限に追加しない。
 - アーカイブ環境スナップショットは最新情報として使わず、オフライン分析で取得日とレギュレーションを確認する。
 - このパッケージの運用ルールをLIVE判断ゲートにコピーして二重管理しない。
+
+
+## 2026-10-23 CI・マージ事故再発防止
+- 必須Windows PR CIは最新PR HEADで全テスト・両Windows GUIビルド・起動スモークの成功を検証。Artifact配布は明示的な手動実行と分離（Actions容量不足のため）。
+- 最新PR HEADに対するCI全体と必須Windowsジョブがcompleted/success以外なら絶対にマージしない。ユーザー判断でGitHub Pro/Branch protectionは不要とし、GitHub上の強制保護ではなく厳格な手動CIゲートで運用する。
+- 新チャットでは `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md` とGitHubの現状を必ず再読込する。必要なら `scripts/verify_merge_ready.py` による読み取り専用ゲート検証を行う。

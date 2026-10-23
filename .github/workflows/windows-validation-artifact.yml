@@ -1,8 +1,17 @@
 name: Windows desktop development validation
 
-# Draft PRs are for code changes; ready PRs validate on every new revision.
+# Required PR CI validates code, Windows builds and both smoke tests, without
+# uploading distribution ZIPs. Artifact quota must never mask a test outcome.
+# Optional DEVELOPMENT_ONLY package publishing is an explicit manual operation.
+# Draft PRs do not run the expensive Windows job; Ready/updates do.
 on:
   workflow_dispatch:
+    inputs:
+      publish_artifacts:
+        description: "Upload both DEVELOPMENT_ONLY Windows packages (requires free Actions artifact quota)"
+        type: boolean
+        required: false
+        default: false
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
@@ -45,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_screen_auto_label tests.test_terminology tests.test_phase_2
+          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_match_replay tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
           Write-Host "offline core unittest process exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
           # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
@@ -191,13 +200,18 @@ jobs:
             "screenshots_auto_saved=false"
             "network_upload=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
+      # PR CI always tests the Windows EXEs but DOES NOT publish files.
+      # Actions storage quota is a delivery failure, not a software test failure.
+      # Manual workflow_dispatch with publish_artifacts=true explicitly opts in.
       - name: Upload local screen dataset collector Windows artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true
         uses: actions/upload-artifact@v4
         with:
           name: PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64
           path: dist/PokemonChampionsScreenDataCollector/
           if-no-files-found: error
       - name: Upload diagnostic-only Windows portable artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_artifacts == true
         uses: actions/upload-artifact@v4
         with:
           # GitHub Actions wraps this folder into ONE download ZIP. Do not
