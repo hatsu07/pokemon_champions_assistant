@@ -288,9 +288,12 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_list.setMinimumHeight(160)
         self.auto_list.currentItemChanged.connect(self._on_group_selected)
         layout.addWidget(self.auto_list)
+        self.auto_select_reviewed_button=QPushButton("確認済みグループをすべて選択")
+        self.auto_select_reviewed_button.clicked.connect(self._select_all_reviewed_groups)
+        layout.addWidget(self.auto_select_reviewed_button)
         layout.addWidget(QLabel(
-            "Ctrl/Shiftで複数グループを選択。各グループを表示して全画像確認済みにし、"
-            "選択したグループを一括保存できます。"))
+            "Ctrl/Shiftで複数グループを選択、または「確認済みグループをすべて選択」。"
+            "各グループを表示して全画像確認済みにしてから一括保存できます。"))
         reps=QHBoxLayout()
         self.auto_representatives=[]
         for title in ("先頭","中央","末尾"):
@@ -436,7 +439,7 @@ class ScreenDatasetCollector(QMainWindow):
                      self.auto_frame_fix_button,self.auto_frame_exclude_button,
                      self.auto_frame_reset_button,self.auto_review_confirm,
                      self.auto_label_box,self.auto_group_draft_button,
-                     self.auto_bulk_button):
+                     self.auto_bulk_button,self.auto_select_reviewed_button):
             item.setEnabled(not busy)
         self.stop_button.setEnabled(self._thread is not None)
 
@@ -1061,6 +1064,18 @@ class ScreenDatasetCollector(QMainWindow):
                 return
             forced[index]=label
         self._commit_auto_groups([index],forced=forced)
+
+    def _select_all_reviewed_groups(self):
+        if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:
+            return
+        self.auto_list.clearSelection()
+        for index in sorted(self._auto_reviewed_groups):
+            item=self.auto_list.item(index)
+            if item is not None:
+                item.setSelected(True)
+        self.auto_progress.setText(
+            f"確認済み{len(self.auto_list.selectedItems())}グループを選択しました。"
+            "一括保存ボタンで保存前にラベルを検査します。")
 
     def _approve_selected_auto_groups(self):
         """Batch selected *individually reviewed* groups, preserving each label."""
