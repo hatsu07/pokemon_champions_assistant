@@ -117,6 +117,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         panel.state={"phase": "MATCHMAKING", "matrix_compatible": False}
         panel._auto_running=True
+        panel._render({"status": "AUTO_STARTED"})
         image=np.full((80, 140, 3), 180, dtype=np.uint8)
         with patch("champions_assist.match_replay_dialog.capture_for_chatgpt", return_value=image) as capture:
             panel._capture_next()
