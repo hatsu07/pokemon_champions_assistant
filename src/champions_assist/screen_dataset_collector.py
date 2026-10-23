@@ -15,13 +15,13 @@ from time import monotonic
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, QProcess, Signal, Slot, QSize
+from PySide6.QtCore import QObject, Qt, QThread, QProcess, Signal, Slot, QSize, QEvent
 from PySide6.QtGui import QImage, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QInputDialog, QPushButton,
     QScrollArea, QVBoxLayout, QWidget, QAbstractItemView, QPlainTextEdit,
-    QListView,
+    QListView, QBoxLayout, QSizePolicy,
 )
 
 from .app_config import AppSettingsStore, CaptureConfiguration, default_app_root
@@ -44,6 +44,30 @@ SCREEN_LABELS={
     "UNKNOWN":"その他・判別不能",
 }
 PAGE_SIZE=100
+
+
+class _ResponsivePreview(QLabel):
+    """Resize an original screen preview without imposing pixmap width on layouts."""
+
+    def __init__(self, text=""):
+        super().__init__(text)
+        self._original_pixmap=QPixmap()
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setSourcePixmap(self, pixmap: QPixmap):
+        self._original_pixmap=pixmap
+        self._scale_to_widget()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        self._scale_to_widget()
+
+    def _scale_to_widget(self):
+        if not self._original_pixmap.isNull():
+            self.setPixmap(self._original_pixmap.scaled(
+                max(1,self.width()-8),max(1,self.height()-8),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
 
 
 class _ReadOnlyCollectorWorker(QObject):
@@ -170,6 +194,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_error=None
         self._gpu_process=None
         self._gpu_repo=""
+        self._responsive_rows=[]
         self._build()
         self._update_source_label()
         self._refresh_review_sessions()
@@ -178,6 +203,7 @@ class ScreenDatasetCollector(QMainWindow):
     def _build(self):
         scroll=QScrollArea(self)
         scroll.setWidgetResizable(True)
+        scroll.viewport().installEventFilter(self)
         body=QWidget()
         layout=QVBoxLayout(body)
         intro=QLabel(
@@ -204,6 +230,7 @@ class ScreenDatasetCollector(QMainWindow):
         self.folder_button.clicked.connect(self._choose_folder)
         layout.addWidget(self.folder_button)
         self.session_label=QLabel("記録対象の対戦セッションID: "+self.session_id)
+        self.session_label.setWordWrap(True)
         layout.addWidget(self.session_label)
         self.session_button=QPushButton("次の対戦セッションを作成（過去の未ラベル画像は保持）")
         self.session_button.clicked.connect(self._new_session)
@@ -243,7 +270,7 @@ class ScreenDatasetCollector(QMainWindow):
         layout.addWidget(self.status)
         self.capture_count=QLabel("今回の収集0枚")
         layout.addWidget(self.capture_count)
-        self.preview=QLabel("収集中の画面または選択した未ラベル画像を表示します")
+        self.preview=_ResponsivePreview("収集中の画面または選択した未ラベル画像を表示します")
         self.preview.setMinimumHeight(230)
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setStyleSheet(
@@ -284,16 +311,18 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_list=QListWidget()
         self.auto_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.auto_list.setToolTip(
-            "Ctrl/Shiftで複数グループを選択し、確認済みグループをまとめてPNG保存できます。")
+            "Ctrl/Shiftで複数グループを選択し、まとめてPNG保存できます。保存前にラベルと枚数を確認します。")
         self.auto_list.setMinimumHeight(160)
         self.auto_list.currentItemChanged.connect(self._on_group_selected)
         layout.addWidget(self.auto_list)
-        self.auto_select_reviewed_button=QPushButton("確認済みグループをすべて選択")
+        self.auto_select_reviewed_button=QPushButton("すべてのグループを選択")
         self.auto_select_reviewed_button.clicked.connect(self._select_all_reviewed_groups)
         layout.addWidget(self.auto_select_reviewed_button)
-        layout.addWidget(QLabel(
-            "Ctrl/Shiftで複数グループを選択、または「確認済みグループをすべて選択」。"
-            "各グループを表示して全画像確認済みにしてから一括保存できます。"))
+        bulk_help=QLabel(
+            "Ctrl/Shiftで複数選択、または「すべてのグループを選択」。"
+            "AI候補は仮ラベルです。画像を確認・必要なら訂正し、最後の確認画面で一括保存を確定します。")
+        bulk_help.setWordWrap(True)
+        layout.addWidget(bulk_help)
         reps=QHBoxLayout()
         self.auto_representatives=[]
         for title in ("先頭","中央","末尾"):
@@ -355,9 +384,11 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_frame_reset_button.clicked.connect(self._reset_selected_auto_frames)
         correction_controls.addWidget(self.auto_frame_reset_button)
         layout.addLayout(correction_controls)
-        self.auto_review_confirm=QCheckBox("このグループの全画像を一覧で確認した（AIの予測だけでは正解になりません）")
+        # Legacy review widget remains for compatibility with old sessions/tests.
+        # A second per-group checkbox is no longer a requirement for PNG saving.
+        self.auto_review_confirm=QCheckBox("任意の確認メモ",body)
         self.auto_review_confirm.toggled.connect(self._set_auto_group_reviewed)
-        layout.addWidget(self.auto_review_confirm)
+        self.auto_review_confirm.hide()
         approve_buttons=QHBoxLayout()
         self.auto_accept_button=QPushButton("選択グループをAI候補で承認・PNG保存")
         self.auto_accept_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=True))
@@ -366,11 +397,11 @@ class ScreenDatasetCollector(QMainWindow):
         self.auto_correct_button.clicked.connect(lambda:self._approve_auto_groups(use_suggestion=False))
         approve_buttons.addWidget(self.auto_correct_button)
         layout.addLayout(approve_buttons)
-        self.auto_bulk_button=QPushButton("選択した確認済みグループをまとめて承認・PNG保存")
+        self.auto_bulk_button=QPushButton("選択したグループをまとめてPNG保存")
         self.auto_bulk_button.setObjectName("autoBulkApproveReviewedGroups")
         self.auto_bulk_button.setToolTip(
-            "Ctrl/Shiftで選択したグループを1度の確認で保存。"
-            "未確認・ラベル未確定のグループがあれば保存しません。")
+            "Ctrl/Shiftで選択したグループを1回の最終確認で保存。"
+            "ラベル未確定や全画像除外のグループは保存できません。")
         self.auto_bulk_button.clicked.connect(self._approve_selected_auto_groups)
         layout.addWidget(self.auto_bulk_button)
         gpu_controls=QHBoxLayout()
@@ -423,9 +454,30 @@ class ScreenDatasetCollector(QMainWindow):
             "同じ対戦で途中再開しても対戦IDを変えず、次の対戦でのみ新規セッションを作成してください。")
         note.setWordWrap(True)
         layout.addWidget(note)
+        self._responsive_rows=[
+            row,controls,buttons,rev,auto_buttons,reps,auto_label_controls,
+            correction_controls,approve_buttons,gpu_controls,page,labels]
         scroll.setWidget(body)
         self.setCentralWidget(scroll)
+        self._apply_responsive_layout(scroll.viewport().width())
         self._set_capture_busy(False)
+
+    def eventFilter(self, watched, event):
+        scroll=self.centralWidget()
+        if (isinstance(scroll,QScrollArea) and watched is scroll.viewport()
+                and event.type()==QEvent.Type.Resize):
+            self._apply_responsive_layout(event.size().width())
+        return super().eventFilter(watched,event)
+
+    def _apply_responsive_layout(self, width: int):
+        # The content is narrower than the outer window due to the scrollbar.
+        # Stack multi-button rows instead of forcing the QScrollArea wider.
+        direction=(QBoxLayout.Direction.TopToBottom if width<790 else
+                   QBoxLayout.Direction.LeftToRight)
+        for row in self._responsive_rows:
+            if row.direction()!=direction:
+                row.setDirection(direction)
+
 
     def _set_capture_busy(self, busy):
         busy=busy or self._auto_thread is not None or self._gpu_process is not None
@@ -562,11 +614,7 @@ class ScreenDatasetCollector(QMainWindow):
         height,width=image.shape[:2]
         rgb=np.ascontiguousarray(image)
         qimg=QImage(rgb.data,width,height,rgb.strides[0],QImage.Format.Format_RGB888).copy()
-        pix=QPixmap.fromImage(qimg).scaled(
-            max(1,self.preview.width()-8),max(1,self.preview.height()-8),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
-        self.preview.setPixmap(pix)
+        self.preview.setSourcePixmap(QPixmap.fromImage(qimg))
 
     @Slot(str)
     def _on_capture_error(self, reason):
@@ -799,7 +847,8 @@ class ScreenDatasetCollector(QMainWindow):
     def _auto_group_row_text(self, index: int) -> str:
         group=self._auto_groups[index]
         candidate=self._auto_group_label_overrides.get(index,group.candidate)
-        status="✓確認済" if index in self._auto_reviewed_groups else "要確認"
+        status="訂正内容あり" if (index in self._auto_group_label_overrides or
+                             any(path in self._auto_frame_overrides for path in group.files)) else "AI候補"
         changed="（訂正済）" if index in self._auto_group_label_overrides else ""
         return (f"{index+1:03d} | {status} | {candidate or '候補不明'}{changed} | "
                 f"{group.count}枚 | 信頼度下限 {group.confidence:.1%}")
@@ -888,7 +937,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._render_auto_group_list()
         self.auto_progress.setText(
             f"解析完了：{sum(g.count for g in groups)}枚 / {len(groups)}グループ。"
-            "グループ内の全画像を一覧確認してから一括承認してください。")
+            "複数選択してPNG保存できます。未判定画像はラベル訂正が必要です。")
 
     @Slot()
     def _auto_on_finished(self):
@@ -1012,8 +1061,7 @@ class ScreenDatasetCollector(QMainWindow):
         self._auto_group_label_overrides[index]=label
         self._invalidate_auto_review()
         self.auto_progress.setText(
-            f"グループ{index+1}を{label}に仮訂正しました。"
-            "全画像を再確認してチェックすると、一括保存の対象にできます。")
+            f"グループ{index+1}を{label}に仮訂正しました。保存時にラベルを最終確認します。")
 
     def _correct_selected_auto_frames(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
@@ -1026,7 +1074,7 @@ class ScreenDatasetCollector(QMainWindow):
             self._auto_frame_overrides[path]=chosen
             self._auto_frame_exclusions.discard(path)
         self._invalidate_auto_review()
-        self.auto_progress.setText(f"{len(paths)}枚を{chosen}に部分訂正。全画像の再確認後に保存してください")
+        self.auto_progress.setText(f"{len(paths)}枚を{chosen}に部分訂正しました。保存前の最終確認に反映されます")
 
     def _exclude_selected_auto_frames(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
@@ -1070,16 +1118,13 @@ class ScreenDatasetCollector(QMainWindow):
         self._commit_auto_groups([index],forced=forced)
 
     def _select_all_reviewed_groups(self):
+        """Compatibility name: select every group; no per-group checkbox needed."""
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:
             return
-        self.auto_list.clearSelection()
-        for index in sorted(self._auto_reviewed_groups):
-            item=self.auto_list.item(index)
-            if item is not None:
-                item.setSelected(True)
+        self.auto_list.selectAll()
         self.auto_progress.setText(
-            f"確認済み{len(self.auto_list.selectedItems())}グループを選択しました。"
-            "一括保存ボタンで保存前にラベルを検査します。")
+            f"{len(self.auto_list.selectedItems())}グループを選択しました。"
+            "PNG保存時にラベルを一括検査します。")
 
     def _select_all_reviewed_auto_groups(self):
         """Compatibility with PR #30 select-all-reviewed control/tests."""
@@ -1094,7 +1139,7 @@ class ScreenDatasetCollector(QMainWindow):
         return [(index,self._auto_groups[index]) for index in indices]
 
     def _approve_selected_auto_groups(self):
-        """Batch selected *individually reviewed* groups, preserving each label."""
+        """Batch selected groups, validating effective labels before saving."""
         indices=[index for index,_ in self._selected_auto_groups()]
         self._commit_auto_groups(indices)
 
@@ -1108,17 +1153,13 @@ class ScreenDatasetCollector(QMainWindow):
                 index<0 or index>=len(self._auto_groups) for index in indices):
             self.auto_progress.setText("グループ一覧が更新されました。選択し直してください")
             return
-        unchecked=[index+1 for index in indices
-                   if index not in self._auto_reviewed_groups]
-        if unchecked:
-            self.auto_progress.setText(
-                "未確認グループが含まれます："+", ".join(map(str,unchecked))+
-                "。各グループの全画像を確認してチェックしてください")
-            return
+        # One final confirmation dialog replaces the redundant per-group checks.
+        # Unknown/invalid labels and duplicate frames remain hard blockers.
         forced=forced or {}
         requested=[]
         corrected=0
         excluded=0
+        label_summary=[]
         for index in indices:
             group=self._auto_groups[index]
             base=forced.get(
@@ -1136,19 +1177,24 @@ class ScreenDatasetCollector(QMainWindow):
                     "グループまたは画像単位で訂正してください")
                 return
             requested.extend(group_paths)
+            per_label={}
+            for _path,label in group_paths:
+                per_label[label]=per_label.get(label,0)+1
+            label_summary.append(f"グループ{index+1}: "+", ".join(
+                f"{name} {count}枚" for name,count in sorted(per_label.items())))
             corrected+=sum(path in self._auto_frame_overrides for path,_ in group_paths)
             excluded+=group.count-len(group_paths)
         if len({path for path,_ in requested})!=len(requested):
             self.auto_progress.setText("選択グループ間に画像の重複があります。再解析してください")
             return
         accepted=QMessageBox.question(
-            self,"確認済みグループを一括PNG保存",
+            self,"選択グループのPNG保存を最終確認",
             f"{len(indices)}グループ・{len(requested)}枚をPNG保存します。"
-            f" 個別訂正{corrected}枚、除外{excluded}枚。\n"
-            "各グループの確定ラベルと個別訂正を使います。"
-            "選択グループの全画像を確認しましたか？\n"
-            "AIの予測だけでは正解とみなせません。"
-            "除外したJPEGは保存せず、そのまま保持します。",
+            f" 個別訂正{corrected}枚、除外{excluded}枚。\n\n"
+            +"\n".join(label_summary)+"\n\n"
+            "上記の各ラベルを正解として学習用に保存しますか？\n"
+            "AIの候補は誤っている可能性があります。必要ならキャンセルして画像を訂正してください。"
+            "除外したJPEGは保存せず保持します。",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
         if accepted!=QMessageBox.StandardButton.Yes:
             return
