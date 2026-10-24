@@ -370,6 +370,31 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertIsNone(panel._background_capture)
         panel._stop_auto()
 
+    def test_prep_auth_error_does_not_leave_running_forever(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel._prep_cancel_event.clear()
+        panel._on_prep_result({
+            "state":{"phase":"PREP","prep_status":"RUNNING"},
+            "report":{"status":"ERROR","reason":"SignInError"}})
+        self.assertEqual(panel.state["prep_status"],"ERROR")
+        self.assertEqual(panel.entries[-1]["status"],"PREP_ERROR")
+
+    def test_superseded_api_response_does_not_revert_battle_state(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel.state={"phase":"BATTLE","our_active":"アシレーヌ"}
+        panel._pending_batch=[np.zeros((16,20,3),dtype=np.uint8)]
+        panel._completed({
+            "state":{"phase":"BATTLE","our_active":"マスカーニャ"},
+            "report":{"status":"ADVICE","recommendation":"はたきおとす。"}})
+        self.assertEqual(panel.entries[-1]["status"],"SUPERSEDED")
+        self.assertEqual(panel.state["our_active"],"アシレーヌ")
+        self.assertEqual(panel.entries[-1]["recommendation"],"")
+        panel._pending_batch=None
+        panel._stop_auto()
+
     def test_ai_dispatch_attempt_and_response_are_visible_in_main_header(self):
         panel=self.window._match_panel
         panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
