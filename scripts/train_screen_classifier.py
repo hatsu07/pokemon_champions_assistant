@@ -231,6 +231,40 @@ def _resolve_device(args,torch):
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def build_training_manifest(
+    *, model_path: Path, mean: Sequence[float], std: Sequence[float],
+    metrics: dict[str, Any], held_out_sessions: int,
+    quality_gate_passed: bool, approve_if_thresholds_pass: bool,
+    confidence: float, device: str, pretrained: bool,
+) -> dict[str, Any]:
+    """Create the shared five-label model contract without importing Torch.
+
+    A good dataset and a schema-compatible artifact are separate conditions.
+    The validated flag is never set unless both the quality gate and explicit
+    approval were satisfied.
+    """
+    if set(metrics) != set(LABELS):
+        raise ValueError("training metrics must contain exactly the five screen labels")
+    if not 0.5 <= confidence < 1:
+        raise ValueError("invalid model confidence threshold")
+    return {
+        "schema_version": LABEL_SCHEMA_VERSION,
+        "labels": list(LABELS),
+        "input_size": list(SIZE),
+        "mean": list(mean),
+        "std": list(std),
+        "sha256": sha256(model_path.read_bytes()).hexdigest(),
+        "min_confidence": confidence,
+        "min_margin": 0.20,
+        "validated": bool(quality_gate_passed and approve_if_thresholds_pass),
+        "holdout_sessions": held_out_sessions,
+        "metrics": metrics,
+        "training_device": device,
+        "pretrained": bool(pretrained),
+        "provenance": "locally labelled Pokémon Champions sessions",
+    }
+
+
 def train_model(args):
     import torch
     from torch import nn
@@ -343,22 +377,14 @@ def train_model(args):
     torch.onnx.export(
         model_cpu,torch.zeros(1,3,SIZE[1],SIZE[0]),str(model_path),
         input_names=["rgb"],output_names=["logits"],opset_version=17)
-    manifest={
-        "schema_version":1,
-        "labels":list(LABELS),
-        "input_size":list(SIZE),
-        "mean":mean,
-        "std":std,
-        "sha256":sha256(model_path.read_bytes()).hexdigest(),
-        "min_confidence":args.confidence,
-        "min_margin":0.20,
-        "validated":bool(validated and args.approve_if_thresholds_pass),
-        "holdout_sessions":len(held_out),
-        "metrics":metrics,
-        "training_device":str(device),
-        "pretrained":bool(args.pretrained),
-        "provenance":"locally labelled Pokémon Champions sessions",
-    }
+    manifest=build_training_manifest(
+        model_path=model_path, mean=mean, std=std,
+        metrics=metrics, held_out_sessions=len(held_out),
+        quality_gate_passed=validated,
+        approve_if_thresholds_pass=args.approve_if_thresholds_pass,
+        confidence=args.confidence, device=str(device),
+        pretrained=bool(args.pretrained),
+    )
     manifest_path=args.output_dir/"champions_screen_classifier.json"
     manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     result={
