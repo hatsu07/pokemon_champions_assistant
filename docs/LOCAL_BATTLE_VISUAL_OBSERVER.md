@@ -58,6 +58,18 @@ remain in memory. The OCR branch is never run on the GUI polling thread.
 If the viewport size differs, the classifier is unknown, or Tesseract fails,
 the existing image-to-ChatGPT fallback is retained without made-up values.
 
+The optional ROI settings are **frozen at match start**:
+`<app data root>/calibration/screen_fields.json` (schema version 1,
+`reference_resolution`, `regions` with `name`, `kind`,
+`bounds_px`, `applicable_labels`). When absent, the example
+`ScreenFieldProfile.from_user_samples_960x572()` is used. When invalid,
+the optional OCR path is disabled, but the existing image-batch path
+remains available. Neither profile is evidence of real-game validation.
+A private profile can be generated from the in-code example using
+`ScreenFieldProfile.from_user_samples_960x572().as_dict()`. Calibration
+files and any icon exemplar images stay on the user's own computer.
+Do not update either calibration or the four master files mid-match.
+
 This is an **incremental hybrid path**: image sending still happens.
 Calibration from eight still frames has not justified disabling the visual
 fallback, sending screenshots as structured data alone, or automatically
