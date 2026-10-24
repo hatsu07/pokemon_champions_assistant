@@ -65,11 +65,17 @@ class _ReplayWorker(QObject):
         try:
             auth=ChatGPTSignIn(ProtectedSessionStore(self.app_root))
             if self.job=="prep":
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
+                    return
                 next_state, report=run_replay_prep(
                     state=self.state, assets=self.assets,
                     access_token=auth.access_token(),model=self.selected_model,
                     reasoning_effort=self.reasoning_effort,
                 )
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
+                    return
             elif self.job=="batch":
                 # Optional OCR happens in the worker, never on the 300ms Qt
                 # capture-polling thread. One battle decision remains one AI
@@ -237,6 +243,12 @@ class MatchReplayDialog(QDialog):
         self._thread=None
         self._worker=None
         self._active_job=None
+        self._prep_thread=None
+        self._prep_worker=None
+        self._prep_cancel_event=Event()
+        self._prep_timer=QTimer(self)
+        self._prep_timer.setSingleShot(True)
+        self._prep_timer.timeout.connect(self._prep_deadline)
         self._ai_request_attempts=0
         self._ai_last_status="AI未送信（撮影・メニュー認識待ち）"
         panel=QVBoxLayout(self)
@@ -321,8 +333,8 @@ class MatchReplayDialog(QDialog):
         panel.addLayout(row)
         calibration=QHBoxLayout()
         for kind,label in (("TEAM_SELECTION","選出画面を登録"),
-                           ("MOVE_MENU","技選択画面を登録"),
-                           ("PARTY_MENU","交代画面を登録")):
+                           ("TURN_ACTION","技選択画面を登録"),
+                           ("SWITCH_SELECTION","交代画面を登録")):
             button=QPushButton(label)
             button.clicked.connect(lambda _checked=False, k=kind:self._calibrate(k))
             calibration.addWidget(button)
@@ -331,7 +343,7 @@ class MatchReplayDialog(QDialog):
         self.manual_batch_button.clicked.connect(self._manual_batch)
         panel.addWidget(self.manual_batch_button)
         panel.addWidget(QLabel("自動送信は登録した選択画面への遷移時のみ。登録前は手動送信を使用してください。"))
-        self.prep_button=QPushButton("選出後の40秒PREPをテスト（18対面）")
+        self.prep_button=QPushButton("40秒PREPの手動再実行（保険）")
         self.prep_button.clicked.connect(self._prep)
         panel.addWidget(self.prep_button)
         panel.addWidget(QLabel("画像の認識・AI提案・進行ログ（現在の1試合）"))
@@ -344,7 +356,7 @@ class MatchReplayDialog(QDialog):
         self._render({"status":"NOT_STARTED"})
 
     def _new_match(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._prep_thread is not None:return
         if self._auto_running:
             QMessageBox.warning(self, "停止が必要", "自動送信を停止してから新しい対戦を開始してください。")
             return
@@ -391,7 +403,7 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"テスト開始不可",str(exc))
 
     def _reset(self):
-        if self._thread is not None:return
+        if self._thread is not None or self._prep_thread is not None:return
         self._stop_auto()
         self._turn_buffer.reset_turn()
         self._automatic_probe.reset()
@@ -504,7 +516,7 @@ class MatchReplayDialog(QDialog):
 
     def _update_menu_detection_label(self) -> None:
         names={"TEAM_SELECTION":"選出画面",
-               "MOVE_MENU":"技選択画面","PARTY_MENU":"交代画面"}
+               "TURN_ACTION":"技選択画面","SWITCH_SELECTION":"交代画面"}
         found=[names[k] for k in names if k in self._turn_buffer.templates]
         self.menu_detection_label.setText(
             "標準自動認識: 有効 / 補助登録: "+
@@ -514,7 +526,7 @@ class MatchReplayDialog(QDialog):
         phase=(self.state or {}).get("phase")
         return (
             kind=="TEAM_SELECTION" and phase in ("MATCHMAKING","SELECTION")
-            or kind in ("MOVE_MENU","PARTY_MENU") and phase in ("PREP","BATTLE")
+            or kind in ("TURN_ACTION","SWITCH_SELECTION") and phase in ("PREP","BATTLE")
         )
 
     def _start_auto(self):
@@ -563,6 +575,7 @@ class MatchReplayDialog(QDialog):
         self._capture_next()
 
     def _stop_auto(self):
+        self._interrupt_prep()
         self._end_background_collection()
         self._cancel_event.set()
         self._auto_running=False
@@ -660,9 +673,7 @@ class MatchReplayDialog(QDialog):
                 if not self._automatic_probe.recently_submitted(image):
                     self._automatic_probe.acknowledge(image,self.state["phase"])
                     self._screen_gate.acknowledge(kind,self.state["phase"])
-                    self._queue_batch(self._turn_buffer.batch(image), screen_label={
-                        "TEAM_SELECTION":"TEAM_SELECTION", "MOVE_MENU":"TURN_ACTION",
-                        "PARTY_MENU":"SWITCH_SELECTION"}.get(kind))
+                    self._queue_batch(self._turn_buffer.batch(image), screen_label=kind)
             else:
                 self._turn_buffer.calibrate(kind,image)
                 self._update_menu_detection_label()
@@ -692,6 +703,13 @@ class MatchReplayDialog(QDialog):
     def _queue_batch(self,frames, *, screen_label=None):
         if not self._auto_running and not self._manual_submission:
             return
+        # A newly observed turn/party/event candidate outranks PREP.
+        # Never wait for a 40-second PREP API call before requesting action.
+        if (self.state is not None and self.state.get("phase")=="PREP"
+                and screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT")):
+            self._interrupt_prep()
+        # An unclassified image change is not proof that battle has started.
+        # Let the visual AI observation confirm the opponent lead first.
         # At most one pending batch: new observed events replace stale ones.
         self._pending_batch=list(frames)
         self._pending_screen_label=screen_label
@@ -787,9 +805,7 @@ class MatchReplayDialog(QDialog):
         if kind is not None and self._eligible_menu(kind):
             self._automatic_probe.acknowledge(image,phase)
             self._screen_gate.acknowledge(kind,phase)
-            self._queue_batch(self._turn_buffer.batch(image), screen_label={
-                "TEAM_SELECTION":"TEAM_SELECTION", "MOVE_MENU":"TURN_ACTION",
-                "PARTY_MENU":"SWITCH_SELECTION"}.get(kind))
+            self._queue_batch(self._turn_buffer.batch(image), screen_label=kind)
             return
 
         if self._screen_model is not None:
@@ -828,14 +844,21 @@ class MatchReplayDialog(QDialog):
             return
         if report.get("status") == "UNCHANGED_FRAME":
             return
-        if self._active_job=="batch" and self._pending_batch is not None:
-            # A newer command screen was observed while this AI call ran.
-            # Never display an older turn's action as the current advice.
+        superseded=self._active_job=="batch" and self._pending_batch is not None
+        if superseded:
+            # Preserve the newer snapshot's *current* state rather than
+            # accepting stale facts or a stale action from an older request.
             report={**report,"status":"SUPERSEDED",
                     "recommendation":"","warning":"NEWER_COMMAND_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
-        if report["status"] not in ("ERROR","DEADLINE_EXCEEDED"):
+        if (not superseded and payload.get("state", {}).get("phase")=="BATTLE"
+                and self.state is not None and self.state.get("phase")=="PREP"):
+            # An unclassified fallback frame was verified by vision. End PREP
+            # without accepting any later stale PREP response.
+            self._interrupt_prep()
+        if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
+                                    "CANCELLED","SUPERSEDED"):
             self.state=payload["state"]
         if report.get("status")=="ERROR":
             self._set_ai_status(f"AI処理エラー / {report.get('reason','UNKNOWN')}")
@@ -864,35 +887,100 @@ class MatchReplayDialog(QDialog):
                                  "selected_three":self.state["selected_three"],
                                  "lead":self.state["lead"],"status":"CONFIRMED"})
             self._render(self.entries[-1])
+            # Prevent an unclassified fallback probe from redispatching the
+            # final selection screen as if it were the opponent's first turn.
+            if self._latest_image is not None:
+                self._automatic_probe.acknowledge(self._latest_image,"PREP")
+            self._start_prep_auto()
         except (ValueError, KeyError) as exc:
             QMessageBox.warning(self,"実際の選出を確定できません",str(exc))
 
     def _prep(self):
-        if self._thread is not None:return
-        if self.state is None or self.state["phase"]!="PREP":
-            QMessageBox.warning(self,"PREP不可","まず実際の選出3匹と初手を確定してください。")
+        """Optional manual retry, never overlapping the automatic PREP."""
+        if self.state is None or self.state.get("phase")!="PREP":
+            QMessageBox.warning(self,"PREP不可","選出3匹と初手の確定後のみ実行できます。")
             return
         if QMessageBox.question(
-            self,"PREPテストの確認",
-            "40秒のPREP試験を実行しますか？構築専用のLIVEマトリクスがなければ評価を行いません。",
+            self,"PREP再実行の確認",
+            "まだ対戦が始まっていない場合だけ40秒PREPを再実行しますか？",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )!=QMessageBox.StandardButton.Yes:return
-        self._set_busy(True)
-        self._active_job="prep"
-        self._thread=QThread(self)
-        self._worker=_ReplayWorker(
+        self._start_prep_auto()
+
+    def _start_prep_auto(self):
+        if (self.state is None or self.state.get("phase")!="PREP"
+                or self._prep_thread is not None or self._thread is not None):
+            return
+        if not self.state.get("matrix_compatible"):
+            self.state["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
+            self._render({"status":"PREP_UNAVAILABLE",
+                          "reason":"OWN_MATRIX_MISMATCH"})
+            return
+        self._prep_cancel_event.clear()
+        self.state["prep_status"]="RUNNING"
+        self._prep_thread=QThread(self)
+        self._prep_worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
-            assets=self.assets, state=self.state, job="prep")
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._completed)
-        self._worker.finished.connect(self._thread.quit)
-        self._thread.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(self._cleanup)
-        self._thread.start()
+            assets=self.assets, state=self.state, job="prep",
+            cancel_event=self._prep_cancel_event,
+        )
+        self._prep_worker.moveToThread(self._prep_thread)
+        self._prep_thread.started.connect(self._prep_worker.run)
+        self._prep_worker.finished.connect(self._on_prep_result)
+        self._prep_worker.finished.connect(self._prep_thread.quit)
+        self._prep_thread.finished.connect(self._prep_worker.deleteLater)
+        self._prep_thread.finished.connect(self._prep_thread.deleteLater)
+        self._prep_thread.finished.connect(self._prep_cleanup)
+        self._prep_timer.start(40000)
+        self._render({"status":"PREP_RUNNING",
+                      "message":"選出確定直後の40秒PREPを自動開始"})
+        self._prep_thread.start()
+
+    def _interrupt_prep(self):
+        if self._prep_thread is None:
+            return
+        self._prep_timer.stop()
+        self._prep_cancel_event.set()
+        if self.state is not None and self.state.get("phase")=="PREP":
+            self.state["prep_status"]="INTERRUPTED_BY_NEW_BATTLE_SCREEN"
+
+    def _prep_deadline(self):
+        if self._prep_thread is None:
+            return
+        self._prep_cancel_event.set()
+        if self.state is not None and self.state.get("phase")=="PREP":
+            self.state["prep_status"]="DEADLINE_EXCEEDED"
+            self._render({"status":"PREP_DEADLINE_EXCEEDED",
+                          "message":"40秒以内にPREP完了を確認できませんでした"})
+
+    @Slot(object)
+    def _on_prep_result(self, payload):
+        self._prep_timer.stop()
+        if (self._prep_cancel_event.is_set() or self.state is None
+                or self.state.get("phase")!="PREP"
+                or self.state.get("prep_status")!="RUNNING"
+                or self._pending_batch is not None):
+            return  # Late/stale PREP must not overwrite a live battle.
+        result=payload["report"]
+        if result.get("status")=="CANCELLED":
+            return
+        if result.get("status") in ("ERROR", "DEADLINE_EXCEEDED"):
+            self.state["prep_status"]=(
+                "ERROR" if result["status"]=="ERROR" else "DEADLINE_EXCEEDED"
+            )
+            result={**result,"status":"PREP_ERROR" if result["status"]=="ERROR"
+                    else "PREP_DEADLINE_EXCEEDED"}
+        else:
+            self.state=payload["state"]
+        self.entries.append({"step":len(self.entries)+1, **result})
+        self._render(self.entries[-1])
+
+    @Slot()
+    def _prep_cleanup(self):
+        self._prep_thread=None
+        self._prep_worker=None
 
     def _set_busy(self,busy):
         for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button,self.reconnect_button):
@@ -945,7 +1033,7 @@ class MatchReplayDialog(QDialog):
 
     def closeEvent(self, event):
         self._stop_auto()
-        if self._thread is not None:
+        if self._thread is not None or self._prep_thread is not None:
             # Never destroy a QThread while a network request is still
             # running. Closing will be possible after it completes.
             event.ignore()

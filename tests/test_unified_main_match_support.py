@@ -212,6 +212,118 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertEqual(cap.call_count,5)
         panel._stop_auto()
 
+    def test_turn_and_switch_calibration_use_five_class_labels(self):
+        panel=self.window._match_panel
+        from champions_assist.app_config import CaptureConfiguration
+        panel.capture_config=CaptureConfiguration(
+            backend="WINDOWS_NATIVE", selected_window_identity={"hwnd":2},
+            game_viewport_normalized=(0,0,1,1))
+        panel.state={"phase":"BATTLE","matrix_compatible":True}
+        image=np.full((120,200,3),60,dtype=np.uint8)
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=image), patch.object(panel,"_queue_batch") as send:
+            panel._calibrate("TURN_ACTION")
+            panel._calibrate("SWITCH_SELECTION")
+            self.assertIn("TURN_ACTION",panel._turn_buffer.templates)
+            self.assertIn("SWITCH_SELECTION",panel._turn_buffer.templates)
+            self.assertIn("技選択画面",panel.menu_detection_label.text())
+            self.assertIn("交代画面",panel.menu_detection_label.text())
+            self.assertTrue(panel._eligible_menu("TURN_ACTION"))
+            self.assertTrue(panel._eligible_menu("SWITCH_SELECTION"))
+            panel._auto_running=True
+            panel._calibrate("TURN_ACTION")
+            send.assert_called_once()
+            self.assertEqual(send.call_args.kwargs["screen_label"],"TURN_ACTION")
+        panel._stop_auto()
+
+    def test_selection_confirmation_automatically_starts_prep_once(self):
+        from champions_assist.match_replay import new_replay
+        from champions_assist.preload import MasterPreloader
+        panel=self.window._match_panel
+        member=self.service.import_team(
+            MASTER_DIR / "Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(member.team_id,match_active=False)
+        assets=MasterPreloader(MASTER_DIR,team_source=self.service.teams.path_for_next_match(member.team_id)).load_for_new_match()
+        self.assertTrue(assets.matrix_index)
+        panel.assets=assets
+        panel.state=new_replay(assets)
+        panel.state["phase"]="SELECTION"
+        panel.state["opponent_six"]=list(assets.matrix_index)[:6]
+        panel.actual_three.setText("マスカーニャ / アシレーヌ / ガブリアス")
+        panel.actual_lead.setText("マスカーニャ")
+        with patch.object(panel,"_start_prep_auto") as launch:
+            panel._confirm_selection()
+            launch.assert_called_once()
+        self.assertEqual(panel.state["phase"],"PREP")
+        self.assertEqual(panel.state["prep_status"],"PENDING")
+
+    def test_prep_interruption_prioritizes_battle_batch_without_waiting(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel._auto_running=True
+        panel._prep_thread=object()
+        panel._prep_cancel_event.clear()
+        panel._prep_timer.start(40000)
+        image=np.zeros((100,160,3),dtype=np.uint8)
+        try:
+            with patch.object(panel,"_send_pending") as queued:
+                panel._queue_batch([image],screen_label="TURN_ACTION")
+                queued.assert_called_once()
+                self.assertTrue(panel._prep_cancel_event.is_set())
+                self.assertEqual(panel.state["prep_status"],"INTERRUPTED_BY_NEW_BATTLE_SCREEN")
+            old={"state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
+                 "report":{"status":"PREP_STRUCTURE_OK"}}
+            panel._on_prep_result(old)
+            self.assertEqual(panel.state["prep_status"],"INTERRUPTED_BY_NEW_BATTLE_SCREEN")
+        finally:
+            panel._prep_thread=None
+            panel._prep_timer.stop()
+            panel._pending_batch=None
+            panel._stop_auto()
+
+    def test_unclassified_fallback_waits_for_verified_battle_before_prep_interrupt(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel._auto_running=True
+        panel._prep_thread=object()
+        panel._prep_cancel_event.clear()
+        image=np.zeros((100,160,3),dtype=np.uint8)
+        try:
+            with patch.object(panel,"_send_pending") as queued:
+                panel._queue_batch([image],screen_label=None)
+                queued.assert_called_once()
+            self.assertFalse(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["prep_status"],"RUNNING")
+            # An actual image observation (not the fallback scene delta)
+            # has now confirmed an opponent's turn.
+            panel._pending_batch=None
+            panel._active_job="batch"
+            panel._completed({
+                "state":{"phase":"BATTLE","prep_status":"INTERRUPTED_BY_BATTLE_SCREEN"},
+                "report":{"status":"OBSERVED","recommendation":""}})
+            self.assertTrue(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["phase"],"BATTLE")
+        finally:
+            panel._prep_thread=None
+            panel._pending_batch=None
+            panel._stop_auto()
+
+    def test_prep_timeout_discards_late_result(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel._prep_thread=object()
+        panel._prep_cancel_event.clear()
+        try:
+            panel._prep_deadline()
+            self.assertEqual(panel.state["prep_status"],"DEADLINE_EXCEEDED")
+            panel._on_prep_result({
+                "state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
+                "report":{"status":"PREP_STRUCTURE_OK"}})
+            self.assertEqual(panel.state["prep_status"],"DEADLINE_EXCEEDED")
+        finally:
+            panel._prep_thread=None
+
     def test_local_classifier_triggers_on_two_stable_selection_frames(self):
         from champions_assist.screen_classifier import ScreenPrediction
         panel=self.window._match_panel
@@ -283,6 +395,31 @@ class UnifiedMainWindowTests(unittest.TestCase):
             worker.stop.assert_called_once_with(wait=False)
             self.assertTrue(panel._auto_running)
             self.assertIsNone(panel._background_capture)
+        panel._stop_auto()
+
+    def test_prep_auth_error_does_not_leave_running_forever(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel._prep_cancel_event.clear()
+        panel._on_prep_result({
+            "state":{"phase":"PREP","prep_status":"RUNNING"},
+            "report":{"status":"ERROR","reason":"SignInError"}})
+        self.assertEqual(panel.state["prep_status"],"ERROR")
+        self.assertEqual(panel.entries[-1]["status"],"PREP_ERROR")
+
+    def test_superseded_api_response_does_not_revert_battle_state(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel.state={"phase":"BATTLE","our_active":"アシレーヌ"}
+        panel._pending_batch=[np.zeros((16,20,3),dtype=np.uint8)]
+        panel._completed({
+            "state":{"phase":"BATTLE","our_active":"マスカーニャ"},
+            "report":{"status":"ADVICE","recommendation":"はたきおとす。"}})
+        self.assertEqual(panel.entries[-1]["status"],"SUPERSEDED")
+        self.assertEqual(panel.state["our_active"],"アシレーヌ")
+        self.assertEqual(panel.entries[-1]["recommendation"],"")
+        panel._pending_batch=None
         panel._stop_auto()
 
     def test_ai_dispatch_attempt_and_response_are_visible_in_main_header(self):
