@@ -488,7 +488,8 @@ _BATCH_SCHEMA = {
 
 def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      access_token: str, model: str, total_seconds: float = 35.0,
-                     client_factory=None, reasoning_effort: str = "auto") -> tuple[dict, dict]:
+                     client_factory=None, reasoning_effort: str = "auto",
+                     local_field_candidates: list[dict] | None = None) -> tuple[dict, dict]:
     """Process chronological local snapshots in ONE Responses call.
 
     Observations remain unverified. The existing replay reducer enforces
@@ -521,6 +522,10 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             "history":state.get("history",[])[-6:],
             "matrix_compatible":state.get("matrix_compatible",False),
         }
+        if local_field_candidates:
+            # Local ROI OCR is non-authoritative and may be wrong: attach it
+            # separately, never merge into the verified battle snapshot.
+            prompt["local_field_candidates_unverified"] = local_field_candidates[:12]
         if phase in ("MATCHMAKING","SELECTION"):
             # Six fixed rows are supplied only for opponents that are known.
             opp=tuple(state.get("opponent_six") or ())
@@ -553,6 +558,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "registered own six, frozen LIVE gate and compatible matrix rows "
                 "when supplied, select exactly three and lead. Do not invent "
                 "opponent sets, actions, mechanic effects, or unseen HP. "
+                "Any local_field_candidates_unverified are optional untrusted "
+                "OCR hints, never confirmed mechanics or override evidence. "
                 "Choose only currently visible moves and party switches. "
                 "If uncertain, use NO_ACTION and empty strings/arrays."
             ),

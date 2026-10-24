@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Mapping, Protocol
 
+from .battle_visual_fields import HpBarCalibration, IconCalibration, VisualCandidateStabilizer, estimate_hp_bar, recognize_icon
 from .capture import Frame
 from .effect_catalog import FrozenEffectCatalog
 from .fsm import MatchSession, ObservationEvent, VisualUI
@@ -133,6 +134,8 @@ class ObserverPipeline:
         change_threshold: float = 2.0,
         stable_frames: int = 2,
         recent_frame_limit: int = 120,
+        hp_calibrations: tuple[HpBarCalibration, ...] = (),
+        icon_calibrations: tuple[IconCalibration, ...] = (),
     ) -> None:
         if session.store is not store:
             raise ValueError("observer pipeline and session must use the same BattleStore")
@@ -165,6 +168,10 @@ class ObserverPipeline:
         self._processed_event_seq = 0
         self._recent_frames: deque[Frame] = deque(maxlen=recent_frame_limit)
         self._reanalysis_seq = 0
+        self.hp_calibrations = hp_calibrations
+        self.icon_calibrations = icon_calibrations
+        self.visual_stabilizer = VisualCandidateStabilizer()
+        self._visual_last_values: dict[str, object] = {}
 
     def process_frame(self, frame: Frame, *, now_ms: int | None = None, actual_ui_remaining_ms: int | None = None) -> FrameObservation:
         started = perf_counter()
@@ -218,6 +225,7 @@ class ObserverPipeline:
             capture_seq=frame.capture_seq,
         )
 
+        self._observe_visual_fields(frame, raw_observation_id)
         applied_events: list[ObservedEvent] = []
         for event in pending_events:
             self._observed_event_seq += 1
@@ -252,6 +260,48 @@ class ObserverPipeline:
             processing_ms=(perf_counter() - started) * 1000.0,
             ocr_text={name: parsed.text for name, parsed in parsed_rois.items()},
         )
+
+
+    def _observe_visual_fields(self, frame: Frame, raw_observation_id: str) -> None:
+        """Persist calibrated local image observations without confirming gameplay.
+
+        Calibration is opt-in and empty by default. Values remain CANDIDATE,
+        and the v2.3 tactical snapshot receives an explicit uncertainty rather
+        than silently replacing a confirmed HP/species/ability.
+        """
+        candidates = []
+        for cal in self.hp_calibrations:
+            item = estimate_hp_bar(frame.image, cal, frame_id=raw_observation_id)
+            if item is not None:
+                candidates.append(item)
+        for cal in self.icon_calibrations:
+            item = recognize_icon(frame.image, cal, frame_id=raw_observation_id)
+            if item is not None:
+                candidates.append(item)
+        for candidate in candidates:
+            repeated = self.visual_stabilizer.observe(candidate)
+            if repeated is None:
+                continue
+            if self._visual_last_values.get(candidate.field) == candidate.value:
+                continue
+            evidence_id = f"{raw_observation_id}:visual:{candidate.field}"
+            applied = self.store.append_evidence(
+                self.session.match_id, evidence_id,
+                field=candidate.field, value=candidate.value,
+                source_kind="UI_DIRECT", quality="CANDIDATE",
+            )
+            if not applied:
+                continue
+            self._visual_last_values[candidate.field] = candidate.value
+            existing = list(self.session.state_facts.get("uncertainties", []))
+            note = f"{candidate.field}: {candidate.value} ({candidate.reason}; evidence={','.join(repeated.evidence_ids)})"
+            # Bound the request size; observations remain append-only in SQLite.
+            existing.append(note)
+            self.session.update_observed_state(
+                evidence_id + ":uncertain",
+                {"uncertainties": existing[-20:]},
+                source_kind="UI_DIRECT", quality="CANDIDATE",
+            )
 
     def recent_frames(self) -> tuple[Frame, ...]:
         """Return the in-memory replay buffer; source pixels are never exported here."""

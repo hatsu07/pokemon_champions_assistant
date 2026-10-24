@@ -11,6 +11,7 @@ import numpy as np
 
 from champions_assist.__main__ import main
 from champions_assist.calibration import CalibrationLabels, OfflineReplayRunner
+from champions_assist.battle_visual_fields import HpBarCalibration
 from champions_assist.capture import CaptureUnavailable, Frame, ImageFileFrameSource, SyntheticFrameSource, VideoFrameSource
 from champions_assist.effect_catalog import EffectRule, FrozenEffectCatalog
 from champions_assist.fsm import MatchController, ObservationEvent, WindowKind, WindowStatus
@@ -149,6 +150,38 @@ class Phase4TestCase(unittest.TestCase):
         result = pipe.process_frame(frame("party", 2, party))
         self.assertEqual(result.classification.visual_ui, DetectedUI.PARTY_MENU)
         self.assertEqual(session.current_window.kind, WindowKind.FAINT_REPLACEMENT)
+
+    def test_local_hp_candidate_is_evidence_not_a_confirmed_state_fact(self) -> None:
+        from champions_assist.session_payloads import build_session_payload
+
+        session = self.battle_session("local-hp")
+        bar_roi = NormalizedROI("HP", 0, 1 / 6, 1, 5 / 12)
+        bar = HpBarCalibration("opponent", bar_roi, (30, 100, 100), (95, 255, 255))
+        pipe = ObserverPipeline(
+            session=session, store=self.store, roi_config=self.config,
+            ui_classifier=self.classifier(),
+            ocr_engine=MappingOcrEngine({}),
+            text_parser=TextObservationParser((), lexicon=ScreenLexicon()),
+            classification_roi_name="ROI_STATUS",
+            ocr_roi_names=(),
+            stable_frames=1,
+            hp_calibrations=(bar,),
+        )
+        image = synthetic_image(DetectedUI.ACTION_RESOLUTION)
+        image[10:25, :48] = (20, 220, 30)
+        pipe.process_frame(frame("hp-1", 1, image))
+        self.assertNotIn("uncertainties", session.state_facts)
+        pipe.process_frame(frame("hp-2", 2, image.copy()))
+        self.assertIn("hp_status.opponent", session.state_facts["uncertainties"][0])
+        self.assertNotIn("hp_status", session.state_facts)
+        fields = self.store.replay(session.match_id)["fields"]
+        self.assertEqual(fields["hp_status.opponent"]["certainty"], "CANDIDATE")
+        payload = build_session_payload(session, phase="REVIEW", request_id="r-hp", now_ms=200)
+        self.assertEqual(payload["snapshot_quality"]["readiness"], "READY_WITH_UNCERTAINTY")
+        self.assertTrue(payload["snapshot_quality"]["material_unknowns"])
+        initial_seq = session.observation_seq
+        pipe.process_frame(frame("hp-3", 3, image.copy()))
+        self.assertEqual(session.observation_seq, initial_seq)
 
     def test_duplicate_message_is_not_applied_twice_but_later_episode_is_new(self) -> None:
         session = self.battle_session()

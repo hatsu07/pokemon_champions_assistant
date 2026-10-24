@@ -28,6 +28,8 @@ from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep, run_replay_batch
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
+from .calibrated_screen_fields import ScreenFieldProfile, observe_screen_fields, candidates_for_prompt
+from .ocr import TesseractJapaneseOcr, image_digest
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
@@ -40,10 +42,12 @@ class _ReplayWorker(QObject):
     def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
-                 cancel_event=None, frames=None):
+                 cancel_event=None, frames=None, screen_label=None, field_profile=None):
         super().__init__()
         self.job=job
         self.frames=frames
+        self.screen_label=screen_label
+        self.field_profile=field_profile
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -65,12 +69,38 @@ class _ReplayWorker(QObject):
                     reasoning_effort=self.reasoning_effort,
                 )
             elif self.job=="batch":
+                # Optional OCR happens in the worker, never on the 300ms Qt
+                # capture-polling thread. One battle decision remains one AI
+                # call; no extra OCR-triggered tactic request.
+                from time import perf_counter
+                batch_started=perf_counter()
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
                 self.progress.emit("ChatGPT認証確認中")
                 token=auth.access_token()
                 self.progress.emit("AI画像送信処理中（結果待ち）")
+                local_candidates=[]
+                field_label = self.screen_label
+                if field_label is None and self.state.get("phase") in ("PREP", "BATTLE"):
+                    field_label = "HUD_UNCLASSIFIED"
+                if self.field_profile is not None and field_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","HUD_UNCLASSIFIED"):
+                    try:
+                        frame=self.frames[-1]
+                        profile=self.field_profile
+                        if profile.compatible(frame):
+                            self.progress.emit("ローカル文字認識中（未確認の観測候補）")
+                            reads=observe_screen_fields(
+                                frame, label=field_label,
+                                frame_id=image_digest(frame),
+                                ocr_engine=TesseractJapaneseOcr(),
+                                profile=profile,
+                            )
+                            local_candidates=candidates_for_prompt(reads)
+                    except Exception:
+                        # The unvalidated optional OCR cannot disable the
+                        # existing image-to-AI fallback or invent a fact.
+                        local_candidates=[]
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
                     # Team preview needs the exact six LIVE matrix rows AFTER
                     # reading the opponent icons; do not guess selection in
@@ -82,11 +112,23 @@ class _ReplayWorker(QObject):
                     )
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
-                    next_state,report=run_replay_batch(
-                        self.frames, state=self.state, assets=self.assets,
-                        access_token=token,model=self.selected_model,
-                        reasoning_effort=self.reasoning_effort,
-                    )
+                    remaining=35.0-(perf_counter()-batch_started)
+                    if remaining<=1.0:
+                        next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"OCR_OR_AUTH_BUDGET"}
+                    else:
+                        next_state,report=run_replay_batch(
+                            self.frames, state=self.state, assets=self.assets,
+                            access_token=token,model=self.selected_model,
+                            reasoning_effort=self.reasoning_effort,
+                            total_seconds=remaining,
+                            local_field_candidates=local_candidates,
+                        )
+                report["local_field_candidates_unverified"]=local_candidates
+                report["screen_label_source"]=(
+                    "FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label
+                    else "HUD_NUMBERS_ONLY_UNCLASSIFIED"
+                    if field_label == "HUD_UNCLASSIFIED" else "UNKNOWN"
+                )
                 self.finished.emit({"state":next_state,"report":report})
             elif self.job=="auto_frame":
                 # Capture and model transport run on this worker thread.
@@ -169,6 +211,8 @@ class MatchReplayDialog(QDialog):
         self._screen_model,self._screen_model_status=load_bundled_classifier(device="cpu")
         self._last_local_class=None
         self._pending_batch=None
+        self._pending_screen_label=None
+        self._field_profile=None
         self._manual_submission=False
         self._latest_image=None
         self._preview_last_at=None
@@ -289,6 +333,18 @@ class MatchReplayDialog(QDialog):
             self.assets=MasterPreloader(self.master_directory,
                                         team_source=self.team_path).load_for_new_match()
             self.state=new_replay(self.assets)
+            # Read the optional PRIVATE ROI profile once at match start.
+            # Calibration does not bypass or replace the four-master load.
+            private_profile=self.store_root / "calibration" / "screen_fields.json"
+            try:
+                self._field_profile=(
+                    ScreenFieldProfile.from_json(private_profile)
+                    if private_profile.is_file()
+                    else ScreenFieldProfile.from_user_samples_960x572()
+                )
+            except (OSError, ValueError, TypeError, KeyError):
+                # A broken optional profile cannot alter tactical facts.
+                self._field_profile=None
             self.match_id="capture-"+uuid4().hex
             self.entries=[]
             self.actual_three.clear()
@@ -299,6 +355,7 @@ class MatchReplayDialog(QDialog):
             self._screen_gate.reset()
             self._last_local_class=None
             self._pending_batch=None
+            self._pending_screen_label=None
             self._ai_request_attempts=0
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
             self._update_menu_detection_label()
@@ -317,6 +374,8 @@ class MatchReplayDialog(QDialog):
         self._screen_gate.reset()
         self._last_local_class=None
         self._pending_batch=None
+        self._pending_screen_label=None
+        self._field_profile=None
         self.assets=None
         self.state=None
         self.entries=[]
@@ -478,6 +537,7 @@ class MatchReplayDialog(QDialog):
         self._poll_timer.stop()
         self._poll_timer.setInterval(300)
         self._pending_batch=None
+        self._pending_screen_label=None
         self._latest_image=None
         self._automatic_probe.reset()
         self._screen_gate.reset()
@@ -501,7 +561,9 @@ class MatchReplayDialog(QDialog):
                 if not self._automatic_probe.recently_submitted(image):
                     self._automatic_probe.acknowledge(image,self.state["phase"])
                     self._screen_gate.acknowledge(kind,self.state["phase"])
-                    self._queue_batch(self._turn_buffer.batch(image))
+                    self._queue_batch(self._turn_buffer.batch(image), screen_label={
+                        "TEAM_SELECTION":"TEAM_SELECTION", "MOVE_MENU":"TURN_ACTION",
+                        "PARTY_MENU":"SWITCH_SELECTION"}.get(kind))
             else:
                 self._turn_buffer.calibrate(kind,image)
                 self._update_menu_detection_label()
@@ -528,11 +590,12 @@ class MatchReplayDialog(QDialog):
         except AutoCaptureUnavailable as exc:
             QMessageBox.warning(self,"撮影失敗",str(exc))
 
-    def _queue_batch(self,frames):
+    def _queue_batch(self,frames, *, screen_label=None):
         if not self._auto_running and not self._manual_submission:
             return
         # At most one pending batch: new observed events replace stale ones.
         self._pending_batch=list(frames)
+        self._pending_screen_label=screen_label
         self._send_pending()
 
     def _send_pending(self):
@@ -542,7 +605,9 @@ class MatchReplayDialog(QDialog):
             self._pending_batch=None
             return
         frames=self._pending_batch
+        screen_label=self._pending_screen_label
         self._pending_batch=None
+        self._pending_screen_label=None
         self._turn_buffer.reset_turn()
         self._ai_request_attempts+=1
         self._set_ai_status(
@@ -562,6 +627,8 @@ class MatchReplayDialog(QDialog):
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="batch",
             frames=frames,cancel_event=self._cancel_event,
+            screen_label=screen_label,
+            field_profile=self._field_profile,
         )
         self._worker.moveToThread(self._thread)
         self._worker.progress.connect(self._on_ai_progress)
@@ -619,7 +686,9 @@ class MatchReplayDialog(QDialog):
         if kind is not None and self._eligible_menu(kind):
             self._automatic_probe.acknowledge(image,phase)
             self._screen_gate.acknowledge(kind,phase)
-            self._queue_batch(self._turn_buffer.batch(image))
+            self._queue_batch(self._turn_buffer.batch(image), screen_label={
+                "TEAM_SELECTION":"TEAM_SELECTION", "MOVE_MENU":"TURN_ACTION",
+                "PARTY_MENU":"SWITCH_SELECTION"}.get(kind))
             return
 
         if self._screen_model is not None:
@@ -641,7 +710,7 @@ class MatchReplayDialog(QDialog):
                 classified=self._screen_gate.observe(prediction,phase)
                 if classified is not None:
                     self._automatic_probe.acknowledge(image,phase)
-                    self._queue_batch(self._turn_buffer.batch(image))
+                    self._queue_batch(self._turn_buffer.batch(image), screen_label=classified)
                 # A validated installed model is the default trigger. Do not
                 # also fire an unrelated image-change gate for UNKNOWN frames.
                 return

@@ -148,12 +148,25 @@ def build_session_payload(session: MatchSession, *, phase: str, request_id: str,
         },
         "battle_state": _battle_state(session, selected),
         "snapshot_quality": {
-            "readiness": "READY_CONFIRMED",
+            # Candidates and pending effects must not be misrepresented as
+            # confirmed facts. Completeness of legal choices is a separate,
+            # mandatory precondition enforced by the model adapter.
+            "readiness": (
+                "READY_WITH_UNCERTAINTY"
+                if session.state_facts.get("uncertainties") or session.state_facts.get("unresolved_event_ids")
+                else "READY_CONFIRMED"
+            ),
             "critical_unknowns": [],
-            "material_unknowns": [],
-            "pending_event_ids": [],
+            "material_unknowns": [
+                str(item) for item in session.state_facts.get("uncertainties", [])
+            ],
+            "pending_event_ids": [
+                str(item) for item in session.state_facts.get("unresolved_event_ids", [])
+            ],
             "evidence_seq_through": session.observation_seq,
-            "reason": "phase_2_frozen_session_snapshot",
+            "reason": "observation_candidates_present" if (
+                session.state_facts.get("uncertainties") or session.state_facts.get("unresolved_event_ids")
+            ) else "phase_2_frozen_session_snapshot",
         },
         "previous_ai_plan": {
             "parent_decision_window_id": None if plan is None else plan.source_window_id,
