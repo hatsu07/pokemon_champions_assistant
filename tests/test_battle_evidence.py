@@ -131,6 +131,25 @@ class BattleEvidenceTests(unittest.TestCase):
                      observed_event="OUR_FAINTED")
         self.assertFalse(self.state["battle_evidence"]["choice_lock"]["move"])
 
+    def test_mega_active_cannot_switch_to_itself_via_registered_alias(self):
+        self.advance("ACTION_RESOLUTION",our_active="メガルカリオZ",
+                     our_current_form="メガルカリオZ")
+        action=obs("PARTY_MENU",our_active="メガルカリオZ",
+                   visible_party=["ルカリオ","アシレーヌ"])
+        same={"action_kind":"SWITCH","switch_target":"ルカリオ → メガルカリオZ",
+              "move":"","warning":""}
+        reason,_=validate_battle_choice(same,action,self.state,self.assets)
+        self.assertEqual(reason,"SWITCH_TARGET_NOT_SELECTED")
+
+    def test_invalid_own_species_never_creates_an_execution_lock(self):
+        self.advance("ACTION_RESOLUTION",our_active="マスカーニャ")
+        self.advance("ACTION_RESOLUTION",our_active="他のポケモン",
+                     our_used_move="トリックフラワー",our_hp="1/100")
+        memory=self.state["battle_evidence"]
+        self.assertFalse(memory["choice_lock"]["move"])
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+        self.assertNotEqual(memory["hp_by_pokemon"]["own"].get("マスカーニャ"),"1/100")
+
     def test_stat_changes_are_observed_not_guessed(self):
         self.advance("ACTION_RESOLUTION",our_active="マスカーニャ",
                      opponent_active="ガブリアス",messages=["能力が変化した"])
