@@ -203,6 +203,7 @@ class ScreenClassifierTests(unittest.TestCase):
         self.assertEqual(gate.observe(p("TURN_ACTION"),"BATTLE"),"TURN_ACTION")
         self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
+        self.assertEqual(gate.observe(p("BATTLE_EVENT"),"BATTLE"),"BATTLE_EVENT")
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
         # Dedup until another (non-action, non-event) screen rearms the gate.
         self.assertIsNone(gate.observe(p("OTHER"),"BATTLE"))
