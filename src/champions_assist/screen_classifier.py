@@ -168,6 +168,7 @@ class ClassifiedMenuGate:
         self.streak=0
         self.armed=True
         self.misses=0
+        self.last_emitted=None
 
     def acknowledge(self, kind: str, phase: str) -> None:
         """Explicit or template-triggered dispatch disarms duplicate model hits."""
@@ -176,6 +177,7 @@ class ClassifiedMenuGate:
         self.candidate=kind
         self.streak=self.stable_frames
         self.armed=False
+        self.last_emitted=kind
 
     def observe(self, prediction: ScreenPrediction, phase: str) -> str | None:
         if phase!=self.phase:
@@ -191,6 +193,7 @@ class ClassifiedMenuGate:
             self.streak=0
             if self.misses>=2:
                 self.armed=True
+                self.last_emitted=None
             return None
         self.misses=0
         if kind!=self.candidate:
@@ -198,7 +201,11 @@ class ClassifiedMenuGate:
             self.streak=1
         else:
             self.streak+=1
-        if self.armed and self.streak>=self.stable_frames:
+        # Event and action categories can follow one another directly.
+        # Deduplicate steady frames of one category until the kind changes
+        # or two unrelated frames permit the same category again.
+        if self.streak>=self.stable_frames and (self.armed or kind!=self.last_emitted):
             self.armed=False
+            self.last_emitted=kind
             return kind
         return None
