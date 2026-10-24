@@ -133,11 +133,13 @@ def observe_screen_fields(
     if not profile.compatible(image):
         return ()
     candidates = []
+    attempted = 0
     for region in profile.regions:
         if label not in region.applicable_labels:
             continue
-        if len(candidates) >= max_rois:
+        if attempted >= max_rois:
             break
+        attempted += 1
         crop = profile.crop(image, region)
         reading = ocr_engine.read(crop, roi_name=region.name)
         candidate = parse_field_text(region, reading.text, frame_id=frame_id)
