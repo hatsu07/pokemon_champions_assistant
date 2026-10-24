@@ -57,6 +57,21 @@ def inspect_legacy_five_class_model(source_dir: Path) -> dict[str, Any]:
     return info
 
 
+def _check_container_output_owner(*, effective_uid: int, parent_uid: int) -> None:
+    """Refuse inaccessible root-owned archives on a non-root WSL bind mount.
+
+    tempfile.TemporaryDirectory uses mode 0700. Running Docker's dev
+    container as root and renaming that directory into a host-owned output
+    folder creates a model directory the host user cannot enter.
+    """
+    if effective_uid == 0 and parent_uid != 0:
+        raise ValueError(
+            'OUTPUT_OWNER_MISMATCH: Docker is root but the output folder is '
+            'host-owned. Re-run with docker compose run --rm --user '
+            '"$(id -u):$(id -g)" dev ...; do not use chmod 777.'
+        )
+
+
 def upgrade_legacy_five_class_model(
     source_dir: Path, destination_dir: Path, *, apply: bool = False,
 ) -> dict[str, Any]:
@@ -69,6 +84,13 @@ def upgrade_legacy_five_class_model(
         raise ValueError("destination must be a new, non-existing directory")
     if real_destination == real_source or real_destination.parent != real_source.parent:
         raise ValueError("destination must be a new sibling of the source folder")
+    # Check on apply only: dry runs must remain available for inspection,
+    # including when a previously root-owned directory needs manual repair.
+    if apply and os.name == "posix":
+        _check_container_output_owner(
+            effective_uid=os.geteuid(),
+            parent_uid=real_destination.parent.stat().st_uid,
+        )
     result = {
         "source": str(real_source),
         "destination": str(real_destination),
