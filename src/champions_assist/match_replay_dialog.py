@@ -81,14 +81,17 @@ class _ReplayWorker(QObject):
                 token=auth.access_token()
                 self.progress.emit("AI画像送信処理中（結果待ち）")
                 local_candidates=[]
-                if self.field_profile is not None and self.screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"):
+                field_label = self.screen_label
+                if field_label is None and self.state.get("phase") in ("PREP", "BATTLE"):
+                    field_label = "HUD_UNCLASSIFIED"
+                if self.field_profile is not None and field_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","HUD_UNCLASSIFIED"):
                     try:
                         frame=self.frames[-1]
                         profile=self.field_profile
                         if profile.compatible(frame):
                             self.progress.emit("ローカル文字認識中（未確認の観測候補）")
                             reads=observe_screen_fields(
-                                frame, label=self.screen_label,
+                                frame, label=field_label,
                                 frame_id=image_digest(frame),
                                 ocr_engine=TesseractJapaneseOcr(),
                                 profile=profile,
@@ -121,7 +124,11 @@ class _ReplayWorker(QObject):
                             local_field_candidates=local_candidates,
                         )
                 report["local_field_candidates_unverified"]=local_candidates
-                report["screen_label_source"]="FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label else "UNKNOWN"
+                report["screen_label_source"]=(
+                    "FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label
+                    else "HUD_NUMBERS_ONLY_UNCLASSIFIED"
+                    if field_label == "HUD_UNCLASSIFIED" else "UNKNOWN"
+                )
                 self.finished.emit({"state":next_state,"report":report})
             elif self.job=="auto_frame":
                 # Capture and model transport run on this worker thread.
