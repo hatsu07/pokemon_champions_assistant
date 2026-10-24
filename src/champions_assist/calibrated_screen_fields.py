@@ -120,7 +120,7 @@ def parse_field_text(region: FieldRegion, raw_text: str, *, frame_id: str) -> Vi
 def observe_screen_fields(
     image: np.ndarray, *, label: str, frame_id: str,
     ocr_engine: OcrEngine, profile: ScreenFieldProfile,
-    max_rois: int = 5,
+    max_rois: int = 7,
 ) -> tuple[VisualCandidate, ...]:
     """Extract bounded candidate observations; no network/API/strategy work.
 
