@@ -80,6 +80,13 @@ class SampleScreenFieldTests(unittest.TestCase):
         self.assertEqual(len(engine.calls), 2)
         self.assertEqual(len(candidates_for_prompt(observations)), 2)
         engine.calls.clear()
+        numbers_without_class = observe_screen_fields(
+            self.image, label="HUD_UNCLASSIFIED", frame_id="f-unclassified",
+            ocr_engine=engine, profile=self.profile,
+        )
+        self.assertEqual(len(numbers_without_class), 2)
+        self.assertEqual(engine.calls, ["own_hp_fraction", "opponent_hp_percent"])
+        engine.calls.clear()
         self.assertEqual(observe_screen_fields(
             self.image,label="UNKNOWN",frame_id="f-2",
             ocr_engine=engine,profile=self.profile), ())
