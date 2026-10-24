@@ -114,9 +114,20 @@ class MemoryAndReasoningTests(unittest.TestCase):
         after,report=run_replay_batch(
             [np.zeros((40,60,3),dtype=np.uint8)],
             state=state,assets=assets,access_token="dummy",model="test",
-            reasoning_effort="low",client_factory=lambda **kw:client)
+            reasoning_effort="low",client_factory=lambda **kw:client,
+            local_field_candidates=[{
+                "field":"screen_text.opponent_hp_percent",
+                "candidate":{"percent_displayed":97},
+                "certainty":"CANDIDATE","source":"ROI_OCR",
+                "evidence_ids":["synthetic-frame-1"],
+            }])
         self.assertEqual(len(client.responses.calls),1)
         self.assertEqual(client.responses.calls[0]["reasoning"],{"effort":"low"})
+        sent_prompt=json.loads(client.responses.calls[0]["input"][0]["content"][0]["text"])
+        self.assertEqual(sent_prompt["local_field_candidates_unverified"][0]["candidate"],
+                         {"percent_displayed":97})
+        self.assertEqual(sent_prompt["local_field_candidates_unverified"][0]["certainty"],
+                         "CANDIDATE")
         self.assertEqual(report["status"],"BLOCKED")
         self.assertEqual(report["reason"],"MOVE_NOT_VERIFIED")
         self.assertEqual(after["our_active"],own[0])
