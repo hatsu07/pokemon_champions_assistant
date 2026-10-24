@@ -18,7 +18,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QCheckBox, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -33,6 +33,8 @@ from .ocr import TesseractJapaneseOcr, image_digest
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
+from .background_training_capture import BackgroundTrainingCapture
+from .screen_dataset import new_session_id
 
 
 class _ReplayWorker(QObject):
@@ -221,6 +223,11 @@ class MatchReplayDialog(QDialog):
         self._capture_paused=False
         self._cancel_event=Event()
         self._auto_running=False
+        self._dataset_session_id=None
+        self._background_capture=None
+        self._storage_status_timer=QTimer(self)
+        self._storage_status_timer.setInterval(1500)
+        self._storage_status_timer.timeout.connect(self._refresh_training_capture_status)
         self._poll_timer=QTimer(self)
         self._poll_timer.setInterval(300)
         self._poll_timer.timeout.connect(self._capture_next)
@@ -235,7 +242,7 @@ class MatchReplayDialog(QDialog):
         panel=QVBoxLayout(self)
         intro=QLabel(
             "開始を一度押すと、設定したゲーム画面を自動キャプチャしてChatGPTに送信します。\\n"
-            "画像ファイルは保存しません。停止はいつでも可能。ゲームの操作は行いません。"
+            "学習用画像は明示同意ONの場合だけローカル保存します。停止はいつでも可能。ゲームの操作は行いません。"
         )
         intro.setWordWrap(True)
         panel.addWidget(intro)
@@ -281,6 +288,22 @@ class MatchReplayDialog(QDialog):
         row.addWidget(self.auto_button)
         row.addWidget(self.stop_button)
         panel.addLayout(row)
+        self.training_capture_check=QCheckBox(
+            "学習データ収集をON（対戦画面の未ラベルJPEGをローカル保存・最大2GB）"
+        )
+        self.training_capture_check.setObjectName("trainingCaptureOptIn")
+        self.training_capture_check.setChecked(False)
+        self.training_capture_check.toggled.connect(self._on_training_capture_toggle)
+        panel.addWidget(self.training_capture_check)
+        self.training_capture_status=QLabel(
+            "学習データ収集: OFF（通常は画面を保存しません）"
+        )
+        self.training_capture_status.setObjectName("trainingCaptureStatus")
+        self.training_capture_status.setWordWrap(True)
+        panel.addWidget(self.training_capture_status)
+        panel.addWidget(QLabel(
+            "対戦中は画像保存のみ。正解ラベルの確認・PNG保存は対戦後に画面収集アプリで行います。"
+        ))
         self.reconnect_button=QPushButton("撮影対象ウィンドウを再選択（ミラーリング対応）")
         self.reconnect_button.clicked.connect(self._reconnect_capture_window)
         panel.addWidget(self.reconnect_button)
@@ -346,6 +369,7 @@ class MatchReplayDialog(QDialog):
                 # A broken optional profile cannot alter tactical facts.
                 self._field_profile=None
             self.match_id="capture-"+uuid4().hex
+            self._dataset_session_id=new_session_id()
             self.entries=[]
             self.actual_three.clear()
             self.actual_lead.clear()
@@ -402,9 +426,11 @@ class MatchReplayDialog(QDialog):
         self.capture_preview.setPixmap(pixmap)
         self._preview_last_at=now
         self._preview_last_clock=datetime.now().strftime("%H:%M:%S")
+        storage=(" / 学習用JPEG保存ON" if self._background_capture is not None
+                 else " / 学習用画像保存なし")
         self.capture_preview_info.setText(
             f"撮影成功 {self._preview_last_clock} / 送信範囲 {width}×{height} px / "
-            "プレビューは最大2回/秒・画像ファイル保存なし")
+            "プレビューは最大2回/秒"+storage)
 
     def _clear_capture_preview(self, message: str) -> None:
         self._preview_last_at=None
@@ -503,10 +529,15 @@ class MatchReplayDialog(QDialog):
         if not self.capture_config.game_viewport_normalized:
             QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
             return
+        storage_note=(
+            "学習用JPEGもローカルへ保存します（最大2GB、未ラベル、人手承認まで学習不可）。"
+            if self.training_capture_check.isChecked()
+            else "学習用画像は保存しません。"
+        )
         if QMessageBox.question(self, "自動送信の確認",
                 "指定したゲーム画面をローカルで継続監視します。登録した選択画面を検出した時のみ、"
                 "直近の重要画像をまとめてChatGPTへ送信します。送信ごとの確認は行いません。"
-                "画像はファイル保存しません。開始しますか？",
+                +storage_note+"開始しますか？",
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
@@ -522,6 +553,8 @@ class MatchReplayDialog(QDialog):
         self._last_local_class=None
         self._pending_batch=None
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
+        if self.training_capture_check.isChecked():
+            self._begin_background_collection()
         self._poll_timer.start()
         # Starting capture must update the status before a menu triggers AI.
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
@@ -530,6 +563,7 @@ class MatchReplayDialog(QDialog):
         self._capture_next()
 
     def _stop_auto(self):
+        self._end_background_collection()
         self._cancel_event.set()
         self._auto_running=False
         self._capture_paused=False
@@ -547,6 +581,71 @@ class MatchReplayDialog(QDialog):
         # Previously the UI could still say "自動送信中" after stopping.
         if self.state is not None:
             self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
+
+    def _on_training_capture_toggle(self, enabled: bool) -> None:
+        if enabled and self._auto_running and self.state is not None:
+            self._begin_background_collection()
+        elif not enabled:
+            self._end_background_collection()
+        elif enabled:
+            self.training_capture_status.setText(
+                "学習データ収集: ON（AI監視の開始後にローカル保存を開始）"
+            )
+
+    def _begin_background_collection(self) -> None:
+        if self._background_capture is not None or not self.training_capture_check.isChecked():
+            return
+        if self._dataset_session_id is None:
+            self._dataset_session_id=new_session_id()
+        try:
+            collector=BackgroundTrainingCapture(
+                self.store_root/"private-training"/"screens",
+                self._dataset_session_id,
+            )
+            collector.start()
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Optional storage must never affect live recommendations.
+            self.training_capture_status.setText(
+                "学習データ収集開始不可: "+type(exc).__name__
+            )
+            return
+        self._background_capture=collector
+        self._storage_status_timer.start()
+        self._refresh_training_capture_status()
+
+    def _refresh_training_capture_status(self) -> None:
+        collector=self._background_capture
+        if collector is None:return
+        stats=collector.stats()
+        if stats.error:
+            self.training_capture_status.setText(
+                "学習画像保存停止: "+stats.error+
+                f" / 保存{stats.saved}枚・収集断念{stats.dropped}枚"
+            )
+            self._end_background_collection(keep_status=True)
+            return
+        self.training_capture_status.setText(
+            f"学習用JPEG保存中: {stats.saved}枚 / "
+            f"混雑で見送り{stats.dropped}枚・同一画面省略{stats.duplicates}枚 / "
+            "最大2GB・未ラベル"
+        )
+
+    def _end_background_collection(self, *, keep_status: bool = False) -> None:
+        collector=self._background_capture
+        self._background_capture=None
+        self._storage_status_timer.stop()
+        if collector is not None:
+            collector.stop(wait=False)  # Never wait for JPEG fsync on live UI.
+            if not keep_status:
+                stats=collector.stats()
+                self.training_capture_status.setText(
+                    f"学習画像保存停止: {stats.saved}枚・"
+                    f"混雑で見送り{stats.dropped}枚（未ラベルJPEGは保持）"
+                )
+        elif not keep_status and not self.training_capture_check.isChecked():
+            self.training_capture_status.setText(
+                "学習データ収集: OFF（通常は画面を保存しません）"
+            )
 
     def _calibrate(self, kind):
         if self.capture_config is None:
@@ -680,6 +779,8 @@ class MatchReplayDialog(QDialog):
             self.entries.append(report)
             self._render(report)
         self._latest_image=image
+        if self._background_capture is not None:
+            self._background_capture.offer(image)
         self._show_capture_preview(image)
         kind=self._turn_buffer.observe(image)
         phase=self.state.get("phase")
@@ -829,7 +930,8 @@ class MatchReplayDialog(QDialog):
         if self.state is None:return
         dest,_=QFileDialog.getSaveFileName(self,"対戦テスト結果を保存","","JSON (*.json)")
         if not dest:return
-        report={"scope":"OPT_IN_AUTO_CAPTURE_MATCH_SUPPORT_NO_IMAGE_STORAGE","model":self.model,
+        report={"scope":"OPT_IN_AUTO_CAPTURE_MATCH_SUPPORT","model":self.model,
+                "training_frames":"local_unlabelled_opt_in_not_exported",
                 "reasoning_effort":self.reasoning_effort,
                 "matrix_compatible":self.state["matrix_compatible"],
                 "state":self.state,"timeline":self.entries}
