@@ -42,11 +42,12 @@ class _ReplayWorker(QObject):
     def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
-                 cancel_event=None, frames=None, screen_label=None):
+                 cancel_event=None, frames=None, screen_label=None, field_profile=None):
         super().__init__()
         self.job=job
         self.frames=frames
         self.screen_label=screen_label
+        self.field_profile=field_profile
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -80,10 +81,10 @@ class _ReplayWorker(QObject):
                 token=auth.access_token()
                 self.progress.emit("AI画像送信処理中（結果待ち）")
                 local_candidates=[]
-                if self.screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"):
+                if self.field_profile is not None and self.screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"):
                     try:
                         frame=self.frames[-1]
-                        profile=ScreenFieldProfile.from_user_samples_960x572()
+                        profile=self.field_profile
                         if profile.compatible(frame):
                             self.progress.emit("ローカル文字認識中（未確認の観測候補）")
                             reads=observe_screen_fields(
@@ -204,6 +205,7 @@ class MatchReplayDialog(QDialog):
         self._last_local_class=None
         self._pending_batch=None
         self._pending_screen_label=None
+        self._field_profile=None
         self._manual_submission=False
         self._latest_image=None
         self._preview_last_at=None
@@ -324,6 +326,18 @@ class MatchReplayDialog(QDialog):
             self.assets=MasterPreloader(self.master_directory,
                                         team_source=self.team_path).load_for_new_match()
             self.state=new_replay(self.assets)
+            # Read the optional PRIVATE ROI profile once at match start.
+            # Calibration does not bypass or replace the four-master load.
+            private_profile=self.store_root / "calibration" / "screen_fields.json"
+            try:
+                self._field_profile=(
+                    ScreenFieldProfile.from_json(private_profile)
+                    if private_profile.is_file()
+                    else ScreenFieldProfile.from_user_samples_960x572()
+                )
+            except (OSError, ValueError, TypeError, KeyError):
+                # A broken optional profile cannot alter tactical facts.
+                self._field_profile=None
             self.match_id="capture-"+uuid4().hex
             self.entries=[]
             self.actual_three.clear()
@@ -354,6 +368,7 @@ class MatchReplayDialog(QDialog):
         self._last_local_class=None
         self._pending_batch=None
         self._pending_screen_label=None
+        self._field_profile=None
         self.assets=None
         self.state=None
         self.entries=[]
@@ -606,6 +621,7 @@ class MatchReplayDialog(QDialog):
             assets=self.assets,state=self.state,job="batch",
             frames=frames,cancel_event=self._cancel_event,
             screen_label=screen_label,
+            field_profile=self._field_profile,
         )
         self._worker.moveToThread(self._thread)
         self._worker.progress.connect(self._on_ai_progress)
