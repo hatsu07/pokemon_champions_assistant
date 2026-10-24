@@ -122,8 +122,18 @@ def confirm_actual_selection(state: dict, assets: FrozenMatchAssets,
 
 
 def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) -> None:
-    # Never use a model's recommended action to fabricate *observed* game state.
-    update_battle_evidence(state, obs, assets.own_team)
+    # Only observations of registered own members can update own state.
+    # An ambiguous own species must not attach its HP/move to the prior actor.
+    evidence_obs = dict(obs)
+    own_label = _canonical(str(obs.get("our_active") or ""))
+    if own_label and _member_for(own_label, assets) is None:
+        evidence_obs["our_active"] = ""
+        for key in ("our_hp", "our_used_move", "our_item_revealed",
+                    "our_ability_revealed", "our_current_form",
+                    "our_stat_changes", "our_status"):
+            evidence_obs[key] = ""
+    # Never use a model's recommended action to fabricate observed execution.
+    update_battle_evidence(state, evidence_obs, assets.own_team)
     for field in ("our_active", "opponent_active"):
         raw = obs.get(field) or ""
         name = _canonical(raw) if raw else ""
