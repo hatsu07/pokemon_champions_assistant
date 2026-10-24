@@ -70,7 +70,7 @@ class GroupingTests(unittest.TestCase):
                 i=len(seen)
                 if i<=2:
                     return ScreenPrediction("TEAM_SELECTION",.98,.93,0.1)
-                return ScreenPrediction("MOVE_MENU",.60,.10,0.1)
+                return ScreenPrediction("TURN_ACTION",.60,.10,0.1)
         groups=analyze_staged_session(self.staging.session_files(SESSION),classifier=Stub())
         self.assertEqual([g.count for g in groups],[2,2])
         self.assertEqual(groups[0].candidate,"TEAM_SELECTION")
@@ -85,15 +85,15 @@ class GroupingTests(unittest.TestCase):
             def predict(self,image,*,raw_label=False):
                 calls.append(raw_label)
                 if len(calls)==3:
-                    return ScreenPrediction("UNKNOWN",0.97,0.95,0.1)
+                    return ScreenPrediction("OTHER",0.97,0.95,0.1)
                 return ScreenPrediction("TEAM_SELECTION",0.96,0.89,0.1)
         groups=analyze_staged_session(self.staging.session_files(SESSION),classifier=Model())
         self.assertEqual(sum(g.count for g in groups),4)
         self.assertEqual([d.path for g in groups for d in g.frame_details],paths)
         self.assertEqual([d.predicted_label for g in groups for d in g.frame_details],
-                         ["TEAM_SELECTION","TEAM_SELECTION","UNKNOWN","TEAM_SELECTION"])
+                         ["TEAM_SELECTION","TEAM_SELECTION","OTHER","TEAM_SELECTION"])
         flagged=[d for g in groups for d in g.frame_details if d.review_flags]
-        self.assertTrue(any("UNKNOWNは重点確認" in d.review_flags for d in flagged))
+        self.assertTrue(any("OTHERは内容を確認" in d.review_flags for d in flagged))
         self.assertTrue(all(calls))
         self.assertEqual(self.dataset.audit()["total"],0)
 
@@ -110,7 +110,7 @@ class GroupingTests(unittest.TestCase):
             model.write_bytes(b"dummy bytes; synthetic session mock")
             manifest=folder/"champions_screen_classifier.json"
             manifest.write_text(json.dumps({
-                "schema_version":1,
+                "schema_version":2,
                 "validated":False,
                 "labels":list(LABELS),
                 "input_size":[160,160],
@@ -125,7 +125,7 @@ class GroupingTests(unittest.TestCase):
                 def get_inputs(self):
                     return [SimpleNamespace(name="rgb")]
                 def run(self,unused,feed):
-                    return [np.array([[1.0,0,0,0,0,0,0]],dtype=np.float32)]
+                    return [np.array([[10.0,0,0,0,0]],dtype=np.float32)]
 
             with self.assertRaisesRegex(ScreenClassifierError,"SCREEN_MODEL_NOT_VALIDATED"):
                 ScreenClassifier(model,manifest,session_factory=FakeSession)
@@ -133,7 +133,7 @@ class GroupingTests(unittest.TestCase):
                 model,manifest,experimental_for_labelling=True,session_factory=FakeSession)
             frame=np.full((64,64,3),120,dtype=np.uint8)
             self.assertEqual(experimental.predict(frame).label,"UNKNOWN")
-            self.assertEqual(experimental.predict(frame,raw_label=True).label,"MATCHMAKING")
+            self.assertEqual(experimental.predict(frame,raw_label=True).label,"TEAM_SELECTION")
             with patch("champions_assist.screen_auto_label.ScreenClassifier",
                        return_value=experimental) as ctor:
                 self.assertIs(load_suggestion_model(model),experimental)
