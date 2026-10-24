@@ -321,8 +321,8 @@ class MatchReplayDialog(QDialog):
         panel.addLayout(row)
         calibration=QHBoxLayout()
         for kind,label in (("TEAM_SELECTION","選出画面を登録"),
-                           ("MOVE_MENU","技選択画面を登録"),
-                           ("PARTY_MENU","交代画面を登録")):
+                           ("TURN_ACTION","技選択画面を登録"),
+                           ("SWITCH_SELECTION","交代画面を登録")):
             button=QPushButton(label)
             button.clicked.connect(lambda _checked=False, k=kind:self._calibrate(k))
             calibration.addWidget(button)
@@ -504,7 +504,7 @@ class MatchReplayDialog(QDialog):
 
     def _update_menu_detection_label(self) -> None:
         names={"TEAM_SELECTION":"選出画面",
-               "MOVE_MENU":"技選択画面","PARTY_MENU":"交代画面"}
+               "TURN_ACTION":"技選択画面","SWITCH_SELECTION":"交代画面"}
         found=[names[k] for k in names if k in self._turn_buffer.templates]
         self.menu_detection_label.setText(
             "標準自動認識: 有効 / 補助登録: "+
@@ -514,7 +514,7 @@ class MatchReplayDialog(QDialog):
         phase=(self.state or {}).get("phase")
         return (
             kind=="TEAM_SELECTION" and phase in ("MATCHMAKING","SELECTION")
-            or kind in ("MOVE_MENU","PARTY_MENU") and phase in ("PREP","BATTLE")
+            or kind in ("TURN_ACTION","SWITCH_SELECTION") and phase in ("PREP","BATTLE")
         )
 
     def _start_auto(self):
@@ -660,9 +660,7 @@ class MatchReplayDialog(QDialog):
                 if not self._automatic_probe.recently_submitted(image):
                     self._automatic_probe.acknowledge(image,self.state["phase"])
                     self._screen_gate.acknowledge(kind,self.state["phase"])
-                    self._queue_batch(self._turn_buffer.batch(image), screen_label={
-                        "TEAM_SELECTION":"TEAM_SELECTION", "MOVE_MENU":"TURN_ACTION",
-                        "PARTY_MENU":"SWITCH_SELECTION"}.get(kind))
+                    self._queue_batch(self._turn_buffer.batch(image), screen_label=kind)
             else:
                 self._turn_buffer.calibrate(kind,image)
                 self._update_menu_detection_label()
@@ -787,9 +785,7 @@ class MatchReplayDialog(QDialog):
         if kind is not None and self._eligible_menu(kind):
             self._automatic_probe.acknowledge(image,phase)
             self._screen_gate.acknowledge(kind,phase)
-            self._queue_batch(self._turn_buffer.batch(image), screen_label={
-                "TEAM_SELECTION":"TEAM_SELECTION", "MOVE_MENU":"TURN_ACTION",
-                "PARTY_MENU":"SWITCH_SELECTION"}.get(kind))
+            self._queue_batch(self._turn_buffer.batch(image), screen_label=kind)
             return
 
         if self._screen_model is not None:
