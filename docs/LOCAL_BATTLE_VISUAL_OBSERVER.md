@@ -70,6 +70,16 @@ A private profile can be generated from the in-code example using
 files and any icon exemplar images stay on the user's own computer.
 Do not update either calibration or the four master files mid-match.
 
+When a validated five-class prediction is unavailable and the existing
+visual-change fallback fires a battle/PREP request, the worker also attempts
+**only two HUD numeric ROIs** (`own_hp_fraction` and
+`opponent_hp_percent`) using `HUD_UNCLASSIFIED`. It does **not**
+infer the screen class, switch reason, event type, or legal move. No extra
+ChatGPT call is made; any recognized numbers are unverified hints. The
+existing full-image model call remains the source of UI interpretation.
+This fallback also requires the matching 960x572 viewport and local OCR
+availability.
+
 This is an **incremental hybrid path**: image sending still happens.
 Calibration from eight still frames has not justified disabling the visual
 fallback, sending screenshots as structured data alone, or automatically
