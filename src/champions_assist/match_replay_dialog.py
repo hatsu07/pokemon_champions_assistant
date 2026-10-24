@@ -705,8 +705,11 @@ class MatchReplayDialog(QDialog):
             return
         # A newly observed turn/party/event candidate outranks PREP.
         # Never wait for a 40-second PREP API call before requesting action.
-        if self.state is not None and self.state.get("phase")=="PREP":
+        if (self.state is not None and self.state.get("phase")=="PREP"
+                and screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT")):
             self._interrupt_prep()
+        # An unclassified image change is not proof that battle has started.
+        # Let the visual AI observation confirm the opponent lead first.
         # At most one pending batch: new observed events replace stale ones.
         self._pending_batch=list(frames)
         self._pending_screen_label=screen_label
@@ -849,6 +852,11 @@ class MatchReplayDialog(QDialog):
                     "recommendation":"","warning":"NEWER_COMMAND_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
+        if (not superseded and payload.get("state", {}).get("phase")=="BATTLE"
+                and self.state is not None and self.state.get("phase")=="PREP"):
+            # An unclassified fallback frame was verified by vision. End PREP
+            # without accepting any later stale PREP response.
+            self._interrupt_prep()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
             self.state=payload["state"]
@@ -879,6 +887,10 @@ class MatchReplayDialog(QDialog):
                                  "selected_three":self.state["selected_three"],
                                  "lead":self.state["lead"],"status":"CONFIRMED"})
             self._render(self.entries[-1])
+            # Prevent an unclassified fallback probe from redispatching the
+            # final selection screen as if it were the opponent's first turn.
+            if self._latest_image is not None:
+                self._automatic_probe.acknowledge(self._latest_image,"PREP")
             self._start_prep_auto()
         except (ValueError, KeyError) as exc:
             QMessageBox.warning(self,"実際の選出を確定できません",str(exc))
