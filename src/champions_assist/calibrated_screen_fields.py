@@ -183,14 +183,20 @@ def observe_screen_fields(
     UNKNOWN/OTHER do not invoke OCR.  For low-confidence classification the
     normal vision fallback is preserved.
     """
-    if label not in {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT"}:
+    if label not in {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "HUD_UNCLASSIFIED"}:
         return ()
     if not profile.compatible(image):
         return ()
     candidates = []
     attempted = 0
     for region in profile.regions:
-        if label not in region.applicable_labels:
+        if label == "HUD_UNCLASSIFIED":
+            # No validated screen classifier: safely OCR *numbers only* in
+            # stable HUD coordinates. Never infer a UI, legal action or
+            # event message from a scene label we do not have.
+            if region.kind not in {"HP_FRACTION", "HP_PERCENT"}:
+                continue
+        elif label not in region.applicable_labels:
             continue
         if attempted >= max_rois:
             break
