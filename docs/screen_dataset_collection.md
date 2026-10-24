@@ -101,6 +101,39 @@ ONNX出力、SHA-256、未検証マニフェスト、ONNX Runtimeの5出力推�
 `scripts/check_screen_model_release.py --release` を参照してください。合成データによる
 学習パイプラインの確認と、実機Champions画像の精度・速度検証は別工程です。
 
+## 5分類ONNXマニフェストv2と、既存学習結果の安全な修復
+
+5分類学習器は今後`schema_version=2`でONNXに隣接する
+`champions_screen_classifier.json`を出力する（旧7分類の`schema_version=1`は引き続き拒否）。
+2026-10-24以前の学習器では、**5分類のモデルでも誤ってv1を書き出す不整合**があった。
+保存済みモデルは**再学習なし・元モデル無変更**で新しい兄弟フォルダーにコピーして修正できる。
+
+WSLのリポジトリからDocker devコンテナ経由で実行（モデルはローカルのみ）。
+実際の`run-...`名は学習結果の`output`に置き換える。
+
+```bash
+SOURCE="private-training/output/run-20261024T004230Z-webSrxET"
+DEST="${SOURCE}-schema-v2"
+
+# デフォルトは検査のみ。元ONNX/JSONは変更されない。
+docker compose run --rm dev python scripts/upgrade_five_class_model_manifest.py \
+  --source-dir "$SOURCE" --destination-dir "$DEST"
+
+# 明示承認後に、*新しい*フォルダーへ2ファイルをコピーする。
+docker compose run --rm dev python scripts/upgrade_five_class_model_manifest.py \
+  --source-dir "$SOURCE" --destination-dir "$DEST" --apply
+```
+
+修復ツールは元manifestの5ラベル完全一致、v1、入力寸法、評価指標、
+ONNXのSHA-256を確認する。**旧7分類・破損・順序不一致を拒否**。
+修復結果の`validated`は必ず`false`であり、
+学習結果の`quality_gate_passed=false`を覆さない。
+新フォルダーのONNXとJSONを**両方セットで**Windows側ローカル
+`private-training/models`へコピーし、画面収集GUIの
+「実験ONNXモデルを選択」で新しい`.onnx`を選ぶ。
+これは**自動ラベルの候補生成専用**であり、ランクマの正式画面分類へ昇格しない。
+学習済みの元アーカイブ、ユーザー画像、教師PNGは変更・送信しない。
+
 ## 対戦後の自動ラベル候補・一括承認（PR #25）
 
 この機能は**正解ラベルの自動確定ではありません**。収集済みの未ラベルJPEGを、
