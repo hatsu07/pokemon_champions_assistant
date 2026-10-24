@@ -27,6 +27,14 @@
 - 既存統一GUIは画像解析ハイブリッドのままであり、Phase2 v2.3状態機械への完全置換は未実装。戦術判断のPython化、ゲーム自動操作は実施していない。
 - Windows CIは **最新HEADが completed/success と確認されるまで未検証**。結果が出ても実機検証の代替にはならない。関連詳細: `docs/LOCAL_BATTLE_VISUAL_OBSERVER.md`。
 
+## 5分類ONNXスキーマ整合の修正（2026-10-24）
+
+- 対象: `scripts/train_screen_classifier.py` の旧 `schema_version=1` 誤出力。実運用ローダーが要求する `LABEL_SCHEMA_VERSION=2` を共有してv2を出力する。独立5セッション以上・TEAM_SELECTION適合率99.5%以上等の既存品質基準と、`--approve-if-thresholds-pass`による明示承認を変更しない。
+- 過去の5ラベルv1アーカイブだけを、改変せず別ディレクトリへコピーしてv2 manifestへ変換する`scripts/upgrade_five_class_model_manifest.py`を追加。旧7ラベルONNX、出力順違い、SHA不一致、既存の保存先などは拒否。元アーカイブ不変、学習再実行不要。
+- **変換したmanifestの`validated`は常に`false`**。モデルの学習精度、実機精度、正式アプリの採用資格は保証・引き上げない。実験的なローカル自動ラベル候補のみに使用。
+- `tests/test_screen_model_manifest_v2.py`と`tests/training_pipeline_integration.py`に、5ラベル・v2出力、実験ローダー受入、旧7分類拒否、SHA照合、承認ゲートの回帰を追加。実GPU再学習・実モデル移行・独立対戦画像での精度検証は未実施。
+- 人手の5ラベル判定基準と誤分類しやすい操作/情報/待機の境界を`docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md`へ追記。
+
 ## 実装工程の進捗（Codexが追記）
 
 | Phase | 進捗 | 変更ファイル | テスト | ブロッカー |

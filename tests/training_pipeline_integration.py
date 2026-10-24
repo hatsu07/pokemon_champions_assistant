@@ -17,10 +17,11 @@ import onnxruntime as ort
 from PIL import Image
 
 from scripts import train_screen_classifier as trainer
+from champions_assist.screen_classifier import ScreenClassifier, LABEL_SCHEMA_VERSION
 
 
 class TrainingPipelineIntegrationTests(unittest.TestCase):
-    def test_cpu_training_exports_a_loadable_seven_class_onnx_model(self):
+    def test_cpu_training_exports_a_loadable_five_class_v2_onnx_model(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)/"学習 data"
             for session_index in range(4):
@@ -48,11 +49,16 @@ class TrainingPipelineIntegrationTests(unittest.TestCase):
             self.assertEqual(result["device"],"cpu")
             self.assertFalse(result["pretrained"])
             self.assertFalse(manifest["validated"])
+            self.assertEqual(manifest["schema_version"], LABEL_SCHEMA_VERSION)
             self.assertEqual(manifest["labels"],list(trainer.LABELS))
             self.assertEqual(manifest["sha256"],sha256(model_path.read_bytes()).hexdigest())
             session=ort.InferenceSession(str(model_path),providers=["CPUExecutionProvider"])
             logits=session.run(None,{"rgb":np.zeros((1,3,160,160),dtype=np.float32)})[0]
             self.assertEqual(logits.shape,(1,len(trainer.LABELS)))
+            probe=ScreenClassifier(model_path,output/"champions_screen_classifier.json",
+                                   experimental_for_labelling=True)
+            prediction=probe.predict(np.zeros((32,32,3),dtype=np.uint8),raw_label=True)
+            self.assertIn(prediction.label,trainer.LABELS)
 
 
 if __name__=="__main__":
