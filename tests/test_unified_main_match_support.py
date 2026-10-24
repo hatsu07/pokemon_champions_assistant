@@ -235,6 +235,56 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIn("ONNX_CPU",panel.local_classifier_label.text())
         panel._stop_auto()
 
+    def test_live_training_capture_is_off_by_default_and_uses_existing_frame(self):
+        from champions_assist.background_training_capture import CaptureStats
+        panel=self.window._match_panel
+        self.assertFalse(panel.training_capture_check.isChecked())
+        self.assertIsNone(panel._background_capture)
+        panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
+        panel._auto_running=True
+        frame=np.full((110,180,3),35,dtype=np.uint8)
+        with patch("champions_assist.match_replay_dialog.BackgroundTrainingCapture") as factory, \
+             patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame) as capture, \
+             patch.object(panel,"_queue_batch") as queue:
+            worker=factory.return_value
+            worker.stats.return_value=CaptureStats(0,0,0,None,True)
+            panel._capture_next()
+            capture.assert_called_once()
+            factory.assert_not_called()
+            panel.training_capture_check.setChecked(True)
+            factory.assert_called_once()
+            worker.start.assert_called_once()
+            self.assertTrue(panel._storage_status_timer.isActive())
+            panel._capture_next()
+            self.assertEqual(capture.call_count,2)
+            worker.offer.assert_called_once_with(frame)
+            # The AI decision route is unchanged, not a new API request.
+            queue.assert_called_once()
+            panel.training_capture_check.setChecked(False)
+            worker.stop.assert_called_once_with(wait=False)
+            self.assertFalse(panel._storage_status_timer.isActive())
+            self.assertIsNone(panel._background_capture)
+        panel._stop_auto()
+
+    def test_live_training_capture_failure_only_changes_storage_status(self):
+        from champions_assist.background_training_capture import CaptureStats
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._auto_running=True
+        with patch("champions_assist.match_replay_dialog.BackgroundTrainingCapture") as factory:
+            worker=factory.return_value
+            worker.stats.return_value=CaptureStats(4,1,0,None,True)
+            panel.training_capture_check.setChecked(True)
+            worker.stats.return_value=CaptureStats(
+                4,1,0,"STAGING_QUOTA_REACHED",False)
+            panel._refresh_training_capture_status()
+            self.assertIn("STAGING_QUOTA_REACHED",panel.training_capture_status.text())
+            worker.stop.assert_called_once_with(wait=False)
+            self.assertTrue(panel._auto_running)
+            self.assertIsNone(panel._background_capture)
+        panel._stop_auto()
+
     def test_ai_dispatch_attempt_and_response_are_visible_in_main_header(self):
         panel=self.window._match_panel
         panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
