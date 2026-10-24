@@ -116,13 +116,32 @@ SOURCE="private-training/output/run-20261024T004230Z-webSrxET"
 DEST="${SOURCE}-schema-v2"
 
 # デフォルトは検査のみ。元ONNX/JSONは変更されない。
-docker compose run --rm dev python scripts/upgrade_five_class_model_manifest.py \
+docker compose run --rm --user "$(id -u):$(id -g)" dev \
+  python scripts/upgrade_five_class_model_manifest.py \
   --source-dir "$SOURCE" --destination-dir "$DEST"
 
 # 明示承認後に、*新しい*フォルダーへ2ファイルをコピーする。
-docker compose run --rm dev python scripts/upgrade_five_class_model_manifest.py \
+# コンテナがrootでホスト所有の出力先へmode 0700フォルダーを
+# 作らないよう、WSLの自分のUID/GIDを明示する。
+docker compose run --rm --user "$(id -u):$(id -g)" dev \
+  python scripts/upgrade_five_class_model_manifest.py \
   --source-dir "$SOURCE" --destination-dir "$DEST" --apply
 ```
+
+以前のコマンド（`--user`なし）で作成したモデルフォルダーに
+`ls: Permission denied` が出た場合は、WSLで所有者と権限を確認する。
+
+```bash
+stat -c '%U:%G %a %n' "$DEST"
+# root所有だった場合に限り、**変換先フォルダーだけ**を自分のUID/GIDへ修復
+sudo chown -R "$(id -u):$(id -g)" "$DEST"
+ls -lah "$DEST"
+```
+
+変換済みのフォルダーを消したり、`--apply`をもう一度実行する必要はない。
+モデルは個人のローカル保存物なので、`chmod 777`で全員公開しない。
+今後の変換処理も、ホストが非root所有の出力先にrootで書こうとする場合は
+`OUTPUT_OWNER_MISMATCH`で中断する。
 
 修復ツールは元manifestの5ラベル完全一致、v1、入力寸法、評価指標、
 ONNXのSHA-256を確認する。**旧7分類・破損・順序不一致を拒否**。

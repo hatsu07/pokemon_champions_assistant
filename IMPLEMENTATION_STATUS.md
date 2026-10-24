@@ -35,6 +35,13 @@
 - `tests/test_screen_model_manifest_v2.py`と`tests/training_pipeline_integration.py`に、5ラベル・v2出力、実験ローダー受入、旧7分類拒否、SHA照合、承認ゲートの回帰を追加。実GPU再学習・実モデル移行・独立対戦画像での精度検証は未実施。
 - 人手の5ラベル判定基準と誤分類しやすい操作/情報/待機の境界を`docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md`へ追記。
 
+## モデル変換出力のWSLアクセス権限修正（2026-10-24）
+
+- 再現条件: `docker compose run --rm dev` はdevサービスのrootデフォルトで実行され、変換ツールの`tempfile.TemporaryDirectory` はmode 0700で作成される。これを`os.rename`で最終保存先へ移すと、WSLの非rootユーザーから `ls: Permission denied` になる可能性がある。
+- 修正: モデル変換のDocker手順を `--user "$(id -u):$(id -g)"` に変更。ホスト所有出力先へrootで`--apply`を行ったときは `OUTPUT_OWNER_MISMATCH`で安全に停止するチェックと回帰テストを追加。ドライランの権限は変更しない。
+- 既存root所有の変換先は元アーカイブを削除/上書きせず、WSLホストで`stat`確認後に**その変換先のみ**`sudo chown -R`する復旧手順を文書化。`chmod 777`は不要。
+- Docker devテスト・Windows CI・実ユーザーのWSL権限修復は分離して検証する。実ユーザー環境への操作は行っていない。
+
 ## 実装工程の進捗（Codexが追記）
 
 | Phase | 進捗 | 変更ファイル | テスト | ブロッカー |

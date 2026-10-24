@@ -16,7 +16,7 @@ import numpy as np
 from scripts.train_screen_classifier import build_training_manifest
 from scripts.upgrade_five_class_model_manifest import (
     inspect_legacy_five_class_model, upgrade_legacy_five_class_model,
-    MODEL_NAME, MANIFEST_NAME,
+    MODEL_NAME, MANIFEST_NAME, _check_container_output_owner,
 )
 from champions_assist.screen_classifier import (
     LABELS, LABEL_SCHEMA_VERSION, ScreenClassifier, ScreenClassifierError,
@@ -78,6 +78,14 @@ class ScreenModelManifestV2Tests(unittest.TestCase):
         self.assertEqual(self.dummy_loader(self.old).predict(
             np.zeros((20, 24, 3), np.uint8)
         ).label, "TEAM_SELECTION")
+
+    def test_docker_root_cannot_create_host_user_private_archive(self):
+        # Root inside the dev container must not silently leave mode-0700
+        # model folders inaccessible to their non-root WSL owner.
+        with self.assertRaisesRegex(ValueError, "OUTPUT_OWNER_MISMATCH"):
+            _check_container_output_owner(effective_uid=0, parent_uid=1000)
+        _check_container_output_owner(effective_uid=1000, parent_uid=1000)
+        _check_container_output_owner(effective_uid=0, parent_uid=0)
 
     def test_no_implicit_quality_approval(self):
         self.assertFalse(self.training_manifest(pass_gate=True, approved=False)["validated"])
