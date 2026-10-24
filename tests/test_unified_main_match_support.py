@@ -71,6 +71,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
 
         self.assertIsNotNone(panel.assets)
         self.assertIsNotNone(panel.state)
+        self.assertIsNotNone(panel._field_profile)
+        self.assertEqual(panel._field_profile.reference_resolution, (960, 572))
+        self.assertFalse(panel._field_profile.validated_on_game_capture)
         self.assertEqual(self.window.header_labels["preload"].text(), "4/4 読込済み")
         self.assertEqual(self.window.header_labels["phase"].text(), "MATCHMAKING")
         self.assertEqual(panel.model, "gpt-5.6-terra")
