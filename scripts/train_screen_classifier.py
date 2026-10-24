@@ -63,6 +63,17 @@ def inspect_dataset(root: Path, *, progress: bool=False) -> DatasetInspection:
         print("[preflight] checking labelled images",file=sys.stderr,flush=True)
     records: list[Sample]=[]
     issues: list[str]=[]
+    # Never silently exclude legacy 7-class PNGs when a user points the new
+    # five-class trainer at their original dataset. Copy into a NEW root first.
+    for legacy in ("MATCHMAKING","MOVE_MENU","PARTY_MENU","RESULT","UNKNOWN"):
+        folder=root/legacy
+        if folder.is_dir() and any(
+                path.is_file() and path.suffix.lower() in FORMATS
+                for path in folder.rglob("*")):
+            issues.append(
+                f"Legacy seven-class images detected in {folder}. "
+                "Run prepare_five_class_screen_dataset.py and review "
+                "the ambiguous BATTLE_EVENT/UNKNOWN images before training.")
     for index,name in enumerate(LABELS):
         folder=root/name
         if not folder.is_dir():
