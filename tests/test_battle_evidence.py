@@ -85,8 +85,8 @@ class BattleEvidenceTests(unittest.TestCase):
                      our_current_form="メガルカリオZ",
                      our_hp="140/140",opponent_active="サーフゴー")
         self.assertEqual(self.state["our_active"],"メガルカリオZ")
-        self.assertEqual(facts["form_by_pokemon"]["own"]["メガルカリオZ"],"メガルカリオZ")
-        self.assertEqual(facts["hp_by_pokemon"]["own"]["メガルカリオZ"],"140/140")
+        self.assertEqual(self.state["battle_evidence"]["form_by_pokemon"]["own"]["メガルカリオZ"],"メガルカリオZ")
+        self.assertEqual(self.state["battle_evidence"]["hp_by_pokemon"]["own"]["メガルカリオZ"],"140/140")
 
     def test_choice_lock_requires_observed_resolution_and_blocks_different_move(self):
         self.advance("MOVE_MENU",our_active="マスカーニャ",
