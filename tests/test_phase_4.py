@@ -174,7 +174,7 @@ class Phase4TestCase(unittest.TestCase):
         pipe.process_frame(frame("hp-2", 2, image.copy()))
         self.assertIn("hp_status.opponent", session.state_facts["uncertainties"][0])
         self.assertNotIn("hp_status", session.state_facts)
-        fields = self.store.projection(session.match_id)["fields"]
+        fields = self.store.replay(session.match_id)["fields"]
         self.assertEqual(fields["hp_status.opponent"]["certainty"], "CANDIDATE")
         payload = build_session_payload(session, phase="REVIEW", request_id="r-hp", now_ms=200)
         self.assertEqual(payload["snapshot_quality"]["readiness"], "READY_WITH_UNCERTAINTY")
