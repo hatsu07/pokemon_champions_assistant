@@ -170,7 +170,7 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
             target = str(answer.get("switch_target", ""))
             matched = [entry for entry in state["selected_three"]
                        if _canonical(entry) == _canonical(target)]
-            if len(matched) != 1 or _canonical(matched[0]) == _canonical(own):
+            if len(matched) != 1 or _member_for(matched[0], assets) is member:
                 return "PIVOT_TARGET_NOT_SELECTED", {}
             return "OK", {"kind":"PIVOT", "move":move, "target":matched[0]}
         return "OK", {"kind":"MOVE", "move":move}
@@ -181,7 +181,7 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
         possible = [entry for entry in state["selected_three"]
                     if _canonical(entry) == _canonical(target)]
         displayed = {_canonical(name) for name in obs["visible_party"]}
-        if len(possible) != 1 or _canonical(possible[0]) == _canonical(own):
+        if len(possible) != 1 or _member_for(possible[0], assets) is member:
             return "SWITCH_TARGET_NOT_SELECTED", {}
         if _canonical(target) not in displayed:
             return "SWITCH_TARGET_NOT_VISIBLE", {}
