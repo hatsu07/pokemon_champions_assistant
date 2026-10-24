@@ -4,6 +4,9 @@ No private screenshot bytes are committed to the repository.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
@@ -19,6 +22,19 @@ class SampleScreenFieldTests(unittest.TestCase):
     def setUp(self):
         self.profile = ScreenFieldProfile.from_user_samples_960x572()
         self.image = np.zeros((572, 960, 3), dtype=np.uint8)
+
+    def test_private_profile_roundtrip_and_invalid_coordinates(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "fields.json"
+            original = self.profile.as_dict()
+            path.write_text(json.dumps(original), encoding="utf-8")
+            restored = ScreenFieldProfile.from_json(path)
+            self.assertEqual(restored.reference_resolution, (960,572))
+            self.assertEqual(restored.regions, self.profile.regions)
+            original["regions"][0]["bounds_px"] = [-1, 5, 20, 30]
+            path.write_text(json.dumps(original), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                ScreenFieldProfile.from_json(path)
 
     def test_grounded_geometry_and_screenshot_shape_guard(self):
         self.assertTrue(self.profile.compatible(self.image))
