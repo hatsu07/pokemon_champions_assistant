@@ -8,6 +8,8 @@ actual capture viewport before enabling in a ranked match.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 import re
 from typing import Mapping
 
@@ -55,6 +57,59 @@ class ScreenFieldProfile:
     @classmethod
     def from_user_samples_960x572(cls) -> "ScreenFieldProfile":
         return cls((960, 572), _SAMPLE_960, "USER_SCREENSHOTS_2026_10_24", False)
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> "ScreenFieldProfile":
+        """Load explicit private local calibration; refuse malformed geometry."""
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        if payload.get("schema_version") != 1:
+            raise ValueError("invalid screen field calibration schema")
+        dims = payload.get("reference_resolution")
+        if not isinstance(dims, list) or len(dims) != 2 or not all(type(v) is int and v > 0 for v in dims):
+            raise ValueError("reference_resolution must be positive pixel dimensions")
+        width, height = dims
+        raw_regions = payload.get("regions")
+        if not isinstance(raw_regions, list) or not raw_regions:
+            raise ValueError("calibration requires regions")
+        regions = []
+        seen = set()
+        valid_kinds = {"HP_FRACTION", "HP_PERCENT", "TIMER", "MESSAGE", "TEXT"}
+        valid_labels = {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT"}
+        for raw in raw_regions:
+            name = raw.get("name")
+            kind = raw.get("kind")
+            bounds = raw.get("bounds_px")
+            labels = raw.get("applicable_labels")
+            if not isinstance(name, str) or not name.isidentifier() or name in seen:
+                raise ValueError("region needs a unique identifier")
+            if kind not in valid_kinds or not isinstance(labels, list) or not labels or not set(labels) <= valid_labels:
+                raise ValueError("invalid region kind/labels")
+            if not isinstance(bounds, list) or len(bounds) != 4 or any(type(v) is not int for v in bounds):
+                raise ValueError("invalid region pixel bounds")
+            x0, y0, x1, y1 = bounds
+            if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
+                raise ValueError("region is outside calibrated capture")
+            seen.add(name)
+            regions.append(FieldRegion(name, kind, tuple(bounds), tuple(labels)))
+        return cls(
+            (width, height), tuple(regions),
+            str(payload.get("source", "PRIVATE_LOCAL_SCREEN_CALIBRATION")),
+            bool(payload.get("validated_on_game_capture", False)),
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "reference_resolution": list(self.reference_resolution),
+            "source": self.source,
+            "validated_on_game_capture": self.validated_on_game_capture,
+            "regions": [
+                {"name": item.name, "kind": item.kind,
+                 "bounds_px": list(item.bounds_px),
+                 "applicable_labels": list(item.applicable_labels)}
+                for item in self.regions
+            ],
+        }
 
     def compatible(self, image: np.ndarray) -> bool:
         if not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
