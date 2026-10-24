@@ -70,6 +70,11 @@ class BattleEvidenceTests(unittest.TestCase):
                      opponent_ability_revealed="さめはだ",
                      our_stat_changes="攻撃+1",opponent_stat_changes="素早さ+1",
                      our_status="まひ",opponent_status="やけど")
+        # This was visible before the opponent switched, then boosts reset.
+        self.assertEqual(
+            self.state["battle_evidence"]["boosts"]["opponent"]["ガブリアス"],
+            "素早さ+1",
+        )
         self.advance("ACTION_RESOLUTION",our_active="アシレーヌ",
                      opponent_active="サーフゴー",our_hp="160/160",
                      our_ability_revealed="げきりゅう")
@@ -80,7 +85,7 @@ class BattleEvidenceTests(unittest.TestCase):
         self.assertEqual(facts["ability_by_pokemon"]["opponent"]["ガブリアス"],"さめはだ")
         self.assertEqual(facts["status_by_pokemon"]["own"]["マスカーニャ"],"まひ")
         self.assertNotIn("マスカーニャ",facts["boosts"]["own"])
-        self.assertEqual(facts["boosts"]["opponent"]["ガブリアス"],"素早さ+1")
+        self.assertNotIn("ガブリアス",facts["boosts"]["opponent"])
         self.advance("ACTION_RESOLUTION",our_active="メガルカリオZ",
                      our_current_form="メガルカリオZ",
                      our_hp="140/140",opponent_active="サーフゴー")
@@ -95,7 +100,9 @@ class BattleEvidenceTests(unittest.TestCase):
         self.assertFalse(evidence["choice_lock"]["move"])
         self.advance("ACTION_RESOLUTION",our_active="マスカーニャ",
                      our_used_move="トリックフラワー")
-        self.assertEqual(evidence["choice_lock"]["move"],"トリックフラワー")
+        self.assertEqual(
+            self.state["battle_evidence"]["choice_lock"]["move"],"トリックフラワー"
+        )
         action=obs("MOVE_MENU",our_active="マスカーニャ",
                    visible_moves=["トリックフラワー","はたきおとす"])
         forbidden={"action_kind":"MOVE","move":"はたきおとす",
