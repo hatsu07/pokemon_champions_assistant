@@ -244,7 +244,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             MASTER_DIR / "Pokemon_Champions_MC_team_2026-10-03.csv",
             match_active=False)
         self.service.select_team(member.team_id,match_active=False)
-        assets=MasterPreloader(MASTER_DIR,team_source=member.path).load_for_new_match()
+        assets=MasterPreloader(MASTER_DIR,team_source=self.service.teams.path_for_next_match(member.team_id)).load_for_new_match()
         self.assertTrue(assets.matrix_index)
         panel.assets=assets
         panel.state=new_replay(assets)
