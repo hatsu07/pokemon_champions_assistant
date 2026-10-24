@@ -841,14 +841,16 @@ class MatchReplayDialog(QDialog):
             return
         if report.get("status") == "UNCHANGED_FRAME":
             return
-        if self._active_job=="batch" and self._pending_batch is not None:
-            # A newer command screen was observed while this AI call ran.
-            # Never display an older turn's action as the current advice.
+        superseded=self._active_job=="batch" and self._pending_batch is not None
+        if superseded:
+            # Preserve the newer snapshot's *current* state rather than
+            # accepting stale facts or a stale action from an older request.
             report={**report,"status":"SUPERSEDED",
                     "recommendation":"","warning":"NEWER_COMMAND_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
-        if report["status"] not in ("ERROR","DEADLINE_EXCEEDED"):
+        if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
+                                    "CANCELLED","SUPERSEDED"):
             self.state=payload["state"]
         if report.get("status")=="ERROR":
             self._set_ai_status(f"AI処理エラー / {report.get('reason','UNKNOWN')}")
@@ -952,7 +954,14 @@ class MatchReplayDialog(QDialog):
         result=payload["report"]
         if result.get("status")=="CANCELLED":
             return
-        self.state=payload["state"]
+        if result.get("status") in ("ERROR", "DEADLINE_EXCEEDED"):
+            self.state["prep_status"]=(
+                "ERROR" if result["status"]=="ERROR" else "DEADLINE_EXCEEDED"
+            )
+            result={**result,"status":"PREP_ERROR" if result["status"]=="ERROR"
+                    else "PREP_DEADLINE_EXCEEDED"}
+        else:
+            self.state=payload["state"]
         self.entries.append({"step":len(self.entries)+1, **result})
         self._render(self.entries[-1])
 
