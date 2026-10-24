@@ -125,7 +125,7 @@ class GroupingTests(unittest.TestCase):
                 def get_inputs(self):
                     return [SimpleNamespace(name="rgb")]
                 def run(self,unused,feed):
-                    return [np.array([[10.0,0,0,0,0]],dtype=np.float32)]
+                    return [np.array([[1.0,0,0,0,0]],dtype=np.float32)]
 
             with self.assertRaisesRegex(ScreenClassifierError,"SCREEN_MODEL_NOT_VALIDATED"):
                 ScreenClassifier(model,manifest,session_factory=FakeSession)
