@@ -16,6 +16,17 @@
 - 実機のターン境界/交代UI: 未検証
 - 戦術判断: OpenAI APIのみ。Phase 3は実APIと同じ境界のモックで検証済みであり、実通信の戦術品質・遅延は未検証。
 
+## ローカル画面観測の実装追加（2026-10-24、PR #37）
+
+- ユーザー提供のPokémon Champions実画面8枚、各960x572からROI位置を抽出。元PNG・切り出し画像・対戦データはGitに追加していない。
+- `calibrated_screen_fields.py`：任意の試合開始時固定プロファイルでHP `現在/最大`、相手の表示HP％、文字メッセージ、入力残時間をローカルOCRの**未確定候補**として抽出。5分類が不明な場合、数字2 ROIのみを読み、UI・合法手・技効果は推測しない。
+- `battle_visual_fields.py` + `observer_pipeline.py`：HPバーカラーの範囲推定、アイコンの相関・得点差判定、別フレーム観測、SQLite CANDIDATE証拠への追記（オプトイン）。
+- `match_replay_dialog.py` + `match_replay.py`：QtメインスレッドをブロックしないOCR、既存スクリーンショット付き1判断1回のAI送信への候補同封、OCR/校正不整合時は従来画像認識を維持。
+- `session_payloads.py`：候補/未解決イベントが残るとき `READY_WITH_UNCERTAINTY`。未確定を確定として上書きしない。
+- 合成画像のHP/アイコン/フィールドOCR/連続フレーム/GUI結合テストを追加。**実画面でのOCR成功率・誤認率、Windows Tesseract、BlueStacks連続フレーム、45秒以内完了、実APIは未検証**。ONNX分類器実運用学習済み重み、種族/フォームのアイコン辞書も未提供。
+- 既存統一GUIは画像解析ハイブリッドのままであり、Phase2 v2.3状態機械への完全置換は未実装。戦術判断のPython化、ゲーム自動操作は実施していない。
+- Windows CIは **最新HEADが completed/success と確認されるまで未検証**。結果が出ても実機検証の代替にはならない。関連詳細: `docs/LOCAL_BATTLE_VISUAL_OBSERVER.md`。
+
 ## 実装工程の進捗（Codexが追記）
 
 | Phase | 進捗 | 変更ファイル | テスト | ブロッカー |
