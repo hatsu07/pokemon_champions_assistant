@@ -56,12 +56,15 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
     """
     memory = state.setdefault("battle_evidence", empty_battle_evidence())
     previous_own = _clean(state.get("our_active"))
+    previous_opponent = _clean(state.get("opponent_active"))
     own = _clean(observation.get("our_active")) or previous_own
-    opponent = _clean(observation.get("opponent_active")) or _clean(state.get("opponent_active"))
+    opponent = _clean(observation.get("opponent_active")) or previous_opponent
     # An observed switch clears the user's move lock, not the registered item.
     if own and previous_own and _key(own) != _key(previous_own):
         memory["choice_lock"] = {"pokemon": "", "move": "", "source": ""}
         memory["boosts"]["own"].pop(previous_own, None)
+    if opponent and previous_opponent and _key(opponent) != _key(previous_opponent):
+        memory["boosts"]["opponent"].pop(previous_opponent, None)
     for team, active in (("own", own), ("opponent", opponent)):
         if not active:
             continue
@@ -99,7 +102,7 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
                 if _move_key(move) in {_move_key(x) for x in moves if x}:
                     memory["choice_lock"] = {
                         "pokemon": own, "move": move,
-                        "source": "VISIBLE_RESOLVED_MOVE_AND_REGISTERED_CHOICE_ITEM",
+                        "source": "AI_VISUAL_RESOLVED_MOVE_AND_REGISTERED_CHOICE_ITEM",
                     }
     # The screen parser may not distinguish temporary form from permanent
     # Mega state. Retain text verbatim; do not silently infer types or stats.
