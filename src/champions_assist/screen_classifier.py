@@ -17,8 +17,10 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-LABELS=("MATCHMAKING","TEAM_SELECTION","MOVE_MENU","PARTY_MENU",
-        "BATTLE_EVENT","RESULT","UNKNOWN")
+LABELS=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","OTHER")
+# UNKNOWN is a low-confidence inference sentinel, never a training class.
+UNDETERMINED="UNKNOWN"
+LABEL_SCHEMA_VERSION=2
 MODEL_DIR=Path(__file__).resolve().parent / "data"
 MODEL_FILE="champions_screen_classifier.onnx"
 MANIFEST_FILE="champions_screen_classifier.json"
@@ -45,7 +47,7 @@ class ScreenClassifier:
                  experimental_for_labelling: bool=False):
         path=Path(model_path)
         info=json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-        if not isinstance(info,dict) or info.get("schema_version")!=1:
+        if not isinstance(info,dict) or info.get("schema_version")!=LABEL_SCHEMA_VERSION:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_MANIFEST")
         if info.get("validated") is not True and not experimental_for_labelling:
             raise ScreenClassifierError("SCREEN_MODEL_NOT_VALIDATED")
@@ -127,7 +129,7 @@ class ScreenClassifier:
         margin=confidence-float(probabilities[int(order[1])])
         label=(self.labels[top] if (raw_label or
                (confidence>=self.min_confidence and margin>=self.min_margin))
-               else "UNKNOWN")
+               else UNDETERMINED)
         return ScreenPrediction(
             label,confidence,margin,(perf_counter()-started)*1000,
             "ONNX_GPU" if self.device=="gpu" else "ONNX_CPU")
@@ -153,7 +155,7 @@ def load_bundled_classifier(*, model_dir: str | Path | None=None,
 class ClassifiedMenuGate:
     """Debounce UI class predictions and send at most once per command view.
 
-    UNKNOWN/irrelevant labels rearm the gate; phase transitions reset it.
+    OTHER/low-confidence inference rearms the gate; phase transitions reset it.
     Visual model inference is never used as a tactical recommendation.
     """
     def __init__(self, *, stable_frames=2):
@@ -166,6 +168,7 @@ class ClassifiedMenuGate:
         self.streak=0
         self.armed=True
         self.misses=0
+        self.last_emitted=None
 
     def acknowledge(self, kind: str, phase: str) -> None:
         """Explicit or template-triggered dispatch disarms duplicate model hits."""
@@ -174,14 +177,15 @@ class ClassifiedMenuGate:
         self.candidate=kind
         self.streak=self.stable_frames
         self.armed=False
+        self.last_emitted=kind
 
     def observe(self, prediction: ScreenPrediction, phase: str) -> str | None:
         if phase!=self.phase:
             self.reset()
             self.phase=phase
         allowed={"MATCHMAKING":{"TEAM_SELECTION"},
-                 "PREP":{"MOVE_MENU","PARTY_MENU","RESULT"},
-                 "BATTLE":{"MOVE_MENU","PARTY_MENU","RESULT"}}.get(phase,set())
+                 "PREP":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
+                 "BATTLE":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"}}.get(phase,set())
         kind=prediction.label if prediction.label in allowed else None
         if kind is None:
             self.misses+=1
@@ -189,6 +193,7 @@ class ClassifiedMenuGate:
             self.streak=0
             if self.misses>=2:
                 self.armed=True
+                self.last_emitted=None
             return None
         self.misses=0
         if kind!=self.candidate:
@@ -196,7 +201,11 @@ class ClassifiedMenuGate:
             self.streak=1
         else:
             self.streak+=1
-        if self.armed and self.streak>=self.stable_frames:
+        # Event and action categories can follow one another directly.
+        # Deduplicate steady frames of one category until the kind changes
+        # or two unrelated frames permit the same category again.
+        if self.streak>=self.stable_frames and (self.armed or kind!=self.last_emitted):
             self.armed=False
+            self.last_emitted=kind
             return kind
         return None

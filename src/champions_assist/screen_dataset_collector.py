@@ -35,13 +35,11 @@ from .screen_dataset import (
 )
 
 SCREEN_LABELS={
-    "MATCHMAKING":"マッチング待機・準備",
-    "TEAM_SELECTION":"3匹を選ぶ選出画面",
-    "MOVE_MENU":"技選択画面",
-    "PARTY_MENU":"交代先選択画面",
-    "BATTLE_EVENT":"攻撃・交代・メッセージ等の演出",
-    "RESULT":"勝敗・対戦終了",
-    "UNKNOWN":"その他・判別不能",
+    "TEAM_SELECTION":"選出3匹と初手を決める画面",
+    "TURN_ACTION":"各ターンの行動・技を選ぶ画面",
+    "SWITCH_SELECTION":"交代先を選択する画面",
+    "BATTLE_EVENT":"技・特性・持ち物・交代・メガ等の重要な変化",
+    "OTHER":"それ以外の画面（待機・結果・演出を含む）",
 }
 PAGE_SIZE=100
 

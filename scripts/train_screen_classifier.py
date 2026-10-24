@@ -1,6 +1,6 @@
 """Train an experimental Champions UI classifier from consented local captures.
 
-Run only in the Docker ``trainer`` environment. The seven human-labelled PNG
+Run only in the Docker ``trainer`` environment. The five human-labelled PNG
 classes are read from ``screens/<LABEL>/<session>__<frame>.png``. The separate
 ``screens/_UNLABELLED`` JPEG staging area is deliberately never scanned.
 
@@ -25,8 +25,9 @@ from typing import Any, Sequence
 from PIL import Image, UnidentifiedImageError
 
 
-LABELS=("MATCHMAKING","TEAM_SELECTION","MOVE_MENU","PARTY_MENU",
-        "BATTLE_EVENT","RESULT","UNKNOWN")
+from champions_assist.screen_classifier import LABELS, LABEL_SCHEMA_VERSION
+
+# One pinned definition shared with the capture UI and ONNX loader.
 FORMATS={".png",".jpg",".jpeg",".webp"}
 SIZE=(160,160)
 Sample=tuple[Path,int,str]
@@ -62,6 +63,17 @@ def inspect_dataset(root: Path, *, progress: bool=False) -> DatasetInspection:
         print("[preflight] checking labelled images",file=sys.stderr,flush=True)
     records: list[Sample]=[]
     issues: list[str]=[]
+    # Never silently exclude legacy 7-class PNGs when a user points the new
+    # five-class trainer at their original dataset. Copy into a NEW root first.
+    for legacy in ("MATCHMAKING","MOVE_MENU","PARTY_MENU","RESULT","UNKNOWN"):
+        folder=root/legacy
+        if folder.is_dir() and any(
+                path.is_file() and path.suffix.lower() in FORMATS
+                for path in folder.rglob("*")):
+            issues.append(
+                f"Legacy seven-class images detected in {folder}. "
+                "Run prepare_five_class_screen_dataset.py and review "
+                "the ambiguous BATTLE_EVENT/UNKNOWN images before training.")
     for index,name in enumerate(LABELS):
         folder=root/name
         if not folder.is_dir():
@@ -95,7 +107,7 @@ def inspect_dataset(root: Path, *, progress: bool=False) -> DatasetInspection:
         if not readable:
             issues.append(f"No readable labelled images for {name}; label more frames from independent matches")
     report={
-        "schema_version":1,
+        "schema_version":LABEL_SCHEMA_VERSION,
         "data_dir":str(root),
         "labels":_label_summary(records),
         "total_images":len(records),

@@ -40,7 +40,7 @@ class TurnCaptureBuffer:
         self.frames.clear()
 
     def calibrate(self, kind: str, image: np.ndarray) -> None:
-        if kind not in ("TEAM_SELECTION","MOVE_MENU","PARTY_MENU"):
+        if kind not in ("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION"):
             raise ValueError("unsupported menu kind")
         self.templates[kind]=_menu_patch(image).copy()
         self._candidate=None

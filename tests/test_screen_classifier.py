@@ -20,7 +20,7 @@ class DummySession:
     def __init__(self, logits=None):
         self.calls=[]
         self.logits=np.array([logits if logits is not None
-            else [-10,9,-10,-10,-10,-10,-10]],dtype=np.float32)
+            else [9,-10,-10,-10,-10]],dtype=np.float32)
 
     def get_inputs(self):
         return [type("Input",(),{"name":"rgb"})()]
@@ -39,7 +39,7 @@ class ScreenClassifierTests(unittest.TestCase):
         self.meta=self.root/"champions_screen_classifier.json"
         self.model.write_bytes(b"local fake ONNX fixture")
         self.config={
-            "schema_version":1,"labels":list(LABELS),"input_size":[160,160],
+            "schema_version":2,"labels":list(LABELS),"input_size":[160,160],
             "sha256":sha256(self.model.read_bytes()).hexdigest(),
             "mean":[0,0,0],"std":[1,1,1],
             "min_confidence":0.90,"min_margin":0.20,
@@ -49,9 +49,20 @@ class ScreenClassifierTests(unittest.TestCase):
     def write_config(self):
         self.meta.write_text(json.dumps(self.config),encoding="utf-8")
 
+    def test_legacy_seven_label_manifest_is_refused_even_when_validated(self):
+        self.config["schema_version"]=1
+        self.config["labels"]=["MATCHMAKING","TEAM_SELECTION","MOVE_MENU",
+                               "PARTY_MENU","BATTLE_EVENT","RESULT","UNKNOWN"]
+        self.write_config()
+        with self.assertRaisesRegex(ScreenClassifierError,"MANIFEST"):
+            ScreenClassifier(self.model,self.meta,
+                             session_factory=lambda *a,**kw:DummySession())
+
     def test_cpu_prediction_uses_pinned_model_rgb_and_preprocess(self):
         session=DummySession()
         klass=ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:session)
+        self.assertEqual(tuple(LABELS),("TEAM_SELECTION","TURN_ACTION",
+                                        "SWITCH_SELECTION","BATTLE_EVENT","OTHER"))
         self.assertEqual(klass.device,"cpu")
         image=np.full((24,36,3),120,dtype=np.uint8)
         prediction=klass.predict(image)
@@ -84,7 +95,7 @@ class ScreenClassifierTests(unittest.TestCase):
         with self.assertRaisesRegex(ScreenClassifierError,"CHECKSUM"):
             ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:DummySession())
         self.model.write_bytes(b"local fake ONNX fixture")
-        self.config["labels"]=list(reversed(LABELS[:-1])) # missing UNKNOWN
+        self.config["labels"]=list(reversed(LABELS[:-1])) # missing OTHER
         self.write_config()
         with self.assertRaisesRegex(ScreenClassifierError,"LABELS"):
             ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:DummySession())
@@ -156,7 +167,7 @@ class ScreenClassifierTests(unittest.TestCase):
         self.assertTrue(report["ready"])
         self.assertTrue(report["unlabelled_directory_ignored"])
         self.assertEqual(report["labels"]["TEAM_SELECTION"],{"images":4,"sessions":4})
-        self.assertEqual(report["split"]["validation"]["labels"]["UNKNOWN"]["images"],1)
+        self.assertEqual(report["split"]["validation"]["labels"]["OTHER"]["images"],1)
 
     def test_split_explains_when_a_label_has_only_one_session(self):
         from scripts.train_screen_classifier import split_by_session
@@ -174,11 +185,11 @@ class ScreenClassifierTests(unittest.TestCase):
         gate=ClassifiedMenuGate(stable_frames=2)
         def predicted(label):
             return ScreenPrediction(label,0.98,0.93,4.0)
-        self.assertIsNone(gate.observe(predicted("MATCHMAKING"),"MATCHMAKING"))
+        self.assertIsNone(gate.observe(predicted("OTHER"),"MATCHMAKING"))
         self.assertIsNone(gate.observe(predicted("TEAM_SELECTION"),"MATCHMAKING"))
         self.assertEqual(gate.observe(predicted("TEAM_SELECTION"),"MATCHMAKING"),"TEAM_SELECTION")
         self.assertIsNone(gate.observe(predicted("TEAM_SELECTION"),"MATCHMAKING"))
-        self.assertIsNone(gate.observe(predicted("UNKNOWN"),"MATCHMAKING"))
+        self.assertIsNone(gate.observe(predicted("OTHER"),"MATCHMAKING"))
         self.assertIsNone(gate.observe(predicted("UNKNOWN"),"MATCHMAKING"))
         self.assertIsNone(gate.observe(predicted("TEAM_SELECTION"),"MATCHMAKING"))
         self.assertEqual(gate.observe(predicted("TEAM_SELECTION"),"MATCHMAKING"),"TEAM_SELECTION")
@@ -188,13 +199,19 @@ class ScreenClassifierTests(unittest.TestCase):
         def p(label):
             return ScreenPrediction(label,0.99,0.95,2.0)
         self.assertIsNone(gate.observe(p("TEAM_SELECTION"),"BATTLE"))
-        self.assertIsNone(gate.observe(p("MOVE_MENU"),"BATTLE"))
-        self.assertEqual(gate.observe(p("MOVE_MENU"),"BATTLE"),"MOVE_MENU")
-        self.assertIsNone(gate.observe(p("MOVE_MENU"),"BATTLE"))
+        self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
+        self.assertEqual(gate.observe(p("TURN_ACTION"),"BATTLE"),"TURN_ACTION")
+        self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
+        self.assertEqual(gate.observe(p("BATTLE_EVENT"),"BATTLE"),"BATTLE_EVENT")
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
-        self.assertIsNone(gate.observe(p("PARTY_MENU"),"BATTLE"))
-        self.assertEqual(gate.observe(p("PARTY_MENU"),"BATTLE"),"PARTY_MENU")
+        # Dedup until another (non-action, non-event) screen rearms the gate.
+        self.assertIsNone(gate.observe(p("OTHER"),"BATTLE"))
+        self.assertIsNone(gate.observe(p("OTHER"),"BATTLE"))
+        self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
+        self.assertEqual(gate.observe(p("BATTLE_EVENT"),"BATTLE"),"BATTLE_EVENT")
+        self.assertIsNone(gate.observe(p("SWITCH_SELECTION"),"BATTLE"))
+        self.assertEqual(gate.observe(p("SWITCH_SELECTION"),"BATTLE"),"SWITCH_SELECTION")
 
 
 if __name__=="__main__":

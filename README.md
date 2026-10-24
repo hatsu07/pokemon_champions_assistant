@@ -1,3 +1,5 @@
+**画面分類の現行仕様：** 操作3画面（TEAM_SELECTION / TURN_ACTION / SWITCH_SELECTION）＋情報更新候補BATTLE_EVENT＋OTHERの5分類。旧7分類のPNG移行方法とモデル互換性は [5分類移行手順](docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md)。元画像や過去モデルを自動で削除せず、旧ONNXは新モデルとして使わない。
+
 # Pokémon Champions Codex開発スターター v2.7 — WSL2/Docker開発 → Windows MSI配布
 
 **これはCodexへ実装を依頼するためのリポジトリです。完成アプリでもMSIでもありません。**

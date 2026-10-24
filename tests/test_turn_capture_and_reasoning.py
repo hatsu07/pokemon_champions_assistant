@@ -36,11 +36,11 @@ class MemoryAndReasoningTests(unittest.TestCase):
         menu=np.zeros((120,200,3),dtype=np.uint8)
         menu[60:,100:]=200
         other=np.zeros_like(menu)
-        gate.calibrate("MOVE_MENU",menu)
+        gate.calibrate("TURN_ACTION",menu)
         self.assertIsNone(gate.observe(other))
         self.assertIsNone(gate.observe(other))
         self.assertIsNone(gate.observe(menu))
-        self.assertEqual(gate.observe(menu),"MOVE_MENU")
+        self.assertEqual(gate.observe(menu),"TURN_ACTION")
         self.assertIsNone(gate.observe(menu))
         batch=gate.batch(menu)
         self.assertLessEqual(len(batch),4)
@@ -48,7 +48,7 @@ class MemoryAndReasoningTests(unittest.TestCase):
         gate.observe(other)
         gate.observe(other)
         gate.observe(menu)
-        self.assertEqual(gate.observe(menu),"MOVE_MENU")
+        self.assertEqual(gate.observe(menu),"TURN_ACTION")
 
     def test_explicit_menu_acknowledgement_suppresses_duplicate_menu_send(self):
         buffer=TurnCaptureBuffer(stable_frames=2)

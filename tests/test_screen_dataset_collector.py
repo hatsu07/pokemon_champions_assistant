@@ -69,10 +69,10 @@ class DatasetCoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_session("../other")
         self.assertTrue(staged.exists())
-        self.staging.label(staged,"UNKNOWN",self.dataset)
-        item=next((self.dataset.root/"UNKNOWN").glob("*.png"))
-        moved=self.dataset.relabel(item,"MOVE_MENU")
-        self.assertEqual(moved.parent.name,"MOVE_MENU")
+        self.staging.label(staged,"OTHER",self.dataset)
+        item=next((self.dataset.root/"OTHER").glob("*.png"))
+        moved=self.dataset.relabel(item,"TURN_ACTION")
+        self.assertEqual(moved.parent.name,"TURN_ACTION")
 
     def test_recordings_are_separate_sessions_and_old_labels_unchanged(self):
         a="match20261023T111111_abc12345"
@@ -80,12 +80,12 @@ class DatasetCoreTests(unittest.TestCase):
         first=self.staging.save_unlabelled(self.frame,a)
         other=self.staging.save_unlabelled(self.frame,b)
         self.assertEqual(set(self.staging.sessions()),{a,b})
-        out=self.staging.label(first,"RESULT",self.dataset)
+        out=self.staging.label(first,"OTHER",self.dataset)
         self.assertEqual(self.staging.session_files(a),[])
         self.assertEqual(self.staging.session_files(b),[other])
         self.staging.save_unlabelled(self.frame,a)
         self.assertTrue(out.exists())
-        self.assertEqual(self.dataset.audit()["counts"]["RESULT"],1)
+        self.assertEqual(self.dataset.audit()["counts"]["OTHER"],1)
 
     def test_training_script_ignores_unlabelled_folder(self):
         from scripts.train_screen_classifier import collect
@@ -178,7 +178,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         frame=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup((frame,),"RESULT",.98,.90,(frame,),"AI候補")])
+            AutoLabelGroup((frame,),"OTHER",.98,.90,(frame,),"AI候補")])
         self.gui.auto_list.setCurrentRow(0)
         self.assertTrue(self.gui.auto_review_confirm.isHidden())
         with patch.object(QMessageBox,"question",
@@ -192,7 +192,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             self.gui._approve_auto_groups(use_suggestion=True)
         confirm.assert_called_once()
         self.assertFalse(frame.exists())
-        self.assertEqual(self.gui.dataset.audit()["counts"]["RESULT"],1)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["OTHER"],1)
 
     def test_gui_has_5fps_default_and_requires_disk_consent(self):
         self.assertEqual(self.gui.fps_box.currentData(),5)
@@ -278,42 +278,42 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(6)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.9,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.96,.9,
                            (frames[0],frames[1]),"AI候補"),
             AutoLabelGroup(tuple(frames[2:4]),"TEAM_SELECTION",.98,.9,
                            (frames[2],frames[3]),"AI候補"),
-            AutoLabelGroup(tuple(frames[4:]),"RESULT",.95,.9,
+            AutoLabelGroup(tuple(frames[4:]),"OTHER",.95,.9,
                            (frames[4],frames[5]),"AI候補")])
         # A previous per-frame correction must beat the later group correction.
-        self.gui._auto_frame_overrides[frames[4]]="UNKNOWN"
+        self.gui._auto_frame_overrides[frames[4]]="OTHER"
         self.gui.auto_list.setCurrentRow(2)
         self.gui.auto_list.item(0).setSelected(True)
         self.gui.auto_list.item(2).setSelected(True)
         self.assertEqual({i for i,_ in self.gui._selected_auto_groups()},{0,2})
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("PARTY_MENU"))
+            self.gui.auto_label_box.findData("SWITCH_SELECTION"))
         self.gui.auto_group_draft_button.click()
         self.assertEqual(self.gui._auto_group_label_overrides,
-                         {0:"PARTY_MENU",2:"PARTY_MENU"})
+                         {0:"SWITCH_SELECTION",2:"SWITCH_SELECTION"})
         self.assertIn("2グループ",self.gui.auto_progress.text())
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertTrue(all(f.exists() for f in frames))
         # Current group's thumbnails show the effective saved labels.
         labels=[self.gui.auto_frames_list.item(i).text()
                 for i in range(self.gui.auto_frames_list.count())]
-        self.assertTrue(any("画像訂正済" in t and "UNKNOWN" in t for t in labels))
-        self.assertTrue(any("グループ訂正済" in t and "PARTY_MENU" in t for t in labels))
+        self.assertTrue(any("画像訂正済" in t and "OTHER" in t for t in labels))
+        self.assertTrue(any("グループ訂正済" in t and "SWITCH_SELECTION" in t for t in labels))
         # One save button saves just the selected groups, in one dialog.
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes) as confirmation:
             self.gui.auto_bulk_button.click()
         confirmation.assert_called_once()
         prompt=confirmation.call_args.args[2]
-        self.assertIn("グループ1: PARTY_MENU 2枚",prompt)
+        self.assertIn("グループ1: SWITCH_SELECTION 2枚",prompt)
         self.assertIn("グループ3:",prompt)
         counts=self.gui.dataset.audit()["counts"]
-        self.assertEqual(counts["PARTY_MENU"],3)
-        self.assertEqual(counts["UNKNOWN"],1)
+        self.assertEqual(counts["SWITCH_SELECTION"],3)
+        self.assertEqual(counts["OTHER"],1)
         self.assertEqual(sum(counts.values()),4)
         self.assertEqual(set(self.gui.staging.session_files(self.gui.session_id)),
                          set(frames[2:4]))
@@ -330,7 +330,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertFalse(self.gui._auto_group_label_overrides)
         self.assertTrue(path.exists())
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("RESULT"))
+            self.gui.auto_label_box.findData("OTHER"))
         self.gui.auto_list.clearSelection()
         self.gui.auto_group_draft_button.click()
         self.assertFalse(self.gui._auto_group_label_overrides)
@@ -347,29 +347,29 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertGreaterEqual(adjacent_row.indexOf(self.gui.auto_label_box),0)
         self.assertGreater(parent_layout.indexOf(self.gui.label_box),thumbnails_index+1)
         self.assertIsNone(self.gui.auto_label_box.currentData())
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("RESULT"))
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("OTHER"))
         self.assertIsNone(self.gui.auto_label_box.currentData())
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("PARTY_MENU"))
-        self.assertEqual(self.gui.auto_label_box.currentData(),"PARTY_MENU")
-        self.assertEqual(self.gui.label_box.currentData(),"RESULT")
+            self.gui.auto_label_box.findData("SWITCH_SELECTION"))
+        self.assertEqual(self.gui.auto_label_box.currentData(),"SWITCH_SELECTION")
+        self.assertEqual(self.gui.label_box.currentData(),"OTHER")
 
     def test_manual_label_does_not_accidentally_correct_an_auto_frame(self):
         from champions_assist.screen_auto_label import AutoLabelGroup
         staged=self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
-        group=AutoLabelGroup((staged,),"MOVE_MENU",.99,.90,(staged,),"AI候補")
+        group=AutoLabelGroup((staged,),"TURN_ACTION",.99,.90,(staged,),"AI候補")
         self.gui._auto_on_proposals([group])
         self.gui.auto_list.setCurrentRow(0)
         self.gui.auto_frames_list.setCurrentRow(0)
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("RESULT"))
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("OTHER"))
         self.gui._correct_selected_auto_frames()
         self.assertNotIn(staged,self.gui._auto_frame_overrides)
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("PARTY_MENU"))
+            self.gui.auto_label_box.findData("SWITCH_SELECTION"))
         self.gui._correct_selected_auto_frames()
-        self.assertEqual(self.gui._auto_frame_overrides[staged],"PARTY_MENU")
+        self.assertEqual(self.gui._auto_frame_overrides[staged],"SWITCH_SELECTION")
         # Ordinary manual label remains unchanged for its separate workflow.
-        self.assertEqual(self.gui.label_box.currentData(),"RESULT")
+        self.assertEqual(self.gui.label_box.currentData(),"OTHER")
 
     def test_png_save_keeps_other_groups_predictions_corrections_and_review(self):
         from champions_assist.screen_auto_label import AutoLabelGroup, AutoLabelFrame
@@ -382,15 +382,15 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 (paths[0],paths[len(paths)//2],paths[-1]),"AI候補",
                 tuple(AutoLabelFrame(p,label,.97,.91,()) for p in paths))
         self.gui._auto_on_proposals([
-            group(frames[:3],"MOVE_MENU"),
+            group(frames[:3],"TURN_ACTION"),
             group(frames[3:],"TEAM_SELECTION")])
         # Prepare the second group with a corrected image and review it first.
         self.gui.auto_list.setCurrentRow(1)
         self.gui.auto_frames_list.setCurrentRow(1)
-        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("RESULT"))
+        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("OTHER"))
         self.gui._correct_selected_auto_frames()
         self.gui.auto_review_confirm.setChecked(True)
-        self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"RESULT")
+        self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"OTHER")
         self.assertIn(1,self.gui._auto_reviewed_groups)
 
         # Save only the first group. The other three images must NOT be
@@ -400,26 +400,26 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._approve_auto_groups(use_suggestion=True)
-        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],3)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TURN_ACTION"],3)
         self.assertEqual(self.gui.auto_list.count(),1)
         self.assertEqual(self.gui.auto_frames_list.count(),3)
         self.assertEqual(self.gui._auto_groups[0].candidate,"TEAM_SELECTION")
         self.assertEqual(self.gui._auto_groups[0].frame_details[1].predicted_label,
                          "TEAM_SELECTION")
-        self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"RESULT")
+        self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"OTHER")
         self.assertTrue(self.gui.auto_review_confirm.isChecked())
         self.assertTrue(all(p.exists() for p in frames[3:]))
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.assertEqual(self.gui.auto_list.count(),1)
-        self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"RESULT")
+        self.assertEqual(self.gui._auto_frame_overrides[frames[4]],"OTHER")
         self.assertTrue(self.gui.auto_review_confirm.isChecked())
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._approve_auto_groups(use_suggestion=True)
         counts=self.gui.dataset.audit()["counts"]
-        self.assertEqual(counts["MOVE_MENU"],3)
+        self.assertEqual(counts["TURN_ACTION"],3)
         self.assertEqual(counts["TEAM_SELECTION"],2)
-        self.assertEqual(counts["RESULT"],1)
+        self.assertEqual(counts["OTHER"],1)
         self.assertEqual(self.gui.auto_list.count(),0)
 
     def test_partial_png_save_keeps_unchanged_frames_and_clears_only_edited_group_review(self):
@@ -428,7 +428,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(4)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames),"MOVE_MENU",.98,.94,
+            AutoLabelGroup(tuple(frames),"TURN_ACTION",.98,.94,
                            (frames[0],frames[2],frames[3]),"AI候補")])
         self.gui.auto_list.setCurrentRow(0)
         self.gui.auto_review_confirm.setChecked(True)
@@ -444,7 +444,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                           return_value=QMessageBox.StandardButton.Yes):
             with patch.object(self.gui.staging,"label",side_effect=fail_on_second):
                 self.gui._approve_auto_groups(use_suggestion=True)
-        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],1)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TURN_ACTION"],1)
         self.assertEqual(self.gui.auto_list.count(),1)
         self.assertEqual(self.gui.auto_frames_list.count(),3)
         self.assertEqual(self.gui._auto_groups[0].files,tuple(frames[1:]))
@@ -457,13 +457,13 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(4)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.9,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.96,.9,
                            (frames[0],frames[1]),"AI候補"),
-            AutoLabelGroup(tuple(frames[2:]),"RESULT",.97,.92,
+            AutoLabelGroup(tuple(frames[2:]),"OTHER",.97,.92,
                            (frames[2],frames[3]),"AI候補")])
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         # Save the first frame through the old manual path.
-        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("UNKNOWN"))
+        self.gui.label_box.setCurrentIndex(self.gui.label_box.findData("OTHER"))
         row=next(i for i in range(self.gui.review_list.count())
                  if self.gui.review_list.item(i).data(
                      Qt.ItemDataRole.UserRole)==str(frames[0]))
@@ -471,9 +471,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._save_selected()
-        self.assertEqual(self.gui.dataset.audit()["counts"]["UNKNOWN"],1)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["OTHER"],1)
         self.assertEqual([g.count for g in self.gui._auto_groups],[1,2])
-        self.assertEqual(self.gui._auto_groups[1].candidate,"RESULT")
+        self.assertEqual(self.gui._auto_groups[1].candidate,"OTHER")
         self.assertTrue(all(p.exists() for p in frames[1:]))
 
     def test_bulk_reviewed_groups_can_be_selected_and_saved_with_individual_labels(self):
@@ -482,7 +482,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(5)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.97,.91,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.97,.91,
                            (frames[0],frames[1]),"AI候補"),
             AutoLabelGroup(tuple(frames[2:]),"TEAM_SELECTION",.97,.91,
                            (frames[2],frames[3],frames[4]),"AI候補")])
@@ -494,7 +494,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.gui.auto_list.setCurrentRow(1)
         self.gui.auto_frames_list.setCurrentRow(0)
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("RESULT"))
+            self.gui.auto_label_box.findData("OTHER"))
         self.gui._correct_selected_auto_frames()
         self.gui.auto_review_confirm.setChecked(True)
         self.gui._select_all_reviewed_auto_groups()
@@ -504,9 +504,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             self.gui._approve_auto_groups(use_suggestion=True)
         confirm.assert_called_once()
         counts=self.gui.dataset.audit()["counts"]
-        self.assertEqual(counts["MOVE_MENU"],2)
+        self.assertEqual(counts["TURN_ACTION"],2)
         self.assertEqual(counts["TEAM_SELECTION"],2)
-        self.assertEqual(counts["RESULT"],1)
+        self.assertEqual(counts["OTHER"],1)
         self.assertEqual(self.gui.auto_list.count(),0)
 
     def test_bulk_unreviewed_or_unknown_group_blocks_entire_batch(self):
@@ -515,7 +515,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(4)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.9,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.96,.9,
                            (frames[0],frames[1]),"AI候補"),
             AutoLabelGroup(tuple(frames[2:]),None,.2,.01,
                            (frames[2],frames[3]),"要確認")])
@@ -540,9 +540,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(8)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         groups=[
-            AutoLabelGroup(tuple(frames[:3]),"MOVE_MENU",.99,.92,
+            AutoLabelGroup(tuple(frames[:3]),"TURN_ACTION",.99,.92,
                            (frames[0],frames[1],frames[2]),"AI候補"),
-            AutoLabelGroup(tuple(frames[3:6]),"RESULT",.97,.86,
+            AutoLabelGroup(tuple(frames[3:6]),"OTHER",.97,.86,
                            (frames[3],frames[4],frames[5]),"AI候補"),
             AutoLabelGroup(tuple(frames[6:]),None,0.0,0.0,
                            (frames[6],frames[7]),"要確認")]
@@ -558,7 +558,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
         self.gui.auto_frames_list.setCurrentRow(1)
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("PARTY_MENU"))
+            self.gui.auto_label_box.findData("SWITCH_SELECTION"))
         self.gui._correct_selected_auto_frames()
         self.gui.auto_frames_list.setCurrentRow(2)
         self.gui._exclude_selected_auto_frames()
@@ -574,16 +574,16 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertIn("2グループ",prompt)
         self.assertIn("5枚",prompt)
         counts=self.gui.dataset.audit()["counts"]
-        self.assertEqual(counts["MOVE_MENU"],3)
+        self.assertEqual(counts["TURN_ACTION"],3)
         self.assertEqual(counts["TEAM_SELECTION"],1)
-        self.assertEqual(counts["PARTY_MENU"],1)
+        self.assertEqual(counts["SWITCH_SELECTION"],1)
         # Excluded JPG remains staged in the corrected group; only saved
         # frames disappear. The unselected UNKNOWN group is untouched.
         self.assertEqual(self.gui.auto_list.count(),2)
         self.assertEqual(
             [g.files for g in self.gui._auto_groups],
             [(frames[5],),(frames[6],frames[7])])
-        self.assertEqual(self.gui._auto_groups[0].candidate,"RESULT")
+        self.assertEqual(self.gui._auto_groups[0].candidate,"OTHER")
         self.assertIsNone(self.gui._auto_groups[1].candidate)
         self.assertEqual(set(self.gui.staging.session_files(self.gui.session_id)),
                          {frames[5],frames[6],frames[7]})
@@ -599,9 +599,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(4)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.96,.84,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.96,.84,
                            (frames[0],frames[1]),"AI候補"),
-            AutoLabelGroup(tuple(frames[2:]),"RESULT",.96,.84,
+            AutoLabelGroup(tuple(frames[2:]),"OTHER",.96,.84,
                            (frames[2],frames[3]),"AI候補")])
         self.gui.auto_list.selectAll()
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
@@ -612,8 +612,8 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertTrue(all(frame.exists() for frame in frames))
         prompt=confirm.call_args.args[2]
-        self.assertIn("グループ1: MOVE_MENU 2枚",prompt)
-        self.assertIn("グループ2: RESULT 2枚",prompt)
+        self.assertIn("グループ1: TURN_ACTION 2枚",prompt)
+        self.assertIn("グループ2: OTHER 2枚",prompt)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes) as confirm:
             self.gui._approve_selected_auto_groups()
@@ -627,7 +627,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(6)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[i:i+2]),"MOVE_MENU",.99,.90,
+            AutoLabelGroup(tuple(frames[i:i+2]),"TURN_ACTION",.99,.90,
                            (frames[i],frames[i+1]),"AI候補")
             for i in (0,2,4)])
         self.gui._select_all_reviewed_groups()
@@ -639,7 +639,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                           return_value=QMessageBox.StandardButton.Yes) as confirm:
             self.gui._approve_selected_auto_groups()
         confirm.assert_called_once()
-        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],6)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TURN_ACTION"],6)
         self.assertEqual(self.gui.auto_list.count(),0)
 
     def test_bulk_blocks_unknown_label_without_group_or_frame_correction(self):
@@ -648,7 +648,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(4)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.98,.91,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.98,.91,
                            (frames[0],frames[1]),"AI候補"),
             AutoLabelGroup(tuple(frames[2:]),None,0,0,
                            (frames[2],frames[3]),"候補不明")])
@@ -663,7 +663,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertIn("未確定",self.gui.auto_progress.text())
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("UNKNOWN"))
+            self.gui.auto_label_box.findData("OTHER"))
         # Isolate group 2 when changing only this label.
         self.gui.auto_list.clearSelection()
         self.gui.auto_list.setCurrentRow(1)
@@ -675,7 +675,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._approve_selected_auto_groups()
         self.assertEqual(self.gui.dataset.audit()["total"],4)
-        self.assertEqual(self.gui.dataset.audit()["counts"]["UNKNOWN"],2)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["OTHER"],2)
 
     def test_bulk_partial_error_retains_unsaved_frames_and_other_reviewed_groups(self):
         from champions_assist.screen_auto_label import AutoLabelGroup
@@ -683,18 +683,18 @@ class DatasetCollectorGuiTests(unittest.TestCase):
                 for _ in range(6)]
         self.gui._refresh_review_sessions(select=self.gui.session_id)
         self.gui._auto_on_proposals([
-            AutoLabelGroup(tuple(frames[:2]),"MOVE_MENU",.98,.91,
+            AutoLabelGroup(tuple(frames[:2]),"TURN_ACTION",.98,.91,
                            (frames[0],frames[1]),"AI候補"),
             AutoLabelGroup(tuple(frames[2:4]),"TEAM_SELECTION",.98,.91,
                            (frames[2],frames[3]),"AI候補"),
-            AutoLabelGroup(tuple(frames[4:]),"RESULT",.99,.95,
+            AutoLabelGroup(tuple(frames[4:]),"OTHER",.99,.95,
                            (frames[4],frames[5]),"AI候補")])
         for index in range(3):
             self.gui.auto_list.setCurrentRow(index)
             self.gui.auto_review_confirm.setChecked(True)
         self.gui.auto_list.setCurrentRow(1)
         self.gui.auto_label_box.setCurrentIndex(
-            self.gui.auto_label_box.findData("PARTY_MENU"))
+            self.gui.auto_label_box.findData("SWITCH_SELECTION"))
         self.gui._stage_auto_group_label()
         self.gui.auto_review_confirm.setChecked(True)
         self.gui.auto_list.item(0).setSelected(True)
@@ -716,7 +716,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual([g.files for g in self.gui._auto_groups],
                          [(frames[3],),(frames[4],frames[5])])
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
-        self.assertEqual(self.gui._auto_group_label_overrides[0],"PARTY_MENU")
+        self.assertEqual(self.gui._auto_group_label_overrides[0],"SWITCH_SELECTION")
         self.gui.auto_list.setCurrentRow(1)
         self.assertTrue(self.gui.auto_review_confirm.isChecked())
         self.assertEqual(set(self.gui.staging.session_files(self.gui.session_id)),
@@ -735,7 +735,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertEqual(self.gui.auto_frames_list.count(),6)
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
-        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("MOVE_MENU"))
+        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("TURN_ACTION"))
         self.gui.auto_review_confirm.setChecked(True)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.No):
@@ -744,7 +744,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes):
             self.gui._approve_auto_groups(use_suggestion=False)
-        self.assertEqual(self.gui.dataset.audit()["counts"]["MOVE_MENU"],6)
+        self.assertEqual(self.gui.dataset.audit()["counts"]["TURN_ACTION"],6)
         self.assertTrue(all(not f.exists() for f in staged))
         self.assertEqual(self.gui.auto_list.count(),0)
 
@@ -776,9 +776,9 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.gui.auto_list.setCurrentRow(0)
         self.assertEqual(self.gui.auto_frames_list.count(),6)
         self.gui.auto_frames_list.setCurrentRow(2)
-        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("PARTY_MENU"))
+        self.gui.auto_label_box.setCurrentIndex(self.gui.auto_label_box.findData("SWITCH_SELECTION"))
         self.gui._correct_selected_auto_frames()
-        self.assertEqual(self.gui._auto_frame_overrides[staged[2]],"PARTY_MENU")
+        self.assertEqual(self.gui._auto_frame_overrides[staged[2]],"SWITCH_SELECTION")
         self.assertFalse(self.gui.auto_review_confirm.isChecked())
         self.gui.auto_frames_list.setCurrentRow(4)
         self.gui._exclude_selected_auto_frames()
@@ -789,7 +789,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             self.gui._approve_auto_groups(use_suggestion=True)
         counts=self.gui.dataset.audit()["counts"]
         self.assertEqual(counts["TEAM_SELECTION"],4)
-        self.assertEqual(counts["PARTY_MENU"],1)
+        self.assertEqual(counts["SWITCH_SELECTION"],1)
         self.assertEqual(sum(counts.values()),5)
         self.assertTrue(staged[4].exists())
         self.assertTrue(all(not p.exists() for i,p in enumerate(staged) if i!=4))
@@ -798,7 +798,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         from champions_assist.screen_auto_label import AutoLabelGroup
         files=[self.gui.staging.save_unlabelled(self.image,self.gui.session_id)
                for _ in range(3)]
-        group=AutoLabelGroup(tuple(files),"MOVE_MENU",.99,.90,
+        group=AutoLabelGroup(tuple(files),"TURN_ACTION",.99,.90,
                              (files[0],files[1],files[-1]),"AI候補")
         self.gui._auto_on_proposals([group])
         self.gui.auto_list.setCurrentRow(0)
