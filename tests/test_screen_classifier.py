@@ -49,9 +49,20 @@ class ScreenClassifierTests(unittest.TestCase):
     def write_config(self):
         self.meta.write_text(json.dumps(self.config),encoding="utf-8")
 
+    def test_legacy_seven_label_manifest_is_refused_even_when_validated(self):
+        self.config["schema_version"]=1
+        self.config["labels"]=["MATCHMAKING","TEAM_SELECTION","MOVE_MENU",
+                               "PARTY_MENU","BATTLE_EVENT","RESULT","UNKNOWN"]
+        self.write_config()
+        with self.assertRaisesRegex(ScreenClassifierError,"MANIFEST"):
+            ScreenClassifier(self.model,self.meta,
+                             session_factory=lambda *a,**kw:DummySession())
+
     def test_cpu_prediction_uses_pinned_model_rgb_and_preprocess(self):
         session=DummySession()
         klass=ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:session)
+        self.assertEqual(tuple(LABELS),("TEAM_SELECTION","TURN_ACTION",
+                                        "SWITCH_SELECTION","BATTLE_EVENT","OTHER"))
         self.assertEqual(klass.device,"cpu")
         image=np.full((24,36,3),120,dtype=np.uint8)
         prediction=klass.predict(image)
@@ -189,12 +200,17 @@ class ScreenClassifierTests(unittest.TestCase):
             return ScreenPrediction(label,0.99,0.95,2.0)
         self.assertIsNone(gate.observe(p("TEAM_SELECTION"),"BATTLE"))
         self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
-        self.assertEqual(gate.observe(p("TURN_ACTION"),"BATTLE"),"MOVE_MENU")
-        self.assertIsNone(gate.observe(p("MOVE_MENU"),"BATTLE"))
+        self.assertEqual(gate.observe(p("TURN_ACTION"),"BATTLE"),"TURN_ACTION")
+        self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
+        # Dedup until another (non-action, non-event) screen rearms the gate.
+        self.assertIsNone(gate.observe(p("OTHER"),"BATTLE"))
+        self.assertIsNone(gate.observe(p("OTHER"),"BATTLE"))
+        self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
+        self.assertEqual(gate.observe(p("BATTLE_EVENT"),"BATTLE"),"BATTLE_EVENT")
         self.assertIsNone(gate.observe(p("SWITCH_SELECTION"),"BATTLE"))
-        self.assertEqual(gate.observe(p("SWITCH_SELECTION"),"BATTLE"),"PARTY_MENU")
+        self.assertEqual(gate.observe(p("SWITCH_SELECTION"),"BATTLE"),"SWITCH_SELECTION")
 
 
 if __name__=="__main__":
