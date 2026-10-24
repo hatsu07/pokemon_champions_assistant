@@ -309,7 +309,7 @@ class DatasetCollectorGuiTests(unittest.TestCase):
             self.gui.auto_bulk_button.click()
         confirmation.assert_called_once()
         prompt=confirmation.call_args.args[2]
-        self.assertIn("グループ1: PARTY_MENU 2枚",prompt)
+        self.assertIn("グループ1: SWITCH_SELECTION 2枚",prompt)
         self.assertIn("グループ3:",prompt)
         counts=self.gui.dataset.audit()["counts"]
         self.assertEqual(counts["SWITCH_SELECTION"],3)
@@ -612,8 +612,8 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         self.assertEqual(self.gui.dataset.audit()["total"],0)
         self.assertTrue(all(frame.exists() for frame in frames))
         prompt=confirm.call_args.args[2]
-        self.assertIn("グループ1: MOVE_MENU 2枚",prompt)
-        self.assertIn("グループ2: RESULT 2枚",prompt)
+        self.assertIn("グループ1: TURN_ACTION 2枚",prompt)
+        self.assertIn("グループ2: OTHER 2枚",prompt)
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes) as confirm:
             self.gui._approve_selected_auto_groups()
