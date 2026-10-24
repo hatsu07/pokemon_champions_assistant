@@ -171,6 +171,7 @@ class ObserverPipeline:
         self.hp_calibrations = hp_calibrations
         self.icon_calibrations = icon_calibrations
         self.visual_stabilizer = VisualCandidateStabilizer()
+        self._visual_last_values: dict[str, object] = {}
 
     def process_frame(self, frame: Frame, *, now_ms: int | None = None, actual_ui_remaining_ms: int | None = None) -> FrameObservation:
         started = perf_counter()
@@ -281,6 +282,8 @@ class ObserverPipeline:
             repeated = self.visual_stabilizer.observe(candidate)
             if repeated is None:
                 continue
+            if self._visual_last_values.get(candidate.field) == candidate.value:
+                continue
             evidence_id = f"{raw_observation_id}:visual:{candidate.field}"
             applied = self.store.append_evidence(
                 self.session.match_id, evidence_id,
@@ -289,6 +292,7 @@ class ObserverPipeline:
             )
             if not applied:
                 continue
+            self._visual_last_values[candidate.field] = candidate.value
             existing = list(self.session.state_facts.get("uncertainties", []))
             note = f"{candidate.field}: {candidate.value} ({candidate.reason}; evidence={','.join(repeated.evidence_ids)})"
             # Bound the request size; observations remain append-only in SQLite.
