@@ -34,14 +34,8 @@ OBSERVATION_FACT_FIELDS = (
 )
 
 
-def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict, ...]) -> None:
-    """Apply explicitly visible observations without making them tactical facts.
-
-    CHOICE lock activates only on an observed completed move *and* a registered
-    choice user. Lock clears on observed own active change. No implicit move
-    acknowledgement, item activation, ability or Mega transformation.
-    """
-    memory = state.setdefault("battle_evidence", {
+def empty_battle_evidence() -> dict:
+    return {
         "hp_by_pokemon": {"own": {}, "opponent": {}},
         "item_by_pokemon": {"own": {}, "opponent": {}},
         "ability_by_pokemon": {"own": {}, "opponent": {}},
@@ -50,7 +44,17 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
         "boosts": {"own": {}, "opponent": {}},
         "choice_lock": {"pokemon": "", "move": "", "source": ""},
         "last_confirmed_our_move": "",
-    })
+    }
+
+
+def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict, ...]) -> None:
+    """Apply explicitly visible observations without making them tactical facts.
+
+    CHOICE lock activates only on an observed completed move *and* a registered
+    choice user. Lock clears on observed own active change. No implicit move
+    acknowledgement, item activation, ability or Mega transformation.
+    """
+    memory = state.setdefault("battle_evidence", empty_battle_evidence())
     previous_own = _clean(state.get("our_active"))
     own = _clean(observation.get("our_active")) or previous_own
     opponent = _clean(observation.get("opponent_active")) or _clean(state.get("opponent_active"))
