@@ -36,7 +36,7 @@ class MemoryAndReasoningTests(unittest.TestCase):
         menu=np.zeros((120,200,3),dtype=np.uint8)
         menu[60:,100:]=200
         other=np.zeros_like(menu)
-        gate.calibrate("MOVE_MENU",menu)
+        gate.calibrate("TURN_ACTION",menu)
         self.assertIsNone(gate.observe(other))
         self.assertIsNone(gate.observe(other))
         self.assertIsNone(gate.observe(menu))
