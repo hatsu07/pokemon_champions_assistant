@@ -282,6 +282,33 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
+    def test_unclassified_fallback_waits_for_verified_battle_before_prep_interrupt(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel._auto_running=True
+        panel._prep_thread=object()
+        panel._prep_cancel_event.clear()
+        image=np.zeros((100,160,3),dtype=np.uint8)
+        try:
+            with patch.object(panel,"_send_pending") as queued:
+                panel._queue_batch([image],screen_label=None)
+                queued.assert_called_once()
+            self.assertFalse(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["prep_status"],"RUNNING")
+            # An actual image observation (not the fallback scene delta)
+            # has now confirmed an opponent's turn.
+            panel._pending_batch=None
+            panel._active_job="batch"
+            panel._completed({
+                "state":{"phase":"BATTLE","prep_status":"INTERRUPTED_BY_BATTLE_SCREEN"},
+                "report":{"status":"OBSERVED","recommendation":""}})
+            self.assertTrue(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["phase"],"BATTLE")
+        finally:
+            panel._prep_thread=None
+            panel._pending_batch=None
+            panel._stop_auto()
+
     def test_prep_timeout_discards_late_result(self):
         panel=self.window._match_panel
         panel.state={"phase":"PREP","prep_status":"RUNNING"}
