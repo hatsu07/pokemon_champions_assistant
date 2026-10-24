@@ -165,8 +165,8 @@ def analyze_staged_session(files: Sequence[Path], *, classifier=None,
             flags.append("AI未設定")
         elif current_label is None:
             flags.append("AI予測の確信度不足")
-        elif current_label == "UNKNOWN":
-            flags.append("UNKNOWNは重点確認")
+        elif current_label == "OTHER":
+            flags.append("OTHERは内容を確認")
         if previous_hash is not None and (previous_hash ^ current_hash).bit_count() >= 4:
             flags.append("前画像との形状差")
         if previous_small is not None and color_change >= 12.0:
