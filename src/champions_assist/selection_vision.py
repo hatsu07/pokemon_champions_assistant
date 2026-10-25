@@ -352,40 +352,43 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
         raise SelectionBlocked("MODEL_STREAM_INCOMPLETE")
     return json.loads("".join(pieces))
 
-def selection_image_content(image, *, introduction: str) -> list[dict]:
-    """Send a full frame plus enlarged RIGHT-OPPONENT six only.
+def selection_image_content(image, *, introduction: str,
+                            include_full: bool = False) -> list[dict]:
+    """Opponent-only compact vision payload for actual 35s selection latency.
 
-    The player's six are known from the preloaded team and are NOT read from
-    image. The extra right crop is from the same frame, one model request.
-    Opponent-six, form/ambiguity and registered choice checks remain strict.
+    First attempt sends ONLY the right-side game region: the player's six are
+    preloaded and the full frame adds significant redundant image processing.
+    A validation retry may include the full frame for visual context.
+    No crop is treated as a verified Pokémon identity. Unusual frames fall
+    back to a single complete image rather than guessing coordinates.
     """
     from .vision_api_benchmark import jpeg_data_uri
 
-    content = [
-        {"type": "input_text", "text": introduction},
-        {"type": "input_image", "image_url": jpeg_data_uri(image), "detail": "high"},
-    ]
+    content = [{"type": "input_text", "text": introduction}]
     if not hasattr(image, "shape") or len(image.shape) != 3:
+        content.append({"type": "input_image", "image_url": jpeg_data_uri(image),
+                        "detail": "high"})
         return content
     height, width = image.shape[:2]
     if width < 480 or height < 240 or not 1.15 <= width / height <= 3.0:
+        content.append({"type": "input_image", "image_url": jpeg_data_uri(image),
+                        "detail": "high"})
         return content
+    if include_full:
+        content.append({
+            "type": "input_image", "image_url": jpeg_data_uri(image),
+            "detail": "low",
+        })
     side_width = int(width * 0.45)
-    for name, crop in (
-        ("OPPONENT_RIGHT_SIX_ONLY", image[:, width-side_width:, :].copy()),
-    ):
-        content.append({
-            "type": "input_text",
-            "text": ("Visual detail crop " + name +
-                     ". Same screenshot; do not confuse own and opponent species. "
-                     "Read ONLY the six opponent names or sprites actually visible; "
-                     "never infer unclear opponents; the registered player's team "
-                     "is already known and must NOT be read from the image."),
-        })
-        content.append({
-            "type": "input_image", "image_url": jpeg_data_uri(crop),
-            "detail": "high",
-        })
+    crop = image[:, width-side_width:, :].copy()
+    content.extend([
+        {"type": "input_text",
+         "text": "OPPONENT_RIGHT_SIX_ONLY: the RIGHT opponent Pokémon column. "
+                 "Read six distinct sprites/forms top-to-bottom. Do not read "
+                 "the LEFT preloaded player's team or invent missing species."},
+        {"type": "input_image", "image_url": jpeg_data_uri(crop),
+         "detail": "high"},
+    ])
     return content
 
 
