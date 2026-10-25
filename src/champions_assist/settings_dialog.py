@@ -54,6 +54,14 @@ class _MatchupAIWorker(QThread):
             from .team_auto_analysis import run_automatic_analysis
             from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore
             from .app_config import default_app_root
+            # Refresh only BETWEEN matches. Network/age errors preserve the
+            # previous last-good Singles evidence; never block analysis.
+            refresh_status = "LAST_GOOD"
+            try:
+                self.service.refresh_public_battle_data(match_active=False)
+                refresh_status = "REFRESHED"
+            except (OSError, ValueError, RuntimeError, TimeoutError):
+                pass
             ready = self.service.prepare_team_live_assets(self.team_id, match_active=False)
             catalog = ready.manifest_path.with_name("matchup-evidence.json")
             auth = ChatGPTSignIn(ProtectedSessionStore(default_app_root()))
@@ -61,7 +69,7 @@ class _MatchupAIWorker(QThread):
                 catalog, model=self.model, access_token=auth.access_token(),
                 reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
                 progress=self.progress.emit)
-            self.result_ready.emit({"ok":True, **report})
+            self.result_ready.emit({"ok":True, "environment_refresh":refresh_status, **report})
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
             self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
@@ -1026,7 +1034,9 @@ class SettingsDialog(QDialog):
             self.matchup_review_status.setText(
                 f"{label}。今回の保存: {result['count']}件 / "
                 f"通信 {result['batches']}回。"
-                " Championsマスターで確認した先制技の習得候補はLIVE警戒欄に反映。"
+                + ("Singles統計更新済み。" if result.get("environment_refresh")=="REFRESHED"
+                   else "既存の環境統計を利用。")
+                + " Championsマスターで確認した先制技の習得候補はLIVE警戒欄に反映。"
                 " AIの対面評価・処理役・安全受けは未検証のままです。")
         else:
             self.matchup_review_status.setText(
