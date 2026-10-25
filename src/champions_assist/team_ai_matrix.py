@@ -30,61 +30,83 @@ def _safe_text(value: object, limit: int = 72) -> str:
 
 
 def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
-    """Accept only saved proposals matching *this exact* evidence catalogue.
+    """Prefer validated v2 structured hints, fallback to previous v1 prose.
 
-    Matching signatures and exact catalog keys prevent cross-team or old-version
-    proposals from leaking into a new registered team.
+    Local JSON can be modified; validate each row again against the exact
+    evidence catalog before exposing it in a match-specific matrix.
     """
+    from .team_matchup_v2 import (
+        SCHEMA_V2, FIELDS, validate_v2_reply, compact_v2_hint)
     catalog_path = Path(catalog_path)
     raw = catalog_path.read_bytes()
     catalog = json.loads(raw)
     if catalog.get("schema") != CATALOG_SCHEMA:
         raise ConfigurationError("Champions対面根拠が不正です")
     digest = sha256(raw).hexdigest()
-    keys = {(c["opponent"], c["slot"], c["member_signature"])
-            for c in catalog["cells"]}
+    source = {(c["opponent"],c["slot"],c["member_signature"]):c
+              for c in catalog["cells"]}
     notes: dict[str, dict[int, str]] = {}
-    seen = set()
+    versions: dict[tuple[str,int],int] = {}
     for path in sorted(catalog_path.parent.glob("ai-proposal-*.json")):
         if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
             continue
         try:
             data = _load(path)
-        except (OSError, ValueError, UnicodeError):
+            ver = 2 if data.get("schema") == SCHEMA_V2 else 1
+            if (data.get("schema") not in (PROPOSAL_SCHEMA,SCHEMA_V2)
+                    or data.get("catalog_sha256") != digest
+                    or data.get("status") != "AI_PROPOSAL_UNVERIFIED"
+                    or data.get("live_approved") is not False
+                    or data.get("processor_certified") is not False
+                    or data.get("safe_switch_certified") is not False
+                    or not isinstance(data.get("proposals"), list)
+                    or not data["proposals"]):
+                continue
+            rows = data["proposals"]
+            keys = []
+            for r in rows:
+                key=(r["opponent"],r["slot"],r["member_signature"])
+                if key not in source or key in keys:
+                    raise ValueError("matchup key missing or duplicated")
+                keys.append(key)
+            if ver == 2:
+                selected=[source[k] for k in keys]
+                request={
+                    "catalog_sha256":digest,
+                    "cells":[{"opponent":c["opponent"],"slot":c["slot"],
+                              "member_signature":c["member_signature"]}
+                             for c in selected],
+                    "own_members":[{"slot":c["slot"],"moves":c["registered_moves"],
+                                    "traits":c["own_species"]}
+                                   for c in selected],
+                    "opponents":[{"name":c["opponent"],"traits":c["opponent_species"]}
+                                 for c in selected],
+                    "regulation":catalog["regulation"],
+                    "member_signatures":catalog["member_signatures"]}
+                # Reject edited files that bypassed fixed-master constraints.
+                validate_v2_reply(request, {
+                    "schema":SCHEMA_V2,"catalog_sha256":digest,
+                    "proposals":rows})
+                selected_notes=[compact_v2_hint(r) for r in rows]
+            else:
+                if any(not isinstance(r,dict)
+                       or any(not isinstance(r.get(k),str) or not r[k].strip()
+                              for k in ("assessment","risks","unknowns"))
+                       for r in rows):
+                    continue
+                selected_notes=[
+                    _safe_text(r["assessment"],52) +
+                    "/注意:" + _safe_text(r["risks"],20) for r in rows]
+            for key,note in zip(keys,selected_notes):
+                opponent,slot,_signature=key
+                current=(opponent,slot)
+                if versions.get(current,0) > ver:
+                    continue
+                versions[current]=ver
+                notes.setdefault(opponent,{})[slot]=note
+        except (OSError,ValueError,UnicodeError,TypeError,KeyError,ConfigurationError):
             continue
-        if (data.get("schema") != PROPOSAL_SCHEMA
-                or data.get("catalog_sha256") != digest
-                or data.get("status") != "AI_PROPOSAL_UNVERIFIED"
-                or data.get("live_approved") is not False
-                or data.get("processor_certified") is not False
-                or data.get("safe_switch_certified") is not False
-                or not isinstance(data.get("proposals"), list)):
-            continue
-        # Invalid rows invalidate this file, not just the offending proposal.
-        selected = []
-        for row in data["proposals"]:
-            if not isinstance(row, dict):
-                selected = []
-                break
-            try:
-                key = (row["opponent"], row["slot"], row["member_signature"])
-            except KeyError:
-                selected = []
-                break
-            if key not in keys or key in seen or any(
-                    not isinstance(row.get(field), str) or not row[field].strip()
-                    for field in ("assessment", "risks", "unknowns")):
-                selected = []
-                break
-            selected.append((key, _safe_text(row["assessment"], 52),
-                             _safe_text(row["risks"], 20)))
-        if not selected or len(selected) != len(data["proposals"]):
-            continue
-        for (opponent, slot, signature), assessment, risk in selected:
-            seen.add((opponent, slot, signature))
-            notes.setdefault(opponent, {})[slot] = (
-                assessment + ("/注意:" + risk if risk else ""))
-    return notes, len(seen)
+    return notes, len(versions)
 
 
 def publish_ai_matrix(*, matrix_path: str | Path,
