@@ -45,7 +45,8 @@ class _ReplayWorker(QObject):
     def __init__(self, *, app_root, selected_model, assets, state, job='auto_frame',
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
-                 cancel_event=None, frames=None, screen_label=None, field_profile=None):
+                 cancel_event=None, frames=None, screen_label=None, field_profile=None,
+                 selection_seconds=55.0, prep_seconds=40.0):
         super().__init__()
         self.job=job
         self.frames=frames
@@ -54,6 +55,8 @@ class _ReplayWorker(QObject):
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
+        self.selection_seconds=float(selection_seconds)
+        self.prep_seconds=float(prep_seconds)
         self.capture_config=capture_config
         self.capture_gate=capture_gate
         self.capture_function=capture_function
@@ -73,6 +76,7 @@ class _ReplayWorker(QObject):
                     state=self.state, assets=self.assets,
                     access_token=auth.access_token(),model=self.selected_model,
                     reasoning_effort=self.reasoning_effort,
+                    limit_seconds=self.prep_seconds,
                 )
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
@@ -111,9 +115,8 @@ class _ReplayWorker(QObject):
                         # existing image-to-AI fallback or invent a fact.
                         local_candidates=[]
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
-                    # The 35-second budget includes auth/image preparation as
-                    # well as ALL opponent recognition and tactical calls.
-                    remaining=35.0-(perf_counter()-batch_started)
+                    # Selection: shared 55s including auth and all model calls.
+                    remaining=self.selection_seconds-(perf_counter()-batch_started)
                     if remaining<=2.0:
                         next_state,report=self.state,{
                             "status":"DEADLINE_EXCEEDED",
@@ -160,9 +163,9 @@ class _ReplayWorker(QObject):
                                         "report":{"status":"UNCHANGED_FRAME"}})
                     return
                 token=auth.access_token()
-                # Both capture and credential refresh consume the 35s budget.
+                # Both capture and auth consume the selection budget.
                 capture_and_auth_ms=round((perf_counter()-started)*1000)
-                remaining=35.0-(perf_counter()-started)
+                remaining=self.selection_seconds-(perf_counter()-started)
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     next_state,report=self.state,{"status":"CANCELLED"}
                 elif remaining <= 1.0:
@@ -254,6 +257,8 @@ class MatchReplayDialog(QDialog):
         self._timing_trace=[]
         self._debug_log=None
         self._active_request_started=None
+        self._selection_screen_started=None
+        self._prep_budget_seconds=40.0
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -618,6 +623,8 @@ class MatchReplayDialog(QDialog):
         self._screen_gate.reset()
         self._last_local_class=None
         self._pending_batch=None
+        self._selection_screen_started=None
+        self._prep_budget_seconds=40.0
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         if self.training_capture_check.isChecked():
             self._begin_background_collection()
@@ -779,6 +786,11 @@ class MatchReplayDialog(QDialog):
         # An unclassified image change is not proof that battle has started.
         # Let the visual AI observation confirm the opponent lead first.
         # At most one pending batch: new observed events replace stale ones.
+        if (screen_label=="TEAM_SELECTION" and self._selection_screen_started is None
+                and self.state is not None
+                and self.state.get("phase") in ("MATCHMAKING","SELECTION")):
+            self._selection_screen_started=monotonic()
+            self._trace_event("SELECTION_CLOCK_STARTED")
         if screen_label in ("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION"):
             self._trace_event("SCREEN_CLASSIFIER_CANDIDATE",
                               screen_label=screen_label,
@@ -804,6 +816,12 @@ class MatchReplayDialog(QDialog):
         self._turn_buffer.reset_turn()
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
+        if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
+            elapsed_preview=(self._active_request_started-self._selection_screen_started
+                             if self._selection_screen_started is not None else 0.0)
+            selection_remaining=max(1.0,55.0-elapsed_preview)
+        else:
+            selection_remaining=35.0
         self._set_ai_status(
             f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
         request_report={
@@ -825,6 +843,7 @@ class MatchReplayDialog(QDialog):
             frames=frames,cancel_event=self._cancel_event,
             screen_label=screen_label,
             field_profile=self._field_profile,
+            selection_seconds=selection_remaining,
         )
         self._worker.moveToThread(self._thread)
         self._worker.progress.connect(self._on_ai_progress)
@@ -993,6 +1012,10 @@ class MatchReplayDialog(QDialog):
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
         if report.get("screen")=="TEAM_SELECTION" and report.get("selected_three"):
+            if self._selection_screen_started is None:
+                self._selection_screen_started=(
+                    monotonic()-report.get("queue_elapsed_ms",0)/1000.0)
+                self._trace_event("SELECTION_CLOCK_INFERRED_FROM_AI")
             self.actual_three.setText(" / ".join(report["selected_three"]))
             self.actual_lead.setText(report.get("lead") or "")
         self._render(entry)
