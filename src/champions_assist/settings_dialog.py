@@ -482,6 +482,19 @@ class SettingsDialog(QDialog):
         self.singles_source_status=QLabel(self._singles_source_message())
         self.singles_source_status.setWordWrap(True)
         layout.addWidget(self.singles_source_status)
+        review_row=QHBoxLayout()
+        self.matchup_candidates_button=QPushButton("構築別358×6対面根拠JSONを確認")
+        self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
+        review_row.addWidget(self.matchup_candidates_button)
+        self.matchup_review_button=QPushButton("確認済み対面レビューJSONを取り込む")
+        self.matchup_review_button.clicked.connect(self._import_matchup_reviews)
+        review_row.addWidget(self.matchup_review_button)
+        layout.addLayout(review_row)
+        self.matchup_review_status=QLabel(
+            "対面根拠は固定マスターの事実と未評価箇所を記録します。"
+            "承認済みでも実戦E2E未確認の新構築をLIVE_READYにはしません。")
+        self.matchup_review_status.setWordWrap(True)
+        layout.addWidget(self.matchup_review_status)
         layout.addWidget(QLabel(
             "構築選択で構築別LIVEデータを生成。未検証の対面は実戦評価に昇格しません。"
         ))
@@ -902,6 +915,49 @@ class SettingsDialog(QDialog):
             self.singles_source_status.setText(self._singles_source_message())
         except (OSError,ValueError,RuntimeError) as exc:
             QMessageBox.warning(self,"統計JSONを取り込めません",str(exc))
+
+    def _show_matchup_candidates(self) -> None:
+        if self._match_active():
+            QMessageBox.warning(self,"対面候補の確認不可","対戦が終わってから確認してください。")
+            return
+        record=self._selected_record()
+        if record is None:return
+        try:
+            ready=self.service.prepare_team_live_assets(record.team_id,match_active=False)
+            import json
+            meta=json.loads(ready.manifest_path.read_text(encoding="utf-8"))
+            counts=meta["candidate_status_counts"]
+            path=ready.manifest_path.with_name("matchup-evidence.json")
+            self.matchup_review_status.setText(
+                f"対面候補: CONFIRMED {counts['CONFIRMED']} / "
+                f"CONDITIONAL {counts['CONDITIONAL']} / UNKNOWN {counts['UNKNOWN']}。"
+                f" \nファイル: {path}"
+                " \n新構築のLIVE認定は独立した実戦検証まで保留。"
+            )
+        except (OSError,ValueError,RuntimeError) as exc:
+            QMessageBox.warning(self,"対面候補の生成に失敗",str(exc))
+
+    def _import_matchup_reviews(self) -> None:
+        if self._match_active():
+            QMessageBox.warning(self,"取り込み不可","対戦が終わってから取り込んでください。")
+            return
+        record=self._selected_record()
+        if record is None:return
+        filename,_=QFileDialog.getOpenFileName(
+            self,"プレイヤー確認済みChampions対面レビューJSON","","JSON (*.json)")
+        if not filename:return
+        try:
+            result=self.service.import_matchup_reviews(
+                record.team_id,filename,match_active=False)
+            counts=result["review_counts"]
+            self.matchup_review_status.setText(
+                f"レビュー保持: CONFIRMED {counts['CONFIRMED']} / "
+                f"CONDITIONAL {counts['CONDITIONAL']}。"
+                " 相手の型と安全受けは自動確定しません。"
+                " \n根拠: "+result["matchup_evidence_path"]
+            )
+        except (OSError,ValueError,RuntimeError) as exc:
+            QMessageBox.warning(self,"対面レビューJSONを取り込めません",str(exc))
 
     def closeEvent(self,event):
         if self._singles_worker is not None and self._singles_worker.isRunning():

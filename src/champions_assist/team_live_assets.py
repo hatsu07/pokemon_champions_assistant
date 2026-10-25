@@ -16,12 +16,13 @@ import re
 
 from .app_config import ConfigurationError, atomic_write_text
 from .species_name_aliases import selection_base_name
+from .matchup_evidence import build_candidate_catalog, certified_review_counts, validate_review_packet
 
 
 MATRIX = "Pokemon_Champions_MC_live_selection_matrix.txt"
 LOOKUP = "Pokemon_Champions_MC_60sec_lookup_master.txt"
 BASE_TEAM = "Pokemon_Champions_MC_team_2026-10-03.csv"
-GENERATED_VERSION = "team-assets-v1"
+GENERATED_VERSION = "team-assets-v2-candidate-evidence"
 SET_FIELDS = ("name", "item", "ability", "nature", "ap_h_a_b_c_d_s",
               "move1", "move2", "move3", "move4", "choice_lock",
               "form_change", "priority", "setup", "recovery", "action_guarantee")
@@ -136,23 +137,85 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         for entry in env["pokemon"]:
             if isinstance(entry, dict) and isinstance(entry.get("name"), str):
                 env_rows[selection_base_name(entry["name"])] = entry
+    review_path = Path(data_root)/"matchup-reviews"/(team_id+".json")
+    review_bytes = review_path.read_bytes() if review_path.is_file() else b""
+    if len(review_bytes) > 2*1024*1024:
+        raise ConfigurationError("レビューJSONのサイズ上限超過")
     fingerprint = _jsonhash({
         "version":GENERATED_VERSION, "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
         "master_lookup":sha256(lookup_bytes).hexdigest(),
         "baseline":_jsonhash(baseline), "environment":snapshot_sha,
-        "environment_kind":env_kind,
+        "environment_kind":env_kind,"reviews_sha256":sha256(review_bytes).hexdigest(),
     })
     directory = Path(data_root)/"live-team-assets"/team_id/fingerprint
     matrix_path, lookup_path, manifest_path = directory/"matrix.txt", directory/"lookup.txt", directory/"manifest.json"
-    if all(p.is_file() for p in (matrix_path,lookup_path,manifest_path)):
+    evidence_path=directory/"matchup-evidence.json"
+    if all(p.is_file() for p in (matrix_path,lookup_path,manifest_path,evidence_path)):
         saved = json.loads(manifest_path.read_text(encoding="utf-8"))
         if (saved.get("fingerprint")==fingerprint
                 and sha256(matrix_path.read_bytes()).hexdigest()==saved.get("matrix_sha256")
-                and sha256(lookup_path.read_bytes()).hexdigest()==saved.get("lookup_sha256")):
+                and sha256(lookup_path.read_bytes()).hexdigest()==saved.get("lookup_sha256")
+                and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")):
             return PreparedTeamAssets(matrix_path,lookup_path,manifest_path,
                                       saved["status"],saved["reviewed_members"],
                                       saved["opponent_rows"],True)
     full = all(i is not None for i in matched_columns)
+    team_reg=(registered[0].get("reg") or "UNDECLARED").strip()
+    catalog=build_candidate_catalog(
+        master_dir=master,team=registered,matrix_rows=matrix_rows,
+        fields=SET_FIELDS,regulation=team_reg)
+    review_counts={"CONFIRMED":0,"CONDITIONAL":0}
+    reviews={}
+    review_warning=""
+    if review_bytes:
+        try:
+            packet=json.loads(review_bytes)
+            approved=validate_review_packet(
+                packet,team_id=team_id,regulation=catalog["regulation"],
+                signatures=catalog["member_signatures"],
+                opponents=set(matrix_rows))
+            reviews={(item["opponent"],item["slot"]):item for item in approved}
+            review_counts={
+                "CONFIRMED":sum(item["status"]=="CONFIRMED" for item in approved),
+                "CONDITIONAL":sum(item["status"]=="CONDITIONAL" for item in approved),
+            }
+        except (ConfigurationError,ValueError,TypeError) as exc:
+            # A modified team or stale/corrupt review must never block the next
+            # four-file preloading. It contributes zero trusted evaluations.
+            review_warning="STALE_OR_INVALID_REVIEW_IGNORED:"+type(exc).__name__
+    for entry in catalog["cells"]:
+        slot=entry["slot"]
+        reviewed=reviews.get((entry["opponent"],slot))
+        if reviewed is not None:
+            entry["evaluation"]=reviewed["status"]
+            entry["review_summary"]={
+                "reviewed_at":reviewed["reviewed_at"],
+                "source_count":len(reviewed["sources"]),
+                "rationale":reviewed["rationale"],
+                "conditions":reviewed["conditions"],
+                "processor":"UNVERIFIED","safe_switch":"UNVERIFIED",
+            }
+        elif matched_columns[slot] is not None:
+            entry["evaluation"]="CONDITIONAL"
+            entry["review_summary"]={
+                "source_file":MATRIX,
+                "source_sha256":sha256(matrix_bytes).hexdigest(),
+                "note":"LEGACY_EVALUATION_REUSED_EXACT_BATTLE_SET; NO_NEW_KO_CERTIFICATION",
+            }
+    catalog["counts"]={
+        "CONFIRMED":sum(x["evaluation"]=="CONFIRMED" for x in catalog["cells"]),
+        "CONDITIONAL":sum(x["evaluation"]=="CONDITIONAL" for x in catalog["cells"]),
+        "UNKNOWN":sum(x["evaluation"]=="UNKNOWN" for x in catalog["cells"]),
+    }
+    catalog["quality_gate"]={
+        "evidence_complete":catalog["counts"]["UNKNOWN"]==0,
+        "master_missing_cells":sum(bool(x["missing_source"]) for x in catalog["cells"]),
+        "independent_real_battle_e2e":"NOT_VALIDATED",
+        "champions_damage_engine":"NOT_VERIFIED",
+        "live_ready":False,
+        "legacy_matrix_reuse_allowed":full,
+        "reason":"CANDIDATE_EVIDENCE_NEVER_AUTOMATICALLY_CERTIFIES_LIVE_READY",
+    }
     status = "REVIEWED_REUSE" if full else "PROVISIONAL_UNVERIFIED"
     # Preserve fixed source verbatim if the exact same six battle sets and
     # slot order. Even a reordered team gets new OWN/FAST6 column ordering.
@@ -228,9 +291,11 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     # Pre-validate complete rows before making the manifest visible.
     _pipe_rows(matrix_text,14)
     _pipe_rows(lookup_text,12)
+    candidate_text=json.dumps(catalog,ensure_ascii=False,sort_keys=True,separators=(",",":"))
     directory.mkdir(parents=True,exist_ok=True)
     atomic_write_text(matrix_path,matrix_text)
     atomic_write_text(lookup_path,lookup_text)
+    atomic_write_text(evidence_path,candidate_text)
     manifest = {
         "schema":GENERATED_VERSION,"team_id":team_id,"fingerprint":fingerprint,
         "status":status,"reviewed_members":sum(i is not None for i in matched_columns),
@@ -241,6 +306,14 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "matrix_sha256":sha256(matrix_text.encode("utf-8")).hexdigest(),
         "lookup_sha256":sha256(lookup_text.encode("utf-8")).hexdigest(),
         "rules":"NO_AUTOMATIC_PROMOTION_OF_UNVERIFIED_PROCESSOR_OR_SAFE_SWITCH",
+        "review_input_sha256":sha256(review_bytes).hexdigest() if review_bytes else None,
+        "review_status_counts":review_counts,
+        "review_warning":review_warning,
+        "candidate_file":"matchup-evidence.json",
+        "candidate_sha256":sha256(candidate_text.encode("utf-8")).hexdigest(),
+        "candidate_status_counts":catalog["counts"],
+        "unknown_rate":round(catalog["counts"]["UNKNOWN"]/catalog["total_cells"],6),
+        "quality_gate":catalog["quality_gate"],
     }
     atomic_write_text(manifest_path,json.dumps(manifest,ensure_ascii=False,sort_keys=True,indent=2))
     return PreparedTeamAssets(matrix_path,lookup_path,manifest_path,status,
