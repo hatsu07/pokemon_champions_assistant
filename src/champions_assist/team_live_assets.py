@@ -168,14 +168,14 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     if review_bytes:
         review_counts=certified_review_counts(
             review_path,team_id=team_id,
-            candidate_catalog=catalog,team=registered)
+            candidate_catalog=catalog)
     reviews={}
     if review_bytes:
         packet=json.loads(review_bytes)
         for item in validate_review_packet(
                 packet,team_id=team_id,
                 signatures=catalog["member_signatures"],
-                opponents=set(matrix_rows),team=registered):
+                opponents=set(matrix_rows)):
             reviews[(item["opponent"],item["slot"])]=item
     for entry in catalog["cells"]:
         slot=entry["slot"]
@@ -205,7 +205,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "evidence_complete":catalog["counts"]["UNKNOWN"]==0,
         "independent_real_battle_e2e":"NOT_VALIDATED",
         "champions_damage_engine":"NOT_VERIFIED",
-        "live_ready":False if not full else True,
+        "live_ready":False,
+        "legacy_matrix_reuse_allowed":full,
         "reason":"CANDIDATE_EVIDENCE_NEVER_AUTOMATICALLY_CERTIFIES_LIVE_READY",
     }
     status = "REVIEWED_REUSE" if full else "PROVISIONAL_UNVERIFIED"
