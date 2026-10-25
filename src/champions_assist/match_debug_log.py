@@ -33,6 +33,12 @@ _ALLOWED_NUMBER = frozenset({
     "timeout_budget_ms", "latency_ms",
     "visual_first_attempt_elapsed_ms", "visual_transport_retry_elapsed_ms",
     "visual_image_count",
+    "visual_source_width","visual_source_height",
+    "visual_crop_x","visual_crop_y","visual_crop_width","visual_crop_height",
+    "visual_primary_jpeg_bytes","visual_total_jpeg_bytes",
+    "visual_total_data_uri_bytes","visual_retry_total_jpeg_bytes",
+    "visual_retry_total_data_uri_bytes","visual_retry_image_count",
+    "comparison_elapsed_ms","comparison_percent","correct_slots",
 })
 _SAFE_CODE = re.compile(r"^[\w .:/+()\-]{1,100}$",re.UNICODE)
 _SAFE_SESSION = re.compile(r"^capture-[0-9a-f]{32}$")
