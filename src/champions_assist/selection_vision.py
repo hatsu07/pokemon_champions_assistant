@@ -30,6 +30,7 @@ class SelectionDecision:
     only_in_image: tuple[str, ...] = ()
     only_in_registered_team: tuple[str, ...] = ()
     uncertain_slots: tuple[str, ...] = ()
+    opponent_recognition_attempts: int = 1
 
     def as_dict(self) -> dict:
         return dict(status=self.status, selected_three=list(self.selected_three),
