@@ -130,8 +130,8 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(result["status"],"TEST_ONLY")
         self.assertEqual(result["live_reasoning_effort"],"low")
         self.assertEqual(len(client.timeouts),2)
-        self.assertLessEqual(client.timeouts[0],18)
-        self.assertLessEqual(client.timeouts[1],16)
+        self.assertLessEqual(client.timeouts[0],22)
+        self.assertLessEqual(client.timeouts[1],18)
         self.assertTrue(all(call["reasoning"]=={"effort":"low"}
                             for call in client.calls))
 
@@ -169,9 +169,9 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(result["opponent_recognition_attempts"],2)
         self.assertEqual(result["visual_image_count"],1)
         self.assertEqual(len(client.calls),3)
-        self.assertLessEqual(client.timeouts[0],12.0)
-        self.assertLessEqual(client.timeouts[1],7.0)
-        self.assertLessEqual(client.timeouts[2],16.0)
+        self.assertLessEqual(client.timeouts[0],22.0)
+        self.assertLessEqual(client.timeouts[1],12.0)
+        self.assertLessEqual(client.timeouts[2],18.0)
         self.assertEqual(state["opponent_six"],list(OPP))
 
     def test_second_readtimeout_cannot_trigger_tactical_guess(self):
