@@ -81,6 +81,13 @@ class SinglesEnvironmentStore:
         if source_kind not in ("PUBLIC_CHAMPIONS_STATS","USER_INGAME_CONFIRMED"):
             raise ConfigurationError("不明なSinglesデータソースです")
         normalized = validate_singles_snapshot(payload)
+        if source_kind=="PUBLIC_CHAMPIONS_STATS" and self.receipt.is_file():
+            old=json.loads(self.receipt.read_text(encoding="utf-8"))
+            if (old.get("source_kind")=="USER_INGAME_CONFIRMED"
+                    and old.get("generated_at","") >= normalized["generatedAt"]):
+                raise ConfigurationError(
+                    "ゲーム内確認情報の方が新しいため、古い公開統計で上書きしません"
+                )
         raw = json.dumps(normalized,ensure_ascii=False,sort_keys=True)
         if len(raw.encode("utf-8")) > MAX_BYTES:
             raise ConfigurationError("Singles統計が容量上限を超えています")
