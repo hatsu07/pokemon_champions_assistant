@@ -12,7 +12,7 @@ from champions_assist.app_config import ConfigurationError
 from champions_assist.real_battle_validation import (
     SCHEMA,MIN_MATCHES,validate_real_battle_packet,import_real_battle_packet
 )
-from champions_assist.matchup_evidence import validate_review_packet
+from champions_assist.matchup_evidence import validate_review_packet, import_reviews, certified_review_counts
 
 TEAM="c"*32
 FINGERPRINT="d"*64
@@ -214,6 +214,32 @@ class RoleObservationTests(unittest.TestCase):
         self.assertEqual(got["role_observations"]["processor"],"NOT_OBSERVED")
         self.assertFalse(
             got["role_observations"]["safe_switch"]["safe_switch_certified"])
+
+    def test_role_review_roundtrip_preserves_source_observation(self):
+        with TemporaryDirectory() as folder:
+            root=Path(folder)
+            data=deepcopy(self.base)
+            data["reviews"][0]["role_observations"]={"processor":{
+                "source_sha256":"1"*64,
+                "opponent_hp_before":100,"opponent_hp_after":0,
+                "observed_our_move":"じゃれつく",
+                "our_action_before_opponent":True,
+            }}
+            file=root/"input.json"
+            file.write_text(json.dumps(data,ensure_ascii=False),encoding="utf-8")
+            catalog={
+                "regulation":REG,
+                "member_signatures":self.sig,
+                "cells":[{"opponent":"ガブリアス","slot":0}],
+            }
+            dest=import_reviews(data_root=root,team_id=TEAM,
+                                packet_path=file,candidate_catalog=catalog)
+            self.assertEqual(
+                certified_review_counts(dest,team_id=TEAM,
+                                        candidate_catalog=catalog)["CONDITIONAL"],1)
+            stored=json.loads(dest.read_text(encoding="utf-8"))
+            self.assertTrue(
+                stored["reviews"][0]["role_observations"]["processor"]["our_action_before_opponent"])
 
     def test_non_gameproof_sha_or_false_switch_or_invalid_damage_rejected(self):
         data=deepcopy(self.base)
