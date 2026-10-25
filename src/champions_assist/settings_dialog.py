@@ -65,10 +65,27 @@ class _MatchupAIWorker(QThread):
             ready = self.service.prepare_team_live_assets(self.team_id, match_active=False)
             catalog = ready.manifest_path.with_name("matchup-evidence.json")
             auth = ChatGPTSignIn(ProtectedSessionStore(default_app_root()))
+            # Public rankings only change evaluation ORDER. They never
+            # identify a guaranteed opposing item, move or ability.
+            priority = []
+            snapshot = self.service.environment.snapshot
+            if snapshot.is_file():
+                try:
+                    import json
+                    env = json.loads(snapshot.read_text(encoding="utf-8"))
+                    if env.get("format") == "Singles":
+                        ranked = sorted(
+                            (x for x in env.get("pokemon",[]) if isinstance(x,dict)
+                             and isinstance(x.get("name"),str)
+                             and type(x.get("position")) is int),
+                            key=lambda x:x["position"])
+                        priority=[x["name"] for x in ranked]
+                except (OSError,ValueError,TypeError,KeyError):
+                    pass
             report = run_automatic_analysis(
                 catalog, model=self.model, access_token=auth.access_token(),
                 reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
-                progress=self.progress.emit)
+                progress=self.progress.emit, priority_opponents=priority)
             self.result_ready.emit({"ok":True, "environment_refresh":refresh_status, **report})
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
