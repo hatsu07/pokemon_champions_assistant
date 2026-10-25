@@ -533,7 +533,6 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                       live_reasoning_effort=live_effort,
                       visual_first_attempt_elapsed_ms=first_visual_elapsed_ms,
                       visual_transport_retry_elapsed_ms=transport_retry_elapsed_ms,
-                      visual_image_count=vision_image_count,
                       **image_metrics, **retry_image_metrics)
         if (result.get("status") == "BLOCKED" and
                 result.get("reason") in (
@@ -559,7 +558,6 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
         return deepcopy(state), {"status":"DEADLINE_EXCEEDED",
                                   "request_stage":current_stage,
                                   "opponent_recognition_attempts":opponent_recognition_attempts,
-                                  "visual_image_count":vision_image_count,
                                   "visual_first_attempt_elapsed_ms":first_visual_elapsed_ms,
                                   "visual_transport_retry_elapsed_ms":transport_retry_elapsed_ms,
                                   "elapsed_ms":round((perf_counter()-started)*1000),
