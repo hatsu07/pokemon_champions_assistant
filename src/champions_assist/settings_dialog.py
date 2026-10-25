@@ -490,6 +490,10 @@ class SettingsDialog(QDialog):
         self.matchup_review_button.clicked.connect(self._import_matchup_reviews)
         review_row.addWidget(self.matchup_review_button)
         layout.addLayout(review_row)
+        self.device_quality_button=QPushButton(
+            "実機対戦90/40/45秒ログを検証（対戦前）")
+        self.device_quality_button.clicked.connect(self._import_real_battle_quality)
+        layout.addWidget(self.device_quality_button)
         self.matchup_review_status=QLabel(
             "対面根拠は固定マスターの事実と未評価箇所を記録します。"
             "承認済みでも実戦E2E未確認の新構築をLIVE_READYにはしません。")
@@ -958,6 +962,31 @@ class SettingsDialog(QDialog):
             )
         except (OSError,ValueError,RuntimeError) as exc:
             QMessageBox.warning(self,"対面レビューJSONを取り込めません",str(exc))
+
+    def _import_real_battle_quality(self) -> None:
+        if self._match_active():
+            QMessageBox.warning(self,"検証不可","対戦が終わってから取り込んでください。")
+            return
+        record=self._selected_record()
+        if record is None:return
+        file,_=QFileDialog.getOpenFileName(
+            self,"実機対戦の証拠付きタイムラインJSONを選択","","JSON (*.json)")
+        if not file:return
+        try:
+            result=self.service.import_real_battle_quality(
+                record.team_id,file,match_active=False)
+            audit=result["audit"]
+            self.matchup_review_status.setText(
+                f"実機証拠を検査：{audit['match_count']}試合 / "
+                f"選出・PREP・各ターン期限:"
+                f"{'PASS' if audit['all_deadlines_met'] else 'FAIL'} / "
+                f"認識・古い応答:"
+                f"{'PASS' if audit['no_screen_or_stale_advice_errors'] else 'FAIL'}。"
+                "\\n※実機証拠の検査だけではLIVE_READYになりません。"
+                "\\n"+result["file"]
+            )
+        except (OSError,ValueError,RuntimeError) as exc:
+            QMessageBox.warning(self,"実機E2E検証JSONを取り込めません",str(exc))
 
     def closeEvent(self,event):
         if self._singles_worker is not None and self._singles_worker.isRunning():

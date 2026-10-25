@@ -243,6 +243,8 @@ class MatchReplayDialog(QDialog):
         self.assets=None
         self.state=None
         self.entries=[]
+        self._trace_origin=monotonic()
+        self._timing_trace=[]
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -388,6 +390,8 @@ class MatchReplayDialog(QDialog):
             self.match_id="capture-"+uuid4().hex
             self._dataset_session_id=new_session_id()
             self.entries=[]
+            self._trace_origin=monotonic()
+            self._timing_trace=[]
             self.actual_three.clear()
             self.actual_lead.clear()
             self._capture_gate.reset()
@@ -400,6 +404,7 @@ class MatchReplayDialog(QDialog):
             self._ai_request_attempts=0
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
             self._update_menu_detection_label()
+            self._trace_event("PRELOAD_4_FILES_COMPLETED")
             self._render({"status":"MATCH_STARTED","message":"4ファイル事前読込完了。自動キャプチャ開始で進めます。"})
         except Exception as exc:
             self.assets=None
@@ -420,11 +425,23 @@ class MatchReplayDialog(QDialog):
         self.assets=None
         self.state=None
         self.entries=[]
+        self._timing_trace=[]
+        self._trace_origin=monotonic()
         self.actual_three.clear()
         self.actual_lead.clear()
         self._set_ai_status("AI未送信（対戦未開始）")
         self._render({"status":"RESET"})
         self.match_id=None
+
+    def _trace_event(self, event: str, **data) -> None:
+        """Unverified UI-clock telemetry; no screenshot, disk or network use."""
+        if len(self._timing_trace) >= 3000:
+            return
+        self._timing_trace.append({
+            "at_ms":max(0,int((monotonic()-self._trace_origin)*1000)),
+            "event":event,"phase":(self.state or {}).get("phase","UNKNOWN"),
+            **data,
+        })
 
     def _show_capture_preview(self, image: np.ndarray, *, force: bool = False) -> None:
         """Render an already captured RGB frame; no new screenshot or API call."""
@@ -716,6 +733,10 @@ class MatchReplayDialog(QDialog):
         # An unclassified image change is not proof that battle has started.
         # Let the visual AI observation confirm the opponent lead first.
         # At most one pending batch: new observed events replace stale ones.
+        if screen_label in ("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION"):
+            self._trace_event("SCREEN_CLASSIFIER_CANDIDATE",
+                              screen_label=screen_label,
+                              confidence="UNVERIFIED")
         self._pending_batch=list(frames)
         self._pending_screen_label=screen_label
         self._send_pending()
@@ -871,6 +892,12 @@ class MatchReplayDialog(QDialog):
             self._set_ai_status("AI処理キャンセル")
         else:
             self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}")
+        if not superseded:
+            self._trace_event("AI_RESULT_DISPLAYED",
+                              status=report.get("status","UNKNOWN"),
+                              ui=report.get("screen","UNKNOWN"),
+                              recommendation_present=bool(report.get("recommendation")),
+                              selection_present=bool(report.get("selected_three")))
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
         if report.get("screen")=="TEAM_SELECTION" and report.get("selected_three"):
@@ -888,6 +915,7 @@ class MatchReplayDialog(QDialog):
         try:
             three=[x.strip() for x in self.actual_three.text().split("/") if x.strip()]
             self.state=confirm_actual_selection(self.state,self.assets,three,self.actual_lead.text().strip())
+            self._trace_event("ACTUAL_SELECTION_CONFIRMED")
             self.entries.append({"step":len(self.entries)+1,"operation":"CONFIRM_SELECTION",
                                  "selected_three":self.state["selected_three"],
                                  "lead":self.state["lead"],"status":"CONFIRMED"})
@@ -924,6 +952,7 @@ class MatchReplayDialog(QDialog):
             return
         self._prep_cancel_event.clear()
         self.state["prep_status"]="RUNNING"
+        self._trace_event("PREP_START")
         self._prep_thread=QThread(self)
         self._prep_worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
@@ -955,6 +984,7 @@ class MatchReplayDialog(QDialog):
         if self._prep_thread is None:
             return
         self._prep_cancel_event.set()
+        self._trace_event("PREP_DEADLINE_EXCEEDED")
         if self.state is not None and self.state.get("phase")=="PREP":
             self.state["prep_status"]="DEADLINE_EXCEEDED"
             self._render({"status":"PREP_DEADLINE_EXCEEDED",
@@ -969,6 +999,7 @@ class MatchReplayDialog(QDialog):
                 or self._pending_batch is not None):
             return  # Late/stale PREP must not overwrite a live battle.
         result=payload["report"]
+        self._trace_event("PREP_RESULT",status=result.get("status","UNKNOWN"))
         if result.get("status")=="CANCELLED":
             return
         if result.get("status") in ("ERROR", "DEADLINE_EXCEEDED"):
@@ -1030,7 +1061,15 @@ class MatchReplayDialog(QDialog):
                 "training_frames":"local_unlabelled_opt_in_not_exported",
                 "reasoning_effort":self.reasoning_effort,
                 "matrix_compatible":self.state["matrix_compatible"],
-                "state":self.state,"timeline":self.entries}
+                "state":self.state,"timeline":self.entries,
+                "timing_observations":{
+                    "schema":"champions-local-ui-timing-candidates-v1",
+                    "source":"UNVERIFIED_LOCAL_GUI_MONOTONIC_CLOCK",
+                    "automatically_certified":False,
+                    "events":list(self._timing_trace),
+                    "warning":"SCREEN_CANDIDATE_NOT_VERIFIED_GAME_START; "
+                              "USER_VIDEO_REVIEW_REQUIRED_FOR_E2E",
+                }}
         try:
             with open(dest,"x",encoding="utf-8") as output:
                 json.dump(report,output,ensure_ascii=False,indent=2)

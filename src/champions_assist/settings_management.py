@@ -22,6 +22,8 @@ from .team_management import ChampionsTeamCatalog, RegisteredTeam, TeamRepositor
 from .team_live_assets import PreparedTeamAssets, prepare_team_assets
 from .environment_refresh import SinglesEnvironmentStore
 from .matchup_evidence import import_reviews
+from .matchup_evidence import stable_hash
+from .real_battle_validation import import_real_battle_packet
 
 if TYPE_CHECKING:  # avoid an import cycle between UI/controller and settings.
     from .fsm import MatchController
@@ -144,6 +146,31 @@ class DesktopSettingsService:
             "quality_gate":manifest["quality_gate"],
             "matchup_evidence_path":str(updated.manifest_path.with_name("matchup-evidence.json")),
         }
+
+    def import_real_battle_quality(self, team_id: str, path: str | Path,
+                                   *, match_active: bool) -> dict:
+        """Audit user-provided real-device evidence offline, never auto READY."""
+        if match_active:
+            raise ConfigurationError("対戦中は実機検証ログを取り込めません")
+        prepared=self.prepare_team_live_assets(team_id,match_active=False)
+        catalog=json.loads(prepared.manifest_path.with_name(
+            "matchup-evidence.json").read_text(encoding="utf-8"))
+        fingerprint=stable_hash({
+            "members":catalog["member_signatures"],
+            "regulation":catalog["regulation"],
+        })
+        output,audit=import_real_battle_packet(
+            data_root=Path(self.settings.storage.data_root),
+            packet_path=Path(path),team_id=team_id,
+            team_fingerprint=fingerprint,
+            regulation=catalog["regulation"])
+        return {"file":str(output),"audit":audit,
+                "evidence_template":{
+                    "schema":"champions-live-e2e-device-evidence-v1",
+                    "team_id":team_id,
+                    "team_fingerprint":fingerprint,
+                    "regulation":catalog["regulation"],
+                }}
 
     def refresh_public_battle_data(self, *, match_active: bool) -> dict:
         if match_active:

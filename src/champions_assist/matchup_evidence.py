@@ -184,6 +184,65 @@ def _review_source(item: object) -> bool:
     return bool(locator or proof)
 
 
+def _role_evidence(record: object) -> dict:
+    """Keep one observed processor and one hard-switch event independently.
+
+    A recorded instance is *conditional observation*, not evidence of a safe
+    switch across an unknown 4-move set or a guaranteed processor.
+    """
+    if record is None:
+        return {"processor":"NOT_OBSERVED","safe_switch":"NOT_OBSERVED"}
+    if not isinstance(record,dict) or set(record)-{"processor","safe_switch"}:
+        raise ConfigurationError("処理役／安全受けの実測欄が不正です")
+    result={"processor":"NOT_OBSERVED","safe_switch":"NOT_OBSERVED"}
+    for role,payload in record.items():
+        if not isinstance(payload,dict) or payload.get("source_sha256") is None:
+            raise ConfigurationError("処理役と受け出しの各根拠SHAが必要です")
+        src=payload["source_sha256"]
+        if not isinstance(src,str) or len(src)!=64 or any(x not in "0123456789abcdef" for x in src):
+            raise ConfigurationError("実測役割の証拠SHA256が不正です")
+        def hp(key):
+            v=payload.get(key)
+            if type(v) is not int or v<0 or v>999:
+                raise ConfigurationError("実測HPは整数かつ0～999の範囲です")
+            return v
+        if role=="processor":
+            before=hp("opponent_hp_before")
+            after=hp("opponent_hp_after")
+            move=payload.get("observed_our_move")
+            if not isinstance(move,str) or not move.strip():
+                raise ConfigurationError("処理役の観測技名がありません")
+            if after>before:
+                raise ConfigurationError("処理役の観測HP順序が不正です")
+            if payload.get("our_action_before_opponent") is not True:
+                raise ConfigurationError("先手行動確認のない技を即時処理扱いにできません")
+            result["processor"]={
+                "evidence":"OBSERVED_ONE_CONDITIONAL_ATTACK",
+                "observed_our_move":move,
+                "opponent_hp_before":before,"opponent_hp_after":after,
+                "source_sha256":src,
+                "direct_processor_certified":False,
+            }
+        elif role=="safe_switch":
+            before=hp("own_hp_before_switch")
+            after=hp("own_hp_after_entry")
+            opponent_move=payload.get("observed_opponent_move")
+            if not isinstance(opponent_move,str) or not opponent_move.strip():
+                raise ConfigurationError("交代着地時の相手技を確認できません")
+            if not payload.get("hard_switch_performed"):
+                raise ConfigurationError("直接交代でない観測は安全受け根拠にできません")
+            if after>before:
+                raise ConfigurationError("交代着地後のHPが交代前より大きくなっています")
+            result["safe_switch"]={
+                "evidence":"OBSERVED_ONE_CONDITIONAL_HARD_SWITCH",
+                "observed_opponent_move":opponent_move,
+                "own_hp_before_switch":before,"own_hp_after_entry":after,
+                "source_sha256":src,
+                "safe_switch_certified":False,
+            }
+    return result
+
+
 def validate_review_packet(packet: object, *, team_id: str,
                            regulation: str, signatures: list[str],
                            opponents: set[str]) -> list[dict]:
@@ -247,6 +306,13 @@ def validate_review_packet(packet: object, *, team_id: str,
                            source.get("sha256","")) for source in sources}
             if len(fingerprints)<2:
                 raise ConfigurationError("CONFIRMEDは別々の根拠が2件必要")
+        role=_role_evidence(cell.get("role_observations"))
+        if any(
+            isinstance(x,dict) and not any(
+                src.get("sha256")==x["source_sha256"] for src in sources
+            ) for x in role.values()
+        ):
+            raise ConfigurationError("役割の実測SHAがレビュー根拠に含まれていません")
         # Reject tactical text injection into lookup/matrix entirely. The
         # reviewed packet remains a sidecar for manual audit only.
         normalized.append({
@@ -254,6 +320,7 @@ def validate_review_packet(packet: object, *, team_id: str,
             "status":status,"rationale":rationale,"conditions":cell.get("conditions", {}),
             "sources":sources,"reviewed_at":cell["reviewed_at"],"reviewer":cell["reviewer"],
             "processing_role":"UNVERIFIED","safe_switch_role":"UNVERIFIED",
+            "role_observations":role,
         })
     return normalized
 
@@ -271,6 +338,15 @@ def import_reviews(*, data_root: Path, team_id: str, packet_path: Path,
         regulation=candidate_catalog["regulation"],
         opponents={cell["opponent"] for cell in candidate_catalog["cells"]},
     )
+    # The reviewer input can be validated into a human-readable summary, but
+    # the raw conditional observation data must be retained for a later
+    # validation pass. Never persist the derived NOT_OBSERVED markers as if
+    # they were source observations.
+    for validated, original in zip(approved, packet["reviews"]):
+        if "role_observations" in original:
+            validated["role_observations"] = original["role_observations"]
+        else:
+            validated.pop("role_observations", None)
     target=Path(data_root)/"matchup-reviews"/(team_id+".json")
     body={"schema":REVIEW_SCHEMA,"team_id":team_id,
           "regulation":candidate_catalog["regulation"],
