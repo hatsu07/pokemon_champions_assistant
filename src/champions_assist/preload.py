@@ -98,16 +98,25 @@ class MasterPreloader:
     uses the canonical contract filename and is immutable after this call.
     """
 
-    def __init__(self, master_directory: str | Path, *, team_source: str | Path | None = None) -> None:
+    def __init__(self, master_directory: str | Path, *, team_source: str | Path | None = None,
+                 matrix_source: str | Path | None = None,
+                 lookup_source: str | Path | None = None) -> None:
         self._master_directory = Path(master_directory)
         self._team_source = None if team_source is None else Path(team_source)
+        self._matrix_source = None if matrix_source is None else Path(matrix_source)
+        self._lookup_source = None if lookup_source is None else Path(lookup_source)
 
     def load_for_new_match(self) -> FrozenMatchAssets:
         raw_bytes: dict[str, bytes] = {}
         failures: dict[str, str] = {}
         for filename in REQUIRED_MASTER_FILES:
             try:
-                source = self._team_source if filename == REQUIRED_MASTER_FILES[3] and self._team_source is not None else self._master_directory / filename
+                source = (
+                    self._team_source if filename == REQUIRED_MASTER_FILES[3] and self._team_source is not None
+                    else self._matrix_source if filename == REQUIRED_MASTER_FILES[1] and self._matrix_source is not None
+                    else self._lookup_source if filename == REQUIRED_MASTER_FILES[2] and self._lookup_source is not None
+                    else self._master_directory / filename
+                )
                 body = source.read_bytes()
                 if not body:
                     raise ValueError("empty file")
