@@ -891,6 +891,16 @@ class DesktopMainWindow(QMainWindow):
             self.recommendation_label.setText("撮影中。次のAI判断を待機")
         elif status == "CONFIRMED":
             self.recommendation_label.setText("選出確定。相手初手・行動選択を待機")
+        elif status == "BLOCKED" and report.get("reason") in (
+                "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
+                "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
+                "OPPONENT_MATRIX_MISSING"):
+            attempts=report.get("opponent_recognition_attempts",1)
+            self.recommendation_label.setText(
+                str(report.get("recommendation") or
+                    "選出不可：相手6匹の認識が確定しません（AI再認識 "+
+                    str(attempts)+"回分）。推測で選出しません。")
+                + " [診断: "+str(report.get("reason"))+"]")
         elif status in ("BLOCKED", "NO_ACTION", "DEADLINE_EXCEEDED", "ERROR",
                         "CAPTURE_PAUSED", "SUPERSEDED", "PREP_UNAVAILABLE"):
             self.recommendation_label.setText("行動推奨なし：" + str(report.get("reason") or status))

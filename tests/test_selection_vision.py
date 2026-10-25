@@ -52,11 +52,12 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.selected_three,own[:3])
         self.assertEqual(result.lead,"ピカチュウ")
         self.assertEqual(result.opponent_six,opponent)
-        self.assertEqual(result.as_dict()["observed_own_six"],list(own))
+        self.assertEqual(result.as_dict()["observed_own_six"],[])
         self.assertEqual(result.as_dict()["observed_opponent_six"],list(opponent))
         self.assertEqual(result.as_dict()["only_in_image"],[])
         self.assertEqual(result.as_dict()["only_in_registered_team"],[])
         self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0]["own_roster_source"],"PRELOADED_USER_SELECTED_TEAM_NOT_VISION")
 
     def test_mismatched_matrix_blocks_ordinary_selection_but_allows_labeled_function_test(self):
         original=assets()
@@ -94,8 +95,8 @@ class SelectionVisionTest(unittest.TestCase):
             "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ",
         )
         self.assertEqual(
-            selection_summary_ja({"status":"BLOCKED","reason":"REGISTERED_TEAM_MISMATCH"}),
-            "選出できません：画像の自軍6匹と登録構築が一致しません。",
+            selection_summary_ja({"status":"BLOCKED","reason":"REGISTERED_TEAM_INVALID"}),
+            "選出できません：事前ロードした登録構築6匹に重複・不足があります。",
         )
 
     def test_ambiguous_species_form_is_not_guessed(self):
@@ -120,16 +121,19 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(verify_selection_observation(obs,two_forms)[0],
                          "ライチュウ（アローラのすがた）")
 
-    def test_unknown_english_species_remains_blocked(self):
+    def test_hallucinated_own_species_is_ignored_and_registry_wins(self):
         obs=observation()
         obs["our_six"][0]="UnrecognizedCreature"
         called=[]
         result=SelectionPlanner(clock=lambda:5.0).choose(
-            obs,assets(),lambda *v: called.append(v),started_at=0.0)
-        self.assertEqual(result.status,"BLOCKED")
-        self.assertEqual(result.reason,"REGISTERED_TEAM_MISMATCH")
-        self.assertEqual(called,[])
-        self.assertIn("UnrecognizedCreature",result.as_dict()["only_in_image"])
+            obs,assets(),lambda context,_:(
+                called.append(context) or
+                {"selected_three":list(OWN[:3]),"lead":OWN[0]}),started_at=0.0)
+        self.assertEqual(result.status,"OK")
+        self.assertEqual(result.selected_three,OWN[:3])
+        self.assertEqual(result.as_dict()["observed_own_six"],[])
+        self.assertEqual(result.as_dict()["only_in_image"],[])
+        self.assertEqual(called[0]["own_team"][0]["name"],OWN[0])
 
     def test_alias_duplicate_in_opponent_six_blocks(self):
         obs=observation()
@@ -172,28 +176,30 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertTrue(any("infer" in word.lower() for word in called[0]["instructions"].split()))
         self.assertTrue(all(not row.get("role") for row in called[0]["own_team"]))
 
-    def test_mismatch_blocks_before_model(self):
-        obs=observation()
-        obs["our_six"][0]="ピカチュウ"
-        calls=[]
-        result=SelectionPlanner(clock=lambda:10.0).choose(obs,assets(),lambda *args:calls.append(args),started_at=10.0)
-        self.assertEqual(result.status,"BLOCKED")
-        self.assertEqual(result.reason,"REGISTERED_TEAM_MISMATCH")
-        self.assertEqual(result.as_dict()["observed_own_six"][0],"ピカチュウ")
-        self.assertEqual(result.as_dict()["observed_opponent_six"],list(OPP))
-        self.assertEqual(result.as_dict()["only_in_image"],["ピカチュウ"])
-        self.assertEqual(result.as_dict()["only_in_registered_team"],["マスカーニャ"])
-        self.assertEqual(result.opponent_six,())  # Unverified, never promoted to trusted.
-        self.assertEqual(calls,[])
+    def test_registered_own_six_not_blocked_by_mismatch_or_ocr_typo(self):
+        for hallucination in ("ピカチュウ","ガブリヤス","Iron Valiant"):
+            obs=observation()
+            obs["our_six"][0]=hallucination
+            calls=[]
+            result=SelectionPlanner(clock=lambda:10.0).choose(
+                obs,assets(),
+                lambda ctx, remaining:(
+                    calls.append(ctx) or {"selected_three":list(OWN[:3]),"lead":OWN[0]}),
+                started_at=5.0)
+            self.assertEqual(result.status,"OK")
+            self.assertEqual(len(calls),1)
+            self.assertEqual(result.as_dict()["only_in_image"],[])
+            self.assertEqual(result.as_dict()["only_in_registered_team"],[])
 
-    def test_ocr_typo_is_explicit_in_diagnostics_not_silently_corrected(self):
-        obs=observation()
-        obs["our_six"][2]="ガブリヤス"
-        result=SelectionPlanner(clock=lambda:12.0).choose(obs,assets(),lambda *_:None,started_at=12.0)
-        self.assertEqual(result.reason,"REGISTERED_TEAM_MISMATCH")
-        self.assertIn("ガブリヤス",result.as_dict()["only_in_image"])
-        self.assertIn("ガブリアス",result.as_dict()["only_in_registered_team"])
-        self.assertEqual(result.selected_three,())
+    def test_invalid_frozen_team_still_blocks_before_tactics(self):
+        original=assets()
+        from dataclasses import replace
+        invalid=replace(original,own_team=tuple(original.own_team[:5]))
+        called=[]
+        result=SelectionPlanner(clock=lambda:5).choose(
+            observation(),invalid,lambda *args:called.append(args),started_at=0)
+        self.assertEqual(result.reason,"REGISTERED_TEAM_INVALID")
+        self.assertEqual(called,[])
 
     def test_unreadable_opponent_blocks_without_guess(self):
         obs=observation()
