@@ -5,7 +5,9 @@ param(
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string]$ExpectedSha,
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*
+    [ValidatePattern('^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*$')]
+    [string]$ReleaseVersion
+)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_REPOSITORY -ne 'hatsu07/pokemon_champions_assistant' -or
     $env:GITHUB_REF -ne 'refs/heads/master') {
