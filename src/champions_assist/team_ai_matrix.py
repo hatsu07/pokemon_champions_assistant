@@ -98,8 +98,11 @@ def publish_ai_matrix(*, matrix_path: str | Path,
     matrix_path, manifest_path, catalog_path = map(
         Path, (matrix_path, manifest_path, catalog_path))
     manifest = _load(manifest_path)
-    old_text = matrix_path.read_text(encoding="utf-8")
-    if sha256(old_text.encode("utf-8")).hexdigest() != manifest.get("matrix_sha256"):
+    # read_text() normalizes CRLF on Windows, breaking hashes of the fixed
+    # reviewed baseline; verify the exact on-disk bytes instead.
+    original_bytes = matrix_path.read_bytes()
+    old_text = original_bytes.decode("utf-8-sig")
+    if sha256(original_bytes).hexdigest() != manifest.get("matrix_sha256"):
         raise ConfigurationError("LIVEマトリクスの内容が監査記録と一致しません")
     # An exactly matching old reviewed team needs no AI hypothesis matrix.
     if manifest.get("status") == "REVIEWED_REUSE":
