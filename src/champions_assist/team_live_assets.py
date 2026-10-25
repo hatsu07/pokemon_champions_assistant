@@ -296,7 +296,16 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                         top_moves.append(pair[0]+"@"+str(pair[1])+"%")
             warn = old[10]
             if top_moves:
-                warn += ";環境参考(型未確定):"+",".join(top_moves)
+                warn += ";環境技(型未確定):"+",".join(top_moves)
+            for category, label in (("items","持ち物"),("abilities","特性")):
+                entries=env_extra.get(category,[])
+                if isinstance(entries,list) and entries:
+                    pair=entries[0]
+                    if (isinstance(pair,list) and len(pair)==2
+                            and isinstance(pair[0],str)
+                            and isinstance(pair[1],(int,float))):
+                        name=pair[0].replace("|","/").replace("\\n"," ")[:36]
+                        warn += ";環境"+label+"(未確定):"+name+"@"+str(pair[1])+"%"
             # Pipe and line delimiters never originate from external untrusted
             # source text. Silently drop them from any optional stat labels.
             marker = review_marker(key)
