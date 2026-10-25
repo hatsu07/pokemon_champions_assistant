@@ -1073,6 +1073,10 @@ class SettingsDialog(QDialog):
                 f"通信試行 {result.get('attempts',result['batches'])}回"
                 f"（成功{result['batches']}・再試行{result.get('retries',0)}）。"
                 f" マスター不足 {result.get('source_gaps',0)}対面。"
+                + (" 不足内訳: "+", ".join(
+                    f"{reason}={count}" for reason,count in
+                    result.get("source_gap_reasons",{}).items())+"。"
+                   if result.get("source_gap_reasons") else "")
                 + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
                 " 処理役・安全受け・KOは未検証であり暫定推奨です。")
         else:
