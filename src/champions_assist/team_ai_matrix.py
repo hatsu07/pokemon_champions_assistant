@@ -99,8 +99,15 @@ def publish_ai_matrix(*, matrix_path: str | Path,
         Path, (matrix_path, manifest_path, catalog_path))
     manifest = _load(manifest_path)
     old_text = matrix_path.read_text(encoding="utf-8")
-    if (sha256(old_text.encode("utf-8")).hexdigest() != manifest.get("matrix_sha256")
-            or not old_text.startswith("# TEAM_SCOPED_MATRIX v1;")
+    if sha256(old_text.encode("utf-8")).hexdigest() != manifest.get("matrix_sha256"):
+        raise ConfigurationError("LIVEマトリクスの内容が監査記録と一致しません")
+    # An exactly matching old reviewed team needs no AI hypothesis matrix.
+    if manifest.get("status") == "REVIEWED_REUSE":
+        return {"ai_proposal_cells": 0, "ai_proposal_opponents": 0,
+                "ai_proposal_coverage": 0.0,
+                "ai_proposal_status": "EXACT_BASELINE_REUSED",
+                "ai_proposal_live_certified": False}
+    if (not old_text.startswith("# TEAM_SCOPED_MATRIX v1;")
             or "# DERIVED_STATUS=PROVISIONAL_UNVERIFIED;" not in old_text):
         raise ConfigurationError("暫定の構築別LIVEマトリクスだけを更新できます")
     raw_catalog = catalog_path.read_bytes()
