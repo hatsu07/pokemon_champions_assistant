@@ -92,12 +92,18 @@ def _run_structured(candidate_path: Path, *, model: str, access_token: str,
     size = 24
     small_successes = 0
     catalog = json.loads(candidate_path.read_text(encoding="utf-8"))
+    from collections import Counter
     source_gaps=sum(bool(x.get("missing_source")) and x.get("evaluation")=="UNKNOWN"
                     for x in catalog["cells"])
+    gap_reasons=Counter(reason
+        for cell in catalog["cells"] if cell.get("evaluation")=="UNKNOWN"
+        for reason in cell.get("missing_source",[]))
     def result(status):
         return {"status":status,"count":count,"batches":successful,
                 "attempts":attempts,"retries":failures,
-                "source_gaps":source_gaps,"batch_size":size}
+                "source_gaps":source_gaps,
+                "source_gap_reasons":dict(sorted(gap_reasons.items())),
+                "batch_size":size}
     while attempts < max_batches:
         if interrupted():
             return result("INTERRUPTED")
