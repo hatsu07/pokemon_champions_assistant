@@ -129,6 +129,35 @@ class EnvironmentEvidenceTests(unittest.TestCase):
         self.assertEqual(json.loads(self.store.snapshot.read_text())["pokemon"][0]["moves"],
                          [["Earthquake",65.2]])
 
+    def test_public_trends_update_lookup_warning_not_matchup_grade(self):
+        environment=SinglesEnvironmentStore(self.root)
+        environment.import_snapshot(
+            {"format":"Singles","generatedAt":"2026-10-25T01:00:00Z",
+             "pokemon":[{"name":"Garchomp","position":1,
+                         "moves":[["Earthquake",65.2]]}]},
+            source_url=SOURCE_URL,source_kind="PUBLIC_CHAMPIONS_STATS")
+        prepared=prepare_team_assets(
+            master_dir=MASTER,data_root=self.root,
+            team_id="f"*32,team_path=ORIGINAL,
+            environment_snapshot=environment.snapshot)
+        self.assertEqual(prepared.status,"REVIEWED_REUSE")
+        lines=prepared.matrix_path.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any("Earthquake@65.2%" in line for line in lines))
+        self.assertTrue(any("Garchomp" not in line for line in lines))
+        stats=json.loads(prepared.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(stats["environment_source_kind"],"PUBLIC_CHAMPIONS_STATS")
+
+    def test_newer_game_rankings_are_not_overwritten_by_old_public_data(self):
+        mine={"format":"Singles","generatedAt":"2026-10-25T02:00:00Z",
+              "pokemon":[{"name":"Garchomp","position":1}]}
+        self.store.import_snapshot(mine,source_url="user-ranked-list",
+                                   source_kind="USER_INGAME_CONFIRMED")
+        old=self.store.snapshot.read_bytes()
+        with self.assertRaises(ConfigurationError):
+            self.store.refresh_public_singles(
+                fetch=lambda:json.dumps(self.snapshot).encode("utf-8"))
+        self.assertEqual(old,self.store.snapshot.read_bytes())
+
     def test_failed_refresh_keeps_last_good(self):
         self.store.refresh_public_singles(fetch=lambda:json.dumps(self.snapshot).encode())
         old=self.store.snapshot.read_bytes()
