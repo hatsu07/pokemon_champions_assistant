@@ -834,6 +834,11 @@ class DesktopMainWindow(QMainWindow):
         if not team_id:
             raise ConfigurationError("設定 → 自軍構築で次戦の構築を選択してください。")
         team_path = self.settings_service.teams.path_for_next_match(team_id)
+        prepared = self.settings_service.prepare_team_live_assets(
+            team_id, match_active=False)
+        self._match_panel.matrix_source = str(prepared.matrix_path)
+        self._match_panel.lookup_source = str(prepared.lookup_path)
+        self._match_panel.live_assets_status = prepared.status
         self._match_panel.model = model
         self._match_panel.reasoning_effort = preferences.reasoning_effort()
         self._match_panel.team_path = str(team_path)
@@ -901,7 +906,9 @@ class DesktopMainWindow(QMainWindow):
             ("前回の観測UI", str(last_obs.get("ui") or "未観測"), "画像候補・未検証"),
             ("最終イベント", str(state.get("last_event") or "NONE"), "画像候補"),
             ("勝敗", str(state.get("result") or "UNKNOWN"), "画像候補"),
-            ("マトリクス", "対応" if state.get("matrix_compatible") else "不一致・TEST_ONLY", "4ファイル"),
+            ("マトリクス", "対応" if state.get("matrix_compatible") else
+             "未検証・TEST_ONLY" if panel.live_assets_status=="PROVISIONAL_UNVERIFIED"
+             else "不一致・TEST_ONLY", "4ファイル"),
         ]
         self.state_tree.clear()
         for a,b,c in rows:
@@ -929,6 +936,13 @@ class DesktopMainWindow(QMainWindow):
                 self._refresh_history()
             except (OSError, ValueError, RuntimeError) as exc:
                 self.header_labels["records"].setText("SQLite記録失敗: " + type(exc).__name__)
+        if status=="MATCH_END" and panel.match_id:
+            try:
+                self.settings_service.environment.record_finished_match(
+                    match_id=panel.match_id,state=state)
+            except (OSError, ValueError, RuntimeError):
+                # Optional local stats collection cannot disrupt end-of-match.
+                pass
         elif status == "RESET":
             self._unified_match_id = None
             self._unified_last_report_key = None
