@@ -30,6 +30,12 @@ jobs:
           $sha = (git rev-parse HEAD).Trim()
           if ($sha -ne $env:GITHUB_SHA) { throw "Checked-out SHA does not match triggered master commit" }
           Write-Host "Publishing DEVELOPMENT builds from master commit $sha"
+      - name: Resolve monotonic semantic development version
+        id: release_version
+        shell: pwsh
+        run: |
+          python scripts/development_release_version.py --run-number $env:GITHUB_RUN_NUMBER --github-output $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE -ne 0) { throw "Invalid release VERSION or run number" }
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -54,8 +60,19 @@ jobs:
       - name: Test release lifecycle scripts without GitHub mutations
         shell: pwsh
         run: |
-          python -m unittest tests.test_prune_development_releases -v
+          python -m unittest tests.test_prune_development_releases tests.test_development_release_version -v
           if ($LASTEXITCODE -ne 0) { throw "release lifecycle tests failed" }
+      - name: Validate PowerShell prerelease publisher syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $syntaxErrors = $null
+          $source = (Resolve-Path './scripts/publish_windows_development_release.ps1').Path
+          $null = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$syntaxErrors)
+          if ($syntaxErrors.Count -gt 0) {
+            $syntaxErrors | ForEach-Object { Write-Host $_.ToString() }
+            throw 'Versioned DEVELOPMENT release publisher has invalid PowerShell syntax'
+          }
       - name: Test legacy Actions artifact cleanup script offline
         shell: bash
         run: bash tests/test_prune_actions_artifacts.sh
@@ -156,6 +173,7 @@ jobs:
           $built = (git rev-parse HEAD).Trim()
           @(
             "commit_sha=$built"
+            "version=${{ steps.release_version.outputs.version }}"
             "workflow_run_id=${{ github.run_id }}"
             "workflow_run_attempt=${{ github.run_attempt }}"
             "artifact_type=DEVELOPMENT_ONLY"
@@ -163,6 +181,7 @@ jobs:
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
           @(
             "commit_sha=$built"
+            "version=${{ steps.release_version.outputs.version }}"
             "workflow_run_id=${{ github.run_id }}"
             "workflow_run_attempt=${{ github.run_attempt }}"
             "artifact_type=SCREEN_DATASET_COLLECTOR_DEVELOPMENT"
@@ -186,7 +205,11 @@ jobs:
             if (-not $metadata.Contains("commit_sha=$env:GITHUB_SHA")) {
               throw "Revision metadata differs from current master: $app"
             }
-            $name = "$app-DEVELOPMENT-windows-x64.zip"
+            $releaseVersion = "${{ steps.release_version.outputs.version }}"
+            if (-not $metadata.Contains("version=$releaseVersion")) {
+              throw "Version metadata differs from versioned ZIP name: $app"
+            }
+            $name = "$app-$releaseVersion-windows-x64.zip"
             $zipPath = Join-Path "release-zips" $name
             Compress-Archive -Path (Join-Path $root "*") -DestinationPath $zipPath -CompressionLevel Optimal
             $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath).Path)
@@ -205,5 +228,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          & ./scripts/publish_windows_development_release.ps1 -ExpectedSha $env:GITHUB_SHA
+          & ./scripts/publish_windows_development_release.ps1 -ExpectedSha $env:GITHUB_SHA -ReleaseVersion "${{ steps.release_version.outputs.version }}"
           if ($LASTEXITCODE -ne 0) { throw "Development Release publishing failed" }

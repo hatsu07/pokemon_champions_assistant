@@ -63,8 +63,19 @@ jobs:
       - name: Test release lifecycle scripts without GitHub mutations
         shell: pwsh
         run: |
-          python -m unittest tests.test_prune_development_releases -v
+          python -m unittest tests.test_prune_development_releases tests.test_development_release_version -v
           if ($LASTEXITCODE -ne 0) { throw "release lifecycle tests failed" }
+      - name: Validate PowerShell prerelease publisher syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $syntaxErrors = $null
+          $source = (Resolve-Path './scripts/publish_windows_development_release.ps1').Path
+          $null = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$syntaxErrors)
+          if ($syntaxErrors.Count -gt 0) {
+            $syntaxErrors | ForEach-Object { Write-Host $_.ToString() }
+            throw 'Versioned DEVELOPMENT release publisher has invalid PowerShell syntax'
+          }
       - name: Test legacy Actions artifact cleanup script offline
         shell: bash
         run: bash tests/test_prune_actions_artifacts.sh

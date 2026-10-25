@@ -16,11 +16,11 @@
 
 - リポジトリ：`hatsu07/pokemon_champions_assistant`（**privateのまま維持**）。
 - `.github/workflows/windows-validation-artifact.yml`：Ready PR最新HEADのWindowsオフラインテスト、Assistant/Collector両Windows PyInstallerビルドと起動スモーク。**PRではActions Artifactsをアップロードしない**。workflow名とファイル名は歴史的名称のまま。
-- `.github/workflows/windows-development-release.yml`：masterへのpush後、Windowsで再テスト・再ビルド・スモークし、`PokemonChampionsAssistant-DEVELOPMENT-windows-x64.zip`と`PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64.zip`を**GitHub ReleasesのDEVELOPMENTプレリリース**として公開。初回のRelease公開処理を修正したのはPR #33。
+- `.github/workflows/windows-development-release.yml`：masterへのpush後、Windowsで再テスト・再ビルド・スモークし、`PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`と`PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip`を**GitHub ReleasesのDEVELOPMENTプレリリース**として公開。初回のRelease公開処理を修正したのはPR #33。
 - `.github/workflows/windows-development-release-cleanup.yml`：14日以上経過し**新しい3件から外れた**特定のDEVELOPMENTプレリリースと対応タグだけを毎日削除。通常Release、保護されたRelease、Draft、他のタグを削除しない。`scripts/prune_development_releases.py` はドライランがデフォルト。
 - 旧`scripts/prune_actions_artifacts.sh`は過去のActions Artifactsだけの履歴整理用。新しいDEVELOPMENT ZIPには使用しない。
 
-**2026-10-23時点の公開実測**：masterコミット`67715135e80190a7cea7aabbf2456c433b0a5b9a`に対するWindows DEVELOP Release workflow run `39968802394` は `completed/success`。プレリリース`development-windows-67715135e80190a7cea7aabbf2456c433b0a5b9a`へ2つのZIPを公開済み。以後は新チャットで必ず最新状態を再取得。
+**旧SHA形式の履歴（2026-10-23時点）**：masterコミット`67715135e80190a7cea7aabbf2456c433b0a5b9a`に対するWindows DEVELOP Release workflow run `39968802394` は `completed/success`。プレリリース`development-windows-67715135e80190a7cea7aabbf2456c433b0a5b9a`へ2つのZIPを公開済み。現在の新しい配布は、`VERSION`とGitHub Actions `run_number`から`Windows DEVELOPMENT v0.1.0-dev.N`の表示名・タグ・両ZIP名を生成する。GitHub Releasesの最上段が最新。SHAは配布物の`BUILD_REVISION.txt`とReleaseノートに残す。以後は新チャットで必ず最新状態を再取得。
 
 ## 絶対に守るPRマージ条件
 

@@ -3,7 +3,10 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9a-f]{40}$')]
-    [string]$ExpectedSha
+    [string]$ExpectedSha,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*$')]
+    [string]$ReleaseVersion
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_REPOSITORY -ne 'hatsu07/pokemon_champions_assistant' -or
@@ -15,11 +18,13 @@ $checkedOut = (git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $checkedOut -ne $ExpectedSha -or $env:GITHUB_SHA -ne $ExpectedSha) {
     throw 'Checkout, event and expected release SHA must match.'
 }
-$tag = "development-windows-$ExpectedSha"
-$title = "Windows DEVELOPMENT $($ExpectedSha.Substring(0, 12))"
+$tag = "development-windows-$ReleaseVersion"
+$title = "Windows DEVELOPMENT $ReleaseVersion"
+# A prerelease number comes from the workflow's monotonically increasing
+# run_number; reruns retain their original release identity and SHA.
 $names = @(
-    'PokemonChampionsAssistant-DEVELOPMENT-windows-x64.zip',
-    'PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64.zip'
+    "PokemonChampionsAssistant-$ReleaseVersion-windows-x64.zip",
+    "PokemonChampionsScreenDataCollector-$ReleaseVersion-windows-x64.zip"
 )
 $paths = @()
 foreach ($filename in $names) {
@@ -75,6 +80,7 @@ if ($null -eq $release) {
     @(
         '**DEVELOPMENT_ONLY**, not a production MSI or validated battle assistant.',
         '',
+        "version=$ReleaseVersion",
         "commit_sha=$ExpectedSha",
         "workflow_run_id=$env:GITHUB_RUN_ID",
         'release_kind=windows-development-only',
