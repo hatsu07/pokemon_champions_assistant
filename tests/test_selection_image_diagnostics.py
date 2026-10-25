@@ -56,7 +56,7 @@ class SelectionImageStatisticsTests(unittest.TestCase):
                          samples[0]["data_uri_bytes"])
         self.assertGreater(stats["visual_total_data_uri_bytes"],
                            stats["visual_total_jpeg_bytes"])
-        self.assertTrue(samples[0]["jpeg"].startswith(b"\\xff\\xd8".decode("unicode_escape").encode("latin-1")) if False else True)
+        self.assertEqual(samples[0]["jpeg"][:2], bytes([0xFF,0xD8]))
 
     def test_retry_has_both_low_context_and_high_opponent_image(self):
         entries,stats=preview_payload_report(self.rgb,100,retry=True)
