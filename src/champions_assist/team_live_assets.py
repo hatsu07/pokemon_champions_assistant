@@ -304,7 +304,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                     if (isinstance(pair,list) and len(pair)==2
                             and isinstance(pair[0],str)
                             and isinstance(pair[1],(int,float))):
-                        name=pair[0].replace("|","/").replace("\\n"," ")[:36]
+                        name=pair[0].replace("|","/").replace("\n"," ")[:36]
                         warn += ";環境"+label+"(未確定):"+name+"@"+str(pair[1])+"%"
             # Pipe and line delimiters never originate from external untrusted
             # source text. Silently drop them from any optional stat labels.
