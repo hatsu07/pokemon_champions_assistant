@@ -111,9 +111,14 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
         prep=_interval(times,"selection_confirmed_ms","prep_finished_ms",PREP_LIMIT_MS)
         if _int(times["selection_confirmed_ms"]) < _int(times["selection_visible_ms"]):
             raise ConfigurationError("選出確定時刻が選出画面前です")
-        if _int(times["prep_finished_ms"]) > _int(times["opponent_lead_visible_ms"]):
-            # A PREP forcibly interrupted by opponent lead may be honestly
-            # recorded but cannot count as a completed PREP.
+        lead_visible=_int(times.get("opponent_lead_visible_ms"))
+        confirmed=_int(times.get("selection_confirmed_ms"))
+        selected_visible=_int(times.get("selection_displayed_ms"))
+        if selected_visible>confirmed or lead_visible<confirmed:
+            raise ConfigurationError("選出表示→選出確定→相手初手の順序が不正です")
+        if _int(times.get("prep_finished_ms")) > lead_visible:
+            # A PREP interrupted by the opponent lead is not counted as
+            # complete, even if the eventual 18 matchup text is populated.
             prep["within_limit"]=False
             prep["lead_interrupted"]=True
         turns=times.get("turns")
