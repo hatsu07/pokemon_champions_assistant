@@ -24,7 +24,7 @@ from champions_assist.selection_image_test_tools import (
     preview_payload_report,
 )
 from champions_assist.selection_test_dialog import (
-    SelectionTestDialog,load_test_image,
+    SelectionTestDialog,load_test_image,_SelectionTestWorker,
 )
 from champions_assist.selection_vision import selection_image_content
 from champions_assist.match_replay import new_replay,run_replay_image
@@ -100,6 +100,29 @@ class SelectionImageStatisticsTests(unittest.TestCase):
         self.assertIsNone(score_observed_six(actual,None))
         with self.assertRaises(ValueError):
             truth_slots("ピカチュウ / ゲンガー")
+
+
+    def test_selection_test_only_worker_adds_exact_payload_metrics(self):
+        rgb=np.zeros((624,1048,3),dtype=np.uint8)
+        with TemporaryDirectory() as tmp:
+            worker=_SelectionTestWorker(
+                image=rgb,assets=fixture_assets(),app_root=tmp,
+                model="fake-model",reasoning_effort="low")
+            outcomes=[]
+            worker.finished.connect(outcomes.append)
+            with patch("champions_assist.selection_test_dialog.ChatGPTSignIn") as auth, \
+                 patch("champions_assist.selection_test_dialog.run_replay_image",
+                       return_value=({},{"status":"OK","elapsed_ms":11})) as replay:
+                auth.return_value.access_token.return_value="private"
+                worker.run()
+            self.assertEqual(replay.call_count,1)
+            self.assertEqual(outcomes[0]["status"],"OK")
+            self.assertEqual(outcomes[0]["visual_source_width"],1048)
+            self.assertEqual(outcomes[0]["visual_source_height"],624)
+            self.assertEqual(outcomes[0]["visual_crop_width"],int(1048*.45))
+            self.assertGreater(outcomes[0]["visual_primary_jpeg_bytes"],0)
+            self.assertGreater(outcomes[0]["visual_total_data_uri_bytes"],
+                               outcomes[0]["visual_total_jpeg_bytes"])
 
 
 class RecognitionProbeTests(unittest.TestCase):

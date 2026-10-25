@@ -68,6 +68,17 @@ class _SelectionTestWorker(QObject):
                 )
         except Exception as exc:
             report={"status":"ERROR","reason":type(exc).__name__}
+        # Test-only instrumentation: measure the JPEG/data URI bytes produced
+        # by the same shared image builder, without modifying live replay.
+        # A diagnostics failure must never override the test result.
+        try:
+            from .selection_vision import selection_image_content
+            from .selection_image_diagnostics import payload_statistics
+            content=selection_image_content(
+                self.image,introduction="Selection test image byte metrics")
+            report.update(payload_statistics(self.image,content))
+        except Exception:
+            pass
         report["test_total_elapsed_ms"]=round((perf_counter()-started)*1000)
         self.finished.emit(report)
 
