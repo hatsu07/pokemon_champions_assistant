@@ -51,8 +51,12 @@ class StructuredTeamTests(unittest.TestCase):
         self.team=self.root/"team.csv"
         doc=TeamDocument.load(TEAM)
         rows=[dict(r) for r in doc.rows]
-        idx=next(i for i,r in enumerate(rows) if r.get("record")=="MON")
-        rows[idx]["item"]="いのちのたま"
+        mons=[i for i,r in enumerate(rows) if r.get("record")=="MON"]
+        # Make all six battle-set signatures differ from the reviewed
+        # baseline; otherwise exact unchanged members stay CONDITIONAL.
+        for i in mons:
+            rows[i]["priority"]="OFFLINE_V2_TEST_VARIANT"
+        rows[mons[0]]["item"]="いのちのたま"
         self.team.write_text(TeamDocument(doc.fieldnames,tuple(rows)).to_text(),
                              encoding="utf-8")
         self.team_id="b"*32
@@ -75,6 +79,10 @@ class StructuredTeamTests(unittest.TestCase):
             self.assertNotIn("opponent_species",c)
             self.assertNotIn("registered_moves",c)
         valid=validate_v2_reply(req,mock_reply(req))
+        baseline={p[0]:p for p in (
+            line.split("|") for line in self.ready.matrix_path.read_text(
+                encoding="utf-8").splitlines()
+            if line and not line.startswith("#"))}
         save_proposals(self.catalog.parent/"ai-proposal-v2.json",self.catalog,valid)
         result=self._publish()
         self.assertEqual(result["ai_proposal_cells"],36)
@@ -90,7 +98,7 @@ class StructuredTeamTests(unittest.TestCase):
             self.assertIn("技=",row[11])
             self.assertNotIn("|",row[11])
             self.assertLessEqual(len(row[11]),720)
-            self.assertEqual(row[12],"??/??/??/??/??/??")
+            self.assertEqual(row[12],baseline[opponent][12])
         manifest=json.loads(self.ready.manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["unverified_cells"],2148)
         self.assertFalse(manifest["quality_gate"]["live_ready"])
@@ -124,7 +132,9 @@ class StructuredTeamTests(unittest.TestCase):
         records=[dict(r) for r in doc.rows]
         mon_idx=[i for i,r in enumerate(records) if r.get("record")=="MON"]
         changed_slot=1
-        records[mon_idx[changed_slot]]["item"]="こだわりハチマキ"
+        previous=records[mon_idx[changed_slot]].get("item")
+        records[mon_idx[changed_slot]]["item"]=(
+            "こだわりハチマキ" if previous!="こだわりハチマキ" else "いのちのたま")
         other=self.root/"team2.csv"
         other.write_text(TeamDocument(doc.fieldnames,tuple(records)).to_text(),
                          encoding="utf-8")
@@ -186,6 +196,7 @@ class StructuredTeamTests(unittest.TestCase):
     def test_v1_does_not_satisfy_v2_coverage(self):
         from champions_assist.team_ai_analysis import (
             build_request,validate_reply,SCHEMA)
+        before=eligible_v2_request(self.catalog,max_cells=12)["cells"]
         legacy=build_request(self.catalog)
         reply={"schema":SCHEMA,"catalog_sha256":legacy["catalog_sha256"],
                "proposals":[{"opponent":c["opponent"],"slot":c["slot"],
@@ -196,9 +207,7 @@ class StructuredTeamTests(unittest.TestCase):
                        self.catalog,validate_reply(legacy,reply))
         request=eligible_v2_request(self.catalog,max_cells=12)
         self.assertEqual(len(request["cells"]),12)
-        legacy_keys={(c["opponent"],c["slot"]) for c in legacy["cells"]}
-        v2_keys={(c["opponent"],c["slot"]) for c in request["cells"]}
-        self.assertTrue(legacy_keys & v2_keys)
+        self.assertEqual(request["cells"],before)
 
 
 if __name__=="__main__":
