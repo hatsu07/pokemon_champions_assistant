@@ -31,7 +31,9 @@ class AutoDebugLogTests(unittest.TestCase):
                      token="sk-secret",api_key="secret",
                      prompt="untrusted prompt",image_bytes="pixel raw",image_count=2,
                      warning="malformed secret=somevalue",status_detail="body private",
-                     model="gpt-5.6-terra")
+                     model="gpt-5.6-terra",visual_image_count=1,
+                     visual_first_attempt_elapsed_ms=12341,
+                     visual_transport_retry_elapsed_ms=7780)
         logger.report({"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
                        "opponent_six":["ガブリアス","ピカチュウ"],
                        "observation":{"opponent_six":["ピカチュウ","ガブリアス"],
@@ -42,6 +44,9 @@ class AutoDebugLogTests(unittest.TestCase):
         self.assertEqual(len(lines),3)
         self.assertEqual(lines[1]["reason"],"ReadTimeout")
         self.assertEqual(lines[1]["elapsed_ms"],18002)
+        self.assertEqual(lines[1]["visual_image_count"],1)
+        self.assertEqual(lines[1]["visual_first_attempt_elapsed_ms"],12341)
+        self.assertEqual(lines[1]["visual_transport_retry_elapsed_ms"],7780)
         self.assertEqual(lines[2]["opponent_six_candidate"],["ピカチュウ","ガブリアス"])
         self.assertEqual(lines[2]["opponent_six_validated"],["ガブリアス","ピカチュウ"])
         raw=logger.path.read_text(encoding="utf-8")
