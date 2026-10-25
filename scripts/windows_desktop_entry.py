@@ -27,6 +27,7 @@ REQUIRED_BUNDLED_MASTERS = (
     "Pokemon_Champions_MC_usable_held_items.csv",
     "Pokemon_Champions_MC_ability_master.csv",
     "Pokemon_Champions_MC_pokemon_learnsets_linked.csv",
+    "Pokemon_Champions_MC_team_2026-10-03.csv",
 )
 
 
