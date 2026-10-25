@@ -89,6 +89,41 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(sum(x["type"]=="input_image" for x in
                              endpoint.calls[1]["input"][0]["content"]),2)
 
+    def test_two_stages_share_bounded_socket_timeouts_and_explicit_fast_effort(self):
+        observed=frame("TEAM_SELECTION",our_six=[],opponent_six=list(OPP))
+        selected={"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        class Stream:
+            def __init__(self,value): self.value=value
+            def __enter__(self):return self
+            def __exit__(self,*args):return False
+            def __iter__(self):
+                yield SimpleNamespace(type="response.output_text.delta",
+                    delta=json.dumps(self.value,ensure_ascii=False))
+                yield SimpleNamespace(type="response.completed")
+        class BoundedClient:
+            def __init__(self):
+                self.timeouts=[]
+                self.calls=[]
+                self.responses=self
+            def with_options(self,*,timeout):
+                self.timeouts.append(timeout)
+                return self
+            def create(self,**kwargs):
+                self.calls.append(kwargs)
+                return Stream([observed,selected][len(self.calls)-1])
+        client=BoundedClient()
+        state,result=run_replay_image(
+            self.image,state=new_replay(fixture_assets()),assets=fixture_assets(),
+            model="mock",access_token="dummy",reasoning_effort="high",
+            client_factory=lambda **_:client)
+        self.assertEqual(result["status"],"TEST_ONLY")
+        self.assertEqual(result["live_reasoning_effort"],"low")
+        self.assertEqual(len(client.timeouts),2)
+        self.assertLessEqual(client.timeouts[0],18)
+        self.assertLessEqual(client.timeouts[1],16)
+        self.assertTrue(all(call["reasoning"]=={"effort":"low"}
+                            for call in client.calls))
+
     def test_two_unreadable_opponent_attempts_never_trigger_tactics(self):
         unreadable=frame("TEAM_SELECTION",
                          our_six=list(OWN),
