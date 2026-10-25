@@ -61,7 +61,8 @@ class _MatchupAIWorker(QThread):
             saved=save_proposals(dest,candidate,proposal)
             self.result_ready.emit({"ok":True,"count":len(proposal["proposals"]),"path":str(saved)})
         except Exception as exc:
-            self.result_ready.emit({"ok":False,"error":type(exc).__name__ if not isinstance(exc,ConfigurationError) else str(exc)})
+            from .team_ai_analysis import safe_ai_error
+            self.result_ready.emit({"ok":False,"error":safe_ai_error(exc)})
 
 
 class _SinglesRefreshWorker(QThread):
