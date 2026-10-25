@@ -517,7 +517,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._completed({
             "state":{"phase":"SELECTION","matrix_provisional":True,
                      "selected_three":three,"lead":three[0]},
-            "report":{"status":"PROVISIONAL_ADVICE","selected_three":three,
+            "report":{"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION","selected_three":three,
                       "lead":three[0],"recommendation":"選出：ピカチュウ",
                       "live_reasoning_effort":"low"}})
         try:
