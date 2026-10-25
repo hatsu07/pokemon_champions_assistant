@@ -351,11 +351,27 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
         from openai import OpenAI
         client_factory = OpenAI
     client = client_factory(api_key=access_token,base_url="https://api.openai.com/v1",
-                            max_retries=0,timeout=total_seconds)
+                            max_retries=0,timeout=min(total_seconds, 18.0))
+    # LIVE selection uses explicit low effort to preserve the 35-second
+    # observation + correction + tactical budget. The caller's preference is
+    # otherwise unchanged for PREP and battle turns; report the override.
+    live_effort = "low" if state.get("phase") in ("MATCHMAKING","SELECTION") else reasoning_effort
+
+    def selection_call(*, phase_limit: float, **kwargs) -> dict:
+        remaining=total_seconds-(perf_counter()-started)
+        if remaining<=1.5:
+            raise TimeoutError("REPLAY_DEADLINE")
+        # Each of the two/three sequential model calls must use the REMAINING
+        # shared budget; the old fixed 35s socket timeout could make a complete
+        # selection exceed one minute.
+        timeout=max(1.0,min(phase_limit,remaining-1.0))
+        bounded=client.with_options(timeout=timeout) if hasattr(client,"with_options") else client
+        return _stream_json(bounded, **kwargs)
+
     try:
-        observation = _stream_json(
-            client,model=model,schema=OBSERVATION_SCHEMA,name=_OBSERVATION_NAME,
-            reasoning_effort=reasoning_effort,
+        observation = selection_call(
+            phase_limit=18.0,model=model,schema=OBSERVATION_SCHEMA,name=_OBSERVATION_NAME,
+            reasoning_effort=live_effort,
             instructions=("Read exactly the visible Pokémon Champions screen. "
                           "On TEAM_SELECTION identify ONLY the RIGHT opponent six; "
                           "the LEFT player's team is preloaded locally and MUST NOT "
@@ -379,8 +395,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
         def tactical(context: dict, remaining: float, phase: str) -> dict:
             if perf_counter()-started >= total_seconds-1:
                 raise TimeoutError("REPLAY_DEADLINE")
-            return _stream_json(
-                client,model=model,reasoning_effort=reasoning_effort,
+            return selection_call(
+                phase_limit=16.0,model=model,reasoning_effort=live_effort,
                 schema=CHOICE_SCHEMA if phase=="SELECTION" else ACTION_SCHEMA,
                 name=_SELECTION_NAME if phase=="SELECTION" else _ACTION_NAME,
                 instructions=(
@@ -411,16 +427,17 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "is registered and must not be recognized. Set our_six=[]; "
                     "keep all other observation fields tied to the actual image."
                 )
-                return _stream_json(
-                    client, model=model, schema=OBSERVATION_SCHEMA,
+                return selection_call(
+                    phase_limit=8.0, model=model, schema=OBSERVATION_SCHEMA,
                     name="champions_opponent_six_retry",
-                    reasoning_effort=reasoning_effort,
+                    reasoning_effort=live_effort,
                     instructions=message,
                     content=selection_image_content(image, introduction=message),
                 )
             observation, opponent_recognition_attempts = retry_unresolved_opponent_six(
                 observation, assets, retry_view,
                 remaining_seconds=lambda: total_seconds-(perf_counter()-started),
+                reserve_seconds=18.0,
             )
             # No own-team pixels ever override the 4-file frozen registered team.
             observation["our_six"] = []
@@ -433,7 +450,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
         elapsed = round((perf_counter()-started)*1000)
         result.update(elapsed_ms=elapsed,observed_ui=observation["visual_ui"],
                       observation=observation,model=model,
-                      opponent_recognition_attempts=opponent_recognition_attempts)
+                      opponent_recognition_attempts=opponent_recognition_attempts,
+                      live_reasoning_effort=live_effort)
         if (result.get("status") == "BLOCKED" and
                 result.get("reason") in (
                     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
