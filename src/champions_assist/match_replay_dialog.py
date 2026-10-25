@@ -110,14 +110,20 @@ class _ReplayWorker(QObject):
                         # existing image-to-AI fallback or invent a fact.
                         local_candidates=[]
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
-                    # Team preview needs the exact six LIVE matrix rows AFTER
-                    # reading the opponent icons; do not guess selection in
-                    # a single blind request. Only battle actions are batched.
-                    next_state,report=run_replay_image(
-                        self.frames[-1],state=self.state,assets=self.assets,
-                        access_token=token,model=self.selected_model,
-                        reasoning_effort=self.reasoning_effort,
-                    )
+                    # The 35-second budget includes auth/image preparation as
+                    # well as ALL opponent recognition and tactical calls.
+                    remaining=35.0-(perf_counter()-batch_started)
+                    if remaining<=2.0:
+                        next_state,report=self.state,{
+                            "status":"DEADLINE_EXCEEDED",
+                            "reason":"AUTH_OR_CAPTURE_BUDGET"}
+                    else:
+                        next_state,report=run_replay_image(
+                            self.frames[-1],state=self.state,assets=self.assets,
+                            access_token=token,model=self.selected_model,
+                            reasoning_effort=self.reasoning_effort,
+                            total_seconds=remaining,
+                        )
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
                     remaining=35.0-(perf_counter()-batch_started)
@@ -764,6 +770,10 @@ class MatchReplayDialog(QDialog):
             return
         frames=self._pending_batch
         screen_label=self._pending_screen_label
+        # Only the CURRENT screenshot is needed for the opponent-six preview;
+        # old transition frames are unhelpful and cost capture/memory time.
+        if self.state.get("phase") in ("MATCHMAKING","SELECTION") and frames:
+            frames=[frames[-1]]
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
