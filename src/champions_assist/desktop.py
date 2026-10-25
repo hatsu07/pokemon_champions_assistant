@@ -899,7 +899,10 @@ class DesktopMainWindow(QMainWindow):
         """One replay snapshot drives advice, labels, evidence and SQLite history."""
         panel = self._match_panel
         phase = state.get("phase", "S00_WAIT_START")
-        self.header_labels["phase"].setText(str(phase))
+        # A model timeout can leave the internal phase at MATCHMAKING after
+        # the actual preview advanced. UI label marks this uncertainty.
+        display_phase=report.get("display_phase") or phase
+        self.header_labels["phase"].setText(str(display_phase))
         self.header_labels["capture"].setText(
             "再取得待機" if panel._auto_running and panel._capture_paused
             else "監視中" if panel._auto_running else "停止")
@@ -942,6 +945,10 @@ class DesktopMainWindow(QMainWindow):
                     "選出不可：相手6匹の認識が確定しません（AI再認識 "+
                     str(attempts)+"回分）。推測で選出しません。")
                 + " [診断: "+str(report.get("reason"))+"]")
+        elif status=="ERROR" and report.get("phase_recognition_pending"):
+            self.recommendation_label.setText(
+                "選出画面を認識できません（AI通信タイムアウト）。"
+                "内部のMATCHMAKING表示は未更新です。相手6匹の認識待ち。")
         elif status in ("BLOCKED", "NO_ACTION", "DEADLINE_EXCEEDED", "ERROR",
                         "CAPTURE_PAUSED", "SUPERSEDED", "PREP_UNAVAILABLE"):
             self.recommendation_label.setText("行動推奨なし：" + str(report.get("reason") or status))
