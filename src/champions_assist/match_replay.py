@@ -672,7 +672,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "NO_ACTION with empty move and switch, and empty selection. "
                 "For a TEAM_SELECTION screen identify ONLY six opponent species "
                 "from the game image. Use the preloaded registered own six, "
-                "frozen LIVE gate and team-specific matrix rows 
+                "frozen LIVE gate and team-specific matrix rows "
                 "when supplied, select exactly three and lead. Provisional UNKNOWN "
                 "cells are not certified grades or safe-switch/processor evidence. "
                 "Reason conditionally from verified Champions facts and clearly "
