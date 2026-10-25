@@ -124,9 +124,8 @@ def make_human_review_packet(*, data_root: str | Path, team_id: str,
     move, exact KO, safety, speed or any role guarantee.
     """
     valid = available_ai_reviews(data_root=data_root,team_id=team_id,catalog=catalog)
-    if not any(x["source_path"] == option.get("source_path")
-               and x["proposal_index"] == option.get("proposal_index")
-               and x["member_signature"] == option.get("member_signature")
+    if not any(all(x[field] == option.get(field) for field in
+                   ("source_path","proposal_index","member_signature","opponent","slot","own"))
                for x in valid):
         raise ConfigurationError("AI候補が現在の構築・マスターに一致しません")
     if not 1 <= len(evidence_files) <= 2:
@@ -154,10 +153,11 @@ def make_human_review_packet(*, data_root: str | Path, team_id: str,
     existing = []
     if existing_path.is_file():
         previous = _load_json(existing_path, MAX_PROPOSAL_BYTES)
-        existing = validate_review_packet(
+        validate_review_packet(
             previous,team_id=team_id,regulation=catalog["regulation"],
             signatures=catalog["member_signatures"],
             opponents={c["opponent"] for c in catalog["cells"]})
+        existing = previous["reviews"]
     # Preserve previously confirmed observations, but replace the chosen cell
     # with a new explicit review. Never carry stale team signatures forward.
     remaining = [entry for entry in existing if
