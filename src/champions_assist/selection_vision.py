@@ -109,6 +109,48 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         raise SelectionBlocked("OPPONENT_MATRIX_MISSING") from exc
     return tuple(resolved)
 
+_RETRYABLE_OPPONENT_REASONS = frozenset({
+    "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
+    "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
+    "OPPONENT_MATRIX_MISSING",
+})
+
+
+def retry_unresolved_opponent_six(
+    first: Mapping[str, Any], assets: FrozenMatchAssets,
+    retry_call: Callable[[str, Mapping[str, Any]], Mapping[str, Any]],
+    *, remaining_seconds: Callable[[], float],
+    reserve_seconds: float = 10.0,
+) -> tuple[dict, int]:
+    """Retry one incomplete/ambiguous opponent observation via NEW model call.
+
+    Never retry own-roster recognition: the selected own team is frozen.
+    Reserve time for tactical selection within the same 35s budget.
+    Even after retry, the regular independent opponent-six validator runs
+    before any tactical decision; we never silently fill names from guesses.
+    """
+    observation = dict(first)
+    if observation.get("visual_ui") != "TEAM_SELECTION":
+        return observation, 1
+    try:
+        verify_selection_observation(observation, assets)
+        return observation, 1
+    except SelectionBlocked as exc:
+        reason = str(exc)
+    if reason not in _RETRYABLE_OPPONENT_REASONS or remaining_seconds() <= reserve_seconds:
+        return observation, 1
+    try:
+        second = retry_call(reason, observation)
+    except (ValueError, KeyError, TypeError):
+        return observation, 2
+    if not isinstance(second, Mapping) or second.get("visual_ui") != "TEAM_SELECTION":
+        return observation, 2
+    result = dict(second)
+    # Even a confident second guess must survive full six+forms+matrix check.
+    # Unrecognized returns to the normal BLOCKED path, not an AI selection.
+    return result, 2
+
+
 def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
     chosen = raw.get("selected_three")
     lead = raw.get("lead")
@@ -380,6 +422,31 @@ def run_selection_image(image, *, access_token: str, model: str,
                                     "do not visually identify it. One opponent-right crop "
                                     "shows details from the SAME frame."),
         )
+        def retry_view(reason: str, previous: Mapping[str, Any]) -> dict:
+            # Re-send a NEW observation request, with the precise validator
+            # failure as feedback, never as a fabricated expected species.
+            correction = (
+                "The previous RIGHT opponent-six reading failed validation: " + reason +
+                ". Previously guessed labels (UNTRUSTED): " +
+                json.dumps(previous.get("opponent_six", []), ensure_ascii=False) +
+                ". Re-examine all SIX RIGHT slots from TOP to BOTTOM using the "
+                "opponent-right enlarged image. Correct misread symbols and "
+                "identify distinct Pokémon/forms only when actually visible. "
+                "If any remains unreadable, omit it and mark the uncertain "
+                "opponent slot; do NOT infer from meta or the known player team. "
+                "Set our_six to []."
+            )
+            return _stream_json(
+                client, model=model, schema=VISION_SCHEMA,
+                name="champions_opponent_six_retry",
+                reasoning_effort=reasoning_effort,
+                instructions=correction,
+                content=selection_image_content(image,introduction=correction),
+            )
+        visible, attempts = retry_unresolved_opponent_six(
+            visible, assets, retry_view,
+            remaining_seconds=lambda: total_seconds-(perf_counter()-started),
+        )
         planner = SelectionPlanner()
         def choose(context: dict, remaining: float) -> dict:
             # Deadline is shared with recognition, not 35 seconds per call.
@@ -398,9 +465,11 @@ def run_selection_image(image, *, access_token: str, model: str,
                 ),
                 content=[{"type": "input_text", "text": json.dumps(context, ensure_ascii=False)}],
             )
-        return planner.choose(visible, assets, choose, started_at=started,
-                              max_total_seconds=total_seconds,
-                              allow_test_without_matrix=allow_test_without_matrix)
+        outcome = planner.choose(visible, assets, choose, started_at=started,
+                                 max_total_seconds=total_seconds,
+                                 allow_test_without_matrix=allow_test_without_matrix)
+        # Dataclass stays serializable to existing reports via as_dict.
+        return outcome
     except Exception as exc:
         return SelectionDecision("ERROR", reason=type(exc).__name__,
                                  elapsed_ms=round((perf_counter()-started)*1000))
