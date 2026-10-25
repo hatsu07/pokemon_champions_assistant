@@ -84,13 +84,18 @@ class RealBattleGateTests(unittest.TestCase):
         self.assertFalse(self.check(self.packet(4))["device_evidence_passed"])
 
     def test_any_deadline_miss_fails_even_if_four_are_good(self):
-        for location,value in [
-            ("selection_displayed_ms",90001),
-            ("prep_finished_ms",130001),
-        ]:
-            data=self.packet()
-            data["matches"][0]["timeline"][location]=value
-            self.assertFalse(self.check(data)["device_evidence_passed"])
+        data=self.packet()
+        timeline=data["matches"][0]["timeline"]
+        # The UI returns 1ms too late, and all later events shift with it;
+        # this isolates a missed 90s limit rather than invalid chronology.
+        timeline["selection_displayed_ms"]=90001
+        timeline["selection_confirmed_ms"]=90001
+        timeline["prep_finished_ms"]=130001
+        timeline["opponent_lead_visible_ms"]=131001
+        self.assertFalse(self.check(data)["device_evidence_passed"])
+        data=self.packet()
+        data["matches"][0]["timeline"]["prep_finished_ms"]=130001
+        self.assertFalse(self.check(data)["device_evidence_passed"])
         data=self.packet()
         data["matches"][3]["timeline"]["turns"][1]["recommendation_visible_ms"]=224001
         self.assertFalse(self.check(data)["device_evidence_passed"])
