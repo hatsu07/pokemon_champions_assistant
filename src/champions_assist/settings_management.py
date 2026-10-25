@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import get_ident, Lock
 from typing import Callable, TYPE_CHECKING
 
 from .app_config import (
@@ -50,6 +51,8 @@ class DesktopSettingsService:
             self.catalog = None
         self.teams = TeamRepository(Path(self.settings.storage.data_root) / "teams", catalog=self.catalog)
         self.environment = SinglesEnvironmentStore(self.settings.storage.data_root)
+        self._refresh_lock = Lock()
+        self._refresh_owner = None
 
     @property
     def first_launch(self) -> bool:
@@ -105,6 +108,8 @@ class DesktopSettingsService:
         return self.teams.revalidate(team_id)
 
     def prepare_team_live_assets(self, team_id: str, *, match_active: bool = False) -> PreparedTeamAssets:
+        if self._refresh_lock.locked() and self._refresh_owner != get_ident():
+            raise ConfigurationError("Singlesデータ更新中です。新しい対戦開始はできません")
         if match_active:
             raise ConfigurationError("対戦中はLIVEデータの作成・更新ができません")
         source=self.teams.path_for_next_match(team_id)
@@ -118,13 +123,20 @@ class DesktopSettingsService:
     def refresh_public_battle_data(self, *, match_active: bool) -> dict:
         if match_active:
             raise ConfigurationError("対戦中は環境データを更新できません")
-        receipt=self.environment.refresh_public_singles()
-        # Update cache of active team before the next PRELOAD, preserving all
-        # previous versions and the last-good public snapshot on failure.
-        active=self.settings.teams.active_team_id
-        if active:
-            self.prepare_team_live_assets(active, match_active=False)
-        return receipt
+        if not self._refresh_lock.acquire(blocking=False):
+            raise ConfigurationError("Singles環境データはすでに更新中です")
+        self._refresh_owner=get_ident()
+        try:
+            receipt=self.environment.refresh_public_singles()
+            # Prepare the new last-good team snapshot while still excluding
+            # a concurrent match start. No mid-battle source mutation.
+            active=self.settings.teams.active_team_id
+            if active:
+                self.prepare_team_live_assets(active, match_active=False)
+            return receipt
+        finally:
+            self._refresh_owner=None
+            self._refresh_lock.release()
 
     def import_user_battle_data(self, path: str | Path, *, match_active: bool) -> dict:
         if match_active:
