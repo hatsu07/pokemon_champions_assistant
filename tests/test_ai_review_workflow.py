@@ -82,7 +82,7 @@ class HumanReviewIntoLiveTest(unittest.TestCase):
         self.assertEqual(len(matrix[record["opponent"]]),14)
         self.assertEqual(len(lookups[record["opponent"]]),12)
         result=self.read_catalog(after)
-        self.assertEqual(result["counts"]["CONDITIONAL"],1)
+        self.assertEqual(result["counts"]["CONDITIONAL"],self.catalog["counts"]["CONDITIONAL"]+1)
         self.assertFalse(result["quality_gate"]["live_ready"])
         manifest=json.loads(after.manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["live_observation_markers"],1)
@@ -104,7 +104,7 @@ class HumanReviewIntoLiveTest(unittest.TestCase):
         self.assertEqual(len(options),1)
         self.apply(self.make(idx=1))
         result=self.read_catalog(self.build())
-        self.assertEqual(result["counts"]["CONDITIONAL"],2)
+        self.assertEqual(result["counts"]["CONDITIONAL"],self.catalog["counts"]["CONDITIONAL"]+2)
         self.assertEqual(len(available_ai_reviews(data_root=self.root,team_id=self.team_id,
                                                   catalog=result)),0)
 
