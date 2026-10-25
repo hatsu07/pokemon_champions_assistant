@@ -112,6 +112,8 @@ class MatchDebugLog:
         fields=_clean(report)
         names=report.get("observation",{}).get("opponent_six") if isinstance(
             report.get("observation"),dict) else None
+        if not names and event=="COMPARISON_RESULT":
+            names=report.get("opponent_six")
         if names:
             fields["opponent_six_candidate"]=names
         if report.get("screen")=="TEAM_SELECTION" and report.get("status") in (
