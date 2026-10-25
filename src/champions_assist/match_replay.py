@@ -351,6 +351,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
     deadline, not a guarantee of the network/model returning in that time.
     """
     from .vision_api_benchmark import jpeg_data_uri
+    from .selection_image_diagnostics import payload_statistics
     started = perf_counter()
     if client_factory is None:
         from openai import OpenAI
@@ -367,6 +368,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
     transport_retry_elapsed_ms = 0
     opponent_recognition_attempts = 0
     vision_image_count = 0
+    image_metrics = {}
+    retry_image_metrics = {}
 
     def selection_call(*, phase_limit: float, **kwargs) -> dict:
         remaining=total_seconds-(perf_counter()-started)
@@ -392,6 +395,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
               "text":"Extract visible UI facts from this saved screenshot."},
              {"type":"input_image","image_url":jpeg_data_uri(image),"detail":"high"}])
         vision_image_count=sum(x.get("type")=="input_image" for x in image_content)
+        image_metrics=payload_statistics(image,image_content)
         # Reserve tactical time. A 12s first-read socket timeout was too
         # short for observed ChatGPT response latency; use a larger part of
         # the real 90s preview window, never all of it.
@@ -430,6 +434,11 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             opponent_recognition_attempts=2
             retry_start=perf_counter()
             try:
+                retry_image_metrics.update({
+                    "visual_retry_total_jpeg_bytes":image_metrics["visual_total_jpeg_bytes"],
+                    "visual_retry_total_data_uri_bytes":image_metrics["visual_total_data_uri_bytes"],
+                    "visual_retry_image_count":vision_image_count,
+                })
                 observation=selection_call(
                     phase_limit=min(12.0,remaining-19.0),
                     model=model,schema=VISION_SCHEMA,
@@ -486,13 +495,20 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "is registered and must not be recognized. Set our_six=[]; "
                     "keep all other observation fields tied to the actual image."
                 )
+                retry_content=selection_image_content(
+                    image,introduction=message,include_full=True)
+                extra=payload_statistics(image,retry_content)
+                retry_image_metrics.update({
+                    "visual_retry_total_jpeg_bytes":extra["visual_total_jpeg_bytes"],
+                    "visual_retry_total_data_uri_bytes":extra["visual_total_data_uri_bytes"],
+                    "visual_retry_image_count":extra["visual_image_count"],
+                })
                 return selection_call(
                     phase_limit=10.0, model=model, schema=VISION_SCHEMA,
                     name="champions_opponent_six_retry",
                     reasoning_effort=live_effort,
                     instructions=message,
-                    content=selection_image_content(
-                        image,introduction=message,include_full=True),
+                    content=retry_content,
                 )
             if opponent_recognition_attempts==1:
                 observation, opponent_recognition_attempts = retry_unresolved_opponent_six(
@@ -517,7 +533,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                       live_reasoning_effort=live_effort,
                       visual_first_attempt_elapsed_ms=first_visual_elapsed_ms,
                       visual_transport_retry_elapsed_ms=transport_retry_elapsed_ms,
-                      visual_image_count=vision_image_count)
+                      visual_image_count=vision_image_count,
+                      **image_metrics, **retry_image_metrics)
         if (result.get("status") == "BLOCKED" and
                 result.get("reason") in (
                     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
@@ -535,7 +552,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             return deepcopy(state), {
                 "status":"DEADLINE_EXCEEDED","elapsed_ms":elapsed,
                 "observed_ui":observation["visual_ui"],"model":model,
-                "recommendation":"",
+                "recommendation":"",**image_metrics,**retry_image_metrics,
             }
         return updated,result
     except TimeoutError:
@@ -545,7 +562,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                                   "visual_image_count":vision_image_count,
                                   "visual_first_attempt_elapsed_ms":first_visual_elapsed_ms,
                                   "visual_transport_retry_elapsed_ms":transport_retry_elapsed_ms,
-                                  "elapsed_ms":round((perf_counter()-started)*1000)}
+                                  "elapsed_ms":round((perf_counter()-started)*1000),
+                                  **image_metrics, **retry_image_metrics}
     except Exception as exc:
         return deepcopy(state), {"status":"ERROR","reason":type(exc).__name__,
                                   "request_stage":current_stage,
@@ -553,7 +571,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                                   "visual_image_count":vision_image_count,
                                   "visual_first_attempt_elapsed_ms":first_visual_elapsed_ms,
                                   "visual_transport_retry_elapsed_ms":transport_retry_elapsed_ms,
-                                  "elapsed_ms":round((perf_counter()-started)*1000)}
+                                  "elapsed_ms":round((perf_counter()-started)*1000),
+                                  **image_metrics, **retry_image_metrics}
 
 PREP_SCHEMA = {
     "type":"object","additionalProperties":False,
