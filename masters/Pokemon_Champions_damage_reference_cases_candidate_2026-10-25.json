@@ -1,0 +1,83 @@
+{
+  "schema": "ChampionsDamageReferenceCases.v1",
+  "checked_at": "2026-10-25",
+  "reported_regulation": "M-C",
+  "source_url": "https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
+  "verification_status": "THIRD_PARTY_CALCULATOR_EXAMPLES_NOT_GAME_DEVICE_VALIDATED",
+  "live_autoload_allowed": false,
+  "source_game_version": "UNSPECIFIED",
+  "case_count": 4,
+  "cases": [
+    {
+      "id": "GARCHOMP_EQ_METAGROSS",
+      "attacker": "ガブリアス",
+      "defender": "メタグロス",
+      "move": "じしん",
+      "power": 100,
+      "attacker_attack_actual": 182,
+      "defender_defense_actual": 150,
+      "defender_hp_actual": 155,
+      "damage_range": [
+        138,
+        164
+      ],
+      "ko_roll_numerator": 6,
+      "ko_roll_denominator": 16,
+      "conditions": [
+        "STAB x1.5",
+        "ground effectiveness x2",
+        "neutral weather",
+        "no other modifiers"
+      ],
+      "reference_warning": "Published worked example, not independently measured in Champions battle"
+    },
+    {
+      "id": "CHARIZARD_FT_GYARADOS_NO_WEATHER",
+      "attacker": "リザードン",
+      "defender": "ギャラドス",
+      "move": "かえんほうしゃ",
+      "power": 90,
+      "attacker_spa_actual": 161,
+      "defender_spd_actual": 120,
+      "defender_hp_actual": 170,
+      "damage_range": [
+        34,
+        41
+      ],
+      "weather": "none",
+      "reference_warning": "Published worked example"
+    },
+    {
+      "id": "CHARIZARD_FT_GYARADOS_SUN",
+      "attacker": "リザードン",
+      "defender": "ギャラドス",
+      "move": "かえんほうしゃ",
+      "power": 90,
+      "attacker_spa_actual": 161,
+      "defender_spd_actual": 120,
+      "defender_hp_actual": 170,
+      "damage_range": [
+        51,
+        61
+      ],
+      "weather": "sun",
+      "reference_warning": "Published worked example"
+    },
+    {
+      "id": "CHARIZARD_FT_GYARADOS_RAIN",
+      "attacker": "リザードン",
+      "defender": "ギャラドス",
+      "move": "かえんほうしゃ",
+      "power": 90,
+      "attacker_spa_actual": 161,
+      "defender_spd_actual": 120,
+      "defender_hp_actual": 170,
+      "damage_range": [
+        16,
+        20
+      ],
+      "weather": "rain",
+      "reference_warning": "Published worked example"
+    }
+  ]
+}
