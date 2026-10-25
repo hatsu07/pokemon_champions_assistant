@@ -3,8 +3,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from champions_assist.team_ai_analysis import (
-    SCHEMA, build_request, validate_reply, save_proposals, analyze_request)
+    SCHEMA, build_request, validate_reply, save_proposals, analyze_request, safe_ai_error)
 from champions_assist.app_config import ConfigurationError
 
 class TeamAIAnalysisTests(unittest.TestCase):
@@ -28,6 +29,42 @@ class TeamAIAnalysisTests(unittest.TestCase):
           proposals=[dict(opponent=c["opponent"],slot=c["slot"],
                           member_signature=c["member_signature"],assessment="未検証の候補",
                           risks="不明な相手技",unknowns="最大打点とS") for c in self.request["cells"]])
+    def test_chatgpt_plan_uses_streaming_and_validates_complete_reply(self):
+        events=[SimpleNamespace(type="response.output_text.delta",delta=json.dumps(self.reply())),
+                SimpleNamespace(type="response.completed")]
+        class FakeStream:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def __iter__(self):return iter(events)
+        kwargs={}
+        def create(**params):
+            kwargs.update(params)
+            return FakeStream()
+        factory=lambda **_kwargs:SimpleNamespace(responses=SimpleNamespace(create=create))
+        result=analyze_request(self.request,model="gpt-test",access_token="fake-token",
+                               client_factory=factory)
+        self.assertIs(kwargs["stream"],True)
+        self.assertIs(kwargs["store"],False)
+        self.assertEqual(result["status"],"AI_PROPOSAL_UNVERIFIED")
+        self.assertFalse(result["live_approved"])
+        events.pop()
+        with self.assertRaises(ConfigurationError):
+            analyze_request(self.request,model="gpt-test",access_token="fake-token",
+                            client_factory=factory)
+
+    def test_safe_api_diagnostics_omit_secrets_and_messages(self):
+        class FakeBadRequestError(Exception):
+            status_code=400
+            code="unsupported_parameter"
+            param="reasoning.effort"
+            request_id="req-abc123"
+        error=FakeBadRequestError("secret-token-and-user-text")
+        diagnostic=safe_ai_error(error)
+        self.assertIn("HTTP 400",diagnostic)
+        self.assertIn("code=unsupported_parameter",diagnostic)
+        self.assertIn("param=reasoning.effort",diagnostic)
+        self.assertNotIn("secret-token",diagnostic)
+
     def test_request_is_bounded_and_contains_no_live_conclusions(self):
         self.assertEqual(len(self.request["cells"]),6)
         self.assertNotIn("direct_processor",self.request["cells"][0])
