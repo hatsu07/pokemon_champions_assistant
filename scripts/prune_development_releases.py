@@ -1,4 +1,4 @@
-"""Safely prune ONLY old commit-tagged Windows DEVELOPMENT GitHub Releases.
+"""Safely prune ONLY strictly named old Windows DEVELOPMENT prereleases.
 
 By default this is a dry run. No Actions Artifacts quota is used.
 Requires GitHub CLI with release deletion rights for --apply.
@@ -13,7 +13,10 @@ import subprocess
 import sys
 
 REPOSITORY = "hatsu07/pokemon_champions_assistant"
-TAG_PATTERN = re.compile(r"^development-windows-([0-9a-f]{40})$")
+LEGACY_TAG_PATTERN = re.compile(r"^development-windows-([0-9a-f]{40})$")
+VERSION_TAG_PATTERN = re.compile(
+    r"^development-windows-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-dev\.([1-9]\d*)$"
+)
 DEFAULT_KEEP = 3
 DEFAULT_MIN_AGE_DAYS = 14
 
@@ -51,11 +54,17 @@ def select_candidates(
         if not isinstance(item, dict):
             raise ValueError("Unexpected release entry")
         tag = item.get("tagName", "")
-        match = TAG_PATTERN.fullmatch(tag) if isinstance(tag, str) else None
-        if not match:
+        if not isinstance(tag, str):
             continue
-        sha = match.group(1)
-        if (item.get("name") != f"Windows DEVELOPMENT {sha[:12]}"
+        old = LEGACY_TAG_PATTERN.fullmatch(tag)
+        new = VERSION_TAG_PATTERN.fullmatch(tag)
+        if old:
+            expected_name = f"Windows DEVELOPMENT {old.group(1)[:12]}"
+        elif new:
+            expected_name = f"Windows DEVELOPMENT {tag.removeprefix('development-windows-')}"
+        else:
+            continue
+        if (item.get("name") != expected_name
                 or item.get("isPrerelease") is not True
                 or item.get("isDraft") is not False):
             continue
