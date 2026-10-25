@@ -38,6 +38,22 @@ from PySide6.QtWidgets import (
 from .app_config import CaptureConfiguration, ConfigurationError, StorageConfiguration
 from .capture_settings import CapturePreviewResult, CapturePreviewService
 from .settings_management import DesktopSettingsService
+
+
+class _SinglesRefreshWorker(QThread):
+    result_ready=Signal(object)
+
+    def __init__(self, service, parent=None):
+        super().__init__(parent)
+        self.service=service
+
+    def run(self):
+        try:
+            receipt=self.service.refresh_public_battle_data(match_active=False)
+            self.result_ready.emit({"ok":True,"receipt":receipt})
+        except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+            self.result_ready.emit({"ok":False,"error":str(exc)[:300]})
+
 from .team_management import RegisteredTeam, TeamDocument
 from .windows_capture import WindowCandidate
 from .vision_benchmark_dialog import VisionBenchmarkPanel
@@ -308,6 +324,7 @@ class SettingsDialog(QDialog):
         self._editing_team_id: str | None = None
         self._last_preview: CapturePreviewResult | None = None
         self._team_validation_refreshed = False
+        self._singles_worker = None
         self.setWindowTitle("初回設定" if first_launch else "設定")
         self.setMinimumSize(780, 600)
         self._build_ui()
@@ -454,6 +471,20 @@ class SettingsDialog(QDialog):
         self.team_status = QLabel("構築を選択してください。手入力値は固定マスターに無い場合、未確認または無効として扱います。")
         self.team_status.setWordWrap(True)
         layout.addWidget(self.team_status)
+        source_row=QHBoxLayout()
+        self.singles_refresh_button=QPushButton("シングル環境データを更新（対戦前）")
+        self.singles_refresh_button.clicked.connect(self._refresh_singles)
+        source_row.addWidget(self.singles_refresh_button)
+        self.singles_import_button=QPushButton("ゲーム内統計JSONを取り込む")
+        self.singles_import_button.clicked.connect(self._import_singles)
+        source_row.addWidget(self.singles_import_button)
+        layout.addLayout(source_row)
+        self.singles_source_status=QLabel(self._singles_source_message())
+        self.singles_source_status.setWordWrap(True)
+        layout.addWidget(self.singles_source_status)
+        layout.addWidget(QLabel(
+            "構築選択で構築別LIVEデータを生成。未検証の対面は実戦評価に昇格しません。"
+        ))
         layout.addWidget(QLabel("検証の詳細（不足・不一致のすべて）"))
         self.team_validation_details = QPlainTextEdit()
         self.team_validation_details.setReadOnly(True)
@@ -817,6 +848,68 @@ class SettingsDialog(QDialog):
         except (ConfigurationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, "構築を複製できません", str(exc))
 
+    def _singles_source_message(self) -> str:
+        try:
+            receipt=self.service.environment.summary()
+        except (OSError,ValueError,RuntimeError):
+            return "環境データ: 出典情報を読めません"
+        if receipt.get("status")=="MISSING":
+            return "環境データ: 未取得（Champions固定マスターだけで仮生成）"
+        return ("Singles環境データ: "+str(receipt.get("source_kind"))+
+                " / "+str(receipt.get("generated_at"))+
+                " / "+str(receipt.get("number_of_pokemon"))+
+                "件（採用率は相手の確定型ではありません）")
+
+    def _refresh_singles(self) -> None:
+        if self._match_active():
+            QMessageBox.warning(self,"更新不可","対戦が終わってから更新してください。")
+            return
+        if self._singles_worker is not None:return
+        self.singles_refresh_button.setEnabled(False)
+        self.save_button.setEnabled(False)
+        self.singles_source_status.setText("Singles環境データ取得中（対戦中には取得しません）")
+        self._singles_worker=_SinglesRefreshWorker(self.service,self)
+        self._singles_worker.result_ready.connect(self._singles_refreshed)
+        self._singles_worker.finished.connect(self._singles_refresh_finished)
+        self._singles_worker.start()
+
+    @Slot(object)
+    def _singles_refreshed(self,result:dict) -> None:
+        if result.get("ok"):
+            self.singles_source_status.setText(self._singles_source_message())
+        else:
+            self.singles_source_status.setText(
+                "Singles環境データ更新失敗（前回データを維持）: "+
+                str(result.get("error","UNKNOWN")))
+
+    @Slot()
+    def _singles_refresh_finished(self) -> None:
+        worker=self._singles_worker
+        self._singles_worker=None
+        self.singles_refresh_button.setEnabled(True)
+        self.save_button.setEnabled(True)
+        if worker is not None:worker.deleteLater()
+
+    def _import_singles(self) -> None:
+        if self._match_active():
+            QMessageBox.warning(self,"取込不可","対戦が終わってから取り込んでください。")
+            return
+        name,_=QFileDialog.getOpenFileName(
+            self,"ゲーム内Singlesランキング情報JSONを選択","","JSON (*.json)")
+        if not name:return
+        try:
+            self.service.import_user_battle_data(name,match_active=False)
+            self.singles_source_status.setText(self._singles_source_message())
+        except (OSError,ValueError,RuntimeError) as exc:
+            QMessageBox.warning(self,"統計JSONを取り込めません",str(exc))
+
+    def closeEvent(self,event):
+        if self._singles_worker is not None and self._singles_worker.isRunning():
+            self.singles_source_status.setText("更新終了まで設定画面は閉じられません")
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def _select_team(self) -> None:
         record = self._selected_record()
         if record is None:
@@ -841,7 +934,7 @@ class SettingsDialog(QDialog):
                 return
             self._selected_team_id = record.team_id
             self._refresh_teams(focus_id=record.team_id)
-            self.team_status.setText("設定画面下の「保存」で次戦用構築として適用します。")
+            self.team_status.setText("下の「保存」で次戦用構築を適用し、構築別LIVEデータを準備します。")
         except (ConfigurationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, "次戦に選択できません", str(exc))
 
