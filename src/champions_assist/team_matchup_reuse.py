@@ -25,6 +25,8 @@ def reuse_unchanged_matchups(catalog_path: str | Path,
     index = {(c["opponent"],c["member_signature"],evidence_key(c,current)):c
              for c in current["cells"]
              if c.get("evaluation")=="UNKNOWN" and not c.get("missing_source")}
+    by_cell={(c["opponent"],c["slot"],c["member_signature"]):c
+             for c in index.values()}
     known = set()
     for file in target_path.parent.glob("ai-proposal-*.json"):
         try:
@@ -116,17 +118,11 @@ def reuse_unchanged_matchups(catalog_path: str | Path,
                       "member_signature":r["member_signature"]} for r in rows],
             "own_members":[{"slot":c["slot"],"moves":c["registered_moves"],
                             "traits":c["own_species"]}
-                           for r in rows for c in (index[next(
-                               k for k,v in index.items()
-                               if v["opponent"]==r["opponent"]
-                               and v["slot"]==r["slot"]
-                               and v["member_signature"]==r["member_signature"])],)],
+                           for r in rows for c in (by_cell[(r["opponent"],r["slot"],
+                                                             r["member_signature"])],)],
             "opponents":[{"name":c["opponent"],"traits":c["opponent_species"]}
-                         for r in rows for c in (index[next(
-                             k for k,v in index.items()
-                             if v["opponent"]==r["opponent"]
-                             and v["slot"]==r["slot"]
-                             and v["member_signature"]==r["member_signature"])],)],
+                         for r in rows for c in (by_cell[(r["opponent"],r["slot"],
+                                                           r["member_signature"])],)],
             "regulation":current["regulation"],
             "member_signatures":current["member_signatures"]}
         validated=validate_v2_reply(request,{
