@@ -194,6 +194,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                 "rationale":reviewed["rationale"],
                 "conditions":reviewed["conditions"],
                 "processor":"UNVERIFIED","safe_switch":"UNVERIFIED",
+                "role_observations":reviewed["role_observations"],
+                "role_guarantee":"CONDITIONAL_ONLY_NOT_CERTIFIED",
             }
         elif matched_columns[slot] is not None:
             entry["evaluation"]="CONDITIONAL"
