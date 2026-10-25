@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+import json
 from threading import get_ident, Lock
 from typing import Callable, TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from .app_config import (
 from .team_management import ChampionsTeamCatalog, RegisteredTeam, TeamRepository
 from .team_live_assets import PreparedTeamAssets, prepare_team_assets
 from .environment_refresh import SinglesEnvironmentStore
+from .matchup_evidence import import_reviews
 
 if TYPE_CHECKING:  # avoid an import cycle between UI/controller and settings.
     from .fsm import MatchController
@@ -119,6 +121,29 @@ class DesktopSettingsService:
             team_id=team_id,team_path=source,
             environment_snapshot=self.environment.snapshot,
         )
+
+    def import_matchup_reviews(self, team_id: str, path: str | Path,
+                              *, match_active: bool) -> dict:
+        """Explicit human review import; never accepts it as LIVE certification."""
+        if match_active:
+            raise ConfigurationError("対戦中は対面評価レビューを取り込めません")
+        ready=self.prepare_team_live_assets(team_id,match_active=False)
+        evidence_path=ready.manifest_path.with_name("matchup-evidence.json")
+        candidate=json.loads(evidence_path.read_text(encoding="utf-8"))
+        destination=import_reviews(
+            data_root=self.settings.storage.data_root,team_id=team_id,
+            packet_path=Path(path),candidate_catalog=candidate)
+        # The stored review hash becomes part of the next immutable team
+        # fingerprint. No currently running match is mutated.
+        updated=self.prepare_team_live_assets(team_id,match_active=False)
+        manifest=json.loads(updated.manifest_path.read_text(encoding="utf-8"))
+        return {
+            "review_path":str(destination),
+            "status":updated.status,
+            "review_counts":manifest["review_status_counts"],
+            "quality_gate":manifest["quality_gate"],
+            "matchup_evidence_path":str(updated.manifest_path.with_name("matchup-evidence.json")),
+        }
 
     def refresh_public_battle_data(self, *, match_active: bool) -> dict:
         if match_active:
