@@ -470,8 +470,8 @@ def run_selection_image(image, *, access_token: str, model: str,
         outcome = planner.choose(visible, assets, choose, started_at=started,
                                  max_total_seconds=total_seconds,
                                  allow_test_without_matrix=allow_test_without_matrix)
-        # Dataclass stays serializable to existing reports via as_dict.
-        return outcome
+        # Preserve the actual number of visual model calls for audit/UI.
+        return replace(outcome, opponent_recognition_attempts=attempts)
     except Exception as exc:
         return SelectionDecision("ERROR", reason=type(exc).__name__,
                                  elapsed_ms=round((perf_counter()-started)*1000))
