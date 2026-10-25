@@ -594,6 +594,10 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         opponents=tuple(updated["opponent_six"])
         rows=tuple(updated.get("matrix_rows_six") or assets.matrix_rows_for(opponents))
         provisional=not updated["matrix_compatible"]
+        from .live_context import critical_lookup_rows
+        # Secondary lookup: at most two preloaded, explicitly flagged threats.
+        # AI-generated matrix hints never certify an immediate KO or safe switch.
+        lookup=critical_lookup_rows(assets, opponents, rows)
         prep_input=build_prep_input(
             tuple(updated["selected_three"]),updated["lead"],opponents,rows)
         if client_factory is None:
@@ -606,6 +610,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "lead":updated["lead"],
             "opponent_six":updated["opponent_six"],
             "matrix_rows_six":list(rows),
+            "lookup_rows_critical":lookup,
             "registered_team":list(assets.own_team),
             "frozen_gate":(assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"]
                            if not provisional else ""),
@@ -622,7 +627,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             reasoning_effort=reasoning_effort,
             instructions=(
                 "Champions 40-second PREP. Compare ALL selected 3 x opponent 6 "
-                "= 18 pairs once using these six frozen LIVE matrix rows. "
+                "= 18 pairs once using these six frozen LIVE matrix rows as PRIMARY. "
+                "AI_UNVERIFIED matrix notes are provisional conditional hypotheses "
+                "only and NEVER certify KO, processing roles or safe switching. "
+                "Use at most two supplied secondary lookup rows ONLY for explicit "
+                "critical warnings; do not search all six again. "
                 "For each lead matchup provide all required key=value tags "
                 "separated by |, and for each bench matchup provide all its tags. "
                 "Do not invent moves or type facts. SAFE means safe to SWITCH IN, "

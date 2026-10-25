@@ -82,11 +82,20 @@ class _MatchupAIWorker(QThread):
                         priority=[x["name"] for x in ranked]
                 except (OSError,ValueError,TypeError,KeyError):
                     pass
-            report = run_automatic_analysis(
-                catalog, model=self.model, access_token=auth.access_token(),
-                reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
-                progress=self.progress.emit, priority_opponents=priority)
-            self.result_ready.emit({"ok":True, "environment_refresh":refresh_status, **report})
+            # Saved batches are useful even after interruption or an API failure.
+            # Publication happens only BETWEEN matches, never inside LIVE.
+            try:
+                report = run_automatic_analysis(
+                    catalog, model=self.model, access_token=auth.access_token(),
+                    reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
+                    progress=self.progress.emit, priority_opponents=priority)
+            finally:
+                from .team_ai_matrix import publish_ai_matrix
+                integrated = publish_ai_matrix(
+                    matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
+                    catalog_path=catalog)
+            self.result_ready.emit({"ok":True, "environment_refresh":refresh_status,
+                                    **report, **integrated})
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
             self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
@@ -540,7 +549,7 @@ class SettingsDialog(QDialog):
         self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
         review_row.addWidget(self.matchup_candidates_button)
         layout.addLayout(review_row)
-        self.matchup_ai_button=QPushButton("構築別対面を自動解析（最大180回・試合前）")
+        self.matchup_ai_button=QPushButton("選択構築のLIVEマトリクスをAI作成（未検証・試合前）")
         self.matchup_ai_button.clicked.connect(self._start_matchup_ai)
         layout.addWidget(self.matchup_ai_button)
         self.matchup_stop_button=QPushButton("自動解析を停止（現在の通信終了後）")
@@ -557,7 +566,8 @@ class SettingsDialog(QDialog):
         self.matchup_review_status.setWordWrap(True)
         layout.addWidget(self.matchup_review_status)
         layout.addWidget(QLabel(
-            "構築選択で構築別LIVEデータを生成。未検証の対面は実戦評価に昇格しません。"
+            "構築選択で構築別LIVEひな形を生成。AI作成した対面仮説は次戦の選出とPREPで参照。"
+            "未検証対面を安全受けや確定処理役に昇格しません。"
         ))
         layout.addWidget(QLabel("検証の詳細（不足・不一致のすべて）"))
         self.team_validation_details = QPlainTextEdit()
@@ -1014,7 +1024,8 @@ class SettingsDialog(QDialog):
         answer=QMessageBox.question(
             self,"ChatGPTへの送信確認",
             "登録構築の未評価対面を12件ずつ、最大180回のChatGPT通信で連続解析します。"
-            "完了済みは再解析せず、途中停止・失敗時も正常保存済み分を残します。"
+            "生成したAI仮説を次戦用の構築別LIVEマトリクスに反映します。"
+            "完了済みは再解析せず、途中停止・失敗時も正常保存済み分を残します."
             "利用枠を消費するため、必要なら途中停止してください。"
             "実機証拠や対戦ログは送信しません。AIの推測は戦術の確定評価に昇格しません。開始しますか？",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
@@ -1054,7 +1065,8 @@ class SettingsDialog(QDialog):
                 + ("Singles統計更新済み。" if result.get("environment_refresh")=="REFRESHED"
                    else "既存の環境統計を利用。")
                 + " Championsマスターで確認した先制技の習得候補はLIVE警戒欄に反映。"
-                " AIの対面評価・処理役・安全受けは未検証のままです。")
+                + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
+                " 処理役・安全受け・KOは未検証であり暫定推奨です。")
         else:
             self.matchup_review_status.setText(
                 "AI自動解析停止・今回成功分は保存済み: "+str(result["error"]))

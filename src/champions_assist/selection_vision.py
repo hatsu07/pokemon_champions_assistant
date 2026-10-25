@@ -178,11 +178,18 @@ def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) ->
 def decision_context(assets: FrozenMatchAssets, opponents: tuple[str, ...]) -> dict:
     compatible = matrix_matches_registered_team(assets)
     provisional = provisional_matrix_matches_registered_team(assets)
+    from .live_context import critical_lookup_rows, SELECTION_CHECKLIST
+    # Exactly SIX rows via one cached indexed call. The bounded secondary
+    # lookup comes only from risks explicitly marked in those six rows.
+    rows = assets.matrix_rows_for(opponents) if compatible or provisional else ()
+    lookup = critical_lookup_rows(assets, opponents, rows) if rows else []
     return {
+        "selection_checklist": SELECTION_CHECKLIST,
+        "lookup_rows_critical": lookup,
         "own_team": [dict(item) for item in assets.own_team],
         "own_roster_source": "PRELOADED_USER_SELECTED_TEAM_NOT_VISION",
         "opponent_six": list(opponents),
-        "matrix_rows_six": list(assets.matrix_rows_for(opponents)) if compatible or provisional else [],
+        "matrix_rows_six": list(rows),
         "matrix_compatible": compatible,
         "matrix_provisional": provisional,
         "evidence_scope": "CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY" if provisional else
@@ -229,6 +236,9 @@ class SelectionPlanner:
                     "PROVISIONAL and its tactical cells are UNKNOWN. Use the registered "
                     "four moves/items/abilities/AP and six opponent-specific frozen rows "
                     "containing Champions-only species facts and usage-based warnings. "
+                    "Use each of the six generated matchup rows as the PRIMARY "
+                    "source, including labelled AI_UNVERIFIED A-F matchup notes when present. "
+                    "Follow selection_checklist and only the at-most-two critical lookup rows. "
                     "Rank plausible 3+lead routes, dangerous leads and win conditions "
                     "conditionally; never certify a KO, safe hard switch, processing role, "
                     "opponent set or speed order without evidence. Usage is not proof. "
