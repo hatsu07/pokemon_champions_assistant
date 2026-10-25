@@ -40,6 +40,30 @@ from .capture_settings import CapturePreviewResult, CapturePreviewService
 from .settings_management import DesktopSettingsService
 
 
+class _MatchupAIWorker(QThread):
+    result_ready=Signal(object)
+    def __init__(self, service, team_id, model, effort, parent=None):
+        super().__init__(parent)
+        self.service,self.team_id,self.model,self.effort=service,team_id,model,effort
+
+    def run(self):
+        try:
+            from .team_ai_analysis import build_request,analyze_request,save_proposals
+            from .siwc_auth import ChatGPTSignIn,ProtectedSessionStore
+            from .app_config import default_app_root
+            ready=self.service.prepare_team_live_assets(self.team_id,match_active=False)
+            candidate=ready.manifest_path.with_name("matchup-evidence.json")
+            request=build_request(candidate)
+            auth=ChatGPTSignIn(ProtectedSessionStore(default_app_root()))
+            proposal=analyze_request(request,model=self.model,access_token=auth.access_token(),reasoning_effort=self.effort)
+            import uuid
+            dest=ready.manifest_path.parent/("ai-proposal-"+uuid.uuid4().hex+".json")
+            saved=save_proposals(dest,candidate,proposal)
+            self.result_ready.emit({"ok":True,"count":len(proposal["proposals"]),"path":str(saved)})
+        except Exception as exc:
+            self.result_ready.emit({"ok":False,"error":type(exc).__name__ if not isinstance(exc,ConfigurationError) else str(exc)})
+
+
 class _SinglesRefreshWorker(QThread):
     result_ready=Signal(object)
 
@@ -325,6 +349,7 @@ class SettingsDialog(QDialog):
         self._last_preview: CapturePreviewResult | None = None
         self._team_validation_refreshed = False
         self._singles_worker = None
+        self._matchup_ai_worker = None
         self.setWindowTitle("初回設定" if first_launch else "設定")
         self.setMinimumSize(780, 600)
         self._build_ui()
@@ -490,6 +515,9 @@ class SettingsDialog(QDialog):
         self.matchup_review_button.clicked.connect(self._import_matchup_reviews)
         review_row.addWidget(self.matchup_review_button)
         layout.addLayout(review_row)
+        self.matchup_ai_button=QPushButton("ChatGPTで未評価対面12件を分析（対戦前・未検証候補）")
+        self.matchup_ai_button.clicked.connect(self._start_matchup_ai)
+        layout.addWidget(self.matchup_ai_button)
         self.device_quality_button=QPushButton(
             "実機対戦90/40/45秒ログを検証（対戦前）")
         self.device_quality_button.clicked.connect(self._import_real_battle_quality)
@@ -941,6 +969,48 @@ class SettingsDialog(QDialog):
         except (OSError,ValueError,RuntimeError) as exc:
             QMessageBox.warning(self,"対面候補の生成に失敗",str(exc))
 
+    def _start_matchup_ai(self) -> None:
+        if self._match_active() or self._matchup_ai_worker is not None:
+            QMessageBox.warning(self,"実行不可","対戦中または解析中には実行できません。")
+            return
+        record=self._selected_record()
+        if record is None:return
+        from .vision_preferences import VisionPreferenceStore
+        from .app_config import default_app_root
+        prefs=VisionPreferenceStore(default_app_root())
+        model=prefs.selected_model()
+        if not model:
+            QMessageBox.warning(self,"モデル未選択","ChatGPTタブでログインし、モデルを選択してください。")
+            return
+        answer=QMessageBox.question(
+            self,"ChatGPTへの送信確認",
+            "登録構築の型と未評価対面12件の固定マスター由来情報をChatGPTへ送信します。"
+            "ゲーム画像・対戦ログは送信しません。結果は未検証候補として端末内だけに保存し、"
+            "LIVEマトリクス・ルックアップへ自動反映しません。実行しますか？",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer!=QMessageBox.StandardButton.Yes:return
+        self.matchup_ai_button.setEnabled(False)
+        self.save_button.setEnabled(False)
+        self.matchup_review_status.setText("ChatGPTで対面候補を分析中（試合開始はしないでください）")
+        self._matchup_ai_worker=_MatchupAIWorker(self.service,record.team_id,model,prefs.reasoning_effort(),self)
+        self._matchup_ai_worker.result_ready.connect(self._matchup_ai_result)
+        self._matchup_ai_worker.finished.connect(self._matchup_ai_finished)
+        self._matchup_ai_worker.start()
+
+    def _matchup_ai_result(self, result: dict) -> None:
+        if result["ok"]:
+            self.matchup_review_status.setText(
+                f"未検証AI分析 {result['count']}件を保存: {result['path']}。"
+                " LIVE評価・処理役・安全受けは変更していません。")
+        else:
+            self.matchup_review_status.setText("AI分析失敗・未反映: "+str(result["error"]))
+
+    def _matchup_ai_finished(self) -> None:
+        self._matchup_ai_worker=None
+        self.matchup_ai_button.setEnabled(True)
+        self.save_button.setEnabled(True)
+
     def _import_matchup_reviews(self) -> None:
         if self._match_active():
             QMessageBox.warning(self,"取り込み不可","対戦が終わってから取り込んでください。")
@@ -989,6 +1059,10 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self,"実機E2E検証JSONを取り込めません",str(exc))
 
     def closeEvent(self,event):
+        if self._matchup_ai_worker is not None and self._matchup_ai_worker.isRunning():
+            self.matchup_review_status.setText("AI解析中は設定画面を閉じられません")
+            event.ignore()
+            return
         if self._singles_worker is not None and self._singles_worker.isRunning():
             self.singles_source_status.setText("更新終了まで設定画面は閉じられません")
             event.ignore()
@@ -1100,6 +1174,8 @@ class SettingsDialog(QDialog):
         self._set_roi_from_controls(None)
 
     def _save(self) -> None:
+        if self._matchup_ai_worker is not None:
+            return
         if self._chatgpt_job_busy():
             QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を保存してください。")
             self._show_chatgpt_tab()
@@ -1131,6 +1207,7 @@ class SettingsDialog(QDialog):
         return self.chatgpt_panel.busy
 
     def accept(self) -> None:
+        if self._matchup_ai_worker is not None:return
         if self._chatgpt_job_busy():
             QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を閉じてください。")
             self._show_chatgpt_tab()
@@ -1138,6 +1215,7 @@ class SettingsDialog(QDialog):
         super().accept()
 
     def reject(self) -> None:
+        if self._matchup_ai_worker is not None:return
         if self._chatgpt_job_busy():
             QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を閉じてください。")
             self._show_chatgpt_tab()
