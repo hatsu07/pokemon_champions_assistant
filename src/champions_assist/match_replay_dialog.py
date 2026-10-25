@@ -259,6 +259,10 @@ class MatchReplayDialog(QDialog):
         self._active_request_started=None
         self._selection_screen_started=None
         self._prep_budget_seconds=40.0
+        self._proposed_selection=None
+        self._proposed_prep_key=None
+        self._proposed_prep_payload=None
+        self._restart_prep_after_cleanup=False
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -419,6 +423,10 @@ class MatchReplayDialog(QDialog):
             self.match_id=new_id
             self._selection_screen_started=None
             self._prep_budget_seconds=40.0
+            self._proposed_selection=None
+            self._proposed_prep_key=None
+            self._proposed_prep_payload=None
+            self._restart_prep_after_cleanup=False
             self._dataset_session_id=new_session_id()
             self.entries=[]
             self._trace_origin=monotonic()
@@ -1013,7 +1021,11 @@ class MatchReplayDialog(QDialog):
                               selection_present=bool(report.get("selected_three")))
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
-        if report.get("screen")=="TEAM_SELECTION" and report.get("selected_three"):
+        if (report.get("screen")=="TEAM_SELECTION"
+                and report.get("status") in ("OK","PROVISIONAL_ADVICE","TEST_ONLY")
+                and len(report.get("selected_three") or ())==3 and report.get("lead")
+                and not superseded):
+            self._proposed_selection=(tuple(report["selected_three"]),report["lead"])
             if self._selection_screen_started is None:
                 self._selection_screen_started=(
                     monotonic()-report.get("queue_elapsed_ms",0)/1000.0)
@@ -1032,7 +1044,29 @@ class MatchReplayDialog(QDialog):
         try:
             three=[x.strip() for x in self.actual_three.text().split("/") if x.strip()]
             self.state=confirm_actual_selection(self.state,self.assets,three,self.actual_lead.text().strip())
+            confirmed_key=(tuple(self.state["selected_three"]),self.state["lead"])
             self._trace_event("ACTUAL_SELECTION_CONFIRMED")
+            # A completed provisional PREP is usable only if the three and
+            # lead actually picked in the game match the AI recommendation.
+            if self._proposed_prep_key==confirmed_key:
+                if self._proposed_prep_payload is not None:
+                    cache=self._proposed_prep_payload
+                    if cache.get("report",{}).get("status") in (
+                            "PREP_STRUCTURE_OK","PREP_PROVISIONAL"):
+                        self.state=cache["state"]
+                        self._trace_event("PROVISIONAL_PREP_CONFIRMED")
+                    else:
+                        self.state["prep_status"]="INCOMPLETE"
+                elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
+                    self.state["prep_status"]="RUNNING"
+                    self._trace_event("PROVISIONAL_PREP_AWAITING_RESULT")
+            else:
+                if self._prep_thread is not None:
+                    self._interrupt_prep()
+                    self._restart_prep_after_cleanup=True
+                self._proposed_prep_key=None
+                self._proposed_prep_payload=None
+                self._trace_event("PROVISIONAL_PREP_SELECTION_DIFFERED")
             self.entries.append({"step":len(self.entries)+1,"operation":"CONFIRM_SELECTION",
                                  "selected_three":self.state["selected_three"],
                                  "lead":self.state["lead"],"status":"CONFIRMED"})
@@ -1041,7 +1075,8 @@ class MatchReplayDialog(QDialog):
             # final selection screen as if it were the opponent's first turn.
             if self._latest_image is not None:
                 self._automatic_probe.acknowledge(self._latest_image,"PREP")
-            self._start_prep_auto()
+            if self.state.get("prep_status") not in ("RUNNING","STRUCTURE_COMPLETE"):
+                self._start_prep_auto()
         except (ValueError, KeyError) as exc:
             QMessageBox.warning(self,"実際の選出を確定できません",str(exc))
 
@@ -1058,10 +1093,24 @@ class MatchReplayDialog(QDialog):
         )!=QMessageBox.StandardButton.Yes:return
         self._start_prep_auto()
 
-    def _start_prep_auto(self):
-        if (self.state is None or self.state.get("phase")!="PREP"
-                or self._prep_thread is not None or self._thread is not None):
+    def _start_prep_auto(self, *, provisional=False):
+        if (self.state is None or self._prep_thread is not None
+                or self._thread is not None):
             return
+        if provisional:
+            if self.state.get("phase")!="SELECTION" or not self._proposed_selection:
+                return
+            try:
+                prep_state=confirm_actual_selection(
+                    self.state,self.assets,
+                    list(self._proposed_selection[0]),self._proposed_selection[1])
+            except (ValueError,KeyError):
+                return
+            self._proposed_prep_key=self._proposed_selection
+        else:
+            if self.state.get("phase")!="PREP":
+                return
+            prep_state=self.state
         if not (self.state.get("matrix_compatible") or self.state.get("matrix_provisional")):
             self.state["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
             self._render({"status":"PREP_UNAVAILABLE",
@@ -1080,13 +1129,15 @@ class MatchReplayDialog(QDialog):
                           "message":"選出90秒の残りが不足しています。PREPを実行しません。"})
             return
         self._prep_cancel_event.clear()
-        self.state["prep_status"]="RUNNING"
-        self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000))
+        if not provisional:
+            self.state["prep_status"]="RUNNING"
+        self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000),
+                          status="PROVISIONAL" if provisional else "ACTUAL")
         self._prep_thread=QThread(self)
         self._prep_worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
-            assets=self.assets, state=self.state, job="prep",
+            assets=self.assets, state=prep_state, job="prep",
             prep_seconds=self._prep_budget_seconds,
             cancel_event=self._prep_cancel_event,
         )
@@ -1098,8 +1149,10 @@ class MatchReplayDialog(QDialog):
         self._prep_thread.finished.connect(self._prep_thread.deleteLater)
         self._prep_thread.finished.connect(self._prep_cleanup)
         self._prep_timer.start(int(self._prep_budget_seconds*1000))
-        self._render({"status":"PREP_RUNNING",
-                      "message":f"選出確定後のPREP開始（残り {self._prep_budget_seconds:.1f}秒上限）"})
+        self._render({"status":"PREP_PROVISIONAL_RUNNING" if provisional else "PREP_RUNNING",
+                      "message":("提案選出に基づく暫定PREPを先行計算中。"
+                                 if provisional else "実際の選出でPREPを計算中。")
+                                +f"（残り {self._prep_budget_seconds:.1f}秒上限）"})
         self._prep_thread.start()
 
     def _interrupt_prep(self):
@@ -1123,12 +1176,26 @@ class MatchReplayDialog(QDialog):
     @Slot(object)
     def _on_prep_result(self, payload):
         self._prep_timer.stop()
-        if (self._prep_cancel_event.is_set() or self.state is None
-                or self.state.get("phase")!="PREP"
+        if self._prep_cancel_event.is_set() or self.state is None:
+            return
+        result=payload["report"]
+        if (self.state.get("phase")=="SELECTION"
+                and self._proposed_prep_key is not None):
+            # Preserve the result for actual confirmation, never mark it
+            # LIVE-ready or silently make the suggested three actual.
+            self._proposed_prep_payload=payload
+            self._trace_event("PROVISIONAL_PREP_RESULT",
+                              status=result.get("status","UNKNOWN"))
+            self.entries.append({"step":len(self.entries)+1,
+                                 "status":"PROVISIONAL_PREP_STORED",
+                                 "message":"提案選出のPREP候補を保持。実際の3匹との一致確認待ち。",
+                                 "matchups_evaluated":result.get("matchups_evaluated",0)})
+            self._render(self.entries[-1])
+            return
+        if (self.state.get("phase")!="PREP"
                 or self.state.get("prep_status")!="RUNNING"
                 or self._pending_batch is not None):
             return  # Late/stale PREP must not overwrite a live battle.
-        result=payload["report"]
         self._trace_event("PREP_RESULT",status=result.get("status","UNKNOWN"))
         if result.get("status")=="CANCELLED":
             return
@@ -1147,6 +1214,10 @@ class MatchReplayDialog(QDialog):
     def _prep_cleanup(self):
         self._prep_thread=None
         self._prep_worker=None
+        if self._restart_prep_after_cleanup:
+            self._restart_prep_after_cleanup=False
+            if self.state is not None and self.state.get("phase")=="PREP":
+                self._start_prep_auto()
 
     def _set_busy(self,busy):
         for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button,self.reconnect_button):
@@ -1162,6 +1233,11 @@ class MatchReplayDialog(QDialog):
         self._set_busy(False)
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
+        elif (self.state is not None and self.state.get("phase")=="SELECTION"
+              and self._proposed_selection is not None
+              and self._proposed_prep_key is None
+              and self._prep_thread is None):
+            self._start_prep_auto(provisional=True)
 
     def _render(self, report):
         state=self.state or {}
