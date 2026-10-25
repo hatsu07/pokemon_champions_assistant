@@ -464,6 +464,72 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         panel._stop_auto()
 
+    def test_selection_known_preview_duplicate_is_not_queued_again(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel.state={"phase":"MATCHMAKING","matrix_provisional":True}
+        panel._thread=object()  # an AI selection request is still running
+        panel._active_job="batch"
+        panel._inflight_screen_label="TEAM_SELECTION"
+        panel._pending_batch=None
+        frame=np.zeros((80,100,3),dtype=np.uint8)
+        try:
+            with patch.object(panel,"_send_pending") as enqueue:
+                panel._queue_batch([frame],screen_label="TEAM_SELECTION")
+                panel._queue_batch([frame],screen_label=None)
+                enqueue.assert_not_called()
+            self.assertIsNone(panel._pending_batch)
+        finally:
+            panel._thread=None
+            panel._pending_batch=None
+            panel._stop_auto()
+
+    def test_new_definite_selection_can_supersede_old_unknown_observation(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel.state={"phase":"MATCHMAKING","matrix_provisional":True}
+        panel._thread=object()
+        panel._active_job="batch"
+        panel._inflight_screen_label=None
+        panel._pending_batch=None
+        try:
+            with patch.object(panel,"_send_pending") as enqueue:
+                panel._queue_batch(
+                    [np.zeros((80,100,3),dtype=np.uint8)],
+                    screen_label="TEAM_SELECTION")
+                enqueue.assert_called_once()
+            self.assertIsNotNone(panel._pending_batch)
+            self.assertEqual(panel._pending_screen_label,"TEAM_SELECTION")
+        finally:
+            panel._thread=None
+            panel._pending_batch=None
+            panel._stop_auto()
+
+    def test_completed_legal_selection_survives_duplicate_pending_animation(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._inflight_screen_label="TEAM_SELECTION"
+        panel.state={"phase":"MATCHMAKING","matrix_provisional":True}
+        panel._pending_batch=[np.zeros((100,160,3),dtype=np.uint8)]
+        panel._pending_screen_label=None  # unclassified animation/recheck
+        three=["ピカチュウ","ドドゲザン","ガブリアス"]
+        panel._completed({
+            "state":{"phase":"SELECTION","matrix_provisional":True,
+                     "selected_three":three,"lead":three[0]},
+            "report":{"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION","selected_three":three,
+                      "lead":three[0],"recommendation":"選出：ピカチュウ",
+                      "live_reasoning_effort":"low"}})
+        try:
+            self.assertEqual(panel.entries[-1]["status"],"PROVISIONAL_ADVICE")
+            self.assertEqual(panel.state["selected_three"],three)
+            self.assertIsNone(panel._pending_batch)
+            self.assertEqual(panel.actual_three.text()," / ".join(three))
+            self.assertIn("low",panel.ai_status_label.text())
+        finally:
+            panel._pending_batch=None
+            panel._stop_auto()
+
     def test_ai_dispatch_attempt_and_response_are_visible_in_main_header(self):
         panel=self.window._match_panel
         panel.state={"phase":"MATCHMAKING","matrix_compatible":False}

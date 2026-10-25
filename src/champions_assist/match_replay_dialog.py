@@ -110,14 +110,20 @@ class _ReplayWorker(QObject):
                         # existing image-to-AI fallback or invent a fact.
                         local_candidates=[]
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
-                    # Team preview needs the exact six LIVE matrix rows AFTER
-                    # reading the opponent icons; do not guess selection in
-                    # a single blind request. Only battle actions are batched.
-                    next_state,report=run_replay_image(
-                        self.frames[-1],state=self.state,assets=self.assets,
-                        access_token=token,model=self.selected_model,
-                        reasoning_effort=self.reasoning_effort,
-                    )
+                    # The 35-second budget includes auth/image preparation as
+                    # well as ALL opponent recognition and tactical calls.
+                    remaining=35.0-(perf_counter()-batch_started)
+                    if remaining<=2.0:
+                        next_state,report=self.state,{
+                            "status":"DEADLINE_EXCEEDED",
+                            "reason":"AUTH_OR_CAPTURE_BUDGET"}
+                    else:
+                        next_state,report=run_replay_image(
+                            self.frames[-1],state=self.state,assets=self.assets,
+                            access_token=token,model=self.selected_model,
+                            reasoning_effort=self.reasoning_effort,
+                            total_seconds=remaining,
+                        )
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
                     remaining=35.0-(perf_counter()-batch_started)
@@ -248,6 +254,7 @@ class MatchReplayDialog(QDialog):
         self._thread=None
         self._worker=None
         self._active_job=None
+        self._inflight_screen_label=None
         self._prep_thread=None
         self._prep_worker=None
         self._prep_cancel_event=Event()
@@ -725,6 +732,20 @@ class MatchReplayDialog(QDialog):
     def _queue_batch(self,frames, *, screen_label=None):
         if not self._auto_running and not self._manual_submission:
             return
+        # During selection the first outstanding recognition+tactical request
+        # owns the screen. Subsequent animations, timer changes and fallback
+        # frames must NOT enqueue another preview which would discard the
+        # completed selection as SUPERSEDED. A true command/battle event still
+        # preempts a stale preview through the existing pending mechanism.
+        if (self._thread is not None
+                and self._active_job=="batch"
+                and self.state is not None
+                and self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                and self._inflight_screen_label=="TEAM_SELECTION"
+                and screen_label in (None,"TEAM_SELECTION")):
+            self._trace_event("SELECTION_DUPLICATE_SUPPRESSED",
+                              screen_label=screen_label or "UNCLASSIFIED")
+            return
         # A newly observed turn/party/event candidate outranks PREP.
         # Never wait for a 40-second PREP API call before requesting action.
         if (self.state is not None and self.state.get("phase")=="PREP"
@@ -749,6 +770,10 @@ class MatchReplayDialog(QDialog):
             return
         frames=self._pending_batch
         screen_label=self._pending_screen_label
+        # Only the CURRENT screenshot is needed for the opponent-six preview;
+        # old transition frames are unhelpful and cost capture/memory time.
+        if self.state.get("phase") in ("MATCHMAKING","SELECTION") and frames:
+            frames=[frames[-1]]
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
@@ -764,6 +789,7 @@ class MatchReplayDialog(QDialog):
         self._render(request_report)
         self._set_busy(True)
         self._active_job="batch"
+        self._inflight_screen_label=screen_label
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root,selected_model=self.model,
@@ -870,6 +896,20 @@ class MatchReplayDialog(QDialog):
             return
         if report.get("status") == "UNCHANGED_FRAME":
             return
+        # A correctly completed initial selection must not be thrown away
+        # because its animated preview was automatically re-queued. Protect
+        # the first legal selection only while we are still in selection phase;
+        # real newer battle command screens remain eligible to supersede.
+        if (self._active_job=="batch" and self._pending_batch is not None
+                and self.state is not None
+                and self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                and self._pending_screen_label in (None,"TEAM_SELECTION")
+                and report.get("status") in ("OK","PROVISIONAL_ADVICE","TEST_ONLY")
+                and len(report.get("selected_three") or ())==3
+                and report.get("lead")):
+            self._pending_batch=None
+            self._pending_screen_label=None
+            self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
         superseded=self._active_job=="batch" and self._pending_batch is not None
         if superseded:
             # Preserve the newer snapshot's *current* state rather than
@@ -891,7 +931,9 @@ class MatchReplayDialog(QDialog):
         elif report.get("status")=="CANCELLED":
             self._set_ai_status("AI処理キャンセル")
         else:
-            self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}")
+            effort=report.get("live_reasoning_effort")
+            speed_note=(" / 選出時モデル推論: "+str(effort)) if effort else ""
+            self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}"+speed_note)
         if not superseded:
             self._trace_event("AI_RESULT_DISPLAYED",
                               status=report.get("status","UNKNOWN"),
@@ -1027,6 +1069,7 @@ class MatchReplayDialog(QDialog):
         self._thread=None
         self._worker=None
         self._active_job=None
+        self._inflight_screen_label=None
         self._set_busy(False)
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
