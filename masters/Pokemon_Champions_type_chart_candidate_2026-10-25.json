@@ -391,5 +391,7 @@
       "Steel": 1,
       "Water": 0.5
     }
-  }
+  },
+  "source_license": "CC BY 4.0 (according to upstream repository README)",
+  "attribution": "Pokemon Champions Data — https://github.com/otterlyclueless/pokemon-champions-data"
 }
