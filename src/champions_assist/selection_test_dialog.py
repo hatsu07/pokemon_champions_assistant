@@ -68,6 +68,15 @@ class _SelectionTestWorker(QObject):
                 )
         except Exception as exc:
             report={"status":"ERROR","reason":type(exc).__name__}
+        # Diagnostic-only cached six-row coverage; no filesystem/network IO.
+        try:
+            from .live_context import selection_hint_coverage
+            six=tuple(report.get("opponent_six") or ())
+            if len(six)==6:
+                report.update(selection_hint_coverage(
+                    six,self.assets.matrix_rows_for(six)))
+        except (KeyError,ValueError,TypeError,AttributeError):
+            pass
         # Test-only instrumentation: measure the JPEG/data URI bytes produced
         # by the same shared image builder, without modifying live replay.
         # A diagnostics failure must never override the test result.
@@ -244,8 +253,17 @@ class SelectionTestDialog(QDialog):
             +"\n初手: "+str(report.get("lead") or "なし")
             +"\n所要時間: "+str(elapsed)+" ms"
             +"\n認識回数: "+str(report.get("opponent_recognition_attempts","不明"))
-            +"\n失敗理由: "+str(report.get("reason","なし"))
+            +"\n"+("未検証理由" if status=="PROVISIONAL_ADVICE" else "失敗理由")
+            +": "+str(report.get("reason","なし"))
         )
+        if "matrix_ai_hint_rows" in report:
+            result += (
+                f"\n構築別マトリクスAI評価: {report['matrix_ai_hint_rows']}/6匹、"
+                f"{report['matrix_ai_hint_pairs']}/36対面"
+                f"（構造化v2: {report['matrix_ai_structured_rows']}/6匹）"
+                + ("\nAI評価案が未生成: " + " / ".join(report["matrix_ai_missing_opponents"])
+                   if report["matrix_ai_missing_opponents"] else "")
+            )
         self.details.setText(result)
         if self.log:
             self.log.report(report,event="SELECTION_TEST_RESULT")
