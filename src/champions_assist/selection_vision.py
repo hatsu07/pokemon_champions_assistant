@@ -12,7 +12,7 @@ from time import perf_counter
 from typing import Any, Callable, Mapping
 from .preload import FrozenMatchAssets
 from .species_name_aliases import selection_base_name
-from .matrix_compatibility import matrix_matches_registered_team
+from .matrix_compatibility import matrix_matches_registered_team, provisional_matrix_matches_registered_team
 
 class SelectionBlocked(ValueError):
     pass
@@ -139,11 +139,16 @@ def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) ->
     return tuple(normalized), normalized_lead
 
 def decision_context(assets: FrozenMatchAssets, opponents: tuple[str, ...]) -> dict:
+    compatible = matrix_matches_registered_team(assets)
+    provisional = provisional_matrix_matches_registered_team(assets)
     return {
         "own_team": [dict(item) for item in assets.own_team],
         "opponent_six": list(opponents),
-        "matrix_rows_six": list(assets.matrix_rows_for(opponents)) if matrix_matches_registered_team(assets) else [],
-        "matrix_compatible": matrix_matches_registered_team(assets),
+        "matrix_rows_six": list(assets.matrix_rows_for(opponents)) if compatible or provisional else [],
+        "matrix_compatible": compatible,
+        "matrix_provisional": provisional,
+        "evidence_scope": "CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY" if provisional else
+                          "EXACT_VERIFIED_BASELINE" if compatible else "INCOMPATIBLE",
         "frozen_gate": assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"],
         "instructions": "Select three members of own_team and one of them as lead. If a member role is blank, infer its situational tactical role from its confirmed four moves, ability, held item, nature and AP spread plus the opponents and six LIVE matrix rows; do not guess hidden mechanics or alter stored team roles. A manually supplied role is contextual guidance, not a fixed selection constraint. Only use the frozen Champions rules and exactly six matrix rows. Never infer another game's mechanics.",
     }
@@ -165,7 +170,8 @@ class SelectionPlanner:
                                      elapsed_ms=round((self.clock()-started_at)*1000),
                                      **details)
         compatible = matrix_matches_registered_team(assets)
-        if not compatible and not allow_test_without_matrix:
+        provisional = provisional_matrix_matches_registered_team(assets)
+        if not compatible and not provisional and not allow_test_without_matrix:
             return SelectionDecision("BLOCKED", opponent_six=opponents,
                                      reason="OWN_MATRIX_MISMATCH",
                                      elapsed_ms=round((self.clock()-started_at)*1000), **details)
@@ -176,7 +182,21 @@ class SelectionPlanner:
                                      **details)
         try:
             context = decision_context(assets, opponents)
-            if not compatible:
+            if provisional:
+                # The frozen base gate references a different battle team, so
+                # its old team-specific tactical conclusions cannot be reused.
+                context["frozen_gate"] = ""
+                context["instructions"] = (
+                    "Pokémon Champions only. This exact registered team's matrix is "
+                    "PROVISIONAL and its tactical cells are UNKNOWN. Use the registered "
+                    "four moves/items/abilities/AP and six opponent-specific frozen rows "
+                    "containing Champions-only species facts and usage-based warnings. "
+                    "Rank plausible 3+lead routes, dangerous leads and win conditions "
+                    "conditionally; never certify a KO, safe hard switch, processing role, "
+                    "opponent set or speed order without evidence. Usage is not proof. "
+                    "Do not extrapolate SV/ZA move mechanics. This is advisory, NOT LIVE_READY."
+                )
+            elif not compatible:
                 context["instructions"] = (
                     "OFFLINE FUNCTION TEST ONLY: LIVE matrix belongs to another team; "
                     "do not use it for matchup evaluation. Select 3 and a lead from the "
@@ -191,9 +211,11 @@ class SelectionPlanner:
             if elapsed > max_total_seconds*1000:
                 return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
                                          **details)
-            return SelectionDecision("OK" if compatible else "TEST_ONLY",
+            status = "OK" if compatible else "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY"
+            return SelectionDecision(status,
                                      chosen, lead, opponents, elapsed_ms=elapsed,
-                                     reason="" if compatible else "OWN_MATRIX_MISMATCH",
+                                     reason="" if compatible else
+                                            "TACTICAL_CELLS_UNKNOWN" if provisional else "OWN_MATRIX_MISMATCH",
                                      **details)
         except SelectionBlocked as exc:
             return SelectionDecision("BLOCKED", opponent_six=opponents, reason=str(exc),
@@ -231,11 +253,14 @@ def _japanese_selection_label(name: str) -> str:
 
 def selection_summary_ja(result: Mapping[str, Any]) -> str:
     """Player-facing concise Japanese summary; raw result stays diagnostic."""
-    if result.get("status") in ("OK", "TEST_ONLY"):
+    if result.get("status") in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE"):
         picked = result.get("selected_three") or ()
         lead = result.get("lead")
         if len(picked) == 3 and isinstance(lead, str):
-            prefix = "【構築別マトリクスなし・機能試験のみ】" if result.get("status") == "TEST_ONLY" else ""
+            prefix = ("【構築別マトリクスなし・機能試験のみ】"
+                      if result.get("status") == "TEST_ONLY" else
+                      "【暫定AI推奨・処理役/安全受け未検証】"
+                      if result.get("status") == "PROVISIONAL_ADVICE" else "")
             return prefix + "選出：" + " / ".join(_japanese_selection_label(n) for n in picked) + (
                 "　初手：" + _japanese_selection_label(lead))
     reason = str(result.get("reason", ""))
