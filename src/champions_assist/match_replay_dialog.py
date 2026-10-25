@@ -725,6 +725,19 @@ class MatchReplayDialog(QDialog):
     def _queue_batch(self,frames, *, screen_label=None):
         if not self._auto_running and not self._manual_submission:
             return
+        # During selection the first outstanding recognition+tactical request
+        # owns the screen. Subsequent animations, timer changes and fallback
+        # frames must NOT enqueue another preview which would discard the
+        # completed selection as SUPERSEDED. A true command/battle event still
+        # preempts a stale preview through the existing pending mechanism.
+        if (self._thread is not None
+                and self._active_job=="batch"
+                and self.state is not None
+                and self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                and screen_label in (None,"TEAM_SELECTION")):
+            self._trace_event("SELECTION_DUPLICATE_SUPPRESSED",
+                              screen_label=screen_label or "UNCLASSIFIED")
+            return
         # A newly observed turn/party/event candidate outranks PREP.
         # Never wait for a 40-second PREP API call before requesting action.
         if (self.state is not None and self.state.get("phase")=="PREP"
@@ -870,6 +883,20 @@ class MatchReplayDialog(QDialog):
             return
         if report.get("status") == "UNCHANGED_FRAME":
             return
+        # A correctly completed initial selection must not be thrown away
+        # because its animated preview was automatically re-queued. Protect
+        # the first legal selection only while we are still in selection phase;
+        # real newer battle command screens remain eligible to supersede.
+        if (self._active_job=="batch" and self._pending_batch is not None
+                and self.state is not None
+                and self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                and self._pending_screen_label in (None,"TEAM_SELECTION")
+                and report.get("status") in ("OK","PROVISIONAL_ADVICE","TEST_ONLY")
+                and len(report.get("selected_three") or ())==3
+                and report.get("lead")):
+            self._pending_batch=None
+            self._pending_screen_label=None
+            self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
         superseded=self._active_job=="batch" and self._pending_batch is not None
         if superseded:
             # Preserve the newer snapshot's *current* state rather than
