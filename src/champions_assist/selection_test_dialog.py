@@ -55,7 +55,7 @@ class _SelectionTestWorker(QObject):
         started=perf_counter()
         try:
             token=ChatGPTSignIn(ProtectedSessionStore(self.app_root)).access_token()
-            remaining=35.0-(perf_counter()-started)
+            remaining=55.0-(perf_counter()-started)
             if remaining<=1.5:
                 report={"status":"DEADLINE_EXCEEDED","reason":"AUTH_BUDGET"}
             else:
@@ -97,7 +97,7 @@ class SelectionTestDialog(QDialog):
         layout=QVBoxLayout(self)
         heading=QLabel(
             "登録済み自軍6匹を使用します。画像からは相手6匹をChatGPTで認識し、"
-            "実戦と同じ35秒の選出処理を1回実行します。"
+            "選出90秒のうち約55秒を上限に選出結果を返す処理を1回実行します。"
             "試合中の使用・自動操作はしません。"
         )
         heading.setWordWrap(True)
@@ -163,7 +163,7 @@ class SelectionTestDialog(QDialog):
             return
         self.run_button.setEnabled(False)
         self.select_button.setEnabled(False)
-        self.status.setText("ChatGPT画像認識・相手6匹確認・選出判断を実行中")
+        self.status.setText("ChatGPT画像認識・相手6匹確認・選出判断を実行中（選出約55秒上限）")
         self.details.setText("")
         if self.log:
             self.log.write("TEST_API_QUEUED",phase="MATCHMAKING",image_count=1,
