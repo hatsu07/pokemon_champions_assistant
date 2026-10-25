@@ -51,6 +51,30 @@ def critical_lookup_rows(assets, opponents: tuple[str, ...],
     return [value for _,_,value in ranked[:limit]]
 
 
+def selection_hint_coverage(opponents, matrix_rows) -> dict:
+    """Cheap inspection of six preloaded rows; not evidence certification."""
+    if len(opponents)!=6 or len(matrix_rows)!=6:
+        raise ValueError("SIX_ROWS_REQUIRED")
+    analyzed=structured=pairs=0
+    missing=[]
+    for name,line in zip(opponents,matrix_rows):
+        parts=line.split("|")
+        if len(parts)!=14 or parts[0]!=name:
+            raise ValueError("MATRIX_ROW_OPPONENT_MISMATCH")
+        hint=parts[11]
+        if hint.startswith("AI_UNVERIFIED:"):
+            analyzed+=1
+            if "技=" in hint:
+                structured+=1
+            pairs+=sum(f"{slot}:" in hint for slot in "ABCDEF")
+        else:
+            missing.append(name)
+    return {"matrix_ai_hint_rows":analyzed,
+            "matrix_ai_structured_rows":structured,
+            "matrix_ai_hint_pairs":pairs,
+            "matrix_ai_missing_opponents":missing}
+
+
 SELECTION_CHECKLIST = (
     "Primary source: the SIX opponent matrix rows, not general usage rankings. "
     "Read all six rows in one batch and judge own 3+lead as a whole. "
