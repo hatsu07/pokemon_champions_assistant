@@ -58,6 +58,27 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIsNone(window._auto_match_dialog)
         self.assertEqual(window.header_labels["phase"].text(), "S00_WAIT_START")
 
+    def test_local_clock_export_has_unverified_bounded_timing_evidence(self):
+        import json
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._trace_event("SCREEN_CLASSIFIER_CANDIDATE",
+                           screen_label="TURN_ACTION",confidence="UNVERIFIED")
+        panel._trace_event("AI_RESULT_DISPLAYED",status="ADVICE",
+                           recommendation_present=True)
+        path=self.root/"private-timing-export.json"
+        with patch("champions_assist.match_replay_dialog.QFileDialog.getSaveFileName",
+                   return_value=(str(path),"JSON (*.json)")):
+            panel._export()
+        observed=json.loads(path.read_text(encoding="utf-8"))
+        timing=observed["timing_observations"]
+        self.assertFalse(timing["automatically_certified"])
+        self.assertEqual(timing["source"],"UNVERIFIED_LOCAL_GUI_MONOTONIC_CLOCK")
+        self.assertEqual(len(timing["events"]),2)
+        self.assertLessEqual(timing["events"][0]["at_ms"],timing["events"][1]["at_ms"])
+        self.assertEqual(timing["events"][0]["screen_label"],"TURN_ACTION")
+        self.assertIn("USER_VIDEO_REVIEW_REQUIRED",timing["warning"])
+
     def test_one_preload_one_sqlite_match_and_live_report_updates_main(self):
         member = self.service.import_team(
             MASTER_DIR / "Pokemon_Champions_MC_team_2026-10-03.csv",
