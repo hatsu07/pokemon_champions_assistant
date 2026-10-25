@@ -25,18 +25,27 @@ class SelectionDetailImageTests(unittest.TestCase):
         raw=base64.b64decode(uri.partition(",")[2])
         return cv2.imdecode(np.frombuffer(raw,dtype=np.uint8),cv2.IMREAD_COLOR)
 
-    def test_only_opponent_right_crop_plus_original_image(self):
+    def test_first_visual_request_only_sends_opponent_crop(self):
         inputs=selection_image_content(self.image,introduction="Test")
         images=[item["image_url"] for item in inputs if item["type"]=="input_image"]
-        self.assertEqual(len(images),2)
-        full,right=map(self.decode,images)
-        self.assertEqual(full.shape[:2],(624,1048))
+        self.assertEqual(len(images),1)
+        right=self.decode(images[0])
         self.assertEqual(right.shape[:2],(624,int(1048*.45)))
         self.assertGreater(int(right[250,150,0]),int(right[250,150,2]))
         descriptions=[item["text"] for item in inputs if item["type"]=="input_text"]
-        self.assertEqual(len(descriptions),2)
         self.assertIn("OPPONENT_RIGHT_SIX_ONLY",descriptions[1])
         self.assertNotIn("PLAYER_LEFT_SIX_ONLY",str(descriptions))
+        self.assertTrue(all(item.get("detail")=="high"
+                            for item in inputs if item["type"]=="input_image"))
+
+    def test_validation_retry_can_include_full_low_detail_context(self):
+        inputs=selection_image_content(self.image,introduction="Retry",
+                                       include_full=True)
+        images=[item for item in inputs if item["type"]=="input_image"]
+        self.assertEqual(len(images),2)
+        self.assertEqual(images[0]["detail"],"low")
+        self.assertEqual(images[1]["detail"],"high")
+        self.assertEqual(self.decode(images[0]["image_url"]).shape[:2],(624,1048))
 
     def test_small_or_non_landscape_frame_uses_one_image(self):
         for shape in ((180,300,3),(900,400,3)):
@@ -88,6 +97,8 @@ class SelectionDetailImageTests(unittest.TestCase):
                       str(endpoint.calls[1]["input"][0]["content"][2]["text"]))
         self.assertEqual(sum(x["type"]=="input_image" for x in
                              endpoint.calls[1]["input"][0]["content"]),2)
+        self.assertEqual(sum(x["type"]=="input_image" for x in
+                             endpoint.calls[0]["input"][0]["content"]),1)
 
     def test_two_stages_share_bounded_socket_timeouts_and_explicit_fast_effort(self):
         observed=frame("TEAM_SELECTION",our_six=[],opponent_six=list(OPP))
@@ -123,6 +134,65 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertLessEqual(client.timeouts[1],16)
         self.assertTrue(all(call["reasoning"]=={"effort":"low"}
                             for call in client.calls))
+
+    def test_fast_retry_when_first_vision_readtimeout_allows_choice(self):
+        observed=frame("TEAM_SELECTION",our_six=[],opponent_six=list(OPP))
+        selected={"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        class ReadTimeout(Exception):
+            pass
+        class Stream:
+            def __init__(self,value):self.value=value
+            def __enter__(self):return self
+            def __exit__(self,*_):return False
+            def __iter__(self):
+                yield SimpleNamespace(type="response.output_text.delta",
+                                      delta=json.dumps(self.value,ensure_ascii=False))
+                yield SimpleNamespace(type="response.completed")
+        class Client:
+            def __init__(self):
+                self.responses=self
+                self.calls=[]
+                self.timeouts=[]
+            def with_options(self,*,timeout):
+                self.timeouts.append(timeout)
+                return self
+            def create(self,**kwargs):
+                self.calls.append(kwargs)
+                if len(self.calls)==1:
+                    raise ReadTimeout("read timeout")
+                return Stream(observed if len(self.calls)==2 else selected)
+        client=Client()
+        state,result=run_replay_image(
+            self.image,state=new_replay(fixture_assets()),assets=fixture_assets(),
+            model="mock",access_token="dummy",client_factory=lambda **_:client)
+        self.assertEqual(result["status"],"TEST_ONLY")
+        self.assertEqual(result["opponent_recognition_attempts"],2)
+        self.assertEqual(result["visual_image_count"],1)
+        self.assertEqual(len(client.calls),3)
+        self.assertLessEqual(client.timeouts[0],12.0)
+        self.assertLessEqual(client.timeouts[1],7.0)
+        self.assertLessEqual(client.timeouts[2],16.0)
+        self.assertEqual(state["opponent_six"],list(OPP))
+
+    def test_second_readtimeout_cannot_trigger_tactical_guess(self):
+        class ReadTimeout(Exception):
+            pass
+        class Client:
+            def __init__(self):self.responses=self;self.calls=0
+            def create(self,**kwargs):
+                self.calls+=1
+                raise ReadTimeout("temporary network")
+        client=Client()
+        state,result=run_replay_image(
+            self.image,state=new_replay(fixture_assets()),assets=fixture_assets(),
+            model="mock",access_token="dummy",client_factory=lambda **_:client)
+        self.assertEqual(result["status"],"ERROR")
+        self.assertEqual(result["reason"],"ReadTimeout")
+        self.assertEqual(result["request_stage"],"OPPONENT_VISUAL_TRANSPORT_RETRY")
+        self.assertEqual(result["opponent_recognition_attempts"],2)
+        self.assertEqual(result["visual_image_count"],1)
+        self.assertEqual(client.calls,2)
+        self.assertEqual(state["selected_three"],[])
 
     def test_two_unreadable_opponent_attempts_never_trigger_tactics(self):
         unreadable=frame("TEAM_SELECTION",
