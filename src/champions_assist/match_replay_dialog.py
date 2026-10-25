@@ -1073,9 +1073,16 @@ class MatchReplayDialog(QDialog):
                         self._trace_event("PROVISIONAL_PREP_CONFIRMED")
                     else:
                         self.state["prep_status"]="INCOMPLETE"
+                        self._proposed_prep_key=None
+                        self._proposed_prep_payload=None
                 elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
                     self.state["prep_status"]="RUNNING"
                     self._trace_event("PROVISIONAL_PREP_AWAITING_RESULT")
+                elif self._prep_thread is not None:
+                    # Provisional worker has already timed out/cancelled;
+                    # restart only after the old QThread has really exited.
+                    self._proposed_prep_key=None
+                    self._restart_prep_after_cleanup=True
             else:
                 if self._prep_thread is not None:
                     self._interrupt_prep()
