@@ -26,6 +26,20 @@ def release(days_old: int, index: int, **overrides) -> dict:
     return item
 
 
+def version_release(days_old: int, number: int, **overrides) -> dict:
+    label = f"v0.1.0-dev.{number}"
+    item = {
+        "tagName": f"development-windows-{label}",
+        "name": f"Windows DEVELOPMENT {label}",
+        "isPrerelease": True,
+        "isDraft": False,
+        "isImmutable": False,
+        "createdAt": (NOW - timedelta(days=days_old)).isoformat(),
+    }
+    item.update(overrides)
+    return item
+
+
 class ReleasePruningSafetyTests(unittest.TestCase):
     def test_only_old_releases_beyond_latest_three(self):
         entries = [release(age, i + 1) for i, age in enumerate([1, 2, 3, 15, 30, 45])]
@@ -44,6 +58,33 @@ class ReleasePruningSafetyTests(unittest.TestCase):
         ]
         protected = [release(1, 1), release(2, 2), release(3, 3)]
         self.assertEqual(subject.select_candidates(protected + unrelated, now=NOW), [])
+
+    def test_mixed_legacy_and_versioned_retention_keeps_newest_three(self):
+        entries = [
+            version_release(1, 38),
+            version_release(2, 37),
+            version_release(3, 36),
+            release(19, 50),
+            release(21, 51),
+            version_release(31, 12),
+        ]
+        got = subject.select_candidates(entries, now=NOW)
+        self.assertEqual([item["tagName"] for item in got],
+                         [item["tagName"] for item in entries[3:]])
+
+    def test_never_delete_custom_or_stable_version_tags(self):
+        protected = [
+            version_release(100, 1, name="Official v0.1.0 release"),
+            version_release(100, 2, isPrerelease=False),
+            version_release(100, 3, isDraft=True),
+            version_release(100, 4, isImmutable=True),
+            version_release(100, 5, tagName="v0.1.0"),
+            version_release(100, 6, tagName="development-windows-v0.1.0-dev.06"),
+            version_release(100, 7, tagName="development-windows-v0.1.0-dev.0"),
+            version_release(100, 8, tagName="development-windows-v0.1.0-dev.8-extra"),
+            version_release(100, 9, name="Renamed by user"),
+        ]
+        self.assertEqual(subject.select_candidates(protected,now=NOW,keep=2),[])
 
     def test_age_and_keep_bounds_are_enforced(self):
         with self.assertRaises(ValueError):
