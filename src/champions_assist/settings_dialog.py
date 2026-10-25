@@ -82,20 +82,24 @@ class _MatchupAIWorker(QThread):
                         priority=[x["name"] for x in ranked]
                 except (OSError,ValueError,TypeError,KeyError):
                     pass
+            from .team_matchup_reuse import reuse_unchanged_matchups
+            reused = reuse_unchanged_matchups(
+                catalog, Path(self.service.settings.storage.data_root) / "live-team-assets")
             # Saved batches are useful even after interruption or an API failure.
             # Publication happens only BETWEEN matches, never inside LIVE.
             try:
                 report = run_automatic_analysis(
                     catalog, model=self.model, access_token=auth.access_token(),
                     reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
-                    progress=self.progress.emit, priority_opponents=priority)
+                    progress=self.progress.emit, priority_opponents=priority,
+                    structured=True)
             finally:
                 from .team_ai_matrix import publish_ai_matrix
                 integrated = publish_ai_matrix(
                     matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
                     catalog_path=catalog)
             self.result_ready.emit({"ok":True, "environment_refresh":refresh_status,
-                                    **report, **integrated})
+                                    **report, **reused, **integrated})
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
             self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
@@ -549,7 +553,7 @@ class SettingsDialog(QDialog):
         self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
         review_row.addWidget(self.matchup_candidates_button)
         layout.addLayout(review_row)
-        self.matchup_ai_button=QPushButton("選択構築のLIVEマトリクスをAI作成（未検証・試合前）")
+        self.matchup_ai_button=QPushButton("全対面LIVEマトリクスをAI作成・再開（未検証・試合前）")
         self.matchup_ai_button.clicked.connect(self._start_matchup_ai)
         layout.addWidget(self.matchup_ai_button)
         self.matchup_stop_button=QPushButton("自動解析を停止（現在の通信終了後）")
@@ -1023,9 +1027,11 @@ class SettingsDialog(QDialog):
             return
         answer=QMessageBox.question(
             self,"ChatGPTへの送信確認",
-            "登録構築の未評価対面を12件ずつ、最大180回のChatGPT通信で連続解析します。"
-            "生成したAI仮説を次戦用の構築別LIVEマトリクスに反映します。"
-            "完了済みは再解析せず、途中停止・失敗時も正常保存済み分を残します."
+            "選択構築×相手358種類の全2,148対面を対象に、24～36対面ずつ"
+            "構造化AI解析します（通信上限180回、再試行を含む）。"
+            "固定マスター不足の対面は未解析として記録されます。"
+            "旧形式の文章評価もv2構造化形式では再解析対象です。"
+            "他構築で根拠が同一のv2結果を再利用し、成功分を保存します。"
             "利用枠を消費するため、必要なら途中停止してください。"
             "実機証拠や対戦ログは送信しません。AIの推測は戦術の確定評価に昇格しません。開始しますか？",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
@@ -1043,8 +1049,9 @@ class SettingsDialog(QDialog):
 
     def _matchup_ai_progress(self, report: dict) -> None:
         self.matchup_review_status.setText(
-            f"ChatGPTで対面を自動解析中: 今回 {report['count']}件、"
-            f"{report['batches']}回の通信が完了。"
+            f"ChatGPTで対面を構造化解析中: 今回 {report['count']}件、"
+            f"成功 {report['batches']}回／通信試行 {report.get('attempts',report['batches'])}回。"
+            f" 現在のバッチ {report.get('batch_size',12)}対面。"
             " 確定KO・処理役・安全受けは未認定です。")
 
     def _stop_matchup_ai(self) -> None:
@@ -1056,15 +1063,20 @@ class SettingsDialog(QDialog):
 
     def _matchup_ai_result(self, result: dict) -> None:
         if result["ok"]:
-            label={"COMPLETE":"未評価候補の自動分析完了",
+            label={"COMPLETE":"構造化対面評価案の全件生成完了",
+                   "SOURCE_GAPS":"解析可能な対面は完了・固定マスター不足あり",
                    "INTERRUPTED":"自動解析を中断",
                    "BATCH_LIMIT":"自動解析の上限に到達"}.get(result["status"],result["status"])
             self.matchup_review_status.setText(
-                f"{label}。今回の保存: {result['count']}件 / "
-                f"通信 {result['batches']}回。"
-                + ("Singles統計更新済み。" if result.get("environment_refresh")=="REFRESHED"
-                   else "既存の環境統計を利用。")
-                + " Championsマスターで確認した先制技の習得候補はLIVE警戒欄に反映。"
+                f"{label}。今回生成: {result['count']}件、"
+                f"差分再利用: {result.get('reused_cells',0)}件、"
+                f"通信試行 {result.get('attempts',result['batches'])}回"
+                f"（成功{result['batches']}・再試行{result.get('retries',0)}）。"
+                f" マスター不足 {result.get('source_gaps',0)}対面。"
+                + (" 不足内訳: "+", ".join(
+                    f"{reason}={count}" for reason,count in
+                    result.get("source_gap_reasons",{}).items())+"。"
+                   if result.get("source_gap_reasons") else "")
                 + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
                 " 処理役・安全受け・KOは未検証であり暫定推奨です。")
         else:
