@@ -31,6 +31,8 @@ _ALLOWED_NUMBER = frozenset({
     "image_count", "opponent_recognition_attempts", "step", "preload_count",
     "matchups_evaluated", "consecutive_failures", "queue_elapsed_ms",
     "timeout_budget_ms", "latency_ms",
+    "visual_first_attempt_elapsed_ms", "visual_transport_retry_elapsed_ms",
+    "visual_image_count",
 })
 _SAFE_CODE = re.compile(r"^[\w .:/+()\-]{1,100}$",re.UNICODE)
 _SAFE_SESSION = re.compile(r"^capture-[0-9a-f]{32}$")
