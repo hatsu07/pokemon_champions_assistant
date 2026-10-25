@@ -84,7 +84,7 @@ class _MatchupAIWorker(QThread):
                     pass
             from .team_matchup_reuse import reuse_unchanged_matchups
             reused = reuse_unchanged_matchups(
-                catalog, self.service.settings.storage.data_root / "live-team-assets")
+                catalog, Path(self.service.settings.storage.data_root) / "live-team-assets")
             # Saved batches are useful even after interruption or an API failure.
             # Publication happens only BETWEEN matches, never inside LIVE.
             try:
