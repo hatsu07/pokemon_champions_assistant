@@ -300,6 +300,69 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertEqual(panel.state["prep_status"],"PENDING")
 
+    def test_90s_preview_allows_55s_selection_then_32s_prep(self):
+        from champions_assist.match_replay_dialog import prep_budget_before_battle
+        self.assertEqual(prep_budget_before_battle(100.0,now=100.0),40)
+        self.assertEqual(prep_budget_before_battle(100.0,now=155.0),32)
+        self.assertEqual(prep_budget_before_battle(100.0,now=160.0),27)
+        self.assertEqual(prep_budget_before_battle(100.0,now=188.0),0)
+        self.assertEqual(prep_budget_before_battle(None,now=900.0),40)
+
+    def test_early_prep_launches_while_actual_selection_is_not_yet_confirmed(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"SELECTION","matrix_provisional":True}
+        panel._proposed_selection=(("ピカチュウ","ドドゲザン","ガブリアス"),"ピカチュウ")
+        panel._proposed_prep_key=None
+        panel._prep_thread=None
+        panel._thread=None
+        panel._pending_batch=None
+        with patch.object(panel,"_start_prep_auto") as start:
+            panel._cleanup()
+            start.assert_called_once_with(provisional=True)
+        self.assertEqual(panel.state["phase"],"SELECTION")
+
+    def test_proposed_prep_is_not_promoted_before_actual_confirmation(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"SELECTION","matrix_provisional":True}
+        panel._proposed_prep_key=(("ピカチュウ","ドドゲザン","ガブリアス"),"ピカチュウ")
+        panel._proposed_prep_payload=None
+        panel._prep_cancel_event.clear()
+        fake={"state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE",
+                       "selected_three":["ピカチュウ","ドドゲザン","ガブリアス"],
+                       "lead":"ピカチュウ"},
+              "report":{"status":"PREP_PROVISIONAL","matchups_evaluated":18}}
+        panel._on_prep_result(fake)
+        self.assertIs(panel._proposed_prep_payload,fake)
+        self.assertEqual(panel.state["phase"],"SELECTION")
+        self.assertEqual(panel.entries[-1]["status"],"PROVISIONAL_PREP_STORED")
+
+    def test_actual_selection_can_consume_matching_early_prep(self):
+        from champions_assist.match_replay import new_replay, confirm_actual_selection
+        from champions_assist.preload import MasterPreloader
+        panel=self.window._match_panel
+        assets=MasterPreloader(
+            MASTER_DIR,
+            team_source=MASTER_DIR / "Pokemon_Champions_MC_team_2026-10-03.csv",
+        ).load_for_new_match()
+        panel.assets=assets
+        panel.state=new_replay(assets)
+        panel.state["phase"]="SELECTION"
+        panel.state["opponent_six"]=list(assets.matrix_index)[:6]
+        own=["マスカーニャ","アシレーヌ","ガブリアス"]
+        preview=confirm_actual_selection(panel.state,assets,own,own[0])
+        preview["prep_status"]="STRUCTURE_COMPLETE"
+        panel._proposed_prep_key=(tuple(own),own[0])
+        panel._proposed_prep_payload={
+            "state":preview,
+            "report":{"status":"PREP_STRUCTURE_OK","matchups_evaluated":18}}
+        panel.actual_three.setText(" / ".join(own))
+        panel.actual_lead.setText(own[0])
+        with patch.object(panel,"_start_prep_auto") as launch:
+            panel._confirm_selection()
+            launch.assert_not_called()
+        self.assertEqual(panel.state["phase"],"PREP")
+        self.assertEqual(panel.state["prep_status"],"STRUCTURE_COMPLETE")
+
     def test_prep_interruption_prioritizes_battle_batch_without_waiting(self):
         panel=self.window._match_panel
         panel.state={"phase":"PREP","prep_status":"RUNNING"}
