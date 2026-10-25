@@ -219,10 +219,23 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "reason":"CANDIDATE_EVIDENCE_NEVER_AUTOMATICALLY_CERTIFIES_LIVE_READY",
     }
     status = "REVIEWED_REUSE" if full else "PROVISIONAL_UNVERIFIED"
+    # Only verified human-supplied observation *markers* may enter LIVE.
+    # Even two independently referenced observations are NOT permission to
+    # infer an on-field processor, safe hard switch, damage or speed order.
+    # Model suggestions never feed this path.
+    def review_marker(opponent: str) -> str:
+        flags = []
+        for slot in range(6):
+            item = reviews.get((opponent, slot))
+            if item is not None:
+                flag = "2根拠観測" if item["status"] == "CONFIRMED" else "条件付観測"
+                flags.append(chr(65 + slot) + ":" + flag)
+        return "人間確認(" + ",".join(flags) + ";処理受け未認定)" if flags else ""
+    annotation_count = len(reviews)
     # Preserve fixed source verbatim if the exact same six battle sets and
     # slot order. Even a reordered team gets new OWN/FAST6 column ordering.
     original_order = list(range(6))
-    if full and matched_columns == original_order and not env_rows:
+    if full and matched_columns == original_order and not env_rows and not reviews:
         matrix_text = matrix_bytes.decode("utf-8-sig")
         lookup_text = lookup_bytes.decode("utf-8-sig")
     else:
@@ -235,6 +248,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
             "# PROVENANCE=EXACT_REGISTERED_SET_ONLY; NO_CROSS_GAME_INFERENCE",
             "# ENV_GENERATED_AT="+env_date+"; ENV_SOURCE_KIND="+env_kind,
             "# ENV_USAGE_IS_NOT_OPPONENT_SET_PROOF",
+            "# HUMAN_REVIEW=OBSERVATION_ONLY; DOES_NOT_CERTIFY_PROCESSOR_OR_SAFE_SWITCH",
         ]
         # Reuse only opponent-only type/base-speed/warning/risk and reviewed
         # original cells. Recompute processor summary solely from reused cells.
@@ -245,6 +259,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
             "# DERIVED_STATUS="+status,
             "# UNVERIFIED_PROCESSORS=NONE; NO_SAFETY_CLAIMS",
             "# ENV_GENERATED_AT="+env_date+"; ENV_STATS_ARE_NON_DETERMINISTIC",
+            "# HUMAN_REVIEW=OBSERVATION_ONLY; UNKNOWN_TACTICAL_CELLS_REMAIN_UNKNOWN",
         ]
         for key, old in matrix_rows.items():
             original_lookup = lookup_rows[key]
@@ -272,6 +287,9 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                 warn += ";環境参考(型未確定):"+",".join(top_moves)
             # Pipe and line delimiters never originate from external untrusted
             # source text. Silently drop them from any optional stat labels.
+            marker = review_marker(key)
+            if marker:
+                warn = warn[:320] + ";" + marker
             warn = warn.replace("|", "/").replace("\n", " ")[:500]
             derived_matrix.append("|".join([
                 key,old[1],old[2],*cells,
@@ -310,6 +328,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "rules":"NO_AUTOMATIC_PROMOTION_OF_UNVERIFIED_PROCESSOR_OR_SAFE_SWITCH",
         "review_input_sha256":sha256(review_bytes).hexdigest() if review_bytes else None,
         "review_status_counts":review_counts,
+        "live_observation_markers":annotation_count,
+        "live_grade_certified_from_reviews":0,
         "review_warning":review_warning,
         "candidate_file":"matchup-evidence.json",
         "candidate_sha256":sha256(candidate_text.encode("utf-8")).hexdigest(),

@@ -147,6 +147,44 @@ class DesktopSettingsService:
             "matchup_evidence_path":str(updated.manifest_path.with_name("matchup-evidence.json")),
         }
 
+    def ai_review_options(self, team_id: str, *, match_active: bool) -> list[dict]:
+        """List candidate suggestions, never approve them automatically."""
+        if match_active:
+            raise ConfigurationError("対戦中にはAI候補のレビューができません")
+        from .ai_review_workflow import available_ai_reviews
+        ready=self.prepare_team_live_assets(team_id,match_active=False)
+        candidate=json.loads(ready.manifest_path.with_name("matchup-evidence.json").read_text(encoding="utf-8"))
+        return available_ai_reviews(data_root=self.settings.storage.data_root,
+                                    team_id=team_id,catalog=candidate)
+
+    def approve_observed_ai_review(self, team_id: str, *, option: dict,
+                                   evidence_files: list[str | Path],
+                                   rationale: str, observed_moves: list[str] | None,
+                                   match_active: bool) -> dict:
+        """Player-attested, independently evidenced review; LIVE note only."""
+        if match_active:
+            raise ConfigurationError("対戦中にはレビュー・LIVE再生成ができません")
+        from .ai_review_workflow import make_human_review_packet
+        from .app_config import atomic_write_text
+        import uuid
+        ready=self.prepare_team_live_assets(team_id,match_active=False)
+        candidate=json.loads(ready.manifest_path.with_name("matchup-evidence.json").read_text(encoding="utf-8"))
+        packet=make_human_review_packet(
+            data_root=self.settings.storage.data_root,team_id=team_id,
+            catalog=candidate,option=option,evidence_files=evidence_files,
+            rationale=rationale,observed_moves=observed_moves)
+        input_path=Path(self.settings.storage.data_root)/"matchup-reviews"/(
+            ".ai-review-draft-"+uuid.uuid4().hex+".json")
+        try:
+            atomic_write_text(input_path,json.dumps(packet,ensure_ascii=False))
+            result=self.import_matchup_reviews(team_id,input_path,match_active=False)
+            result["observation_markers"]=json.loads(
+                self.prepare_team_live_assets(team_id,match_active=False).manifest_path.read_text(
+                    encoding="utf-8"))["live_observation_markers"]
+            return result
+        finally:
+            input_path.unlink(missing_ok=True)
+
     def import_real_battle_quality(self, team_id: str, path: str | Path,
                                    *, match_active: bool) -> dict:
         """Audit user-provided real-device evidence offline, never auto READY."""
