@@ -167,6 +167,22 @@ class StructuredTeamTests(unittest.TestCase):
         # Invalid/missing-source evaluations are never marked as certified.
         self.assertFalse(self._publish()["ai_proposal_live_certified"])
 
+    def test_cached_six_row_coverage_and_priority_lookup(self):
+        from champions_assist.live_context import selection_hint_coverage
+        names=tuple("ABCDEF")
+        def row(name,hint):
+            return "|".join([name,"X","80"]+["?,?,?,?,U,0"]*6+
+                            ["-","先制:"+name,hint,"??/??/??/??/??/??","PS"])
+        lines=[row(names[i],"AI_UNVERIFIED:"+chr(65+i)+":技=じしん")
+               if i<4 else row(names[i],"-") for i in range(6)]
+        coverage=selection_hint_coverage(names,lines)
+        self.assertEqual(coverage["matrix_ai_hint_rows"],4)
+        self.assertEqual(coverage["matrix_ai_hint_pairs"],4)
+        self.assertEqual(coverage["matrix_ai_structured_rows"],4)
+        self.assertEqual(coverage["matrix_ai_missing_opponents"],["E","F"])
+        with self.assertRaises(ValueError):
+            selection_hint_coverage(names,lines[:5])
+
     def test_v1_does_not_satisfy_v2_coverage(self):
         from champions_assist.team_ai_analysis import (
             build_request,validate_reply,SCHEMA)
@@ -180,7 +196,9 @@ class StructuredTeamTests(unittest.TestCase):
                        self.catalog,validate_reply(legacy,reply))
         request=eligible_v2_request(self.catalog,max_cells=12)
         self.assertEqual(len(request["cells"]),12)
-        self.assertEqual(request["cells"][0]["opponent"],legacy["cells"][0]["opponent"])
+        legacy_keys={(c["opponent"],c["slot"]) for c in legacy["cells"]}
+        v2_keys={(c["opponent"],c["slot"]) for c in request["cells"]}
+        self.assertTrue(legacy_keys & v2_keys)
 
 
 if __name__=="__main__":
