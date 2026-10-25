@@ -36,7 +36,8 @@ def load_test_image(path: str | Path) -> np.ndarray:
     if (image is None or image.ndim!=3 or image.shape[0]<200 or
             image.shape[1]<300 or image.shape[0]*image.shape[1]>12000000):
         raise ValueError("選出画面画像を正しく読み取れません")
-    return image
+    # Live capture and JPEG encoder consume RGB uint8, not OpenCV BGR.
+    return cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
 
 
 class _SelectionTestWorker(QObject):
@@ -111,6 +112,21 @@ class SelectionTestDialog(QDialog):
         self.run_button.clicked.connect(self.run_test)
         actions.addWidget(self.run_button)
         layout.addLayout(actions)
+        extra=QHBoxLayout()
+        from PySide6.QtWidgets import QComboBox
+        self.preview_percent=QComboBox()
+        self.preview_percent.addItem("元画像100%（実戦と同じ）",100)
+        self.preview_percent.addItem("50%に縮小（比較条件）",50)
+        extra.addWidget(self.preview_percent)
+        self.preview_button=QPushButton("ChatGPTに送信する画像をプレビュー")
+        self.preview_button.setEnabled(False)
+        self.preview_button.clicked.connect(self.show_payload_preview)
+        extra.addWidget(self.preview_button)
+        self.compare_button=QPushButton("解像度×AIモデル比較")
+        self.compare_button.setEnabled(False)
+        self.compare_button.clicked.connect(self.show_comparison)
+        extra.addWidget(self.compare_button)
+        layout.addLayout(extra)
         self.image_label=QLabel("テスト画像を選択してください")
         self.image_label.setMinimumHeight(240)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -148,21 +164,42 @@ class SelectionTestDialog(QDialog):
             return
         self.image=image.copy()
         h,w=self.image.shape[:2]
-        frame=QImage(self.image.data,w,h,self.image.strides[0],QImage.Format.Format_BGR888)
+        frame=QImage(self.image.data,w,h,self.image.strides[0],QImage.Format.Format_RGB888)
         self.image_label.setPixmap(
             QPixmap.fromImage(frame.copy()).scaled(
                 710,310,Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
         self.status.setText(f"画像読込済み: {w}×{h} / 実戦と同じ処理で検証")
         self.run_button.setEnabled(True)
+        self.preview_button.setEnabled(True)
+        self.compare_button.setEnabled(True)
         if self.log:
             self.log.write("TEST_IMAGE_READY",image_count=1)
+
+    def show_payload_preview(self):
+        if self.image is None or self.thread is not None:
+            return
+        from .selection_image_test_tools import OutboundImagePreviewDialog
+        dialog=OutboundImagePreviewDialog(
+            image=self.image,percent=self.preview_percent.currentData(),parent=self)
+        dialog.exec()
+
+    def show_comparison(self):
+        if self.image is None or self.thread is not None:
+            return
+        from .selection_image_test_tools import OpponentImageComparisonDialog
+        dialog=OpponentImageComparisonDialog(
+            image=self.image,assets=self.assets,root=self.app_root,
+            current_model=self.model,logger=self.log,parent=self)
+        dialog.exec()
 
     def run_test(self):
         if self.thread is not None or self.image is None:
             return
         self.run_button.setEnabled(False)
         self.select_button.setEnabled(False)
+        self.preview_button.setEnabled(False)
+        self.compare_button.setEnabled(False)
         self.status.setText("ChatGPT画像認識・相手6匹確認・選出判断を実行中（選出約55秒上限）")
         self.details.setText("")
         if self.log:
@@ -211,6 +248,8 @@ class SelectionTestDialog(QDialog):
         self.worker=None
         self.select_button.setEnabled(True)
         self.run_button.setEnabled(self.image is not None)
+        self.preview_button.setEnabled(self.image is not None)
+        self.compare_button.setEnabled(self.image is not None)
 
     def closeEvent(self,event):
         if self.thread is not None:
