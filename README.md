@@ -50,8 +50,10 @@
 
 masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.github/workflows/windows-development-release.yml) が**masterのSHAを再ビルド・再スモーク**し、2つのZIPを[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases)の**DEVELOPMENT_ONLYプレリリース**として公開する。各ZIPの展開直下にEXEと`_internal`があり、二重ZIPはない。Release公開成功はmaster用workflowと2ZIPの実在で別途確認する。
 
-- `PokemonChampionsAssistant-DEVELOPMENT-windows-x64.zip`
-- `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64.zip`
+- `PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`
+- `PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip`
+
+リリース名は `Windows DEVELOPMENT v0.1.0-dev.N` です。**[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases) 最上部の開発版が最新**で、番号はWindows配布ワークフローの実行ごとに自動で増えます。SHAはZIP同梱の `BUILD_REVISION.txt` に記録。旧SHA形式のReleaseは既存のリンクを維持します。
 
 [古いDEVELOPMENTリリースを整理するworkflow](.github/workflows/windows-development-release-cleanup.yml)が、作成後14日以上かつ新しい3件以外の**特定開発プレリリースのみ**毎日削除する。通常の正式リリース・他タグ・Draftは削除しない。[詳細運用・手順](docs/WINDOWS_DEVELOPMENT_RELEASES.md)。WSLの`gh`で古い**Actions Artifacts**を消す方式は履歴用途に変更した。
 
@@ -114,7 +116,7 @@ masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.
 
 画面認識をユーザーの手動登録に依存しない正式版にするため、スマホミラーリング画面の**正解ラベル付き実画像**を収集する専用Windows GUIを追加しました。
 
-GitHub Releasesの `PokemonChampionsScreenDataCollector-DEVELOPMENT-windows-x64.zip` を展開し、`PokemonChampionsScreenDataCollector.exe` を実行します。対戦支援アプリとは別のローカルアプリで、保存済みキャプチャ設定とROIを共有します。未ラベルJPEGのローカル自動保存には明示的な許可が必要です。標準5fps（2/5/10fps選択）で150枚に達しても自動収集を止めず、2/5/10GBの容量上限と最低空き容量を確認します。学習用の正解ラベルPNGに変換するのは人間が確定した画像のみです。ゲーム操作・AI/クラウド送信は行いません。モデル学習済みという意味ではありません。
+GitHub Releasesの `PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip` を展開し、`PokemonChampionsScreenDataCollector.exe` を実行します。対戦支援アプリとは別のローカルアプリで、保存済みキャプチャ設定とROIを共有します。未ラベルJPEGのローカル自動保存には明示的な許可が必要です。標準5fps（2/5/10fps選択）で150枚に達しても自動収集を止めず、2/5/10GBの容量上限と最低空き容量を確認します。学習用の正解ラベルPNGに変換するのは人間が確定した画像のみです。ゲーム操作・AI/クラウド送信は行いません。モデル学習済みという意味ではありません。
 
 **操作手順・ラベル定義・プライバシー・学習への引き渡し：** [docs/screen_dataset_collection.md](docs/screen_dataset_collection.md)
 
