@@ -73,7 +73,7 @@ class AutomaticMatchupTests(unittest.TestCase):
             run_automatic_analysis(self.path,model="mock",access_token="mock",analyze=failing)
         files=list(self.root.glob("ai-proposal-*.json"))
         self.assertEqual(len(files),1)
-        self.assertFalse(json.loads(files[0].read_text())["live_approved"])
+        self.assertFalse(json.loads(files[0].read_text(encoding="utf-8"))["live_approved"])
         self.assertEqual(self.call()["count"],6)
 
     def test_reject_fake_approval_and_malformed_matchup_response(self):
