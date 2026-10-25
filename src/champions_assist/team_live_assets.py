@@ -165,18 +165,24 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         master_dir=master,team=registered,matrix_rows=matrix_rows,
         fields=SET_FIELDS,regulation=team_reg)
     review_counts={"CONFIRMED":0,"CONDITIONAL":0}
-    if review_bytes:
-        review_counts=certified_review_counts(
-            review_path,team_id=team_id,
-            candidate_catalog=catalog)
     reviews={}
+    review_warning=""
     if review_bytes:
-        packet=json.loads(review_bytes)
-        for item in validate_review_packet(
-                packet,team_id=team_id,
+        try:
+            packet=json.loads(review_bytes)
+            approved=validate_review_packet(
+                packet,team_id=team_id,regulation=catalog["regulation"],
                 signatures=catalog["member_signatures"],
-                opponents=set(matrix_rows)):
-            reviews[(item["opponent"],item["slot"])]=item
+                opponents=set(matrix_rows))
+            reviews={(item["opponent"],item["slot"]):item for item in approved}
+            review_counts={
+                "CONFIRMED":sum(item["status"]=="CONFIRMED" for item in approved),
+                "CONDITIONAL":sum(item["status"]=="CONDITIONAL" for item in approved),
+            }
+        except (ConfigurationError,ValueError,TypeError) as exc:
+            # A modified team or stale/corrupt review must never block the next
+            # four-file preloading. It contributes zero trusted evaluations.
+            review_warning="STALE_OR_INVALID_REVIEW_IGNORED:"+type(exc).__name__
     for entry in catalog["cells"]:
         slot=entry["slot"]
         reviewed=reviews.get((entry["opponent"],slot))
@@ -203,6 +209,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     }
     catalog["quality_gate"]={
         "evidence_complete":catalog["counts"]["UNKNOWN"]==0,
+        "master_missing_cells":sum(bool(x["missing_source"]) for x in catalog["cells"]),
         "independent_real_battle_e2e":"NOT_VALIDATED",
         "champions_damage_engine":"NOT_VERIFIED",
         "live_ready":False,
@@ -301,6 +308,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "rules":"NO_AUTOMATIC_PROMOTION_OF_UNVERIFIED_PROCESSOR_OR_SAFE_SWITCH",
         "review_input_sha256":sha256(review_bytes).hexdigest() if review_bytes else None,
         "review_status_counts":review_counts,
+        "review_warning":review_warning,
         "candidate_file":"matchup-evidence.json",
         "candidate_sha256":sha256(candidate_text.encode("utf-8")).hexdigest(),
         "candidate_status_counts":catalog["counts"],
