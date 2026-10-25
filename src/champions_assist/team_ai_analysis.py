@@ -20,11 +20,22 @@ def build_request(candidate_path: str | Path, *, max_cells: int = LIMIT) -> dict
     catalog = json.loads(path.read_text(encoding="utf-8"))
     if catalog.get("schema") != "champions-matchup-evidence-v1":
         raise ConfigurationError("対面根拠スキーマが異なります")
+    digest = _fingerprint(path)
+    already = set()
+    for previous in path.parent.glob("ai-proposal-*.json"):
+        try:
+            saved = json.loads(previous.read_text(encoding="utf-8"))
+            if saved.get("catalog_sha256") == digest and saved.get("status") == "AI_PROPOSAL_UNVERIFIED":
+                already.update((c["opponent"], c["slot"], c["member_signature"])
+                               for c in saved.get("proposals", []))
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
     unknown = [cell for cell in catalog["cells"] if cell.get("evaluation") == "UNKNOWN"
-               and not cell.get("missing_source")]
+               and not cell.get("missing_source")
+               and (cell["opponent"], cell["slot"], cell["member_signature"]) not in already]
     chosen = unknown[:max_cells]
     return {
-        "schema":SCHEMA, "catalog_sha256":_fingerprint(path),
+        "schema":SCHEMA, "catalog_sha256":digest,
         "regulation":catalog["regulation"],
         "member_signatures":catalog["member_signatures"],
         "cells":[{"opponent":cell["opponent"],"slot":cell["slot"],
