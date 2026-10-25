@@ -171,6 +171,11 @@ def _review_source(item: object) -> bool:
                                 "HUMAN_REVIEWED_BATTLE_RECORD"):return False
     when = item.get("observed_at")
     if not isinstance(when,str) or len(when)<10 or len(when)>48:return False
+    try:
+        parsed=datetime.fromisoformat(when.replace("Z","+00:00"))
+        if parsed.tzinfo is None:return False
+    except ValueError:
+        return False
     locator = item.get("uri", "")
     proof = item.get("sha256", "")
     if locator and (not isinstance(locator,str) or len(locator)>1000):return False
@@ -180,7 +185,8 @@ def _review_source(item: object) -> bool:
 
 
 def validate_review_packet(packet: object, *, team_id: str,
-                           signatures: list[str], opponents: set[str]) -> list[dict]:
+                           regulation: str, signatures: list[str],
+                           opponents: set[str]) -> list[dict]:
     """Validate conservative manually-attested conditional matchup records.
 
     This validates their *structure and scope*, not the truth of visual damage
@@ -190,6 +196,8 @@ def validate_review_packet(packet: object, *, team_id: str,
         raise ConfigurationError("対面レビューJSONのバージョンが不正です")
     if packet.get("team_id")!=team_id or packet.get("member_signatures")!=signatures:
         raise ConfigurationError("レビュー対象の構築・技・持ち物・配分が異なります")
+    if packet.get("regulation")!=regulation:
+        raise ConfigurationError("レビュー対象のレギュレーションが異なります")
     if packet.get("player_reviewed") is not True:
         raise ConfigurationError("プレイヤーのレビュー承認がありません")
     entries=packet.get("reviews")
@@ -213,8 +221,14 @@ def validate_review_packet(packet: object, *, team_id: str,
         if (not isinstance(sources,list) or not sources
                 or len(sources)>10 or not all(_review_source(x) for x in sources)):
             raise ConfigurationError("Champions固有の日時・根拠リンクまたはSHAがありません")
-        if not isinstance(cell.get("reviewed_at"),str) or len(cell["reviewed_at"])<10:
+        reviewed_at=cell.get("reviewed_at")
+        if not isinstance(reviewed_at,str):
             raise ConfigurationError("承認日時がありません")
+        try:
+            if datetime.fromisoformat(reviewed_at.replace("Z","+00:00")).tzinfo is None:
+                raise ValueError("timezone")
+        except ValueError:
+            raise ConfigurationError("承認日時はタイムゾーン付きISO日時で指定してください")
         if not isinstance(cell.get("reviewer"),str) or not cell["reviewer"].strip():
             raise ConfigurationError("レビュー担当者がありません")
         rationale=cell.get("rationale")
@@ -229,6 +243,10 @@ def validate_review_packet(packet: object, *, team_id: str,
                 raise ConfigurationError("相手の実測技条件が必要")
             if len(sources)<2:
                 raise ConfigurationError("CONFIRMEDは独立した2件以上の根拠が必要")
+            fingerprints={(source.get("kind"),source.get("uri",""),
+                           source.get("sha256","")) for source in sources}
+            if len(fingerprints)<2:
+                raise ConfigurationError("CONFIRMEDは別々の根拠が2件必要")
         # Reject tactical text injection into lookup/matrix entirely. The
         # reviewed packet remains a sidecar for manual audit only.
         normalized.append({
@@ -250,10 +268,12 @@ def import_reviews(*, data_root: Path, team_id: str, packet_path: Path,
     approved=validate_review_packet(
         packet,team_id=team_id,
         signatures=candidate_catalog["member_signatures"],
+        regulation=candidate_catalog["regulation"],
         opponents={cell["opponent"] for cell in candidate_catalog["cells"]},
     )
     target=Path(data_root)/"matchup-reviews"/(team_id+".json")
     body={"schema":REVIEW_SCHEMA,"team_id":team_id,
+          "regulation":candidate_catalog["regulation"],
           "member_signatures":candidate_catalog["member_signatures"],
           "player_reviewed":True,"reviews":approved}
     atomic_write_text(target,json.dumps(body,ensure_ascii=False,sort_keys=True,indent=2))
@@ -269,6 +289,7 @@ def certified_review_counts(review_path: Path, *, team_id: str,
     entries=validate_review_packet(
         packet,team_id=team_id,
         signatures=candidate_catalog["member_signatures"],
+        regulation=candidate_catalog["regulation"],
         opponents={cell["opponent"] for cell in candidate_catalog["cells"]},
     )
     return {"CONFIRMED":sum(c["status"]=="CONFIRMED" for c in entries),
