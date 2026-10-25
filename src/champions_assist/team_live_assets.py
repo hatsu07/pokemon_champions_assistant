@@ -232,6 +232,17 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                 flags.append(chr(65 + slot) + ":" + flag)
         return "人間確認(" + ",".join(flags) + ";処理受け未認定)" if flags else ""
     annotation_count = len(reviews)
+    # Verified only against Champions move/learnset masters; an available
+    # priority move is not proof the opponent actually has or selects it.
+    priority_candidates = {}
+    for entry in catalog["cells"]:
+        if entry["slot"] == 0 and not any(
+            reason in entry["missing_source"] for reason in
+            ("OPPONENT_SPECIES_MASTER_NOT_FOUND","OPPONENT_LEARNSET_NOT_FOUND")
+        ):
+            moves = entry.get("opponent_priority_candidates", [])
+            if moves:
+                priority_candidates[entry["opponent"]] = moves[:3]
     # Preserve fixed source verbatim if the exact same six battle sets and
     # slot order. Even a reordered team gets new OWN/FAST6 column ordering.
     original_order = list(range(6))
@@ -249,6 +260,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
             "# ENV_GENERATED_AT="+env_date+"; ENV_SOURCE_KIND="+env_kind,
             "# ENV_USAGE_IS_NOT_OPPONENT_SET_PROOF",
             "# HUMAN_REVIEW=OBSERVATION_ONLY; DOES_NOT_CERTIFY_PROCESSOR_OR_SAFE_SWITCH",
+            "# AUTO_CHAMPIONS_PRIORITY=LEARNSET_POSSIBILITY_ONLY; OPPONENT_SET_UNKNOWN",
         ]
         # Reuse only opponent-only type/base-speed/warning/risk and reviewed
         # original cells. Recompute processor summary solely from reused cells.
@@ -290,6 +302,11 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
             marker = review_marker(key)
             if marker:
                 warn = warn[:320] + ";" + marker
+            names = priority_candidates.get(key, ())
+            if names:
+                cleaned = [x.replace("|", "/").replace("\n", " ")[:35] for x in names]
+                hint = "Champions習得可能な優先度+技(採用未確定):" + ",".join(cleaned)
+                warn = warn[:max(0, 499-len(hint))] + ";" + hint
             warn = warn.replace("|", "/").replace("\n", " ")[:500]
             derived_matrix.append("|".join([
                 key,old[1],old[2],*cells,
@@ -329,6 +346,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "review_input_sha256":sha256(review_bytes).hexdigest() if review_bytes else None,
         "review_status_counts":review_counts,
         "live_observation_markers":annotation_count,
+        "auto_master_priority_warning_rows":len(priority_candidates),
+        "auto_master_priority_status":"LEARNSET_ONLY_NOT_OPPONENT_SET",
         "live_grade_certified_from_reviews":0,
         "review_warning":review_warning,
         "candidate_file":"matchup-evidence.json",
