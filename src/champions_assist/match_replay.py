@@ -356,6 +356,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
     # observation + correction + tactical budget. The caller's preference is
     # otherwise unchanged for PREP and battle turns; report the override.
     live_effort = "low" if state.get("phase") in ("MATCHMAKING","SELECTION") else reasoning_effort
+    current_stage = "OPPONENT_VISUAL_RECOGNITION" if state.get("phase") in (
+        "MATCHMAKING","SELECTION") else "BATTLE_VISUAL_RECOGNITION"
 
     def selection_call(*, phase_limit: float, **kwargs) -> dict:
         remaining=total_seconds-(perf_counter()-started)
@@ -402,6 +404,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                       {"type":"input_image","image_url":jpeg_data_uri(image),"detail":"high"}]),
         )
         def tactical(context: dict, remaining: float, phase: str) -> dict:
+            nonlocal current_stage
+            current_stage="SELECTION_TACTICS" if phase=="SELECTION" else "BATTLE_TACTICS"
             if perf_counter()-started >= total_seconds-1:
                 raise TimeoutError("REPLAY_DEADLINE")
             return selection_call(
@@ -424,6 +428,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             # A failed six-species/forme/matrix check triggers ONE fresh
             # ChatGPT observation request, not a loop or a guessed fallback.
             def retry_view(reason, previous):
+                nonlocal current_stage
+                current_stage="OPPONENT_VISUAL_RETRY"
                 message = (
                     "YOUR FIRST RIGHT OPPONENT SIX READING FAILED: " + reason +
                     ". Previously predicted species (UNTRUSTED): " +
@@ -482,9 +488,12 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             }
         return updated,result
     except TimeoutError:
-        return deepcopy(state), {"status":"DEADLINE_EXCEEDED","elapsed_ms":round((perf_counter()-started)*1000)}
+        return deepcopy(state), {"status":"DEADLINE_EXCEEDED",
+                                  "request_stage":current_stage,
+                                  "elapsed_ms":round((perf_counter()-started)*1000)}
     except Exception as exc:
         return deepcopy(state), {"status":"ERROR","reason":type(exc).__name__,
+                                  "request_stage":current_stage,
                                   "elapsed_ms":round((perf_counter()-started)*1000)}
 
 PREP_SCHEMA = {

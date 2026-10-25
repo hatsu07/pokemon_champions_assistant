@@ -530,6 +530,37 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
+    def test_unconfirmed_preview_does_not_mislabel_matchmaking_as_current_screen(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"MATCHMAKING","matrix_provisional":True}
+        panel._auto_running=True
+        unknown={"status":"AI_REQUEST_QUEUED","screen_label_hint":None}
+        panel._render(unknown)
+        self.assertEqual(panel.state["phase"],"MATCHMAKING")
+        self.assertIn("画面判定中",self.window.header_labels["phase"].text())
+        self.assertIn("未確定",self.window.header_labels["phase"].text())
+        labelled={"status":"AI_REQUEST_QUEUED","screen_label_hint":"TEAM_SELECTION"}
+        panel._render(labelled)
+        self.assertIn("SELECTION候補",self.window.header_labels["phase"].text())
+        self.assertEqual(panel.state["phase"],"MATCHMAKING")
+        self.assertFalse(panel.state.get("opponent_six"))
+        self.assertFalse(panel.state.get("selected_three"))
+
+    def test_readtimeout_marks_stale_matchmaking_without_forging_selection(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"MATCHMAKING","matrix_provisional":True}
+        panel._active_job="batch"
+        panel._auto_running=True
+        payload={"state":{"phase":"MATCHMAKING","matrix_provisional":True},
+                 "report":{"status":"ERROR","reason":"ReadTimeout",
+                           "elapsed_ms":18002}}
+        panel._completed(payload)
+        self.assertEqual(panel.state["phase"],"MATCHMAKING")
+        self.assertTrue(panel.entries[-1]["phase_recognition_pending"])
+        self.assertIn("未更新",self.window.header_labels["phase"].text())
+        self.assertIn("AI通信タイムアウト",self.window.recommendation_label.text())
+        self.assertTrue(panel._ai_last_status.startswith("AI画像認識タイムアウト"))
+
     def test_ai_dispatch_attempt_and_response_are_visible_in_main_header(self):
         panel=self.window._match_panel
         panel.state={"phase":"MATCHMAKING","matrix_compatible":False}

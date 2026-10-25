@@ -31,6 +31,7 @@ from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile, observe_screen_fields, candidates_for_prompt
 from .ocr import TesseractJapaneseOcr, image_digest
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
+from .match_debug_log import MatchDebugLog
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
 from .background_training_capture import BackgroundTrainingCapture
@@ -251,6 +252,8 @@ class MatchReplayDialog(QDialog):
         self.entries=[]
         self._trace_origin=monotonic()
         self._timing_trace=[]
+        self._debug_log=None
+        self._active_request_started=None
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -276,6 +279,9 @@ class MatchReplayDialog(QDialog):
         self.ai_status_label.setObjectName("ai_dispatch_status")
         self.ai_status_label.setWordWrap(True)
         panel.addWidget(self.ai_status_label)
+        self.debug_log_status=QLabel("自動デバッグログ: 対戦開始時に保存（画像・認証情報なし）")
+        self.debug_log_status.setWordWrap(True)
+        panel.addWidget(self.debug_log_status)
         self.menu_detection_label=QLabel("メニュー登録: なし")
         self.menu_detection_label.setWordWrap(True)
         panel.addWidget(self.menu_detection_label)
@@ -372,6 +378,17 @@ class MatchReplayDialog(QDialog):
         if self._auto_running:
             QMessageBox.warning(self, "停止が必要", "自動送信を停止してから新しい対戦を開始してください。")
             return
+        if self._debug_log is not None:
+            self._debug_log.write("PREVIOUS_SESSION_CLOSED")
+        new_id="capture-"+uuid4().hex
+        self._debug_log=None
+        try:
+            self._debug_log=MatchDebugLog(self.store_root,match_id=new_id)
+            self.debug_log_status.setText("自動デバッグログ保存先: "+str(self._debug_log.path))
+        except OSError:
+            # Logging must NEVER prevent starting the match.
+            self.debug_log_status.setText("自動デバッグログ: 保存先に書き込めません（支援は継続）")
+        self._trace_event("MATCH_PRELOAD_START")
         try:
             if self.before_new_match is not None:
                 self.before_new_match()
@@ -394,7 +411,7 @@ class MatchReplayDialog(QDialog):
             except (OSError, ValueError, TypeError, KeyError):
                 # A broken optional profile cannot alter tactical facts.
                 self._field_profile=None
-            self.match_id="capture-"+uuid4().hex
+            self.match_id=new_id
             self._dataset_session_id=new_session_id()
             self.entries=[]
             self._trace_origin=monotonic()
@@ -411,9 +428,12 @@ class MatchReplayDialog(QDialog):
             self._ai_request_attempts=0
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
             self._update_menu_detection_label()
-            self._trace_event("PRELOAD_4_FILES_COMPLETED")
+            self._trace_event("PRELOAD_4_FILES_COMPLETED",preload_count=4,
+                              matrix_compatible=self.state.get("matrix_compatible",False),
+                              matrix_provisional=self.state.get("matrix_provisional",False))
             self._render({"status":"MATCH_STARTED","message":"4ファイル事前読込完了。自動キャプチャ開始で進めます。"})
         except Exception as exc:
+            self._trace_event("MATCH_PRELOAD_ERROR",reason=type(exc).__name__)
             self.assets=None
             self.state=None
             self.match_id=None
@@ -421,6 +441,7 @@ class MatchReplayDialog(QDialog):
 
     def _reset(self):
         if self._thread is not None or self._prep_thread is not None:return
+        self._trace_event("MATCH_RESET")
         self._stop_auto()
         self._turn_buffer.reset_turn()
         self._automatic_probe.reset()
@@ -439,16 +460,20 @@ class MatchReplayDialog(QDialog):
         self._set_ai_status("AI未送信（対戦未開始）")
         self._render({"status":"RESET"})
         self.match_id=None
+        self._debug_log=None
 
     def _trace_event(self, event: str, **data) -> None:
         """Unverified UI-clock telemetry; no screenshot, disk or network use."""
         if len(self._timing_trace) >= 3000:
             return
-        self._timing_trace.append({
+        record={
             "at_ms":max(0,int((monotonic()-self._trace_origin)*1000)),
             "event":event,"phase":(self.state or {}).get("phase","UNKNOWN"),
             **data,
-        })
+        }
+        self._timing_trace.append(record)
+        if self._debug_log is not None:
+            self._debug_log.write(event,**{k:v for k,v in record.items() if k!="event"})
 
     def _show_capture_preview(self, image: np.ndarray, *, force: bool = False) -> None:
         """Render an already captured RGB frame; no new screenshot or API call."""
@@ -778,12 +803,14 @@ class MatchReplayDialog(QDialog):
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
         self._ai_request_attempts+=1
+        self._active_request_started=monotonic()
         self._set_ai_status(
             f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
         request_report={
             "step":len(self.entries)+1, "status":"AI_REQUEST_QUEUED",
             "ai_request_attempt":self._ai_request_attempts,
             "image_count":len(frames),
+            "screen_label_hint":screen_label,
             "message":"AI処理を起動しました。送信成功はまだ確認できていません。"}
         self.entries.append(request_report)
         self._render(request_report)
@@ -812,6 +839,15 @@ class MatchReplayDialog(QDialog):
     @Slot(str)
     def _on_ai_progress(self, progress: str) -> None:
         self._set_ai_status(f"{progress} / 試行 #{self._ai_request_attempts}")
+        if progress.startswith("ChatGPT認証"):
+            kind="AUTH_CHECK"
+        elif progress.startswith("AI画像送信"):
+            kind="IMAGE_REQUEST_WAIT"
+        elif progress.startswith("ローカル文字認識"):
+            kind="OPTIONAL_LOCAL_OCR"
+        else:
+            kind="WORKER_PROGRESS_OTHER"
+        self._trace_event(kind,ai_request_attempt=self._ai_request_attempts)
 
     def _capture_next(self):
         if not self._auto_running:
@@ -892,6 +928,9 @@ class MatchReplayDialog(QDialog):
     @Slot(object)
     def _completed(self, payload):
         report=payload["report"]
+        if self._active_request_started is not None:
+            report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
+            self._active_request_started=None
         if self._active_job in ("auto_frame","batch") and not self._auto_running and self._cancel_event.is_set():
             return
         if report.get("status") == "UNCHANGED_FRAME":
@@ -927,7 +966,18 @@ class MatchReplayDialog(QDialog):
                                     "CANCELLED","SUPERSEDED"):
             self.state=payload["state"]
         if report.get("status")=="ERROR":
-            self._set_ai_status(f"AI処理エラー / {report.get('reason','UNKNOWN')}")
+            reason=report.get("reason","UNKNOWN")
+            if (reason in ("ReadTimeout","APITimeoutError","TimeoutError")
+                    and self.state is not None
+                    and self.state.get("phase")=="MATCHMAKING"):
+                self._set_ai_status("AI画像認識タイムアウト / 選出画面かは未確定・次の認識へ")
+                report["phase_recognition_pending"]=True
+                report["message"]=(
+                    "ゲーム画面は選出に移っている可能性がありますが、"
+                    "ChatGPTの応答が時間内に届かず、内部フェーズはMATCHMAKINGのままです。"
+                    "相手6匹が確定するまで選出は出しません。")
+            else:
+                self._set_ai_status(f"AI処理エラー / {reason}")
         elif report.get("status")=="CANCELLED":
             self._set_ai_status("AI処理キャンセル")
         else:
@@ -1066,6 +1116,7 @@ class MatchReplayDialog(QDialog):
 
     @Slot()
     def _cleanup(self):
+        self._active_request_started=None
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -1084,7 +1135,18 @@ class MatchReplayDialog(QDialog):
                 else "LIVEマトリクス不一致・機能試験のみ")
         sending = ("画面取得待機中（自動再試行）" if self._auto_running and self._capture_paused
                    else "自動送信中" if self._auto_running else "自動送信停止")
-        self.status.setText(f"段階：{phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
+        if phase=="MATCHMAKING" and report.get("status")=="AI_REQUEST_QUEUED":
+            if report.get("screen_label_hint")=="TEAM_SELECTION":
+                display_phase="SELECTION候補（ローカル検出・AI確認待ち）"
+            else:
+                display_phase="画面判定中（内部MATCHMAKING・未確定）"
+        elif phase=="MATCHMAKING" and report.get("phase_recognition_pending"):
+            display_phase="画面判定失敗（内部MATCHMAKING・未更新）"
+        else:
+            display_phase=phase
+        self.status.setText(
+            f"段階：{display_phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
+        report["display_phase"]=display_phase
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
             rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
@@ -1095,6 +1157,8 @@ class MatchReplayDialog(QDialog):
             line+json.dumps({"latest":report,"replay_state":state,
                              "timeline":self.entries},ensure_ascii=False,indent=2))
         self.output.verticalScrollBar().setValue(0)
+        if self._debug_log is not None:
+            self._debug_log.report(report)
         # Only observed UI reports; no hidden controller state is inferred.
         self.state_changed.emit(dict(state), dict(report))
 
@@ -1130,4 +1194,6 @@ class MatchReplayDialog(QDialog):
             # running. Closing will be possible after it completes.
             event.ignore()
             return
+        if self._debug_log is not None:
+            self._debug_log.write("WINDOW_CLOSED")
         super().closeEvent(event)
