@@ -53,10 +53,7 @@ def provisional_matrix_matches_registered_team(assets: FrozenMatchAssets) -> boo
     body = assets.contents.get("Pokemon_Champions_MC_live_selection_matrix.txt", "")
     if (not body.startswith("# TEAM_SCOPED_MATRIX v1;")
             or "# DERIVED_STATUS=PROVISIONAL_UNVERIFIED;" not in body
-            or "# PROVENANCE=EXACT_REGISTERED_SET_ONLY;" not in body
-            or "# UNVERIFIED_CELLS_ARE_NOT_PROCESSORS_OR_SAFE_SWITCHES" in body):
-        # The latter line is not part of the generated format; retained for
-        # compatibility with separately supplied unsupported source files.
+            or "# PROVENANCE=EXACT_REGISTERED_SET_ONLY;" not in body):
         return False
     matrix = configured_matrix_team(assets)
     own = registered_matrix_team(assets)
