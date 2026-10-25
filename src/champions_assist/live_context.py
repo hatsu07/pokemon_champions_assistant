@@ -6,7 +6,8 @@ all six opponents or promoted into certified processors/safe switches.
 from __future__ import annotations
 
 WARNING_MARKERS = ("先制", "積み", "メガ", "天候", "壁", "高速", "優先度")
-RISK_MARKERS = frozenset("PSGWF")
+# Risk S (generic setup) alone is ubiquitous: not a sufficient trigger.
+CRITICAL_FLAGS = frozenset("PGWF")
 
 
 def critical_lookup_rows(assets, opponents: tuple[str, ...],
@@ -20,23 +21,34 @@ def critical_lookup_rows(assets, opponents: tuple[str, ...],
     """
     if not 0 <= limit <= 2 or len(opponents) != len(matrix_rows) or len(opponents) != 6:
         raise ValueError("LOOKUP_REQUIRES_SIX_MATRIX_ROWS_AND_LIMIT_0_TO_2")
-    selected = []
-    for opponent, text in zip(opponents, matrix_rows):
+    ranked = []
+    for index,(opponent, text) in enumerate(zip(opponents, matrix_rows)):
         columns = text.split("|")
         if len(columns) != 14 or columns[0] != opponent:
-            # Minimal synthetic fixtures contain just the key; do not invent
-            # extra warnings or try to fetch a speculative lookup row.
             continue
         warning, risk = columns[10], columns[13]
-        if not (any(token in warning for token in WARNING_MARKERS)
-                or any(flag in risk for flag in RISK_MARKERS)):
+        lookup = assets.lookup_index.get(opponent)
+        if lookup is None:
             continue
-        row = assets.lookup_index.get(opponent)
-        if row is not None:
-            selected.append(row)
-            if len(selected) == limit:
-                break
-    return selected[:limit]
+        # Prioritize potentially game-ending setup / priority / ability
+        # threats, not whatever happened to appear first in the screenshot.
+        # These are lookup retrieval hints, NEVER strategic move decisions.
+        score = (3*any(x in warning for x in ("先制","優先度"))
+                 + 3*any(x in warning for x in ("積み","からをやぶる","りゅうのまい"))
+                 + 2*any(x in warning for x in ("天候","高速","壁"))
+                 + int("メガ" in warning)
+                 + 2*any(flag in risk for flag in ("P","G"))
+                 + any(flag in risk for flag in ("W","F")))
+        try:
+            base_speed = int(columns[2])
+        except (ValueError,TypeError):
+            base_speed = 0
+        if base_speed >= 120:
+            score += 1
+        if score:
+            ranked.append((-score,index,lookup))
+    ranked.sort(key=lambda r:(r[0],r[1]))
+    return [value for _,_,value in ranked[:limit]]
 
 
 SELECTION_CHECKLIST = (
