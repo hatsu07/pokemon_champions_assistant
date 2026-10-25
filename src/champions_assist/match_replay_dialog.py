@@ -38,6 +38,22 @@ from .background_training_capture import BackgroundTrainingCapture
 from .screen_dataset import new_session_id
 
 
+def prep_budget_before_battle(selection_started_at: float | None, *,
+                              now: float, preview_seconds: float = 90.0,
+                              input_reserve: float = 3.0,
+                              prep_cap: float = 40.0) -> float:
+    """Hard-cap provisional/confirmed PREP within the remaining preview.
+
+    If selection-screen onset was not machine-confirmed, we cannot infer an
+    accurate countdown; retain only the established 40s cap and interrupt on
+    any verified battle event. This helper never implies game timer certainty.
+    """
+    if selection_started_at is None:
+        return prep_cap
+    elapsed=max(0.0,now-selection_started_at)
+    return min(prep_cap,max(0.0,preview_seconds-elapsed-input_reserve))
+
+
 class _ReplayWorker(QObject):
     finished = Signal(object)
     progress = Signal(str)
@@ -829,7 +845,7 @@ class MatchReplayDialog(QDialog):
         if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             elapsed_preview=(self._active_request_started-self._selection_screen_started
                              if self._selection_screen_started is not None else 0.0)
-            selection_remaining=max(1.0,55.0-elapsed_preview)
+            selection_remaining=max(0.0,55.0-elapsed_preview)
         else:
             selection_remaining=35.0
         self._set_ai_status(
@@ -1119,9 +1135,8 @@ class MatchReplayDialog(QDialog):
         # PREP must fit in the remaining selection-screen countdown:
         # 90s overall, with 3s reserved for final game UI operations.
         # Normal 40s cap is retained whenever sufficient time remains.
-        remaining_preview=(90.0-(monotonic()-self._selection_screen_started)-3.0
-                           if self._selection_screen_started is not None else 40.0)
-        self._prep_budget_seconds=min(40.0,max(0.0,remaining_preview))
+        self._prep_budget_seconds=prep_budget_before_battle(
+            self._selection_screen_started,now=monotonic())
         if self._prep_budget_seconds<=2.0:
             self.state["prep_status"]="DEADLINE_EXCEEDED"
             self._trace_event("PREP_NO_TIME_BEFORE_BATTLE")
