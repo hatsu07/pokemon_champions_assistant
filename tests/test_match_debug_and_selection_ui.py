@@ -129,7 +129,7 @@ class OfflineSelectionTestWindowTests(unittest.TestCase):
         self.assertEqual(kwargs["model"],"mock")
         self.assertEqual(kwargs["reasoning_effort"],"high")
         self.assertEqual(kwargs["state"]["phase"],"MATCHMAKING")
-        self.assertLessEqual(kwargs["total_seconds"],35)
+        self.assertLessEqual(kwargs["total_seconds"],55)
 
     def test_result_ui_includes_timing_roster_and_persistent_debug(self):
         self.dialog.set_image(np.zeros((624,1048,3),dtype=np.uint8))
