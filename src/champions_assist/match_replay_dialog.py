@@ -248,6 +248,7 @@ class MatchReplayDialog(QDialog):
         self._thread=None
         self._worker=None
         self._active_job=None
+        self._inflight_screen_label=None
         self._prep_thread=None
         self._prep_worker=None
         self._prep_cancel_event=Event()
@@ -734,6 +735,7 @@ class MatchReplayDialog(QDialog):
                 and self._active_job=="batch"
                 and self.state is not None
                 and self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                and self._inflight_screen_label=="TEAM_SELECTION"
                 and screen_label in (None,"TEAM_SELECTION")):
             self._trace_event("SELECTION_DUPLICATE_SUPPRESSED",
                               screen_label=screen_label or "UNCLASSIFIED")
@@ -777,6 +779,7 @@ class MatchReplayDialog(QDialog):
         self._render(request_report)
         self._set_busy(True)
         self._active_job="batch"
+        self._inflight_screen_label=screen_label
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root,selected_model=self.model,
@@ -918,7 +921,9 @@ class MatchReplayDialog(QDialog):
         elif report.get("status")=="CANCELLED":
             self._set_ai_status("AI処理キャンセル")
         else:
-            self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}")
+            effort=report.get("live_reasoning_effort")
+            speed_note=(" / 選出時モデル推論: "+str(effort)) if effort else ""
+            self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}"+speed_note)
         if not superseded:
             self._trace_event("AI_RESULT_DISPLAYED",
                               status=report.get("status","UNKNOWN"),
@@ -1054,6 +1059,7 @@ class MatchReplayDialog(QDialog):
         self._thread=None
         self._worker=None
         self._active_job=None
+        self._inflight_screen_label=None
         self._set_busy(False)
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
