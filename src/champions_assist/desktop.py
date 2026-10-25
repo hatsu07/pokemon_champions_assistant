@@ -891,15 +891,15 @@ class DesktopMainWindow(QMainWindow):
             self.recommendation_label.setText("撮影中。次のAI判断を待機")
         elif status == "CONFIRMED":
             self.recommendation_label.setText("選出確定。相手初手・行動選択を待機")
-        elif status == "BLOCKED" and report.get("reason") == "REGISTERED_TEAM_MISMATCH":
-            # The selection AI supplied the actual discrepancy in the same
-            # reply; surface it instead of leaving an opaque English code.
-            missing = report.get("only_in_registered_team") or []
-            extra = report.get("only_in_image") or []
+        elif status == "BLOCKED" and report.get("reason") in (
+                "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
+                "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
+                "OPPONENT_MATRIX_MISSING"):
+            attempts=report.get("opponent_recognition_attempts",1)
             self.recommendation_label.setText(
-                "選出不可：登録構築と画像AIの自軍6匹が不一致（画像誤認識の可能性）。"
-                "登録側のみ：" + " / ".join(missing or ["なし"]) +
-                "、画像側のみ：" + " / ".join(extra or ["なし"]))
+                str(report.get("recommendation") or
+                    "選出不可：相手6匹の認識が確定しません（AI再認識 "+
+                    str(attempts)+"回分）。推測で選出しません。"))
         elif status in ("BLOCKED", "NO_ACTION", "DEADLINE_EXCEEDED", "ERROR",
                         "CAPTURE_PAUSED", "SUPERSEDED", "PREP_UNAVAILABLE"):
             self.recommendation_label.setText("行動推奨なし：" + str(report.get("reason") or status))
