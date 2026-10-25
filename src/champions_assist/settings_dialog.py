@@ -519,6 +519,9 @@ class SettingsDialog(QDialog):
         self.matchup_ai_button=QPushButton("ChatGPTで未評価対面12件を分析（対戦前・未検証候補）")
         self.matchup_ai_button.clicked.connect(self._start_matchup_ai)
         layout.addWidget(self.matchup_ai_button)
+        self.ai_review_button=QPushButton("AI対面候補を実機証拠で確認・承認（条件付きLIVE注記）")
+        self.ai_review_button.clicked.connect(self._review_ai_candidate)
+        layout.addWidget(self.ai_review_button)
         self.device_quality_button=QPushButton(
             "実機対戦90/40/45秒ログを検証（対戦前）")
         self.device_quality_button.clicked.connect(self._import_real_battle_quality)
@@ -1011,6 +1014,89 @@ class SettingsDialog(QDialog):
         self._matchup_ai_worker=None
         self.matchup_ai_button.setEnabled(True)
         self.save_button.setEnabled(True)
+
+    def _review_ai_candidate(self) -> None:
+        """Explicit human review: game proof is required, AI text is not proof."""
+        if self._match_active() or self._matchup_ai_worker is not None:
+            QMessageBox.warning(self,"レビュー不可","対戦が終了してから実行してください。")
+            return
+        record=self._selected_record()
+        if record is None:
+            return
+        try:
+            if self._editing_team_id == record.team_id:
+                self._persist_team_editor()
+            options=self.service.ai_review_options(record.team_id,match_active=False)
+            if not options:
+                QMessageBox.information(
+                    self,"レビュー候補なし",
+                    "この構築・現行マスターに一致する未評価AI候補がありません。"
+                    "先にChatGPTで対面を分析してください。")
+                return
+            labels=[
+                f"{i+1}. {entry['opponent']} × {entry['own']} (枠{entry['slot']+1})"
+                for i,entry in enumerate(options)
+            ]
+            selection,ok=QInputDialog.getItem(
+                self,"AI対面候補を選択","レビューする対面:",labels,0,False)
+            if not ok:return
+            selected=options[labels.index(selection)]
+            QMessageBox.information(
+                self,"AI候補（未検証）",
+                "AIの提案は実際のゲーム内証拠ではありません。\\n\\n"
+                + "評価候補: "+selected["assessment"][:600]
+                + "\\n懸念: "+str(selected["risks"])[:400]
+                + "\\n不明: "+str(selected["unknowns"])[:300])
+            comment,ok=QInputDialog.getMultiLineText(
+                self,"ゲーム内で確認した事実",
+                "ゲーム内表示・対戦記録で自分が確認した内容を記述してください。"
+                "\\nAI文章のコピーだけでは承認できません。"
+                "\\n処理役や安全受けの保証にはなりません。")
+            if not ok:return
+            first,_=QFileDialog.getOpenFileName(
+                self,"根拠画像またはゲーム内記録を選択","",
+                "ゲーム内根拠 (*.png *.jpg *.jpeg *.json)")
+            if not first:return
+            files=[first]
+            observed=[]
+            second=QMessageBox.question(
+                self,"2件目の根拠",
+                "別の独立したゲーム内証拠があれば2件目として登録できます。"
+                "\\n2件登録しても処理役・安全受けは認定されません。追加しますか？",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if second==QMessageBox.StandardButton.Yes:
+                extra,_=QFileDialog.getOpenFileName(
+                    self,"独立した2件目の根拠を選択","",
+                    "ゲーム内根拠 (*.png *.jpg *.jpeg *.json)")
+                if not extra:return
+                files.append(extra)
+                text,ok=QInputDialog.getText(
+                    self,"相手の観測技",
+                    "根拠ファイルで実際に確認した相手技をカンマ区切りで入力:")
+                if not ok:return
+                observed=[v.strip() for v in text.split(",") if v.strip()]
+            confirmed=QMessageBox.question(
+                self,"確認・承認する",
+                f"{selected['opponent']} × {selected['own']} の観測を"
+                f"{len(files)}件の根拠でレビューします。"
+                "\\n根拠内容は自分で確認済みですか？"
+                "\\nLIVEには観測済みの注記のみ反映し、対面評価・処理役・安全受けは認定しません。",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if confirmed!=QMessageBox.StandardButton.Yes:return
+            result=self.service.approve_observed_ai_review(
+                record.team_id,option=selected,evidence_files=files,
+                rationale=comment,observed_moves=observed,match_active=False)
+            counts=result["review_counts"]
+            self.matchup_review_status.setText(
+                f"確認済み対面: CONFIRMED {counts['CONFIRMED']} / "
+                f"CONDITIONAL {counts['CONDITIONAL']}。"
+                f" LIVE注記 {result['observation_markers']}件。"
+                " 対面評価・処理役・安全受けは認定していません。"
+                "\\n"+result["matchup_evidence_path"])
+        except (OSError,ValueError,RuntimeError,TypeError,KeyError) as exc:
+            QMessageBox.warning(self,"AI対面候補のレビューに失敗",str(exc)[:400])
 
     def _import_matchup_reviews(self) -> None:
         if self._match_active():
