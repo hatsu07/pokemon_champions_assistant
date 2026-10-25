@@ -434,6 +434,16 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
         result.update(elapsed_ms=elapsed,observed_ui=observation["visual_ui"],
                       observation=observation,model=model,
                       opponent_recognition_attempts=opponent_recognition_attempts)
+        if (result.get("status") == "BLOCKED" and
+                result.get("reason") in (
+                    "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
+                    "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
+                    "OPPONENT_MATRIX_MISSING")):
+            result["recommendation"] = (
+                "相手6匹を確定できません。ChatGPT画像認識 " +
+                str(opponent_recognition_attempts) +
+                "回を確認しました。未判明の相手を推測して選出しません。"
+                "画面が鮮明になれば再認識を試してください。")
         if elapsed > total_seconds*1000:
             # Late output must never be promoted into replay state or shown
             # as a recommendation. The same visible image may be submitted
