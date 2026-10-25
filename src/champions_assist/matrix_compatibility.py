@@ -35,4 +35,9 @@ def registered_matrix_team(assets: FrozenMatchAssets) -> tuple[str, ...]:
 def matrix_matches_registered_team(assets: FrozenMatchAssets) -> bool:
     matrix = configured_matrix_team(assets)
     own = registered_matrix_team(assets)
+    body = assets.contents.get("Pokemon_Champions_MC_live_selection_matrix.txt", "")
+    # A newly generated file can have perfectly matching OWN headers but
+    # unknown matchup cells. That is not a battle-ready LIVE evaluation.
+    if "# DERIVED_STATUS=PROVISIONAL_UNVERIFIED" in body:
+        return False
     return len(matrix) == len(own) == 6 and len(set(matrix)) == 6 and set(matrix) == set(own)
