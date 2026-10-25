@@ -66,7 +66,8 @@ def selection_hint_coverage(opponents, matrix_rows) -> dict:
             analyzed+=1
             if "技=" in hint:
                 structured+=1
-            pairs+=sum(f"{slot}:" in hint for slot in "ABCDEF")
+            body=hint[len("AI_UNVERIFIED:"):]
+            pairs+=sum(f"{slot}:" in body for slot in "ABCDEF")
         else:
             missing.append(name)
     return {"matrix_ai_hint_rows":analyzed,
