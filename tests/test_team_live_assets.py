@@ -43,8 +43,9 @@ class TeamLiveAssetsTests(unittest.TestCase):
                                matrix_source=ready.matrix_path,
                                lookup_source=ready.lookup_path).load_for_new_match()
         self.assertTrue(matrix_matches_registered_team(assets))
+        # Preserve source line endings exactly on Windows and Unix.
         self.assertEqual(assets.contents[MATRIX].encode("utf-8"),
-                         (MASTER/MATRIX).read_text(encoding="utf-8-sig").encode("utf-8"))
+                         (MASTER/MATRIX).read_bytes())
         self.assertEqual(set(assets.matrix_index),set(assets.lookup_index))
         second=self.build()
         self.assertTrue(second.cache_hit)
