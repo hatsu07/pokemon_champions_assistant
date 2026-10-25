@@ -78,6 +78,7 @@ class HumanReviewIntoLiveTest(unittest.TestCase):
         self.assertEqual(matrix[record["opponent"]][3+record["slot"]],UNKNOWN_CELL)
         self.assertIn("人間確認(",matrix[record["opponent"]][10])
         self.assertIn("処理受け未認定",matrix[record["opponent"]][10])
+        self.assertNotIn("相手の型が未判明",matrix[record["opponent"]][10])
         self.assertEqual(matrix[record["opponent"]][10],lookups[record["opponent"]][10])
         self.assertEqual(len(matrix[record["opponent"]]),14)
         self.assertEqual(len(lookups[record["opponent"]]),12)
