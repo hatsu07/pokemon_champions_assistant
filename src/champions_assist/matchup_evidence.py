@@ -338,6 +338,15 @@ def import_reviews(*, data_root: Path, team_id: str, packet_path: Path,
         regulation=candidate_catalog["regulation"],
         opponents={cell["opponent"] for cell in candidate_catalog["cells"]},
     )
+    # The reviewer input can be validated into a human-readable summary, but
+    # the raw conditional observation data must be retained for a later
+    # validation pass. Never persist the derived NOT_OBSERVED markers as if
+    # they were source observations.
+    for validated, original in zip(approved, packet["reviews"]):
+        if "role_observations" in original:
+            validated["role_observations"] = original["role_observations"]
+        else:
+            validated.pop("role_observations", None)
     target=Path(data_root)/"matchup-reviews"/(team_id+".json")
     body={"schema":REVIEW_SCHEMA,"team_id":team_id,
           "regulation":candidate_catalog["regulation"],
