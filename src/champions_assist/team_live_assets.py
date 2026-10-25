@@ -120,6 +120,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     snapshot_sha = ""
     env_rows: dict[str, dict] = {}
     env_date = ""
+    env_kind = "NONE"
     if environment_snapshot is not None and Path(environment_snapshot).is_file():
         env_bytes = Path(environment_snapshot).read_bytes()
         snapshot_sha = sha256(env_bytes).hexdigest()
@@ -127,6 +128,11 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         if env.get("format") != "Singles" or not isinstance(env.get("pokemon"), list):
             raise ConfigurationError("シングル統計スナップショット形式が不正です")
         env_date = str(env.get("generatedAt", ""))[:32]
+        receipt_path=Path(environment_snapshot).with_name("singles-provenance.json")
+        if receipt_path.is_file():
+            receipt=json.loads(receipt_path.read_text(encoding="utf-8"))
+            if receipt.get("sha256") == _jsonhash(env) or receipt.get("sha256") == snapshot_sha:
+                env_kind=str(receipt.get("source_kind","UNKNOWN"))[:64]
         for entry in env["pokemon"]:
             if isinstance(entry, dict) and isinstance(entry.get("name"), str):
                 env_rows[selection_base_name(entry["name"])] = entry
@@ -134,6 +140,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "version":GENERATED_VERSION, "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
         "master_lookup":sha256(lookup_bytes).hexdigest(),
         "baseline":_jsonhash(baseline), "environment":snapshot_sha,
+        "environment_kind":env_kind,
     })
     directory = Path(data_root)/"live-team-assets"/team_id/fingerprint
     matrix_path, lookup_path, manifest_path = directory/"matrix.txt", directory/"lookup.txt", directory/"manifest.json"
@@ -150,7 +157,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     # Preserve fixed source verbatim if the exact same six battle sets and
     # slot order. Even a reordered team gets new OWN/FAST6 column ordering.
     original_order = list(range(6))
-    if full and matched_columns == original_order:
+    if full and matched_columns == original_order and not env_rows:
         matrix_text = matrix_bytes.decode("utf-8-sig")
         lookup_text = lookup_bytes.decode("utf-8-sig")
     else:
@@ -161,7 +168,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
             "# OWN={"+own_map+"}", marker,
             "# CELL=rate,spd,move,x,recv,ins; ?=UNVERIFIED; U=NOT_SAFE_TO_SWITCH",
             "# PROVENANCE=EXACT_REGISTERED_SET_ONLY; NO_CROSS_GAME_INFERENCE",
-            "# ENV_GENERATED_AT="+env_date+"; ENV_USAGE_IS_NOT_OPPONENT_SET_PROOF",
+            "# ENV_GENERATED_AT="+env_date+"; ENV_SOURCE_KIND="+env_kind,
+            "# ENV_USAGE_IS_NOT_OPPONENT_SET_PROOF",
         ]
         # Reuse only opponent-only type/base-speed/warning/risk and reviewed
         # original cells. Recompute processor summary solely from reused cells.
@@ -208,7 +216,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
             # Processors/hits/plans refer to the old 6; do not transpose unless
             # all six exact members were reused.
             if full:
-                lookup = original_lookup
+                lookup = list(original_lookup)
+                lookup[10] = warn
             else:
                 lookup = [key,original_lookup[1],original_lookup[2],
                           "-","-","-","-",original_lookup[7],
@@ -228,6 +237,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "opponent_rows":len(matrix_rows),"unverified_cells":len(matrix_rows)*sum(i is None for i in matched_columns),
         "team_file":source.name,"matrix_source":MATRIX,"lookup_source":LOOKUP,
         "environment_source_sha256":snapshot_sha,"environment_generated_at":env_date,
+        "environment_source_kind":env_kind,
         "matrix_sha256":sha256(matrix_text.encode("utf-8")).hexdigest(),
         "lookup_sha256":sha256(lookup_text.encode("utf-8")).hexdigest(),
         "rules":"NO_AUTOMATIC_PROMOTION_OF_UNVERIFIED_PROCESSOR_OR_SAFE_SWITCH",
