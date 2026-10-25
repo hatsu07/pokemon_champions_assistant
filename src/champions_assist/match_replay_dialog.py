@@ -417,6 +417,8 @@ class MatchReplayDialog(QDialog):
                 # A broken optional profile cannot alter tactical facts.
                 self._field_profile=None
             self.match_id=new_id
+            self._selection_screen_started=None
+            self._prep_budget_seconds=40.0
             self._dataset_session_id=new_session_id()
             self.entries=[]
             self._trace_origin=monotonic()
@@ -1065,14 +1067,27 @@ class MatchReplayDialog(QDialog):
             self._render({"status":"PREP_UNAVAILABLE",
                           "reason":"OWN_MATRIX_MISMATCH"})
             return
+        # PREP must fit in the remaining selection-screen countdown:
+        # 90s overall, with 3s reserved for final game UI operations.
+        # Normal 40s cap is retained whenever sufficient time remains.
+        remaining_preview=(90.0-(monotonic()-self._selection_screen_started)-3.0
+                           if self._selection_screen_started is not None else 40.0)
+        self._prep_budget_seconds=min(40.0,max(0.0,remaining_preview))
+        if self._prep_budget_seconds<=2.0:
+            self.state["prep_status"]="DEADLINE_EXCEEDED"
+            self._trace_event("PREP_NO_TIME_BEFORE_BATTLE")
+            self._render({"status":"PREP_DEADLINE_EXCEEDED",
+                          "message":"選出90秒の残りが不足しています。PREPを実行しません。"})
+            return
         self._prep_cancel_event.clear()
         self.state["prep_status"]="RUNNING"
-        self._trace_event("PREP_START")
+        self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000))
         self._prep_thread=QThread(self)
         self._prep_worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=self.state, job="prep",
+            prep_seconds=self._prep_budget_seconds,
             cancel_event=self._prep_cancel_event,
         )
         self._prep_worker.moveToThread(self._prep_thread)
@@ -1082,9 +1097,9 @@ class MatchReplayDialog(QDialog):
         self._prep_thread.finished.connect(self._prep_worker.deleteLater)
         self._prep_thread.finished.connect(self._prep_thread.deleteLater)
         self._prep_thread.finished.connect(self._prep_cleanup)
-        self._prep_timer.start(40000)
+        self._prep_timer.start(int(self._prep_budget_seconds*1000))
         self._render({"status":"PREP_RUNNING",
-                      "message":"選出確定直後の40秒PREPを自動開始"})
+                      "message":f"選出確定後のPREP開始（残り {self._prep_budget_seconds:.1f}秒上限）"})
         self._prep_thread.start()
 
     def _interrupt_prep(self):
@@ -1103,7 +1118,7 @@ class MatchReplayDialog(QDialog):
         if self.state is not None and self.state.get("phase")=="PREP":
             self.state["prep_status"]="DEADLINE_EXCEEDED"
             self._render({"status":"PREP_DEADLINE_EXCEEDED",
-                          "message":"40秒以内にPREP完了を確認できませんでした"})
+                          "message":"残り時間内にPREP完了を確認できませんでした"})
 
     @Slot(object)
     def _on_prep_result(self, payload):
