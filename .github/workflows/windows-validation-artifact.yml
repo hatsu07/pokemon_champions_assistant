@@ -99,7 +99,8 @@ jobs:
             "Pokemon_Champions_MC_move_master.csv",
             "Pokemon_Champions_MC_usable_held_items.csv",
             "Pokemon_Champions_MC_ability_master.csv",
-            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv"
+            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv",
+            "Pokemon_Champions_MC_team_2026-10-03.csv"
           )
           foreach ($file in $files) {
             Copy-Item -LiteralPath (Join-Path ".\\masters" $file) -Destination (Join-Path $destination $file) -Force
