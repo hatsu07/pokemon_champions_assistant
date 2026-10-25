@@ -77,6 +77,13 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
         self.assertNotIn('DEVELOPMENT-windows-x64.zip', publisher)
         self.assertIn('$Release.target_commitish -ne $ExpectedSha', publisher)
         self.assertIn("--latest=false", publisher)
+        # Catch accidentally concatenating the legacy SHA publisher after
+        # the new semantic-version publisher: PowerShell would parse invalidly.
+        self.assertEqual(publisher.count('$tag = "development-windows-$ReleaseVersion"'), 1)
+        self.assertEqual(publisher.count("param("), 2)  # top-level and Assert-DevRelease
+        self.assertTrue(publisher.rstrip().endswith(
+            'Write-Host "Published and verified Windows DEVELOPMENT prerelease: $tag"'
+        ))
 
 
 if __name__ == "__main__":
