@@ -136,9 +136,17 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
         self.assertEqual(result["action"]["kind"],"MOVE")
 
     def test_unrelated_source_matrix_cannot_claim_provisional(self):
+        from dataclasses import replace
         standard=MasterPreloader(MASTER,team_source=self.team).load_for_new_match()
         self.assertFalse(provisional_matrix_matches_registered_team(standard))
-        self.assertFalse(matrix_matches_registered_team(standard))
+        # The original legacy matrix is only name-tagged, so do not pretend
+        # it can detect a changed held item without generator provenance.
+        # A genuinely different species list must be refused by both checks.
+        changed=[dict(x) for x in standard.own_team]
+        changed[0]["name"]="ピカチュウ"
+        unrelated=replace(standard,own_team=tuple(changed))
+        self.assertFalse(provisional_matrix_matches_registered_team(unrelated))
+        self.assertFalse(matrix_matches_registered_team(unrelated))
 
 
 if __name__=="__main__":
