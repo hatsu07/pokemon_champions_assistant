@@ -13,7 +13,8 @@ MAX_CHARS = 1200
 def _fingerprint(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
-def build_request(candidate_path: str | Path, *, max_cells: int = LIMIT) -> dict:
+def build_request(candidate_path: str | Path, *, max_cells: int = LIMIT,
+                  priority_opponents: list[str] | None = None) -> dict:
     if not 1 <= max_cells <= LIMIT:
         raise ConfigurationError("対面分析は1～12件ずつ実行してください")
     path = Path(candidate_path)
@@ -33,6 +34,13 @@ def build_request(candidate_path: str | Path, *, max_cells: int = LIMIT) -> dict
     unknown = [cell for cell in catalog["cells"] if cell.get("evaluation") == "UNKNOWN"
                and not cell.get("missing_source")
                and (cell["opponent"], cell["slot"], cell["member_signature"]) not in already]
+    if priority_opponents:
+        from .species_name_aliases import selection_base_name
+        priority={selection_base_name(name):index
+                  for index,name in enumerate(priority_opponents)
+                  if isinstance(name,str) and name.strip()}
+        unknown.sort(key=lambda cell:priority.get(
+            selection_base_name(cell["opponent"]),len(priority)))
     chosen = unknown[:max_cells]
     return {
         "schema":SCHEMA, "catalog_sha256":digest,
