@@ -342,9 +342,14 @@ def advance_observation(
 
 
 def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
-                     access_token: str, model: str, total_seconds: float = 35.0,
+                     access_token: str, model: str, total_seconds: float = 55.0,
                      client_factory=None, reasoning_effort: str = "auto") -> tuple[dict, dict]:
-    """One user-approved screenshot; output never presses game controls."""
+    """One user-approved screenshot; output never presses game controls.
+
+    During selection, the 55-second budget leaves about 35 seconds of the
+    90-second team-preview timer for human input and PREP. It is an upper
+    deadline, not a guarantee of the network/model returning in that time.
+    """
     from .vision_api_benchmark import jpeg_data_uri
     started = perf_counter()
     if client_factory is None:
@@ -387,14 +392,14 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
               "text":"Extract visible UI facts from this saved screenshot."},
              {"type":"input_image","image_url":jpeg_data_uri(image),"detail":"high"}])
         vision_image_count=sum(x.get("type")=="input_image" for x in image_content)
-        # Preserve 12 seconds or more for tactical selection, including some
-        # allowance for auth/transport overhead; the 18s initial ReadTimeout
-        # from the previous build exhausted almost the entire useful budget.
+        # Reserve tactical time. A 12s first-read socket timeout was too
+        # short for observed ChatGPT response latency; use a larger part of
+        # the real 90s preview window, never all of it.
         visual_start=perf_counter()
         opponent_recognition_attempts=1 if is_preview else 0
         try:
             observation = selection_call(
-                phase_limit=12.0 if is_preview else 18.0,
+                phase_limit=min(22.0,max(12.0,total_seconds*0.42)) if is_preview else 18.0,
                 model=model,
                 schema=VISION_SCHEMA if is_preview else OBSERVATION_SCHEMA,
                 name="champions_opponent_preview" if is_preview else _OBSERVATION_NAME,
@@ -419,14 +424,14 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             remaining=total_seconds-(perf_counter()-started)
             retryable=type(first_error).__name__ in (
                 "ReadTimeout","APITimeoutError","TimeoutError")
-            if not is_preview or not retryable or remaining<=16.0:
+            if not is_preview or not retryable or remaining<=22.0:
                 raise
             current_stage="OPPONENT_VISUAL_TRANSPORT_RETRY"
             opponent_recognition_attempts=2
             retry_start=perf_counter()
             try:
                 observation=selection_call(
-                    phase_limit=min(7.0,remaining-13.0),
+                    phase_limit=min(12.0,remaining-19.0),
                     model=model,schema=VISION_SCHEMA,
                     name="champions_opponent_preview_transport_retry",
                     reasoning_effort=live_effort,
@@ -448,7 +453,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             if perf_counter()-started >= total_seconds-1:
                 raise TimeoutError("REPLAY_DEADLINE")
             return selection_call(
-                phase_limit=16.0,model=model,reasoning_effort=live_effort,
+                phase_limit=18.0 if phase=="SELECTION" else 16.0,
+                model=model,reasoning_effort=live_effort,
                 schema=CHOICE_SCHEMA if phase=="SELECTION" else ACTION_SCHEMA,
                 name=_SELECTION_NAME if phase=="SELECTION" else _ACTION_NAME,
                 instructions=(
@@ -481,7 +487,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "keep all other observation fields tied to the actual image."
                 )
                 return selection_call(
-                    phase_limit=8.0, model=model, schema=VISION_SCHEMA,
+                    phase_limit=10.0, model=model, schema=VISION_SCHEMA,
                     name="champions_opponent_six_retry",
                     reasoning_effort=live_effort,
                     instructions=message,
@@ -492,7 +498,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                 observation, opponent_recognition_attempts = retry_unresolved_opponent_six(
                     observation, assets, retry_view,
                     remaining_seconds=lambda: total_seconds-(perf_counter()-started),
-                    reserve_seconds=18.0,
+                    reserve_seconds=21.0,
                 )
             # Transport recovery already used the single allowed retry.
             # Any remaining ambiguous names are rejected by the validator.
