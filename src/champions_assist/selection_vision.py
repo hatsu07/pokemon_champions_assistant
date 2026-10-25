@@ -42,7 +42,8 @@ class SelectionDecision:
                     observed_opponent_six=list(self.observed_opponent_six),
                     only_in_image=list(self.only_in_image),
                     only_in_registered_team=list(self.only_in_registered_team),
-                    uncertain_slots=list(self.uncertain_slots))
+                    uncertain_slots=list(self.uncertain_slots),
+                    opponent_recognition_attempts=self.opponent_recognition_attempts)
 
 def _display_name(registered_name: str) -> str:
     # One deterministic normalizer for register/vision/matrix checks, never
