@@ -208,6 +208,9 @@ class MatchReplayDialog(QDialog):
         self.reasoning_effort=reasoning_effort
         self.master_directory=master_directory
         self.team_path=team_path
+        self.matrix_source=None
+        self.lookup_source=None
+        self.live_assets_status="UNCONFIGURED"
         self.store_root=Path(store_root) if store_root else default_app_root()
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
@@ -365,8 +368,10 @@ class MatchReplayDialog(QDialog):
                 self.before_new_match()
             if not self.master_directory or not self.team_path:
                 raise ValueError("次戦用の構築を先に選択してください。")
-            self.assets=MasterPreloader(self.master_directory,
-                                        team_source=self.team_path).load_for_new_match()
+            self.assets=MasterPreloader(
+                self.master_directory, team_source=self.team_path,
+                matrix_source=self.matrix_source,lookup_source=self.lookup_source,
+            ).load_for_new_match()
             self.state=new_replay(self.assets)
             # Read the optional PRIVATE ROI profile once at match start.
             # Calibration does not bypass or replace the four-master load.
@@ -999,7 +1004,10 @@ class MatchReplayDialog(QDialog):
         state=self.state or {}
         phase=state.get("phase","NOT_STARTED")
         compatible=state.get("matrix_compatible",False)
-        suffix="構築別LIVEマトリクス有効" if compatible else "LIVEマトリクス不一致・機能試験のみ"
+        suffix=("構築別LIVEマトリクス有効" if compatible
+                else "構築別マトリクス未検証・機能試験のみ"
+                if self.live_assets_status=="PROVISIONAL_UNVERIFIED"
+                else "LIVEマトリクス不一致・機能試験のみ")
         sending = ("画面取得待機中（自動再試行）" if self._auto_running and self._capture_paused
                    else "自動送信中" if self._auto_running else "自動送信停止")
         self.status.setText(f"段階：{phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")

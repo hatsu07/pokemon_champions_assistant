@@ -104,6 +104,27 @@ class UnifiedMainWindowTests(unittest.TestCase):
             "recommendation": "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ"})
         self.assertEqual(len(self.store.events(panel.match_id)), 2)
 
+    def test_selected_team_automatically_prepares_matching_live_sources(self):
+        from champions_assist.matrix_compatibility import matrix_matches_registered_team
+        team=self.service.import_team(
+            MASTER_DIR/"Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(team.team_id,match_active=False)
+        prepared=self.service.prepare_team_live_assets(team.team_id)
+        self.assertEqual(prepared.status,"REVIEWED_REUSE")
+        self.assertTrue(prepared.cache_hit)
+        with patch("champions_assist.vision_preferences.VisionPreferenceStore") as prefs:
+            prefs.return_value.selected_model.return_value="gpt-5.6-terra"
+            prefs.return_value.reasoning_effort.return_value="low"
+            panel=self.window._match_panel
+            panel._new_match()
+        self.assertEqual(panel.matrix_source,str(prepared.matrix_path))
+        self.assertEqual(panel.lookup_source,str(prepared.lookup_path))
+        self.assertEqual(panel.live_assets_status,"REVIEWED_REUSE")
+        self.assertTrue(matrix_matches_registered_team(panel.assets))
+        self.assertEqual(len(panel.assets.sha256),4)
+        self.assertEqual(self.window.header_labels["preload"].text(),"4/4 読込済み")
+
     def test_capture_stop_and_unconfirmed_recommendations_are_visible(self):
         panel = self.window._match_panel
         panel.state = {"phase": "SELECTION", "matrix_compatible": False,

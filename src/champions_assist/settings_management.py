@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import get_ident, Lock
 from typing import Callable, TYPE_CHECKING
 
 from .app_config import (
@@ -17,6 +18,8 @@ from .app_config import (
     validate_storage_directory,
 )
 from .team_management import ChampionsTeamCatalog, RegisteredTeam, TeamRepository
+from .team_live_assets import PreparedTeamAssets, prepare_team_assets
+from .environment_refresh import SinglesEnvironmentStore
 
 if TYPE_CHECKING:  # avoid an import cycle between UI/controller and settings.
     from .fsm import MatchController
@@ -47,6 +50,9 @@ class DesktopSettingsService:
         except ConfigurationError:
             self.catalog = None
         self.teams = TeamRepository(Path(self.settings.storage.data_root) / "teams", catalog=self.catalog)
+        self.environment = SinglesEnvironmentStore(self.settings.storage.data_root)
+        self._refresh_lock = Lock()
+        self._refresh_owner = None
 
     @property
     def first_launch(self) -> bool:
@@ -101,10 +107,52 @@ class DesktopSettingsService:
             raise ConfigurationError("試合中は構築を再検証できません")
         return self.teams.revalidate(team_id)
 
+    def prepare_team_live_assets(self, team_id: str, *, match_active: bool = False) -> PreparedTeamAssets:
+        if self._refresh_lock.locked() and self._refresh_owner != get_ident():
+            raise ConfigurationError("Singlesデータ更新中です。新しい対戦開始はできません")
+        if match_active:
+            raise ConfigurationError("対戦中はLIVEデータの作成・更新ができません")
+        source=self.teams.path_for_next_match(team_id)
+        return prepare_team_assets(
+            master_dir=self.master_directory,
+            data_root=self.settings.storage.data_root,
+            team_id=team_id,team_path=source,
+            environment_snapshot=self.environment.snapshot,
+        )
+
+    def refresh_public_battle_data(self, *, match_active: bool) -> dict:
+        if match_active:
+            raise ConfigurationError("対戦中は環境データを更新できません")
+        if not self._refresh_lock.acquire(blocking=False):
+            raise ConfigurationError("Singles環境データはすでに更新中です")
+        self._refresh_owner=get_ident()
+        try:
+            receipt=self.environment.refresh_public_singles()
+            # Prepare the new last-good team snapshot while still excluding
+            # a concurrent match start. No mid-battle source mutation.
+            active=self.settings.teams.active_team_id
+            if active:
+                self.prepare_team_live_assets(active, match_active=False)
+            return receipt
+        finally:
+            self._refresh_owner=None
+            self._refresh_lock.release()
+
+    def import_user_battle_data(self, path: str | Path, *, match_active: bool) -> dict:
+        if match_active:
+            raise ConfigurationError("対戦中は環境データを取り込めません")
+        receipt=self.environment.import_user_json(path)
+        active=self.settings.teams.active_team_id
+        if active:
+            self.prepare_team_live_assets(active,match_active=False)
+        return receipt
+
     def select_team(self, team_id: str, *, match_active: bool) -> str:
-        # Resolve/validate before updating settings.  This does not reread
-        # masters: registration stored its fixed-master validation result.
+        # The user activates a team, then immediately prepares its two cached
+        # match-specific sources. Never regenerate from a live capture loop.
         self.teams.path_for_next_match(team_id)
+        if not match_active:
+            self.prepare_team_live_assets(team_id,match_active=False)
         teams = self.settings.teams
         if match_active:
             teams = replace(teams, pending_team_id=team_id)
@@ -136,6 +184,7 @@ class DesktopSettingsService:
             migrate_data_directory(previous.data_root, storage.data_root)
             migrate_data_directory(previous.captures_root, storage.captures_root)
             self.teams = TeamRepository(Path(storage.data_root) / "teams", catalog=self.catalog)
+            self.environment = SinglesEnvironmentStore(storage.data_root)
         self.settings = replace(self.settings, storage=storage, pending_storage=None)
         self._save()
         return changed
