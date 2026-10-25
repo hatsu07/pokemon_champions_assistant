@@ -42,6 +42,17 @@ class AutomaticMatchupTests(unittest.TestCase):
         return run_automatic_analysis(self.path,model="mock",access_token="mock",
                                       analyze=self.analyzer,**options)
 
+    def test_public_usage_priority_changes_order_not_certification(self):
+        from champions_assist.team_ai_analysis import build_request
+        first = build_request(self.path,max_cells=1,priority_opponents=["ピカチュウ"])
+        self.assertEqual(first["cells"][0]["opponent"],"ピカチュウ")
+        result=self.call(max_batches=1,priority_opponents=["ピカチュウ"])
+        self.assertEqual(result["count"],12)
+        saved=list(self.root.glob("ai-proposal-*.json"))
+        rows=json.loads(saved[0].read_text(encoding="utf-8"))["proposals"]
+        self.assertTrue(all(r["opponent"]=="ピカチュウ" for r in rows[:6]))
+        self.assertFalse(json.loads(saved[0].read_text(encoding="utf-8"))["live_approved"])
+
     def test_one_action_continues_multiple_batches(self):
         events=[]
         result=self.call(progress=events.append)
