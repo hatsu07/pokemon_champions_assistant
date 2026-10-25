@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from champions_assist.match_replay import new_replay, run_replay_image
-from champions_assist.selection_vision import selection_image_content, selection_summary_ja
+from champions_assist.selection_vision import selection_image_content
 from tests.test_match_replay import fixture_assets, frame, OWN, OPP
 
 
@@ -25,20 +25,18 @@ class SelectionDetailImageTests(unittest.TestCase):
         raw=base64.b64decode(uri.partition(",")[2])
         return cv2.imdecode(np.frombuffer(raw,dtype=np.uint8),cv2.IMREAD_COLOR)
 
-    def test_side_crops_preserve_original_and_left_right_orientation(self):
+    def test_only_opponent_right_crop_plus_original_image(self):
         inputs=selection_image_content(self.image,introduction="Test")
         images=[item["image_url"] for item in inputs if item["type"]=="input_image"]
-        self.assertEqual(len(images),3)
-        full,left,right=map(self.decode,images)
+        self.assertEqual(len(images),2)
+        full,right=map(self.decode,images)
         self.assertEqual(full.shape[:2],(624,1048))
-        self.assertEqual(left.shape[:2],(624,int(1048*.45)))
         self.assertEqual(right.shape[:2],(624,int(1048*.45)))
-        # cv2 works in BGR after decoding the known R/G/B test bands.
-        self.assertGreater(int(left[250,150,2]),int(left[250,150,0]))
         self.assertGreater(int(right[250,150,0]),int(right[250,150,2]))
         descriptions=[item["text"] for item in inputs if item["type"]=="input_text"]
-        self.assertIn("PLAYER_LEFT_SIX_ONLY",descriptions[1])
-        self.assertIn("OPPONENT_RIGHT_SIX_ONLY",descriptions[2])
+        self.assertEqual(len(descriptions),2)
+        self.assertIn("OPPONENT_RIGHT_SIX_ONLY",descriptions[1])
+        self.assertNotIn("PLAYER_LEFT_SIX_ONLY",str(descriptions))
 
     def test_small_or_non_landscape_frame_uses_one_image(self):
         for shape in ((180,300,3),(900,400,3)):
@@ -47,38 +45,80 @@ class SelectionDetailImageTests(unittest.TestCase):
                     if item["type"]=="input_image"]
             self.assertEqual(len(images),1)
 
-    def test_selection_still_blocks_wrong_six_and_reports_exact_mismatch(self):
-        observed=frame("TEAM_SELECTION",our_six=["Mimikyu",*OWN[1:]],
-                       opponent_six=list(OPP))
-        events=[SimpleNamespace(type="response.output_text.delta",
-                                delta=json.dumps(observed,ensure_ascii=False)),
-                SimpleNamespace(type="response.completed")]
+    @staticmethod
+    def fake_client(replies):
         class Stream:
-            def __enter__(self): return self
-            def __exit__(self,*args): return False
-            def __iter__(self):return iter(events)
+            def __init__(self, value):self.value=value
+            def __enter__(self):return self
+            def __exit__(self,*_):return False
+            def __iter__(self):
+                yield SimpleNamespace(type="response.output_text.delta",
+                                      delta=json.dumps(self.value,ensure_ascii=False))
+                yield SimpleNamespace(type="response.completed")
         class Endpoint:
             def __init__(self):self.calls=[]
             def create(self,**kwargs):
                 self.calls.append(kwargs)
-                return Stream()
+                return Stream(replies[len(self.calls)-1])
         endpoint=Endpoint()
-        client=SimpleNamespace(responses=endpoint)
-        assets=fixture_assets()
-        original=new_replay(assets)
-        updated,result=run_replay_image(
-            self.image,state=original,assets=assets,model="mock",access_token="dummy",
-            client_factory=lambda **kwargs:client)
+        return SimpleNamespace(responses=endpoint),endpoint
+
+    def test_opponent_retry_new_model_request_then_registered_selection(self):
+        wrong=frame("TEAM_SELECTION",
+                    our_six=["Iron Valiant",*OWN[1:]],
+                    opponent_six=[OPP[0],OPP[0],*OPP[2:]],
+                    uncertain_slots=["opponent_slot_2"])
+        corrected=frame("TEAM_SELECTION",
+                        our_six=["Mimikyu",*OWN[1:]],
+                        opponent_six=list(OPP))
+        chosen={"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        client,endpoint=self.fake_client([wrong,corrected,chosen])
+        state,result=run_replay_image(
+            self.image,state=new_replay(fixture_assets()),assets=fixture_assets(),
+            model="mock",access_token="dummy",client_factory=lambda **_:client)
+        self.assertEqual(result["status"],"TEST_ONLY")
+        self.assertEqual(result["opponent_recognition_attempts"],2)
+        self.assertEqual(result["selected_three"],list(OWN[:3]))
+        self.assertEqual(state["opponent_six"],list(OPP))
+        self.assertEqual(result["observation"]["our_six"],[])
+        self.assertEqual(len(endpoint.calls),3)  # initial + correction + tactical
+        self.assertIn("FAILED: UNCERTAIN_TEAM_SLOT",
+                      endpoint.calls[1]["instructions"])
+        self.assertIn("OPPONENT_RIGHT_SIX_ONLY",
+                      str(endpoint.calls[1]["input"][0]["content"][2]["text"]))
+        self.assertEqual(sum(x["type"]=="input_image" for x in
+                             endpoint.calls[1]["input"][0]["content"]),2)
+
+    def test_two_unreadable_opponent_attempts_never_trigger_tactics(self):
+        unreadable=frame("TEAM_SELECTION",
+                         our_six=list(OWN),
+                         opponent_six=list(OPP[:5]),
+                         uncertain_slots=["opponent_slot_6"])
+        client,endpoint=self.fake_client([unreadable,unreadable])
+        state,result=run_replay_image(
+            self.image,state=new_replay(fixture_assets()),assets=fixture_assets(),
+            model="mock",access_token="dummy",client_factory=lambda **_:client)
         self.assertEqual(result["status"],"BLOCKED")
-        self.assertEqual(result["reason"],"REGISTERED_TEAM_MISMATCH")
-        self.assertEqual(result["only_in_image"],["ミミッキュ"])
-        self.assertEqual(result["only_in_registered_team"],["ピカチュウ"])
-        self.assertIn("画像AI側のみ",selection_summary_ja(result))
-        self.assertEqual(len(endpoint.calls),1)  # never calls tactical model
-        data=endpoint.calls[0]["input"][0]["content"]
-        self.assertEqual(sum(x["type"]=="input_image" for x in data),3)
-        self.assertEqual(updated["selected_three"],[])
-        self.assertFalse(updated["opponent_six"])
+        self.assertEqual(result["reason"],"OPPONENT_SIX_INCOMPLETE")
+        self.assertEqual(result["opponent_recognition_attempts"],2)
+        self.assertEqual(state["selected_three"],[])
+        self.assertEqual(state["opponent_six"],[])
+        self.assertEqual(len(endpoint.calls),2)  # no tactical third request
+
+    def test_six_clear_opponents_ignores_hallucinated_own_names(self):
+        readable=frame("TEAM_SELECTION",
+                       our_six=["Iron Valiant",*OWN[1:]],
+                       opponent_six=list(OPP))
+        chosen={"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        client,endpoint=self.fake_client([readable,chosen])
+        state,result=run_replay_image(
+            self.image,state=new_replay(fixture_assets()),assets=fixture_assets(),
+            model="mock",access_token="dummy",client_factory=lambda **_:client)
+        self.assertEqual(result["status"],"TEST_ONLY")
+        self.assertEqual(result["opponent_recognition_attempts"],1)
+        self.assertEqual(result["selected_three"],list(OWN[:3]))
+        self.assertEqual(len(endpoint.calls),2)
+
 
 
 if __name__ == "__main__":
