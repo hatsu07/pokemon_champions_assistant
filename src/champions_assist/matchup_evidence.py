@@ -127,7 +127,23 @@ def build_candidate_catalog(*, master_dir: Path, team: tuple[dict, ...],
                 "own":own_name,"member_signature":signatures[slot],
                 "own_species":traits(own),"opponent_species":traits(opp),
                 "registered_moves":registered,
+                "registered_build":{
+                    "item":member.get("item", ""),
+                    "ability":member.get("ability", ""),
+                    "nature":member.get("nature", ""),
+                    "effort_distribution":member.get("ap_h_a_b_c_d_s", ""),
+                    "form_change":member.get("form_change", ""),
+                    "choice_lock_declared":member.get("choice_lock", ""),
+                },
                 "opponent_priority_candidates":potential_priority,
+                "opponent_potential_high_power_moves":[
+                    {"name":x,"base_power":_number(moves[x].get("威力"))}
+                    for x in sorted(
+                        opponent_move_names,
+                        key=lambda x:_number(moves[x].get("威力")) or 0,
+                        reverse=True
+                    )[:5]
+                ],
                 "opponent_set":UNKNOWN,
                 "move_effectiveness":UNKNOWN,
                 "actual_damage":UNKNOWN,
@@ -164,8 +180,7 @@ def _review_source(item: object) -> bool:
 
 
 def validate_review_packet(packet: object, *, team_id: str,
-                           signatures: list[str], opponents: set[str],
-                           team: tuple[dict, ...]) -> list[dict]:
+                           signatures: list[str], opponents: set[str]) -> list[dict]:
     """Validate conservative manually-attested conditional matchup records.
 
     This validates their *structure and scope*, not the truth of visual damage
@@ -226,7 +241,7 @@ def validate_review_packet(packet: object, *, team_id: str,
 
 
 def import_reviews(*, data_root: Path, team_id: str, packet_path: Path,
-                   candidate_catalog: dict, team: tuple[dict, ...]) -> Path:
+                   candidate_catalog: dict) -> Path:
     """Explicit, player-triggered save with last-good preservation on errors."""
     path=Path(packet_path)
     if path.stat().st_size>MAX_REVIEW_BYTES:
@@ -236,7 +251,6 @@ def import_reviews(*, data_root: Path, team_id: str, packet_path: Path,
         packet,team_id=team_id,
         signatures=candidate_catalog["member_signatures"],
         opponents={cell["opponent"] for cell in candidate_catalog["cells"]},
-        team=team,
     )
     target=Path(data_root)/"matchup-reviews"/(team_id+".json")
     body={"schema":REVIEW_SCHEMA,"team_id":team_id,
@@ -247,7 +261,7 @@ def import_reviews(*, data_root: Path, team_id: str, packet_path: Path,
 
 
 def certified_review_counts(review_path: Path, *, team_id: str,
-                            candidate_catalog: dict, team: tuple[dict, ...]) -> dict:
+                            candidate_catalog: dict) -> dict:
     if not review_path.is_file():return {"CONFIRMED":0,"CONDITIONAL":0}
     raw=review_path.read_bytes()
     if len(raw)>MAX_REVIEW_BYTES:raise ConfigurationError("レビューがサイズ上限超過")
@@ -256,7 +270,6 @@ def certified_review_counts(review_path: Path, *, team_id: str,
         packet,team_id=team_id,
         signatures=candidate_catalog["member_signatures"],
         opponents={cell["opponent"] for cell in candidate_catalog["cells"]},
-        team=team,
     )
     return {"CONFIRMED":sum(c["status"]=="CONFIRMED" for c in entries),
             "CONDITIONAL":sum(c["status"]=="CONDITIONAL" for c in entries)}
