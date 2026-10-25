@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from itertools import product
 from unittest.mock import patch
 import unittest
 
@@ -116,6 +117,51 @@ class TeamProvisionalMatrixTests(unittest.TestCase):
         self.assertTrue(prepare_team_assets(
             master_dir=MASTER,data_root=self.root,team_id="c"*32,
             team_path=self.team).cache_hit)
+
+    def test_prep_uses_18_pairs_same_frozen_matrix_and_two_critical_lookups(self):
+        self.propose()
+        self.publish()
+        assets = MasterPreloader(
+            MASTER,team_source=self.team,
+            matrix_source=self.ready.matrix_path,
+            lookup_source=self.ready.lookup_path).load_for_new_match()
+        opponents = tuple(assets.matrix_index)[:6]
+        chosen = tuple(assets.own_team_names)[:3]
+        state = new_replay(assets)
+        state["phase"] = "PREP"
+        state["selected_three"] = list(chosen)
+        state["lead"] = chosen[0]
+        state["opponent_six"] = list(opponents)
+        state["matrix_rows_six"] = list(assets.matrix_rows_for(opponents))
+        captured=[]
+        def fake_stream(_client,**kwargs):
+            prompt=json.loads(kwargs["content"][0]["text"])
+            captured.append(prompt)
+            return {
+                "matchups_18":[{
+                    "our_pokemon":our,"opponent_pokemon":opp,
+                    "eval_code": (
+                        "ACT=attack|KO=unknown|DPS=review|PRI=unknown|S=unknown|"
+                        "OUR=unknown|OPP=unknown|SAFE=unknown|PROC=check|"
+                        "LOCK=none|MEGA=unknown"
+                        if our==chosen[0] else
+                        "S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
+                        "SAFE=unknown|PROC=check")
+                } for our,opp in product(chosen,opponents)],
+                "preserve":chosen[0],"stopper":chosen[1],"closer":chosen[2],
+            }
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=fake_stream):
+            updated, result = run_replay_prep(
+                state=state,assets=assets,access_token="fake",model="fake",
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(result["status"],"PREP_PROVISIONAL")
+        self.assertEqual(result["matchups_evaluated"],18)
+        self.assertLessEqual(len(captured[0]["lookup_rows_critical"]),2)
+        self.assertEqual(captured[0]["matrix_rows_six"],
+                         list(assets.matrix_rows_for(opponents)))
+        self.assertEqual(len(updated["prep"]["matchups_18"]),18)
+        self.assertIn("未検証",updated["prep"]["note"])
 
     def test_stale_or_fake_approved_proposals_cannot_contaminate_matrix(self):
         self.propose()
