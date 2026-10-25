@@ -25,6 +25,7 @@ def run_automatic_analysis(
     interrupted: Callable[[], bool] | None = None,
     progress: Callable[[dict], None] | None = None,
     analyze: Callable | None = None,
+    priority_opponents: list[str] | None = None,
 ) -> dict:
     """Resume from existing proposal cache; stop cleanly at bounded limits.
 
@@ -43,7 +44,7 @@ def run_automatic_analysis(
     while batches < max_batches:
         if interrupted():
             return {"status": "INTERRUPTED", "count": count, "batches": batches}
-        request = build_request(candidate_path)
+        request = build_request(candidate_path, priority_opponents=priority_opponents)
         if not request["cells"]:
             return {"status": "COMPLETE", "count": count, "batches": batches}
         result = analyze(request, model=model, access_token=access_token,
