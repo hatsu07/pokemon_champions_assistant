@@ -45,6 +45,11 @@ class TeamAIAnalysisTests(unittest.TestCase):
         with self.assertRaises(ConfigurationError):validate_reply(self.request,r)
         r=self.reply();r["catalog_sha256"]="stale"
         with self.assertRaises(ConfigurationError):validate_reply(self.request,r)
+    def test_successive_batches_skip_saved_proposals(self):
+        proposal=validate_reply(self.request,self.reply())
+        save_proposals(self.root/"ai-proposal-first.json",self.catalog,proposal)
+        self.assertEqual(build_request(self.catalog)["cells"],[])
+
     def test_changed_catalog_and_overwrite_rejected(self):
         proposal=validate_reply(self.request,self.reply())
         target=self.root/"proposal.json"
