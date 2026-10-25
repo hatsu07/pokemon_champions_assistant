@@ -811,6 +811,9 @@ class DesktopMainWindow(QMainWindow):
         self.compact_box.toggled.connect(self._set_compact)
         controls.addWidget(self.on_top_box)
         controls.addWidget(self.compact_box)
+        test_button = QPushButton("選出画面テスト（試合外）")
+        test_button.clicked.connect(self._open_selection_test)
+        controls.addWidget(test_button)
         settings_button = QPushButton("設定")
         settings_button.clicked.connect(self._open_settings)
         controls.addWidget(settings_button)
@@ -818,6 +821,44 @@ class DesktopMainWindow(QMainWindow):
         layout.addLayout(controls)
         self.setCentralWidget(root)
         self._on_unified_state({}, {"status": "NOT_STARTED"})
+
+    def _open_selection_test(self) -> None:
+        """Standalone off-match screenshot replay; no game capture/controls."""
+        from .app_config import default_app_root, ConfigurationError
+        from .vision_preferences import VisionPreferenceStore
+        from .preload import MasterPreloader
+        from .selection_test_dialog import SelectionTestDialog
+
+        panel=self._match_panel
+        if (panel._auto_running or panel._thread is not None
+                or panel._prep_thread is not None
+                or (panel.state is not None and panel.state.get("phase") not in
+                    ("ENDED",))):
+            QMessageBox.warning(self,"選出テスト不可",
+                                "対戦支援を終了・リセットしてから試してください。")
+            return
+        try:
+            prefs=VisionPreferenceStore(default_app_root())
+            model=prefs.selected_model()
+            team_id=self.settings_service.settings.teams.active_team_id
+            if not model or not team_id:
+                raise ConfigurationError(
+                    "設定でChatGPTモデルと次戦の自軍構築を選択してください")
+            team_path=self.settings_service.teams.path_for_next_match(team_id)
+            prepared=self.settings_service.prepare_team_live_assets(
+                team_id,match_active=False)
+            assets=MasterPreloader(
+                self.settings_service.master_directory,team_source=team_path,
+                matrix_source=prepared.matrix_path,lookup_source=prepared.lookup_path,
+            ).load_for_new_match()
+        except (OSError,ValueError,RuntimeError,KeyError) as exc:
+            QMessageBox.warning(self,"選出テスト不可",str(exc)[:300])
+            return
+        # Qt parent manages lifetime; keep Python ref until dialog closes.
+        dialog=SelectionTestDialog(
+            assets=assets,model=model,reasoning_effort=prefs.reasoning_effort(),
+            app_root=default_app_root(),parent=self)
+        dialog.exec()
 
     def _prepare_unified_match(self) -> None:
         """Apply current model/team/capture selection BEFORE the four reads."""
