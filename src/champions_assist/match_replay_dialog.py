@@ -810,6 +810,7 @@ class MatchReplayDialog(QDialog):
             "step":len(self.entries)+1, "status":"AI_REQUEST_QUEUED",
             "ai_request_attempt":self._ai_request_attempts,
             "image_count":len(frames),
+            "screen_label_hint":screen_label,
             "message":"AI処理を起動しました。送信成功はまだ確認できていません。"}
         self.entries.append(request_report)
         self._render(request_report)
@@ -965,7 +966,18 @@ class MatchReplayDialog(QDialog):
                                     "CANCELLED","SUPERSEDED"):
             self.state=payload["state"]
         if report.get("status")=="ERROR":
-            self._set_ai_status(f"AI処理エラー / {report.get('reason','UNKNOWN')}")
+            reason=report.get("reason","UNKNOWN")
+            if (reason in ("ReadTimeout","APITimeoutError","TimeoutError")
+                    and self.state is not None
+                    and self.state.get("phase")=="MATCHMAKING"):
+                self._set_ai_status("AI画像認識タイムアウト / 選出画面かは未確定・次の認識へ")
+                report["phase_recognition_pending"]=True
+                report["message"]=(
+                    "ゲーム画面は選出に移っている可能性がありますが、"
+                    "ChatGPTの応答が時間内に届かず、内部フェーズはMATCHMAKINGのままです。"
+                    "相手6匹が確定するまで選出は出しません。")
+            else:
+                self._set_ai_status(f"AI処理エラー / {reason}")
         elif report.get("status")=="CANCELLED":
             self._set_ai_status("AI処理キャンセル")
         else:
@@ -1123,7 +1135,18 @@ class MatchReplayDialog(QDialog):
                 else "LIVEマトリクス不一致・機能試験のみ")
         sending = ("画面取得待機中（自動再試行）" if self._auto_running and self._capture_paused
                    else "自動送信中" if self._auto_running else "自動送信停止")
-        self.status.setText(f"段階：{phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
+        if phase=="MATCHMAKING" and report.get("status")=="AI_REQUEST_QUEUED":
+            if report.get("screen_label_hint")=="TEAM_SELECTION":
+                display_phase="SELECTION候補（ローカル検出・AI確認待ち）"
+            else:
+                display_phase="画面判定中（内部MATCHMAKING・未確定）"
+        elif phase=="MATCHMAKING" and report.get("phase_recognition_pending"):
+            display_phase="画面判定失敗（内部MATCHMAKING・未更新）"
+        else:
+            display_phase=phase
+        self.status.setText(
+            f"段階：{display_phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
+        report["display_phase"]=display_phase
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
             rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
