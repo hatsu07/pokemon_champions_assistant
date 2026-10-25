@@ -195,6 +195,9 @@ jobs:
               throw "Revision metadata differs from current master: $app"
             }
             $releaseVersion = "${{ steps.release_version.outputs.version }}"
+            if (-not $metadata.Contains("version=$releaseVersion")) {
+              throw "Version metadata differs from versioned ZIP name: $app"
+            }
             $name = "$app-$releaseVersion-windows-x64.zip"
             $zipPath = Join-Path "release-zips" $name
             Compress-Archive -Path (Join-Path $root "*") -DestinationPath $zipPath -CompressionLevel Optimal
