@@ -863,7 +863,10 @@ class DesktopMainWindow(QMainWindow):
             "再取得待機" if panel._auto_running and panel._capture_paused
             else "監視中" if panel._auto_running else "停止")
         self.header_labels["preload"].setText("4/4 読込済み" if panel.assets is not None and state else "未実行")
-        self.header_labels["prep"].setText(str(state.get("prep_status", "未開始")))
+        prep_label = str(state.get("prep_status", "未開始"))
+        if state.get("matrix_provisional") and prep_label == "STRUCTURE_COMPLETE":
+            prep_label += "（根拠限定）"
+        self.header_labels["prep"].setText(prep_label)
         selected = state.get("selected_three") or []
         self.header_labels["selected"].setText(
             " / ".join(selected) if selected else "未確定")
@@ -874,9 +877,11 @@ class DesktopMainWindow(QMainWindow):
 
         status = report.get("status", "")
         suggestion = str(report.get("recommendation") or "")
-        if status in ("TEST_ONLY", "ADVICE", "OK") and suggestion:
+        if status in ("TEST_ONLY", "PROVISIONAL_ADVICE", "ADVICE", "OK") and suggestion:
             if status == "TEST_ONLY":
                 suggestion = "【機能試験・戦術未検証】" + suggestion
+            elif status == "PROVISIONAL_ADVICE":
+                suggestion = "【暫定AI判断・対面未検証】" + suggestion
             self.recommendation_label.setText(suggestion)
         elif status in ("MATCH_STARTED", "RESET"):
             self.recommendation_label.setText("推奨: 試合開始待ち")
@@ -907,7 +912,7 @@ class DesktopMainWindow(QMainWindow):
             ("最終イベント", str(state.get("last_event") or "NONE"), "画像候補"),
             ("勝敗", str(state.get("result") or "UNKNOWN"), "画像候補"),
             ("マトリクス", "対応" if state.get("matrix_compatible") else
-             "未検証・TEST_ONLY" if panel.live_assets_status=="PROVISIONAL_UNVERIFIED"
+             "根拠限定・暫定AI判断" if panel.live_assets_status=="PROVISIONAL_UNVERIFIED"
              else "不一致・TEST_ONLY", "4ファイル"),
         ]
         self.state_tree.clear()

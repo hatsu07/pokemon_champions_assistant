@@ -945,7 +945,7 @@ class MatchReplayDialog(QDialog):
         if (self.state is None or self.state.get("phase")!="PREP"
                 or self._prep_thread is not None or self._thread is not None):
             return
-        if not self.state.get("matrix_compatible"):
+        if not (self.state.get("matrix_compatible") or self.state.get("matrix_provisional")):
             self.state["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
             self._render({"status":"PREP_UNAVAILABLE",
                           "reason":"OWN_MATRIX_MISMATCH"})
@@ -1036,8 +1036,8 @@ class MatchReplayDialog(QDialog):
         phase=state.get("phase","NOT_STARTED")
         compatible=state.get("matrix_compatible",False)
         suffix=("構築別LIVEマトリクス有効" if compatible
-                else "構築別マトリクス未検証・機能試験のみ"
-                if self.live_assets_status=="PROVISIONAL_UNVERIFIED"
+                else "登録構築専用・根拠限定AI判断（未検証）"
+                if state.get("matrix_provisional")
                 else "LIVEマトリクス不一致・機能試験のみ")
         sending = ("画面取得待機中（自動再試行）" if self._auto_running and self._capture_paused
                    else "自動送信中" if self._auto_running else "自動送信停止")
@@ -1045,6 +1045,8 @@ class MatchReplayDialog(QDialog):
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
             rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
+        elif report.get("status")=="PROVISIONAL_ADVICE" and not rec.startswith("【暫定"):
+            rec="【暫定AI推奨・対面未認証】"+rec
         line=(rec+"\n\n") if rec else ""
         self.output.setPlainText(
             line+json.dumps({"latest":report,"replay_state":state,
