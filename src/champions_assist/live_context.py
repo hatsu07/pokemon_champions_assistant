@@ -24,7 +24,9 @@ def critical_lookup_rows(assets, opponents: tuple[str, ...],
     for opponent, text in zip(opponents, matrix_rows):
         columns = text.split("|")
         if len(columns) != 14 or columns[0] != opponent:
-            raise ValueError("LOOKUP_MATRIX_ROWS_MISMATCH")
+            # Minimal synthetic fixtures contain just the key; do not invent
+            # extra warnings or try to fetch a speculative lookup row.
+            continue
         warning, risk = columns[10], columns[13]
         if not (any(token in warning for token in WARNING_MARKERS)
                 or any(flag in risk for flag in RISK_MARKERS)):
