@@ -296,11 +296,17 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
-        self._automatic_probe=AutomaticVisualProbe()
+        self._automatic_probe=AutomaticVisualProbe(matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
         # Missing/unvalidated training weights are not silently treated as
         # a working visual model. Default CPU is cheap and deterministic.
         self._screen_model,self._screen_model_status=load_bundled_classifier(device="cpu")
+        self._classifier_unknown_streak=0
+        self._deferred_fallback_batch=None
+        self._last_observed_ui=None
+        self._command_menu_frame=None
+        self._selection_clock_source=None
+        self._turn_screen_seen_at=None
         self._last_local_class=None
         self._pending_batch=None
         self._pending_screen_label=None
@@ -542,6 +548,12 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self.match_id=new_id
             self._selection_screen_started=None
+            self._selection_clock_source=None
+            self._deferred_fallback_batch=None
+            self._classifier_unknown_streak=0
+            self._last_observed_ui=None
+            self._command_menu_frame=None
+            self._turn_screen_seen_at=None
             self._active_request_frame=None
             self._latest_recognition_screen=None
             self._last_action_text=""
@@ -805,7 +817,13 @@ class MatchReplayDialog(QDialog):
         self._screen_gate.reset()
         self._last_local_class=None
         self._pending_batch=None
+        self._deferred_fallback_batch=None
+        self._classifier_unknown_streak=0
+        self._last_observed_ui=None
+        self._command_menu_frame=None
+        self._turn_screen_seen_at=None
         self._selection_screen_started=None
+        self._selection_clock_source=None
         self._prep_budget_seconds=40.0
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         if self.training_capture_check.isChecked():
@@ -990,7 +1008,8 @@ class MatchReplayDialog(QDialog):
                 and self.state is not None
                 and self.state.get("phase") in ("MATCHMAKING","SELECTION")):
             self._selection_screen_started=monotonic()
-            self._trace_event("SELECTION_CLOCK_STARTED")
+            self._selection_clock_source="LOCAL_CANDIDATE"
+            self._trace_event("SELECTION_CLOCK_STARTED",source="LOCAL_CANDIDATE")
         if screen_label in ("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION"):
             self._trace_event("SCREEN_CLASSIFIER_CANDIDATE",
                               screen_label=screen_label,
@@ -1194,10 +1213,27 @@ class MatchReplayDialog(QDialog):
             self._pending_batch=None
             self._pending_screen_label=None
             self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
+        # Preserve selection advice even if a newer actionable battle frame
+        # arrives while the selection model is busy. Apply selection first;
+        # the pending battle frame is processed in the next phase.
+        selection_ready=(report.get("screen")=="TEAM_SELECTION"
+                         and report.get("status") in (
+                             "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
+                         and len(report.get("selected_three") or ())==3
+                         and bool(report.get("lead")))
+        preserve_newer_battle=(
+            selection_ready and self._active_job=="batch"
+            and self._pending_batch is not None
+            and self._pending_screen_label in (
+                "TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"))
+        if preserve_newer_battle:
+            self._trace_event("SELECTION_PRESERVED_FOR_BATTLE_TRANSITION",
+                              next_screen=self._pending_screen_label)
         superseded=(
-            self._active_job=="batch" and self._pending_batch is not None
+            not preserve_newer_battle
+            and self._active_job=="batch" and self._pending_batch is not None
             and _supersedes_result(report,self._pending_screen_label))
-        if self._pending_batch is not None and not superseded:
+        if self._pending_batch is not None and not superseded and not preserve_newer_battle:
             # A reply beats another unclassified animation/duplicate. The
             # next new *observed* transition can still request a fresh action.
             self._trace_event("INFLIGHT_RESULT_PROTECTED",
@@ -1253,7 +1289,9 @@ class MatchReplayDialog(QDialog):
             if self._selection_screen_started is None:
                 self._selection_screen_started=(
                     monotonic()-report.get("queue_elapsed_ms",0)/1000.0)
-                self._trace_event("SELECTION_CLOCK_INFERRED_FROM_AI")
+                self._selection_clock_source="ESTIMATED_CAPTURE_SUBMISSION"
+                self._trace_event("SELECTION_CLOCK_ESTIMATED_FROM_CAPTURE",
+                                  source="ESTIMATED_CAPTURE_SUBMISSION")
             self.actual_three.setText(" / ".join(report["selected_three"]))
             self.actual_lead.setText(report.get("lead") or "")
             # The output is a recommendation, not proof of the player's
@@ -1600,6 +1638,11 @@ class MatchReplayDialog(QDialog):
             return
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
+        elif self._deferred_fallback_batch is not None and self._auto_running:
+            frames=self._deferred_fallback_batch
+            self._deferred_fallback_batch=None
+            self._trace_event("FALLBACK_DEFERRED_DISPATCH")
+            self._queue_batch(frames)
         elif (self.state is not None and self.state.get("phase")=="PREP"
               and self.state.get("prep_status") in ("PENDING","CACHE_PREP_BASE_READY")
               and self._prep_thread is None):
