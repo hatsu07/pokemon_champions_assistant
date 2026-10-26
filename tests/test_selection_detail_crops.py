@@ -93,7 +93,7 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(len(endpoint.calls),3)  # initial + correction + tactical
         self.assertIn("FAILED: OPPONENT_SIX_DUPLICATES",
                       endpoint.calls[1]["instructions"])
-        self.assertIn("OPPONENT_RIGHT_SIX_ONLY",
+        self.assertIn("Extra enlarged RIGHT opponent slot",
                       str(endpoint.calls[1]["input"][0]["content"][2]["text"]))
         self.assertEqual(sum(x["type"]=="input_image" for x in
                              endpoint.calls[1]["input"][0]["content"]),2)
