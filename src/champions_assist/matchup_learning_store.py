@@ -101,6 +101,11 @@ class MatchupLearningStore:
         if db.execute("SELECT 1 FROM proposal_files WHERE file_sha=?",(digest,)).fetchone():
             return 0
         stored = json.loads(raw.decode("utf-8-sig"))
+        # The JSON mirror of a SQLite-primary batch has different whitespace,
+        # but identical canonical content. Do not duplicate the same batch.
+        canonical=sha256(_json(stored).encode("utf-8")).hexdigest()
+        if db.execute("SELECT 1 FROM proposal_files WHERE file_sha=?",(canonical,)).fetchone():
+            return 0
         schema = stored.get("schema")
         if (schema not in (SCHEMA_V1,SCHEMA_V2)
                 or stored.get("catalog_sha256") != catalog_sha

@@ -184,5 +184,11 @@ def save_proposals(output_path: str | Path, catalog_path: str | Path, proposal: 
     path=Path(output_path)
     if path.exists():
         raise ConfigurationError("既存のAI提案を上書きしません")
+    # Structured evaluations become durable in SQLite FIRST. The JSON file
+    # remains a backwards-compatible, non-destructive audit/mirror for v28.
+    if (catalog_path.name=="matchup-evidence.json"
+            and catalog_path.parent.parent.parent.name=="live-team-assets"):
+        from .sqlite_primary import ChampionsPrimaryData
+        ChampionsPrimaryData(catalog_path.parents[3]).store_proposals(catalog_path,proposal)
     atomic_write_text(path,json.dumps(proposal,ensure_ascii=False,indent=2))
     return path

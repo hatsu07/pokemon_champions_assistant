@@ -27,6 +27,7 @@ def run_automatic_analysis(
     analyze: Callable | None = None,
     priority_opponents: list[str] | None = None,
     structured: bool = False,
+    token_provider: Callable[[bool],str] | None = None,
 ) -> dict:
     """Resume from existing proposal cache; stop cleanly at bounded limits.
 
@@ -46,7 +47,8 @@ def run_automatic_analysis(
             candidate_path,model=model,access_token=access_token,
             reasoning_effort=reasoning_effort,max_batches=max_batches,
             interrupted=interrupted,progress=progress,analyze=analyze,
-            priority_opponents=priority_opponents)
+            priority_opponents=priority_opponents,
+            token_provider=token_provider)
     count = batches = 0
     while batches < max_batches:
         if interrupted():
@@ -79,7 +81,8 @@ def run_automatic_analysis(
 
 def _run_structured(candidate_path: Path, *, model: str, access_token: str,
                     reasoning_effort: str, max_batches: int, interrupted,
-                    progress, analyze, priority_opponents: list[str] | None) -> dict:
+                    progress, analyze, priority_opponents: list[str] | None,
+                    token_provider: Callable[[bool],str] | None = None) -> dict:
     """Adaptive 24 -> 36-cell batches; rejected oversized replies halve size.
 
     Count attempted requests against max_batches, never retry a broken 6-cell
@@ -113,8 +116,21 @@ def _run_structured(candidate_path: Path, *, model: str, access_token: str,
             return result("SOURCE_GAPS" if source_gaps else "COMPLETE")
         attempts += 1
         try:
-            reply=analyze(request,model=model,access_token=access_token,
-                          reasoning_effort=reasoning_effort)
+            # The persisted Auth session checks expiry before every batch.
+            current_token=token_provider(False) if token_provider else access_token
+            try:
+                reply=analyze(request,model=model,access_token=current_token,
+                              reasoning_effort=reasoning_effort)
+            except Exception as error:
+                # AuthError 401 is not a malformed JSON reply. Force a new
+                # token once and retry *the same* input; no tactical changes.
+                if (getattr(error,"status_code",None)!=401 or token_provider is None
+                        or attempts>=max_batches):
+                    raise
+                current_token=token_provider(True)
+                attempts+=1
+                reply=analyze(request,model=model,access_token=current_token,
+                              reasoning_effort=reasoning_effort)
             if (not isinstance(reply,dict)
                     or reply.get("status")!="AI_PROPOSAL_UNVERIFIED"
                     or reply.get("live_approved") is not False

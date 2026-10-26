@@ -52,6 +52,16 @@ def eligible_v2_request(catalog_path: str | Path, *, max_cells: int = 24,
         raise ConfigurationError("構築別根拠カタログの形式が不正です")
     digest = sha256(raw).hexdigest()
     covered = set()
+    # SQLite is the authoritative evaluation ledger when available. A JSON
+    # compatibility mirror may be missing after a crash between the DB commit
+    # and legacy export; never analyze that already-committed matchup twice.
+    if (path.name=="matchup-evidence.json"
+            and path.parent.parent.parent.name=="live-team-assets"):
+        root=path.parents[3]
+        if (root/"matchup-learning.sqlite3").is_file():
+            from .sqlite_primary import ChampionsPrimaryData
+            for row in ChampionsPrimaryData(root).proposal_rows(path,only_v2=True):
+                covered.add((row["opponent"],row["slot"],row["member_signature"]))
     for saved_file in sorted(path.parent.glob("ai-proposal-*.json")):
         try:
             if saved_file.stat().st_size > 2_000_000:
@@ -178,6 +188,12 @@ def evidence_key(cell: dict, catalog: dict) -> str:
             "registered_moves","registered_build","opponent_priority_candidates",
             "opponent_potential_high_power_moves","missing_source")
     data={k:cell.get(k) for k in fields}
+    from .champions_form_index import form_key
+    if form_key(cell.get("opponent",""))[1] or form_key(cell.get("own",""))[1]:
+        # Never reuse an old form's evidence signature from the v28/v29
+        # name-only indexes, even if its basic types/stats look identical.
+        data["form_lookup_revision"]=catalog.get(
+            "form_lookup_revision","LEGACY_NAME_ONLY_UNSAFE")
     data["regulation"]=catalog.get("regulation")
     data["master_sha256"]=catalog.get("master_sha256")
     return sha256(json.dumps(data,ensure_ascii=False,sort_keys=True).encode("utf-8")).hexdigest()

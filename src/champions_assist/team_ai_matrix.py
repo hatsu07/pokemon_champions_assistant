@@ -43,15 +43,29 @@ def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
     if catalog.get("schema") != CATALOG_SCHEMA:
         raise ConfigurationError("Champions対面根拠が不正です")
     digest = sha256(raw).hexdigest()
-    source = {(c["opponent"],c["slot"],c["member_signature"]):c
+    by_key = {(c["opponent"],c["slot"],c["member_signature"]):c
               for c in catalog["cells"]}
     notes: dict[str, dict[int, str]] = {}
     versions: dict[tuple[str,int],int] = {}
-    for path in sorted(catalog_path.parent.glob("ai-proposal-*.json")):
-        if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
-            continue
+    sources=[("legacy",p) for p in sorted(catalog_path.parent.glob("ai-proposal-*.json"))]
+    if (catalog_path.parent.parent.parent.name=="live-team-assets"):
+        root=catalog_path.parents[3]
+        if (root/"matchup-learning.sqlite3").is_file():
+            from .sqlite_primary import ChampionsPrimaryData
+            for record in ChampionsPrimaryData(root).proposal_rows(catalog_path):
+                schema=SCHEMA_V2 if "attack_move" in record else PROPOSAL_SCHEMA
+                sources.append(("sqlite",{
+                    "schema":schema,"catalog_sha256":digest,
+                    "status":"AI_PROPOSAL_UNVERIFIED","live_approved":False,
+                    "processor_certified":False,"safe_switch_certified":False,
+                    "proposals":[record],
+                }))
+    for source_kind,source in sources:
+        if source_kind=="legacy":
+            if not source.is_file() or source.stat().st_size > 2 * 1024 * 1024:
+                continue
         try:
-            data = _load(path)
+            data = _load(source) if source_kind=="legacy" else source
             ver = 2 if data.get("schema") == SCHEMA_V2 else 1
             if (data.get("schema") not in (PROPOSAL_SCHEMA,SCHEMA_V2)
                     or data.get("catalog_sha256") != digest
@@ -66,11 +80,11 @@ def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
             keys = []
             for r in rows:
                 key=(r["opponent"],r["slot"],r["member_signature"])
-                if key not in source or key in keys:
+                if key not in by_key or key in keys:
                     raise ValueError("matchup key missing or duplicated")
                 keys.append(key)
             if ver == 2:
-                selected=[source[k] for k in keys]
+                selected=[by_key[k] for k in keys]
                 request={
                     "catalog_sha256":digest,
                     "cells":[{"opponent":c["opponent"],"slot":c["slot"],

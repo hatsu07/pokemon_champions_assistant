@@ -298,8 +298,17 @@ class TeamRepository:
 
     def _save_index(self, records: Iterable[RegisteredTeam]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        payload = [record.as_dict() for record in sorted(records, key=lambda item: item.team_id)]
+        values=tuple(records)
+        payload = [record.as_dict() for record in sorted(values, key=lambda item: item.team_id)]
         atomic_write_text(self.index_path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if self.root.name=="teams":
+            from .sqlite_primary import ChampionsPrimaryData
+            primary=ChampionsPrimaryData(self.root.parent)
+            primary.archive_source("team_index","registered",self.index_path)
+            for item in values:
+                path=Path(item.csv_path)
+                if path.is_file() and path.parent.resolve()==self.root.resolve():
+                    primary.archive_source("team_csv",item.team_id,path)
 
     def list(self) -> tuple[RegisteredTeam, ...]:
         return tuple(sorted(self._load_index().values(), key=lambda item: (item.display_name, item.team_id)))

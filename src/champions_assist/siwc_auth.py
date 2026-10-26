@@ -274,7 +274,7 @@ class ChatGPTSignIn:
         self.store.save(document)
         return self.status()
 
-    def access_token(self) -> str:
+    def access_token(self, *, force_refresh: bool = False) -> str:
         document = self.store.load()
         issued = document.get("selected")
         profile = document["accounts"].get(issued)
@@ -282,7 +282,7 @@ class ChatGPTSignIn:
             raise SignInError("NOT_SIGNED_IN")
         if REQUIRED_PLAN_SCOPE not in profile.get("scopes", []):
             raise SignInError("PLAN_PERMISSION_NOT_GRANTED")
-        if time.time() + 120 >= float(profile.get("expires_at", 0)):
+        if force_refresh or time.time() + 120 >= float(profile.get("expires_at", 0)):
             if not profile.get("refresh_token"):
                 raise SignInError("REAUTHORIZATION_REQUIRED")
             response = self.fetch(TOKEN_URL, data=_form({

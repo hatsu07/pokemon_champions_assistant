@@ -169,13 +169,15 @@ class TeamProvisionalMatrixTests(unittest.TestCase):
         saved = json.loads(path.read_text(encoding="utf-8"))
         saved["live_approved"] = True
         path.write_text(json.dumps(saved,ensure_ascii=False),encoding="utf-8")
-        self.assertEqual(self.publish()["ai_proposal_cells"],0)
-        self.assertNotIn("AI_UNVERIFIED:",
-                         self.ready.matrix_path.read_text(encoding="utf-8"))
+        # SQLite-primary already holds the legitimate unverified proposal.
+        # An edited compatibility JSON cannot promote that record to approved.
+        self.assertEqual(self.publish()["ai_proposal_cells"],12)
+        self.assertIn("AI_UNVERIFIED:",
+                      self.ready.matrix_path.read_text(encoding="utf-8"))
         saved["live_approved"] = False
         saved["catalog_sha256"] = "f"*64
         path.write_text(json.dumps(saved,ensure_ascii=False),encoding="utf-8")
-        self.assertEqual(self.publish()["ai_proposal_cells"],0)
+        self.assertEqual(self.publish()["ai_proposal_cells"],12)
         # Wrong current matrix hash rejects publication, preventing silent
         # overwrites of user edited or truncated LIVE data.
         self.ready.matrix_path.write_text("tampered",encoding="utf-8")
