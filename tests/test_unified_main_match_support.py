@@ -190,6 +190,48 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._active_job=None
             panel._auto_running=False
 
+    def test_reset_during_live_worker_cancels_and_completes_automatically(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._thread=object()  # Simulate an active owned worker; no API
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        self.assertTrue(panel.reset_button.isEnabled())
+        panel._reset()
+        self.assertEqual(panel._shutdown_intent,"reset")
+        self.assertTrue(panel._cancel_event.is_set())
+        self.assertIsNotNone(panel.state)
+        # Late GPT output from a cancelled operation must be ignored.
+        panel._completed({"state":{"phase":"ENDED"},
+                          "report":{"status":"ADVICE",
+                                    "recommendation":"じしん。"}})
+        self.assertEqual(panel.state["phase"],"BATTLE")
+        panel._cleanup()
+        self.assertIsNone(panel._shutdown_intent)
+        self.assertIsNone(panel.state)
+        self.assertIsNone(panel._thread)
+        self.assertTrue(panel.reset_button.isEnabled())
+
+    def test_main_close_during_live_worker_finishes_on_cleanup(self):
+        from PySide6.QtCore import QCoreApplication
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._thread=object()
+        panel._active_job="batch"
+        panel._auto_running=True
+        self.window.show()
+        self.window.close()
+        self.assertTrue(self.window._close_pending)
+        self.assertEqual(panel._shutdown_intent,"close")
+        self.assertTrue(panel._cancel_event.is_set())
+        self.assertTrue(self.window.isVisible())
+        panel._cleanup()
+        QCoreApplication.processEvents()
+        QCoreApplication.processEvents()
+        self.assertTrue(panel._shutdown_ready)
+        self.assertFalse(self.window.isVisible())
+
     def test_prominent_selection_and_explicit_battle_work_clock(self):
         panel=self.window._match_panel
         panel.state={"phase":"SELECTION","matrix_compatible":False,
