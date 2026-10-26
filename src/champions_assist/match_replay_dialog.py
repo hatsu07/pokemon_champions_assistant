@@ -1987,14 +1987,14 @@ class MatchReplayDialog(QDialog):
                 "選出"+assumption+"："+ " / ".join(state["selected_three"])
                 +"   初手："+str(state["lead"]))
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY") and (
-                report.get("screen") in ("MOVE_MENU","PARTY_MENU")
+                report.get("screen") in ("COMMAND_MENU","MOVE_MENU","PARTY_MENU")
                 and report.get("recommendation")):
             self._last_action_text=str(report["recommendation"])
         if report.get("status") in ("MATCH_STARTED","RESET"):
             self._last_action_text=""
             self._last_selection_text=""
         if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
-                and report.get("status") in ("OBSERVED","MATCH_END")):
+                and report.get("status") in ("OBSERVED","MATCH_END","BLOCKED","NO_ACTION")):
             self._last_action_text=""
         self.selection_banner.setText(
             self._last_selection_text+"（実選出未確認）"
@@ -2002,10 +2002,11 @@ class MatchReplayDialog(QDialog):
             else self._last_selection_text or "選出：未提示")
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
-        elif report.get("screen")=="COMMAND_MENU":
-            action_text="コマンド画面：『たたかう』を開いて技一覧を表示"
         elif report.get("status") in ("SUPERSEDED","AI_REQUEST_QUEUED"):
-            action_text="新しい画面を確認中／行動提案を生成中"
+            action_text="現在の対面から技4つ・選出控え2匹を比較中"
+        elif report.get("screen")=="COMMAND_MENU" and (
+                report.get("status") not in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
+            action_text="技4つ・交代先の判定未成立（AIによる提案なし）"
         elif self._last_action_text and state.get("phase")=="BATTLE":
             action_text=self._last_action_text
         else:
