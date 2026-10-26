@@ -329,6 +329,28 @@ def advance_observation(
                         "Any fact that requires unverified game mechanics or damage is unknown. "
                         "Choose only visible registered legal actions; unknown may be NO_ACTION."),
             }
+            # Reuse only the CURRENT opponent's cached comparisons in a
+            # turn prompt; never resend 18 rows or override observed evidence.
+            cached_prep = state.get("prep") or {}
+            if cached_prep.get("source") == "FROZEN_CACHE":
+                known_rows = (cached_prep.get("matchups_18") or
+                              cached_prep.get("matchups_known") or [])
+                opponent_now = state.get("opponent_active")
+                current = [
+                    {"own":row["our_pokemon"],"opponent":row["opponent_pokemon"],
+                     "source":row["source"],"cell":row["matrix_cell"],
+                     "hint":row["ai_hint"]}
+                    for row in known_rows
+                    if row.get("opponent_pokemon")==opponent_now
+                ]
+                context["cached_matchup_hypotheses"] = current
+                context["cached_win_roles"] = {
+                    k:cached_prep.get(k) for k in ("preserve","stopper","closer")}
+                context["cached_warning"] = cached_prep.get("warning","")
+                context["rule"] += (
+                    " Use cached matchup notes conditionally; observed facts "
+                    "and revealed moves/items/forms always override them. "
+                    "A cached processor is NOT proof of a safe hard switch.")
             if state["matrix_compatible"]:
                 context["frozen_gate"] = assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"]
             # Otherwise, the matrix and team-specific LIVE gate are not used.
