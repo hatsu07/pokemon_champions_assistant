@@ -321,9 +321,10 @@ def advance_observation(
                     # Only our ACTUAL lead is known, not the two bench slots.
                     # Remove cache PREP built for a different tentative lead.
                     old_three = list(state.get("selected_three") or [])
-                    revised = [observed_name] + [
-                        x for x in old_three if x != observed_name
-                        and x != state.get("lead")][:2]
+                    remaining = [x for x in old_three if x != observed_name]
+                    if observed_name not in old_three:
+                        remaining = [x for x in remaining if x != state.get("lead")]
+                    revised = [observed_name] + remaining[:2]
                     state["selected_three"] = revised
                     state["lead"] = observed_name
                     state["prep"] = None
