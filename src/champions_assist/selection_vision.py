@@ -492,8 +492,10 @@ class SelectionPlanner:
                         "rows. Unknown placeholder names are NOT Pokémon; do not "
                         "invent moves, counters, speed or safety for their slots. "
                         "Favor broad defensive/priority coverage and preserve a "
-                        "stopper for unobserved threats. Full PREP is unavailable "
-                        "until the missing identity is confirmed. "
+                        "stopper for unobserved threats. Full 18-pair PREP "
+                        "is unavailable until the missing identity is confirmed, "
+                        "but the app will start provisional PREP for the 4-5 "
+                        "known opponents without inventing the missing pairings. "
                         "Do not claim this is validated or 6/6 coverage."
                     ),
                 }
