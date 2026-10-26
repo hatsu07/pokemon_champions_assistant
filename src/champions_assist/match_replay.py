@@ -40,6 +40,9 @@ OBSERVATION_SCHEMA = {
         "visible_party": {"type": "array", "items": {"type": "string"}},
         "our_hp": {"type": "string"},
         "opponent_hp": {"type": "string"},
+        "battlefield_weather": {"type": "string"},
+        "battlefield_terrain": {"type": "string"},
+        "battlefield_effects": {"type": "string"},
         "messages": {"type": "array", "items": {"type": "string"}},
         "observed_event": {"type": "string", "enum": [
             "NONE", "OUR_FAINTED", "OUR_PIVOT_SUCCEEDED",
@@ -50,7 +53,8 @@ OBSERVATION_SCHEMA = {
     },
     "required": [
         "visual_ui", "our_six", "opponent_six", "our_active", "opponent_active",
-        "visible_moves", "visible_party", "our_hp", "opponent_hp", "messages",
+        "visible_moves", "visible_party", "our_hp", "opponent_hp",
+        "battlefield_weather","battlefield_terrain","battlefield_effects","messages",
         "observed_event", "match_result", "uncertain_slots",
         *OBSERVATION_FACT_FIELDS,
     ],
@@ -97,6 +101,7 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "result": "UNKNOWN", "step_number": 0, "history": [],
         "image_observations_unverified": [], "prep_status": "NOT_STARTED",
         "prep": None, "battle_evidence": empty_battle_evidence(),
+        "battlefield": {"weather":"","terrain":"","effects":""},
     }
 
 
@@ -166,10 +171,30 @@ def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) ->
         hp = obs.get(field) or ""
         if hp:
             state["observed_hp"][owner] = hp
+    for key,source in (("weather","battlefield_weather"),
+                       ("terrain","battlefield_terrain"),
+                       ("effects","battlefield_effects")):
+        value=obs.get(source)
+        if isinstance(value,str) and value.strip():
+            state.setdefault("battlefield",{})[key]=value.strip()[:200]
     if obs.get("observed_event") and obs["observed_event"] != "NONE":
         state["last_event"] = obs["observed_event"]
     elif obs.get("visual_ui") == "MOVE_MENU":
         state["last_event"] = "NONE"
+
+
+def _bench_candidates(state: dict) -> list[str]:
+    """Selected non-active Pokémon excluding only explicitly known fainted."""
+    own=_canonical(state.get("our_active") or "")
+    hp=(state.get("battle_evidence") or {}).get(
+        "hp_by_pokemon",{}).get("own",{})
+    fainted=set()
+    for name,value in hp.items():
+        h=str(value).strip().casefold()
+        if h in ("0","0hp","0%","ひんし","fainted") or h.startswith(("0/","0 /")):
+            fainted.add(_canonical(name))
+    return [x for x in state.get("selected_three",[])
+            if _canonical(x)!=own and _canonical(x) not in fainted]
 
 
 def validate_battle_choice(answer: dict, obs: dict, state: dict,
@@ -206,6 +231,8 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
                        if _canonical(entry) == _canonical(target)]
             if len(matched) != 1 or _member_for(matched[0], assets) is member:
                 return "PIVOT_TARGET_NOT_SELECTED", {}
+            if matched[0] not in _bench_candidates(state):
+                return "SWITCH_TARGET_FAINTED", {}
             return "OK", {"kind":"PIVOT", "move":move, "target":matched[0]}
         return "OK", {"kind":"MOVE", "move":move}
     if kind == "SWITCH":
@@ -217,6 +244,8 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
         displayed = {_canonical(name) for name in obs["visible_party"]}
         if len(possible) != 1 or _member_for(possible[0], assets) is member:
             return "SWITCH_TARGET_NOT_SELECTED", {}
+        if possible[0] not in _bench_candidates(state):
+            return "SWITCH_TARGET_FAINTED", {}
         if (obs["visual_ui"]=="PARTY_MENU"
                 and _canonical(target) not in displayed):
             return "SWITCH_TARGET_NOT_VISIBLE", {}
@@ -356,9 +385,8 @@ def advance_observation(
                 "registered_move_options":[
                     member.get("move"+str(i)) for i in range(1,5)
                 ] if member else [],
-                "selected_switch_options":[
-                    name for name in state["selected_three"]
-                    if _canonical(name)!=_canonical(state["our_active"])],
+                "selected_switch_options":_bench_candidates(state),
+                "action_candidates_count":4+len(_bench_candidates(state)),
                 "selected_bench_unconfirmed":bool(state.get("selection_assumed")),
                 "opponent_preview":state["opponent_six"],
                 "current_observation":obs,
@@ -366,6 +394,7 @@ def advance_observation(
                 "history":state["history"][-8:],
                 "observed_hp":state["observed_hp"],
                 "battle_evidence":state.get("battle_evidence", {}),
+                "battlefield":state.get("battlefield",{}),
                 "last_event":state["last_event"],
                 "matrix_compatible":state["matrix_compatible"],
                 "matrix_provisional":state["matrix_provisional"],
@@ -1170,7 +1199,15 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 k:v for k,v in state.items()
                 if k in ("our_active","opponent_active","observed_hp",
                          "observed_moves","last_event","prep","prep_status",
-                         "battle_evidence")
+                         "battle_evidence","battlefield")
+            },
+            "registered_command_options":{
+                "moves_by_pokemon":{
+                    m["name"]:[m.get("move"+str(i),"") for i in range(1,5)]
+                    for m in assets.own_team
+                    if m["name"] in (state.get("selected_three") or [])},
+                "bench_candidates_from_current_state":_bench_candidates(state),
+                "actual_bench_unconfirmed":bool(state.get("selection_assumed")),
             },
             "previous_observations":state.get("image_observations_unverified",[])[-6:],
             "history":state.get("history",[])[-6:],
@@ -1203,8 +1240,12 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                   "text":json.dumps(prompt,ensure_ascii=False,default=str)}]
         content.append({"type":"input_text",
                         "text":"Chronological captured frames follow, oldest to newest. "
-                               "Use earlier images only for observed events and last "
-                               "image for current UI and legal actions. Unknown is unknown."})
+                               "Earlier frames contain battle-event evidence such as "
+                               "HP, fainting, moves, stat changes, weather, terrain, "
+                               "field effects, items, forms and statuses. Transcribe "
+                               "only clearly visible facts, and describe changes or "
+                               "endings in battlefield_* fields. Use the last image "
+                               "for the actionable UI; not every event is captured."})
         for image in images:
             content.append({"type":"input_image","image_url":jpeg_data_uri(image),"detail":"high"})
         answer=_stream_json(
@@ -1232,7 +1273,13 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "to another selected_three member. For PIVOT also give the "
                 "planned target; never infer that pivot succeeded. Respect "
                 "known locks, fainting and observed state; do not assume PP, "
-                "current legality, or actual bench confirmation. For MOVE_MENU "
+                "current legality, or actual bench confirmation. Compare the "
+                "four registered moves with 0-2 selected and non-fainted "
+                "bench candidates; never propose a known fainted switch. "
+                "Use remembered HP, status, ability, weather, terrain, "
+                "field effects, stat changes, items, forms, and locks, "
+                "optimizing the win plan of all three selected Pokémon. "
+                "For MOVE_MENU "
                 "and PARTY_MENU require currently visible options. If current "
                 "active or a safe legal action cannot be identified, output "
                 "NO_ACTION and empty strings. Only fill our_used_move when "
