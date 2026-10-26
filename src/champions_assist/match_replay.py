@@ -806,25 +806,47 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed,
                             "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                             "prompt_chars":prompt_chars}
-        updated["prep_status"]="STRUCTURE_COMPLETE" if validation.complete else "INCOMPLETE"
+        updated["prep_status"]=(
+            "PARTIAL_STRUCTURE_COMPLETE" if partial else "STRUCTURE_COMPLETE"
+        ) if validation.complete else "INCOMPLETE"
         if validation.complete:
+            matchups=[{"our_pokemon":m.our_pokemon,
+                       "opponent_pokemon":m.opponent_pokemon,
+                       "eval_code":m.eval_code} for m in result.matchups_18]
             updated["prep"]={
-                "matchups_18":[{"our_pokemon":m.our_pokemon,
-                                "opponent_pokemon":m.opponent_pokemon,
-                                "eval_code":m.eval_code} for m in result.matchups_18],
+                ("matchups_known" if partial else "matchups_18"):matchups,
+                "unknown_opponent_slots":list(unknown_slots),
+                "unknown_pairs":[{"our_pokemon":own,"opponent_pokemon":slot}
+                                 for own in updated["selected_three"]
+                                 for slot in unknown_slots],
                 "preserve":result.preserve,"stopper":result.stopper,
                 "closer":result.closer,
-                "note":("暫定AI評価。18対面構造のみ確認、戦術・処理役・安全受けは未検証"
-                        if provisional else "AI評価案。形式確認済みであり戦術的な正確性は別途検証が必要"),
+                "note":(
+                    f"暫定PREP。既知{len(known)}匹×3の{len(matchups)}対面のみ評価。"
+                    f"未判明{len(unknown_slots)}匹×3の{3*len(unknown_slots)}対面は未評価。"
+                    "18対面完成・処理役・安全受けは未認証"
+                    if partial else
+                    "暫定AI評価。18対面構造のみ確認、戦術・処理役・安全受けは未検証"
+                    if provisional else
+                    "AI評価案。形式確認済みであり戦術的な正確性は別途検証が必要"),
             }
-        status=("PREP_PROVISIONAL" if provisional else "PREP_STRUCTURE_OK") if validation.complete else "PREP_INCOMPLETE"
-        message=("暫定18対面評価（構造検証のみ・戦術未認証）。" if provisional else
-                 "事前評価完了（構造検証）。") if validation.complete else "事前評価は未完成です。"
+        status=(
+            "PREP_PARTIAL" if partial else
+            "PREP_PROVISIONAL" if provisional else "PREP_STRUCTURE_OK"
+        ) if validation.complete else "PREP_INCOMPLETE"
+        message=(
+            f"暫定PREP：既知{len(known)}匹の{len(result.matchups_18)}対面と勝ち筋3点を評価。"
+            f"未判明{len(unknown_slots)}匹の{3*len(unknown_slots)}対面は未評価。"
+            if partial else
+            "暫定18対面評価（構造検証のみ・戦術未認証）。" if provisional else
+            "事前評価完了（構造検証）。"
+        ) if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                         "prompt_chars":prompt_chars,
                         "matchups_evaluated":len(result.matchups_18),
+                        "unknown_matchups":3*len(unknown_slots),
                         "message":message}
     except Exception as exc:
         if stage=="MODEL_RESPONSE":
