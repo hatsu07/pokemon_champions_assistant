@@ -54,6 +54,46 @@ def prep_budget_before_battle(selection_started_at: float | None, *,
     return min(prep_cap,max(0.0,preview_seconds-elapsed-input_reserve))
 
 
+# A fresh *verified* command candidate may replace stale frames, but an
+# unclassified animation is not grounds to erase a completed turn decision.
+_URGENT_SCREENS = frozenset(("TURN_ACTION", "SWITCH_SELECTION"))
+_SCREEN_PRIORITY = {
+    "TEAM_SELECTION": 1, "BATTLE_EVENT": 2,
+    "TURN_ACTION": 3, "SWITCH_SELECTION": 3,
+}
+
+
+def _should_replace_inflight(inflight: str | None,
+                             incoming: str | None) -> bool:
+    """Replace only with a NEW explicit and different game screen category.
+
+    Inflight None means a generic fallback observation, so a verified
+    TURN_ACTION or SWITCH_SELECTION is stronger. Repeated/UNKNOWN frames never
+    evict an action that is being prepared.
+    """
+    if incoming is None or incoming==inflight:
+        return False
+    return _SCREEN_PRIORITY.get(incoming, 0)>=_SCREEN_PRIORITY.get(inflight, 0)
+
+
+def _supersedes_result(report: dict, incoming: str | None) -> bool:
+    """A newer explicit command category, not animation, can preempt a reply."""
+    if not incoming:
+        return False
+    screen=report.get("screen")
+    if screen=="MOVE_MENU":
+        kind="TURN_ACTION"
+    elif screen=="PARTY_MENU":
+        kind="SWITCH_SELECTION"
+    elif screen in ("ACTION_RESOLUTION","RESULT_SCREEN"):
+        kind="BATTLE_EVENT"
+    elif screen=="TEAM_SELECTION":
+        kind="TEAM_SELECTION"
+    else:
+        kind=None
+    return _should_replace_inflight(kind,incoming)
+
+
 class _ReplayWorker(QObject):
     finished = Signal(object)
     progress = Signal(str)
@@ -276,6 +316,9 @@ class MatchReplayDialog(QDialog):
         self._timing_trace=[]
         self._debug_log=None
         self._active_request_started=None
+        self._latest_recognition_screen=None
+        self._last_action_text=""
+        self._last_selection_text=""
         self._selection_screen_started=None
         self._prep_budget_seconds=40.0
         self._proposed_selection=None
@@ -441,6 +484,9 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self.match_id=new_id
             self._selection_screen_started=None
+            self._latest_recognition_screen=None
+            self._last_action_text=""
+            self._last_selection_text=""
             self._prep_budget_seconds=40.0
             self._proposed_selection=None
             self._proposed_prep_key=None
@@ -807,6 +853,20 @@ class MatchReplayDialog(QDialog):
             self._trace_event("SELECTION_DUPLICATE_SUPPRESSED",
                               screen_label=screen_label or "UNCLASSIFIED")
             return
+        if self._thread is not None and self._active_job=="batch":
+            # Before any model result, protect actionable requests from a flood
+            # of unknown animations, duplicates or old event frames.
+            if not _should_replace_inflight(self._inflight_screen_label,
+                                            screen_label):
+                self._trace_event("INFLIGHT_FRAME_SUPPRESSED",
+                                  screen_label=screen_label or "UNCLASSIFIED")
+                return
+            if (self._pending_batch is not None and
+                    not _should_replace_inflight(self._pending_screen_label,
+                                                 screen_label)):
+                self._trace_event("PENDING_PRIORITY_PROTECTED",
+                                  screen_label=screen_label or "UNCLASSIFIED")
+                return
         # A newly observed turn/party/event candidate outranks PREP.
         # Never wait for a 40-second PREP API call before requesting action.
         if (self.state is not None and self.state.get("phase")=="PREP"
@@ -826,6 +886,9 @@ class MatchReplayDialog(QDialog):
                               confidence="UNVERIFIED")
         self._pending_batch=list(frames)
         self._pending_screen_label=screen_label
+        if screen_label:
+            self._latest_recognition_screen=screen_label
+            self._refresh_live_status()
         self._send_pending()
 
     def _send_pending(self):
@@ -838,8 +901,13 @@ class MatchReplayDialog(QDialog):
         screen_label=self._pending_screen_label
         # Only the CURRENT screenshot is needed for the opponent-six preview;
         # old transition frames are unhelpful and cost capture/memory time.
-        if self.state.get("phase") in ("MATCHMAKING","SELECTION") and frames:
+        if frames and (self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                       or screen_label in _URGENT_SCREENS):
+            # One *current* menu shot is sufficient for immediate turn choice:
+            # older animations cost image tokens and risk superseding action.
             frames=[frames[-1]]
+        elif frames and screen_label=="BATTLE_EVENT":
+            frames=frames[-2:]
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
@@ -997,12 +1065,19 @@ class MatchReplayDialog(QDialog):
             self._pending_batch=None
             self._pending_screen_label=None
             self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
-        superseded=self._active_job=="batch" and self._pending_batch is not None
+        superseded=(
+            self._active_job=="batch" and self._pending_batch is not None
+            and _supersedes_result(report,self._pending_screen_label))
+        if self._pending_batch is not None and not superseded:
+            # A reply beats another unclassified animation/duplicate. The
+            # next new *observed* transition can still request a fresh action.
+            self._trace_event("INFLIGHT_RESULT_PROTECTED",
+                              status=report.get("status","UNKNOWN"))
+            self._pending_batch=None
+            self._pending_screen_label=None
         if superseded:
-            # Preserve the newer snapshot's *current* state rather than
-            # accepting stale facts or a stale action from an older request.
             report={**report,"status":"SUPERSEDED",
-                    "recommendation":"","warning":"NEWER_COMMAND_SCREEN_PENDING"}
+                    "recommendation":"","warning":"NEWER_VERIFIED_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
         if (not superseded and payload.get("state", {}).get("phase")=="BATTLE"
