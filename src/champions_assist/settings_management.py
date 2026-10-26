@@ -126,9 +126,11 @@ class DesktopSettingsService:
         # Only a finished match produces these AI cautions. Prepare them
         # BEFORE four-file preload; no DB access during LIVE or PREP.
         from .postmatch_matrix_notes import publish_postmatch_notes
+        from hashlib import sha256
         publish_postmatch_notes(
             data_root=self.settings.storage.data_root,team_id=team_id,
-            manifest_path=prepared.manifest_path,matrix_path=prepared.matrix_path)
+            manifest_path=prepared.manifest_path,matrix_path=prepared.matrix_path,
+            team_signature=sha256(Path(source).read_bytes()).hexdigest())
         return prepared
 
     def import_matchup_reviews(self, team_id: str, path: str | Path,
