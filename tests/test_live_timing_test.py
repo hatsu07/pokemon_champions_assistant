@@ -127,6 +127,18 @@ class TimingCoreTest(unittest.TestCase):
             self.assertFalse(report["pass"])
             self.assertIsNone(updated["prep"])
 
+    def test_prep_rejects_unknown_processor_value(self):
+        def unknown(state):
+            code=state["prep"]["matchups_18"][6]["eval_code"]
+            state["prep"]["matchups_18"][6]["eval_code"]=(
+                code.replace("PROC=UNVERIFIED","PROC=unknown"))
+        changed,result=prep_timing_test(
+            state=self.state,assets=self.assets,access_token="dummy",
+            model="mock",clock=self.clock,started_at=0,
+            prep_runner=self.fake_prep(elapsed=5,mutate=unknown))
+        self.assertFalse(result["pass"])
+        self.assertIsNone(changed["prep"])
+
     def test_prep_rejects_unknown_roles_and_duplicate_pair(self):
         def bad_role(state):
             state["prep"]["stopper"]="NOT_SELECTED"
