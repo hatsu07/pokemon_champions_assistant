@@ -12,6 +12,11 @@
 6. `docs/Pokemon_Champions_WSL_Docker_Windows_MSI_Design_v2_6.md`：WSL+Dockerの開発とWindowsビルド・実行の分離。MSIは別作業。
 7. `README.md`, `CODEX_START_PROMPT.md`：新規参加時の開発入口（古い日付の記述より正本とGitHub現況を優先）。
 
+
+## GitHub Actions無料枠・課金防止（2026-10-26追加）
+
+**新チャットは `docs/GITHUB_ACTIONS_BUDGET_AND_CI_POLICY.md` を必読。** GitHub Free/private repoを維持し、Actions超過課金を避ける。変更はDraft PRでまとめ、ローカルテスト後に最終SHAを固定してからReadyにし、必須Windows CIを行う。最新HEADのCI成功要件は絶対に緩めない。masterへのpushでWindows開発版再ビルドが走るため、マージ回数も抑える。2026-10-26の90%使用警告は履歴値であり、現在のBudgetの$0設定や超過時停止設定が有効かは未確認。予算が不足したらCI・マージ・Releaseを延期し、課金設定を変更済みとは主張しない。
+
 ## 現行CI・配布・ストレージ
 
 - リポジトリ：`hatsu07/pokemon_champions_assistant`（**privateのまま維持**）。
