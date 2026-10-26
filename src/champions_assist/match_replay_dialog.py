@@ -1162,6 +1162,11 @@ class MatchReplayDialog(QDialog):
             else:
                 if prediction.label!=self._last_local_class:
                     self._last_local_class=prediction.label
+                    self._trace_event("SCREEN_CLASSIFIER_CHANGED",
+                                      screen_label=prediction.label,
+                                      confidence=round(prediction.confidence,3),
+                                      margin=round(prediction.margin,3),
+                                      latency_ms=round(prediction.latency_ms,2))
                     self.local_classifier_label.setText(
                         f"ローカル画面判別: {prediction.label} / "
                         f"確信度 {prediction.confidence:.2f} / "
@@ -1170,18 +1175,34 @@ class MatchReplayDialog(QDialog):
                 if classified is not None:
                     self._automatic_probe.acknowledge(image,phase)
                     self._queue_batch(self._turn_buffer.batch(image), screen_label=classified)
-                # A validated installed model is the default trigger. Do not
-                # also fire an unrelated image-change gate for UNKNOWN frames.
+                if prediction.label=="UNKNOWN":
+                    self._classifier_unknown_streak+=1
+                    if self._classifier_unknown_streak>=3 and self._thread is None:
+                        self._observe_fallback_transition(image,phase)
+                else:
+                    self._classifier_unknown_streak=0
                 return
 
+        self._observe_fallback_transition(image,phase)
+
+    def _observe_fallback_transition(self,image,phase):
+        """Keep the latest changed scene while GPT works; no invented UI label."""
         if self._thread is not None and self._active_job=="batch":
-            # Do not acknowledge/consume a fallback scene transition while
-            # GPT is already working. Otherwise the newer command frame can
-            # disappear from the gate *without ever being submitted*.
+            if self._automatic_probe.observe(image,phase):
+                self._deferred_fallback_batch=self._turn_buffer.batch(image)[-2:]
+                self._trace_event("FALLBACK_TRANSITION_DEFERRED")
             return
         if self._automatic_probe.observe(image,phase):
-            # No bundled trained model: bounded fallback only. ChatGPT must
-            # classify the screenshot before generating any tactical choice.
+            if (self._last_observed_ui=="COMMAND_MENU"
+                    and self._command_menu_frame is not None
+                    and self.state is not None
+                    and self.state.get("phase")=="BATTLE"):
+                current=AutomaticVisualProbe._small(image)
+                old=AutomaticVisualProbe._small(self._command_menu_frame)
+                if float(np.mean(np.abs(current-old)))<0.12:
+                    self._trace_event("COMMAND_MENU_DUPLICATE_SUPPRESSED")
+                    return
+            self._trace_event("FALLBACK_SCREEN_RECHECK")
             self._queue_batch(self._turn_buffer.batch(image))
 
     @Slot(object)
@@ -1253,6 +1274,13 @@ class MatchReplayDialog(QDialog):
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
             self.state=payload["state"]
+            observed=report.get("screen")
+            if observed and observed!="UNKNOWN":
+                self._last_observed_ui=observed
+                if observed=="COMMAND_MENU" and self._active_request_frame is not None:
+                    self._command_menu_frame=self._active_request_frame.copy()
+                elif observed in ("MOVE_MENU","PARTY_MENU","ACTION_RESOLUTION"):
+                    self._command_menu_frame=None
         if report.get("status")=="ERROR":
             reason=report.get("reason","UNKNOWN")
             if (reason in ("ReadTimeout","APITimeoutError","TimeoutError")
@@ -1701,9 +1729,14 @@ class MatchReplayDialog(QDialog):
         if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
             reserve=max(0,87-(monotonic()-self._selection_screen_started))
             clock+=f"／選出→PREP推定余裕 {reserve:.0f}秒"
+            clock+=("（ローカル分類候補起点）" if
+                    self._selection_clock_source=="LOCAL_CANDIDATE"
+                    else "（AI送信画像から逆算・未検証）")
         if self._active_request_started is not None and self._active_job=="batch":
             if remaining<=5:
                 clock+="【期限間近】"
+        if phase=="PREP" and state.get("selection_assumed"):
+            current+="／実選出3匹は未確認"
         self.activity_banner.setText("アプリの作業："+current)
         self.deadline_banner.setText("時間："+clock+"（ローカル計測・ゲーム内時計とは別）")
         self.live_clock_changed.emit(clock)
@@ -1750,7 +1783,10 @@ class MatchReplayDialog(QDialog):
         if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
                 and report.get("status") in ("OBSERVED","MATCH_END")):
             self._last_action_text=""
-        self.selection_banner.setText(self._last_selection_text or "選出：未提示")
+        self.selection_banner.setText(
+            self._last_selection_text+"（実選出未確認）"
+            if self._last_selection_text and state.get("selection_assumed")
+            else self._last_selection_text or "選出：未提示")
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
         elif report.get("screen")=="COMMAND_MENU":
