@@ -824,8 +824,10 @@ class MatchReplayDialog(QDialog):
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._clear_capture_preview("監視停止中")
-        if self._thread is None:
-            self._set_ai_status("AI監視停止（新規画像送信なし）")
+        self._set_ai_status(
+            "監視停止／通信中の結果は破棄・ワーカー終了処理中"
+            if self._thread is not None or self._prep_thread is not None else
+            "AI監視停止（新規画像送信なし）")
         # Previously the UI could still say "自動送信中" after stopping.
         if self.state is not None:
             self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
