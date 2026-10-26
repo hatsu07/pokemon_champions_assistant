@@ -328,10 +328,9 @@ class SelectionPlanner:
         try:
             if partial:
                 known=tuple(n for n in opponents if n not in uncertain_names)
-                context=decision_context(assets, known) if False else {
-                    "selection_checklist": __import__(
-                        "champions_assist.live_context",fromlist=["SELECTION_CHECKLIST"]
-                    ).SELECTION_CHECKLIST,
+                from .live_context import SELECTION_CHECKLIST
+                context={
+                    "selection_checklist": SELECTION_CHECKLIST,
                     "lookup_rows_critical": [],
                     "own_team": [dict(item) for item in assets.own_team],
                     "own_roster_source": "PRELOADED_USER_SELECTED_TEAM_NOT_VISION",
