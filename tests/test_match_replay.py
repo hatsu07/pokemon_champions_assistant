@@ -115,6 +115,40 @@ class FullReplayTest(unittest.TestCase):
         self.assertEqual(out["status"],"BLOCKED")
         self.assertEqual(out["reason"],"MATCH_ALREADY_ENDED")
 
+    def test_selection_planner_returns_roles_from_the_same_tactical_call(self):
+        def with_roles(_ctx,_remaining,_mode):
+            return {
+                "selected_three":["Pikachu","Azumarill","Gyarados"],
+                "lead":"Pikachu",
+                "preserve":"Pikachu",
+                "stopper":"Azumarill",
+                "closer":"Gyarados",
+            }
+        out=self.advance(frame(
+            "TEAM_SELECTION",opponent_six=[
+                "Meowscarada","Primarina","Garchomp",
+                "Lucario","Gholdengo","Mimikyu"],
+        ),callback=with_roles)
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertEqual(out["preserve"],"ピカチュウ")
+        self.assertEqual(out["stopper"],"マリルリ")
+        self.assertEqual(out["closer"],"ギャラドス")
+        self.assertEqual(self.state["phase"],"SELECTION")  # Pure reducer waits for live adapter
+
+    def test_invalid_role_is_not_accepted_as_a_win_condition(self):
+        def bad_role(_ctx,_remaining,_mode):
+            return {
+                "selected_three":["Pikachu","Azumarill","Gyarados"],
+                "lead":"Pikachu",
+                "preserve":"Pikachu",
+                "stopper":"NotOnOurTeam",
+                "closer":"Gyarados",
+            }
+        out=self.advance(frame("TEAM_SELECTION",opponent_six=list(OPP)),
+                         callback=bad_role)
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertIsNone(out["stopper"])
+
     def test_live_auto_accept_selection_and_observed_different_lead(self):
         selected=list(OWN[:3])
         state=new_replay(self.assets)
