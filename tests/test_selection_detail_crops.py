@@ -102,7 +102,7 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(sum(x["type"]=="input_image" for x in
                              endpoint.calls[0]["input"][0]["content"]),1)
 
-    def test_type_icon_conflict_retries_same_gpt_model_once(self):
+    def test_type_icon_conflict_is_diagnostic_without_retry(self):
         original=fixture_assets()
         # Complete, typed test rows from the frozen Champions master format.
         correct_types=["くさ/あく","みず/フェアリー","ドラゴン/じめん",
@@ -123,14 +123,14 @@ class SelectionDetailImageTests(unittest.TestCase):
                                              ["かくとう","はがね"],
                                              ["はがね","ゴースト"],["ゴースト","フェアリー"]])
         chosen={"selected_three":list(OWN[:3]),"lead":OWN[0]}
-        client,calls=self.fake_client([wrong,corrected,chosen])
+        client,calls=self.fake_client([wrong,chosen])
         state,report=run_replay_image(
             self.image,state=new_replay(frozen),assets=frozen,
             model="mock",access_token="dummy",client_factory=lambda **_:client)
         self.assertEqual(report["status"],"TEST_ONLY")
-        self.assertEqual(report["opponent_recognition_attempts"],2)
-        self.assertEqual(len(calls.calls),3)
-        self.assertIn("OPPONENT_TYPE_MISMATCH",calls.calls[1]["instructions"])
+        self.assertEqual(report["opponent_recognition_attempts"],1)
+        self.assertEqual(len(calls.calls),2)
+        self.assertEqual(report["type_mismatch_slots"],[3])
         self.assertIn("type GLYPHS",calls.calls[0]["instructions"])
         self.assertIn("opponent_type_icons",
                       calls.calls[0]["text"]["format"]["schema"]["required"])
