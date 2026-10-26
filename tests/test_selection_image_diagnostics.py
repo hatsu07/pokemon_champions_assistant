@@ -128,7 +128,8 @@ class SelectionImageStatisticsTests(unittest.TestCase):
 class RecognitionProbeTests(unittest.TestCase):
     def test_model_vision_only_comparison_no_tactical_call(self):
         obs={"visual_ui":"TEAM_SELECTION","our_six":[],
-             "opponent_six":list(OPP),"uncertain_slots":[]}
+             "opponent_six":list(OPP),
+             "opponent_type_icons":[[] for _ in range(6)],"uncertain_slots":[]}
         class Stream:
             def __enter__(self):return self
             def __exit__(self,*args):return False
@@ -151,6 +152,7 @@ class RecognitionProbeTests(unittest.TestCase):
         self.assertEqual(result["status"],"RECOGNIZED")
         self.assertEqual(result["correct_slots"],6)
         self.assertEqual(result["opponent_six"],list(OPP))
+        self.assertEqual(result["opponent_type_icons"],[[] for _ in range(6)])
         self.assertEqual(result["visual_image_count"],1)
         self.assertEqual(client.calls[0]["model"],"fake-model")
         self.assertEqual(client.calls[0]["text"]["format"]["name"],
