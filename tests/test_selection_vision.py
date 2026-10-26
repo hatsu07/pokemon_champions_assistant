@@ -140,6 +140,17 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(unresolved,("未判明相手3",))
         self.assertNotIn("ゲンガー",names)
 
+    def test_incomplete_type_evidence_shape_never_passes(self):
+        frozen=typed_assets()
+        for invalid in ([[],[],[],[],[]], [[],[],[],[],[],[],[]],
+                        ["でんき",[],[],[],[],[]], [[],[],[],[],[],[1]]):
+            observed=observation()
+            observed["opponent_type_icons"]=invalid
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(
+                    SelectionBlocked,"OPPONENT_TYPE_EVIDENCE_INVALID"):
+                    verify_selection_observation(observed,frozen)
+
     def test_type_evidence_absence_and_unverified_mega_preview(self):
         frozen=typed_assets()
         # Existing tests and manually entered observations without type-icon
