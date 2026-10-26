@@ -1201,19 +1201,28 @@ class MatchReplayDialog(QDialog):
                               screen_label=screen_label or "UNCLASSIFIED")
             return
         if self._thread is not None and self._active_job=="batch":
-            # Before any model result, protect actionable requests from a flood
-            # of unknown animations, duplicates or old event frames.
-            if not _should_replace_inflight(self._inflight_screen_label,
-                                            screen_label):
+            # A second TURN_ACTION belongs to a *different* decision window
+            # after BATTLE_EVENT, even when its screen category is identical.
+            newer_turn=(screen_label in _URGENT_SCREENS
+                        and self._active_turn_epoch is not None
+                        and self._turn_epoch>self._active_turn_epoch)
+            if not newer_turn and not _should_replace_inflight(
+                    self._inflight_screen_label,screen_label):
                 self._trace_event("INFLIGHT_FRAME_SUPPRESSED",
                                   screen_label=screen_label or "UNCLASSIFIED")
                 return
-            if (self._pending_batch is not None and
-                    not _should_replace_inflight(self._pending_screen_label,
-                                                 screen_label)):
+            if (not newer_turn and self._pending_batch is not None
+                    and not _should_replace_inflight(self._pending_screen_label,
+                                                     screen_label)):
                 self._trace_event("PENDING_PRIORITY_PROTECTED",
                                   screen_label=screen_label or "UNCLASSIFIED")
                 return
+            if newer_turn:
+                self._trace_event("NEW_TURN_QUEUED_BEHIND_INFLIGHT",
+                                  turn_epoch=self._turn_epoch,
+                                  active_turn_epoch=self._active_turn_epoch,
+                                  screen_label=screen_label,
+                                  frame_seq=self._last_capture_seq)
         if screen_label=="BATTLE_EVENT":
             self._note_battle_event()
         # A newly observed turn/party/event candidate outranks PREP.
