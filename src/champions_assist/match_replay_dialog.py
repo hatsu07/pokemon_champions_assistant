@@ -297,7 +297,8 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
-        self._automatic_probe=AutomaticVisualProbe(matchmaking_recheck=float('inf'))
+        self._automatic_probe=AutomaticVisualProbe(
+            min_gap=8.0,matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
         # Missing/unvalidated training weights are not silently treated as
         # a working visual model. Default CPU is cheap and deterministic.
@@ -827,8 +828,8 @@ class MatchReplayDialog(QDialog):
                "TURN_ACTION":"技選択画面","SWITCH_SELECTION":"交代画面"}
         found=[names[k] for k in names if k in self._turn_buffer.templates]
         self.menu_detection_label.setText(
-            "標準自動認識: 有効 / 補助登録: "+
-            (" / ".join(found) if found else "なし（登録不要）"))
+            "自動検出: 検証済みONNXがあれば選出・技選択・交代画面のみ送信。"
+            "モデルなしは事前警告後に回数制限付きで確認。")
 
     def _eligible_menu(self, kind: str) -> bool:
         phase=(self.state or {}).get("phase")
@@ -876,8 +877,9 @@ class MatchReplayDialog(QDialog):
             else "学習用画像は保存しません。"
         )
         if QMessageBox.question(self, "自動送信の確認",
-                "指定したゲーム画面をローカルで継続監視します。登録した選択画面を検出した時のみ、"
-                "直近の重要画像をまとめてChatGPTへ送信します。送信ごとの確認は行いません。"
+                "指定したゲーム画面を継続監視します。分類モデルが有効なら"
+                "選出・技選択・交代画面だけAIへ送信します。"
+                "未設定時は警告済みの低頻度モードを使用します。送信ごとの確認はありません。"
                 +storage_note+"開始しますか？",
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
@@ -895,6 +897,7 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._deferred_fallback_batch=None
         self._classifier_unknown_streak=0
+        self._fallback_last_dispatched_at=None
         self._last_observed_ui=None
         self._command_menu_frame=None
         self._turn_screen_seen_at=None
@@ -908,7 +911,9 @@ class MatchReplayDialog(QDialog):
         # Starting capture must update the status before a menu triggers AI.
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
         self._update_menu_detection_label()
-        self._set_ai_status("標準自動判定有効（最初の画面からAI確認を開始）")
+        self._set_ai_status(
+            "5分類モデル監視中（操作画面のみAI送信）" if self._screen_model is not None
+            else "分類モデルなし：画像変化を低頻度でAI確認（誤認識の可能性あり）")
         self._capture_next()
 
     def _stop_auto(self):
@@ -1263,6 +1268,11 @@ class MatchReplayDialog(QDialog):
                         f"確信度 {prediction.confidence:.2f} / "
                         f"{prediction.latency_ms:.1f}ms / {prediction.source}")
                 classified=self._screen_gate.observe(prediction,phase)
+                if classified=="BATTLE_EVENT":
+                    # Non-interactive event animation: do not pay for an AI
+                    # request until the next actionable screen appears.
+                    self._trace_event("NON_ACTION_EVENT_NOT_SENT")
+                    classified=None
                 if (classified is not None and phase=="SELECTION"
                         and not (self._thread is not None
                                  and self._inflight_screen_label=="TEAM_SELECTION")):
@@ -1270,21 +1280,24 @@ class MatchReplayDialog(QDialog):
                 if classified is not None:
                     self._automatic_probe.acknowledge(image,phase)
                     self._queue_batch(self._turn_buffer.batch(image), screen_label=classified)
-                if prediction.label=="UNKNOWN":
-                    self._classifier_unknown_streak+=1
-                    if self._classifier_unknown_streak>=3 and self._thread is None:
-                        self._observe_fallback_transition(image,phase)
-                else:
-                    self._classifier_unknown_streak=0
+                # A loaded, validated ONNX remains authoritative. UNKNOWN
+                # is abstention, not permission to send an unrelated frame.
+                self._classifier_unknown_streak=(
+                    self._classifier_unknown_streak+1
+                    if prediction.label=="UNKNOWN" else 0)
                 return
 
         self._observe_fallback_transition(image,phase)
 
     def _observe_fallback_transition(self,image,phase):
-        """Keep the latest changed scene while GPT works; no invented UI label."""
+        """Model-free fallback is rate-limited; a scene change is NOT a menu."""
+        if (self._fallback_last_dispatched_at is not None
+                and monotonic()-self._fallback_last_dispatched_at<10.0):
+            return
         if self._thread is not None and self._active_job=="batch":
             if self._automatic_probe.observe(image,phase):
                 self._deferred_fallback_batch=self._turn_buffer.batch(image)[-2:]
+                self._fallback_last_dispatched_at=monotonic()
                 self._trace_event("FALLBACK_TRANSITION_DEFERRED")
             return
         if self._automatic_probe.observe(image,phase):
@@ -1297,7 +1310,9 @@ class MatchReplayDialog(QDialog):
                 if float(np.mean(np.abs(current-old)))<0.12:
                     self._trace_event("COMMAND_MENU_DUPLICATE_SUPPRESSED")
                     return
-            self._trace_event("FALLBACK_SCREEN_RECHECK")
+            self._fallback_last_dispatched_at=monotonic()
+            self._trace_event("FALLBACK_SCREEN_RECHECK",
+                              source="MODEL_UNAVAILABLE_RATE_LIMITED")
             self._queue_batch(self._turn_buffer.batch(image))
 
     @Slot(object)
