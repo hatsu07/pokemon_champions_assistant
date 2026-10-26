@@ -107,6 +107,7 @@ TYPE_ICON_VISION_INSTRUCTIONS = (
     "items, or your own world knowledge. Do not mistake badges/marks "
     "for type icons. If graphic or forme is ambiguous, mark that slot "
     "in uncertain_slots instead of inventing a species. "
+    "A type glyph mismatch alone does not mean the species name is uncertain. "
 )
 
 
@@ -216,8 +217,8 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         assets.matrix_rows_for(tuple(resolved))
     except (ValueError, KeyError) as exc:
         raise SelectionBlocked("OPPONENT_MATRIX_MISSING") from exc
-    if opponent_type_mismatch_slots(raw, assets):
-        raise SelectionBlocked("OPPONENT_TYPE_MISMATCH")
+    # Glyph mismatches are diagnostic only: a readable six-species list
+    # matching Champions matrix names is sufficient for full PREP.
     return tuple(resolved)
 
 def unmatched_opponent_slots(raw: Mapping[str, Any],
@@ -241,10 +242,7 @@ def unmatched_opponent_slots(raw: Mapping[str, Any],
                for key in assets.matrix_index):
             continue
         missing.append({"slot":index,"label":name[:70]})
-    for issue in opponent_type_mismatch_slots(raw, assets):
-        if not any(item["slot"] == issue["slot"] for item in missing):
-            name = names[issue["slot"] - 1]
-            missing.append({"slot": issue["slot"], "label": name[:70]})
+    # Do not retry/blank a recognised species only due to icon misreading.
     missing.sort(key=lambda item: item["slot"])
     return missing
 
@@ -306,7 +304,7 @@ def roster_constrained_retry_guidance(
 _RETRYABLE_OPPONENT_REASONS = frozenset({
     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
-    "OPPONENT_MATRIX_MISSING", "OPPONENT_TYPE_MISMATCH",
+    "OPPONENT_MATRIX_MISSING",
     "OPPONENT_TYPE_EVIDENCE_INVALID",
 })
 
@@ -367,13 +365,12 @@ def partial_opponent_preview(raw: Mapping[str, Any],
     names=[]
     unresolved=[]
     seen=set()
-    type_unresolved = {v["slot"] for v in opponent_type_mismatch_slots(raw, assets)}
     for index,name in enumerate(raw_names,1):
         canonical=_display_name(name)
         choices=[canonical] if canonical in assets.matrix_index else [
             key for key in assets.matrix_index if key.startswith(canonical+"（")]
-        resolved=(choices[0] if index not in type_unresolved
-                  and len(choices)==1 and choices[0] not in seen else None)
+        resolved=(choices[0] if len(choices)==1
+                  and choices[0] not in seen else None)
         if resolved:
             names.append(resolved)
             seen.add(resolved)
