@@ -801,12 +801,20 @@ class UnifiedMainWindowTests(unittest.TestCase):
         reader=SimpleNamespace(
             drain=lambda:(SimpleNamespace(error=None,observations=(record,)),),
             stop=lambda:stopped.append(True),
+            reason="READY",diagnostic_counts=lambda:{
+                "ocr_jobs_enqueued":1,"ocr_jobs_completed":1,
+                "ocr_queue_pending":0,"ocr_results_pending":0},
             overflow=0,_queue=SimpleNamespace(qsize=lambda:0))
         panel._local_event_reader=reader
         result=panel._freeze_local_events_for_action("TURN_ACTION")
         self.assertEqual(len(result),1)
         self.assertEqual(result[0]["raw_text"],"まひになった")
         self.assertEqual(result[0]["certainty"],"CANDIDATE")
+        summary=[x for x in panel._timing_trace
+                 if x["event"]=="LOCAL_OCR_TURN_SUMMARY"][-1]
+        self.assertEqual(summary["ocr_jobs_enqueued"],1)
+        self.assertEqual(summary["ocr_candidates_sent"],1)
+        self.assertEqual(summary["ocr_status"],"READY")
         self.assertEqual(stopped,[True])
         self.assertIsNone(panel._local_event_reader)
         self.assertEqual(panel._drain_event_candidates()[0]["raw_text"],
