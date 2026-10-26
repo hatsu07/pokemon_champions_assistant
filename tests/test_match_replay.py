@@ -263,6 +263,58 @@ class FullReplayTest(unittest.TestCase):
             elapsed_seconds=lambda:1.0)
         self.assertEqual(out["reason"],"CHOICE_LOCK_VIOLATION")
 
+    def test_command_menu_excludes_fainted_bench_and_rejects_switch(self):
+        state=new_replay(self.assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],opponent_six=list(OPP))
+        state["battle_evidence"]["hp_by_pokemon"]["own"][OWN[1]]="0/180"
+        captured=[]
+        def decision(context,*args):
+            captured.append(context)
+            return {"action_kind":"SWITCH","switch_target":OWN[1],
+                    "move":"","warning":""}
+        _,out=advance_observation(
+            state,self.assets,frame("COMMAND_MENU",our_active=OWN[0],
+                opponent_active=OPP[0]),decision,elapsed_seconds=lambda:1.0)
+        self.assertEqual(captured[0]["action_candidates_count"],5)
+        self.assertEqual(captured[0]["selected_switch_options"],[OWN[2]])
+        self.assertEqual(out["status"],"BLOCKED")
+        self.assertEqual(out["reason"],"SWITCH_TARGET_FAINTED")
+
+    def test_field_effects_survive_events_to_next_action_context(self):
+        state=new_replay(self.assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],opponent_six=list(OPP))
+        event=frame("ACTION_RESOLUTION",our_active=OWN[0],
+                    opponent_active=OPP[0],our_hp="65/120",
+                    opponent_hp="40%",
+                    our_status="まひ",
+                    opponent_stat_changes="こうげき+2",
+                    battlefield_weather="雨",
+                    battlefield_terrain="エレキフィールド",
+                    battlefield_effects="ひかりのかべが継続",
+                    messages=["雨が降り始めた"])
+        state,out=advance_observation(
+            state,self.assets,event,
+            lambda *a: self.fail("Event must not trigger tactical AI"),
+            elapsed_seconds=lambda:1.0)
+        self.assertEqual(out["status"],"OBSERVED")
+        self.assertEqual(state["battlefield"]["weather"],"雨")
+        seen=[]
+        def choose_action(context,*args):
+            seen.append(context)
+            return {"action_kind":"MOVE","move":"10まんボルト",
+                    "switch_target":"","warning":""}
+        _,out=advance_observation(
+            state,self.assets,frame("COMMAND_MENU",our_active=OWN[0],
+                opponent_active=OPP[0]),choose_action,
+            elapsed_seconds=lambda:1.0)
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertEqual(seen[0]["battlefield"]["terrain"],"エレキフィールド")
+        self.assertEqual(seen[0]["battlefield"]["effects"],"ひかりのかべが継続")
+        self.assertEqual(seen[0]["battle_evidence"]["status_by_pokemon"]["own"][OWN[0]],"まひ")
+        self.assertEqual(seen[0]["observed_hp"]["own"],"65/120")
+
     def test_command_menu_unknown_actor_never_chooses_a_move(self):
         state=new_replay(self.assets)
         state.update(phase="BATTLE",selected_three=list(OWN[:3]),
