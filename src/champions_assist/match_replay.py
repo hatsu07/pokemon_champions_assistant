@@ -21,6 +21,7 @@ from .selection_vision import (
     SelectionBlocked, _stream_json, CHOICE_SCHEMA, VISION_SCHEMA, selection_image_content,
     retry_unresolved_opponent_six, roster_constrained_retry_guidance,
     unmatched_opponent_slots, selection_retry_image_content,
+    TYPE_ICON_VISION_INSTRUCTIONS,
 )
 from .terminology import japanese_name
 
@@ -420,7 +421,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "return our_six=[]. List all opponent species top to bottom. "
                     "If any unclear, do NOT infer from meta or the player's six; "
                     "leave the name out, include its position in uncertain_slots. "
-                    "Return TEAM_SELECTION only when the preview is visible."
+                    + TYPE_ICON_VISION_INSTRUCTIONS
+                    + "Return TEAM_SELECTION only when the preview is visible."
                     if is_preview else
                     "Read only visible Pokémon Champions UI. Report screen, "
                     "visible moves/party choices, HP and revealed events only."),
@@ -449,7 +451,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                         "The previous RIGHT opponent six request timed out "
                         "without any verified result. Re-read only the six "
                         "RIGHT Pokémon from this same game preview, "
-                        "top to bottom. Do not infer unseen species."),
+                        "top to bottom. Do not infer unseen species. "
+                        + TYPE_ICON_VISION_INSTRUCTIONS),
                     content=image_content,
                 )
             finally:
@@ -495,6 +498,7 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "slot in uncertain_slots and never guess. The LEFT own team "
                     "is registered and must not be recognized. Set our_six=[]; "
                     "keep all other observation fields tied to the actual image. "
+                    + TYPE_ICON_VISION_INSTRUCTIONS
                     + roster_constrained_retry_guidance(
                         reason=reason,previous=previous,assets=assets)
                 )
