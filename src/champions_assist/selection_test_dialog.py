@@ -379,7 +379,7 @@ class SelectionTestDialog(QDialog):
             if self.selection_started_at is not None else None)
         self.test_state=None
         if (self.selection_started_at is not None
-                and status in ("OK","PROVISIONAL_ADVICE")):
+                and status in ("OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE")):
             try:
                 from .live_timing_test import selection_test_prep_state
                 self.test_state=selection_test_prep_state(self.assets,report)
@@ -387,9 +387,12 @@ class SelectionTestDialog(QDialog):
                 pass
         self.auto_prep_pending=self.test_state is not None
         if self.auto_prep_pending:
+            partial=status=="PARTIAL_ADVICE"
             self.timing_status.setText(
                 f"選出を{self.selection_display_elapsed_ms/1000:.3f}秒で表示しました。"
-                " 同じ6匹と選出3匹でPREP18対面を自動実行します…")
+                + ("相手未判明枠は推測せず、既知の相手への暫定PREPを自動実行します…"
+                   if partial else
+                   " 同じ6匹と選出3匹でPREP18対面を自動実行します…"))
         else:
             self.timing_status.setText(
                 "未判明の相手があるため、既知の相手から暫定選出しました。"
@@ -506,10 +509,11 @@ class SelectionTestDialog(QDialog):
         if mode=="PREP":
             self.prep_attempted=True
             self.prep_completed=bool(report.get("pass"))
-            if report.get("pass"):
+            if report.get("pass") or report.get("partial_ready"):
                 self.test_state=payload["state"]
             details=(
-                f"選出＋自動PREP90秒 {'合格' if report.get('pass') else '未達'} "
+                f"選出＋自動PREP90秒 "
+                f"{'合格' if report.get('pass') else '暫定PREP実行' if report.get('partial_ready') else '未達'} "
                 f"／選出表示 {self.selection_display_elapsed_ms/1000:.3f}秒"
                 f"／PREP表示まで {wall/1000:.3f}秒"
                 f"／合計 {total/1000:.3f}秒"
@@ -517,7 +521,10 @@ class SelectionTestDialog(QDialog):
                 f"／初手 {report.get('lead_evaluated',0)}/6"
                 f"／控え {report.get('bench_evaluated',0)}/12"
                 f"／勝ち筋 {report.get('win_conditions',0)}/3"
-                f"／理由: {report.get('reason','UNKNOWN')}"
+                + (f"／既知の相手 {report.get('known_opponents',0)}/6"
+                   f"／未評価 {report.get('unknown_matchups',0)}対面"
+                   if report.get('partial_ready') else "")
+                + f"／理由: {report.get('reason','UNKNOWN')}"
                 f"／AI元結果: {report.get('source_status','UNKNOWN')}"
                 f"／AI元理由: {report.get('source_reason','-')}"
                 "。構造と時間の検証であり、戦術的正確性は未検証。")
