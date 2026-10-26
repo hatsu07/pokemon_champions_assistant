@@ -220,6 +220,34 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
         panel._stop_auto()
 
+    def test_later_turn_same_menu_is_queued_behind_old_inflight(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel._thread=object()
+        panel._active_job="batch"
+        panel._inflight_screen_label="TURN_ACTION"
+        panel._active_turn_epoch=1
+        panel._turn_epoch=2
+        panel._turn_action_sent=False
+        panel._turn_event_after_action=False
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        try:
+            with patch.object(panel,"_send_pending") as send:
+                panel._queue_batch([frame],screen_label="TURN_ACTION")
+                send.assert_called_once()
+            self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
+            self.assertEqual(panel._turn_epoch,2)
+            self.assertTrue(any(x["event"]=="NEW_TURN_QUEUED_BEHIND_INFLIGHT"
+                                and x["turn_epoch"]==2
+                                for x in panel._timing_trace))
+        finally:
+            panel._thread=None
+            panel._active_job=None
+            panel._inflight_screen_label=None
+            panel._pending_batch=None
+            panel._stop_auto()
+
     def test_same_turn_direct_queue_is_suppressed(self):
         panel=self.window._match_panel
         panel.state={"phase":"BATTLE"}
