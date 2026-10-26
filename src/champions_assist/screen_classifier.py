@@ -24,6 +24,7 @@ LABEL_SCHEMA_VERSION=2
 MODEL_DIR=Path(__file__).resolve().parent / "data"
 MODEL_FILE="champions_screen_classifier.onnx"
 MANIFEST_FILE="champions_screen_classifier.json"
+EMBEDDED_MANIFEST_KEY="pokemon_champions.screen_classifier.manifest_v2"
 
 
 @dataclass(frozen=True)
@@ -40,18 +41,51 @@ class ScreenClassifierError(ValueError):
 
 
 class ScreenClassifier:
-    """ImageNet-style RGB NCHW logits model with a pinned manifest."""
+    """RGB NCHW logits classifier; sidecar or ONNX-embedded v2 contract.
 
-    def __init__(self, model_path: str | Path, manifest_path: str | Path,
+    Unvalidated weights require an explicit trial opt-in. The classifier never
+    changes the manifest's validated flag, bypasses a checksum, or relabels
+    unknown classes.
+    """
+
+    def __init__(self, model_path: str | Path, manifest_path: str | Path | None,
                  *, device: str="cpu", session_factory=None,
-                 experimental_for_labelling: bool=False):
+                 experimental_for_labelling: bool=False,
+                 allow_unvalidated_for_trial: bool=False):
         path=Path(model_path)
-        info=json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        if device not in ("cpu","auto","gpu"):
+            raise ScreenClassifierError("INVALID_SCREEN_MODEL_DEVICE")
+        if session_factory is None:
+            import onnxruntime as ort
+            session_factory=ort.InferenceSession
+            available=ort.get_available_providers()
+        else:
+            available=["CPUExecutionProvider","CUDAExecutionProvider"]
+        providers=["CPUExecutionProvider"]
+        if device=="gpu":
+            if "CUDAExecutionProvider" not in available:
+                raise ScreenClassifierError("GPU_PROVIDER_UNAVAILABLE")
+            providers=["CUDAExecutionProvider","CPUExecutionProvider"]
+        session=None
+        if manifest_path is None:
+            # Metadata is stored in ONNX's custom_metadata_map, so load the
+            # runtime session once to retrieve it. No separate JSON is needed.
+            session=session_factory(str(path),providers=providers)
+            metadata=session.get_modelmeta().custom_metadata_map
+            raw=metadata.get(EMBEDDED_MANIFEST_KEY)
+            if not raw:
+                raise ScreenClassifierError("SCREEN_MODEL_METADATA_MISSING")
+            try:
+                info=json.loads(raw)
+            except (ValueError,TypeError) as exc:
+                raise ScreenClassifierError("INVALID_SCREEN_MODEL_EMBEDDED_METADATA") from exc
+        else:
+            info=json.loads(Path(manifest_path).read_text(encoding="utf-8"))
         if not isinstance(info,dict) or info.get("schema_version")!=LABEL_SCHEMA_VERSION:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_MANIFEST")
-        if info.get("validated") is not True and not experimental_for_labelling:
+        if info.get("validated") is not True and not (
+                experimental_for_labelling or allow_unvalidated_for_trial):
             raise ScreenClassifierError("SCREEN_MODEL_NOT_VALIDATED")
-        # Explicit offline-only opt-in. load_bundled_classifier never enables it.
         self.experimental=info.get("validated") is not True
         labels=info.get("labels")
         if (not isinstance(labels,list) or len(labels)!=len(LABELS)
@@ -68,28 +102,17 @@ class ScreenClassifier:
                 or any(not isinstance(v,(int,float)) or not np.isfinite(v) for v in mean+std)
                 or any(v<=0 for v in std)):
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_NORMALIZATION")
-        digest=info.get("sha256")
-        if not isinstance(digest,str) or len(digest)!=64:
-            raise ScreenClassifierError("INVALID_SCREEN_MODEL_CHECKSUM")
-        if sha256(path.read_bytes()).hexdigest()!=digest.lower():
-            raise ScreenClassifierError("SCREEN_MODEL_CHECKSUM_MISMATCH")
-        if device not in ("cpu","auto","gpu"):
-            raise ScreenClassifierError("INVALID_SCREEN_MODEL_DEVICE")
-        if session_factory is None:
-            import onnxruntime as ort
-            session_factory=ort.InferenceSession
-            available=ort.get_available_providers()
-        else:
-            # Tests inject a deterministic session with no inference runtime.
-            available=["CPUExecutionProvider","CUDAExecutionProvider"]
-        providers=["CPUExecutionProvider"]
-        if device=="gpu":
-            if "CUDAExecutionProvider" not in available:
-                raise ScreenClassifierError("GPU_PROVIDER_UNAVAILABLE")
-            providers=["CUDAExecutionProvider","CPUExecutionProvider"]
-        # Do not claim GPU is faster for small models; 'auto' deliberately
-        # picks the CPU until measured evidence justifies another default.
-        session=session_factory(str(path),providers=providers)
+        if manifest_path is not None:
+            # A sidecar digest pins the exact binary. An embedded SHA-256 would
+            # be self-referential; ONNX-only models use the runtime's parser
+            # plus their embedded contract instead.
+            digest=info.get("sha256")
+            if not isinstance(digest,str) or len(digest)!=64:
+                raise ScreenClassifierError("INVALID_SCREEN_MODEL_CHECKSUM")
+            if sha256(path.read_bytes()).hexdigest()!=digest.lower():
+                raise ScreenClassifierError("SCREEN_MODEL_CHECKSUM_MISMATCH")
+        if session is None:
+            session=session_factory(str(path),providers=providers)
         inputs=session.get_inputs()
         if len(inputs)!=1:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_INPUTS")
@@ -136,19 +159,35 @@ class ScreenClassifier:
 
 
 def load_bundled_classifier(*, model_dir: str | Path | None=None,
-                            device: str="cpu", session_factory=None):
-    """Return (model or None, diagnostic), never download model weights."""
-    directory=Path(model_dir) if model_dir is not None else MODEL_DIR
-    model=directory / MODEL_FILE
-    manifest=directory / MANIFEST_FILE
-    if not model.is_file() or not manifest.is_file():
+                            model_path: str | Path | None=None,
+                            device: str="cpu", session_factory=None,
+                            allow_unvalidated_for_trial: bool=False):
+    """Load selected ONNX + optional same-name JSON, or ONNX-only metadata.
+
+    The default caller remains strict. Trial use must be an explicit opt-in;
+    status exposes the original reason instead of hiding ScreenClassifierError.
+    """
+    if model_path is not None:
+        model=Path(model_path)
+        if model.suffix.lower()!=".onnx":
+            return None,"MODEL_PATH_NOT_ONNX"
+        manifest=model.with_suffix(".json")
+    else:
+        directory=Path(model_dir) if model_dir is not None else MODEL_DIR
+        model=directory / MODEL_FILE
+        manifest=directory / MANIFEST_FILE
+    if not model.is_file():
         return None,"MODEL_NOT_BUNDLED"
     try:
-        classifier=ScreenClassifier(model,manifest,device=device,
-                                    session_factory=session_factory)
-        return classifier,"MODEL_READY_"+classifier.device.upper()
+        classifier=ScreenClassifier(
+            model,manifest if manifest.is_file() else None,device=device,
+            session_factory=session_factory,
+            allow_unvalidated_for_trial=allow_unvalidated_for_trial)
+        prefix="MODEL_TRIAL_" if classifier.experimental else "MODEL_READY_"
+        return classifier,prefix+classifier.device.upper()
+    except ScreenClassifierError as exc:
+        return None,"MODEL_LOAD_FAILED_"+str(exc)
     except (OSError,ValueError,ImportError,RuntimeError) as exc:
-        # Broken/untrusted model is never an excuse to return guessed UI facts.
         return None,"MODEL_LOAD_FAILED_"+type(exc).__name__
 
 
