@@ -1304,7 +1304,10 @@ class MatchReplayDialog(QDialog):
             # final selection screen as if it were the opponent's first turn.
             if self._latest_image is not None:
                 self._automatic_probe.acknowledge(self._latest_image,"PREP")
-            if self.state.get("prep_status") not in ("RUNNING","STRUCTURE_COMPLETE"):
+            if self.state.get("prep_status") not in (
+                    "RUNNING","STRUCTURE_COMPLETE","PARTIAL_STRUCTURE_COMPLETE",
+                    "CACHE_STRUCTURE_COMPLETE","CACHE_KNOWN_ONLY",
+                    "CACHE_INCOMPLETE"):
                 self._start_prep_auto()
         except (ValueError, KeyError) as exc:
             QMessageBox.warning(self,"実際の選出を確定できません",str(exc))
