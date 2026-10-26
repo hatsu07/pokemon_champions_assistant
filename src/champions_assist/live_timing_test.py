@@ -16,6 +16,7 @@ from .match_replay import (
     new_replay, confirm_actual_selection, run_replay_prep, run_replay_batch)
 from .prep import (
     build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+    validate_partial_prep_result,
 )
 
 PREP_LIMIT_SECONDS = 87.0  # Team-selection 90s clock minus 3s for player input.
@@ -32,17 +33,32 @@ def selection_test_prep_state(assets, result: dict) -> dict:
     Opponents must come from the verified image observation; selected team
     must be the three actually recommended, without guessing another team.
     """
-    if result.get("status") not in ("OK", "PROVISIONAL_ADVICE"):
+    if result.get("status") not in ("OK", "PROVISIONAL_ADVICE", "PARTIAL_ADVICE"):
         raise ValueError("VALID_SELECTION_RESULT_REQUIRED")
     opponents = tuple(result.get("opponent_six") or ())
     if len(opponents) != 6 or len(set(opponents)) != 6:
         raise ValueError("SIX_OPPONENTS_REQUIRED")
+    partial=result["status"]=="PARTIAL_ADVICE"
+    unknown=tuple(name for i,name in enumerate(opponents,1)
+                  if name==f"未判明相手{i}")
+    if partial:
+        known=tuple(name for name in opponents if name not in unknown)
+        if (len(unknown) not in (1,2) or len(known) not in (4,5)
+                or any(name not in assets.matrix_index for name in known)):
+            raise ValueError("PARTIAL_OPPONENTS_INVALID")
+    else:
+        if any(name not in assets.matrix_index for name in opponents):
+            raise ValueError("SIX_OPPONENTS_REQUIRED")
+        known=opponents
     chosen = result.get("selected_three") or []
     lead = result.get("lead") or ""
     state = new_replay(assets)
     state["phase"] = "SELECTION"
     state["opponent_six"] = list(opponents)
-    state["matrix_rows_six"] = list(assets.matrix_rows_for(opponents))
+    state["visual_unknown_opponents"] = list(unknown)
+    state["matrix_rows_six"] = (
+        [assets.matrix_index[name] for name in known]
+        if partial else list(assets.matrix_rows_for(opponents)))
     # This confirmation is ONLY inside the replay test harness, not in the
     # running game: player choices are never silently confirmed.
     return confirm_actual_selection(state, assets, list(chosen), lead)
@@ -97,7 +113,10 @@ def prep_timing_test(
     selected = tuple(state.get("selected_three") or ())
     lead = state.get("lead")
     six = tuple(state.get("opponent_six") or ())
-    rows = prep.get("matchups_18") or []
+    partial=bool(state.get("visual_unknown_opponents"))
+    unknown_slots=tuple(state.get("visual_unknown_opponents") or ())
+    known=tuple(name for name in six if name not in unknown_slots)
+    rows = prep.get("matchups_known" if partial else "matchups_18") or []
     lead_rows = [r for r in rows if r.get("our_pokemon") == lead]
     bench_rows = [r for r in rows if r.get("our_pokemon") in selected and r.get("our_pokemon") != lead]
     required = ("preserve", "stopper", "closer")
@@ -107,18 +126,24 @@ def prep_timing_test(
     structurally_valid = False
     if len(six)==6 and len(selected)==3 and lead in selected:
         try:
-            check=validate_prep_result(
-                build_prep_input(selected,lead,six,tuple(
-                    state.get("matrix_rows_six") or assets.matrix_rows_for(six))),
-                PrepResult("COMPLETE",tuple(PrepMatchup(
+            parsed=PrepResult(
+                "PARTIAL" if partial else "COMPLETE",
+                tuple(PrepMatchup(
                     str(r["our_pokemon"]),str(r["opponent_pokemon"]),
                     str(r["eval_code"])) for r in rows),
-                    prep.get("preserve"),prep.get("stopper"),prep.get("closer")))
+                prep.get("preserve"),prep.get("stopper"),prep.get("closer"))
+            check=(
+                validate_partial_prep_result(
+                    selected,lead,known,unknown_slots,parsed)
+                if partial else validate_prep_result(
+                    build_prep_input(selected,lead,six,tuple(
+                        state.get("matrix_rows_six") or assets.matrix_rows_for(six))),
+                    parsed))
             structurally_valid=check.complete
         except (ValueError,KeyError,TypeError):
             structurally_valid=False
     complete = (
-        structurally_valid
+        not partial and structurally_valid
         and report.get("status") in ("PREP_STRUCTURE_OK", "PREP_PROVISIONAL")
         and updated.get("prep_status") == "STRUCTURE_COMPLETE"
         and len(six) == 6 and len(set(six)) == 6
@@ -127,15 +152,25 @@ def prep_timing_test(
         and win_roles == 3
     )
     passed = complete and elapsed <= round(cap*1000)
-    return (updated if passed else deepcopy(state)), {
-        "status": "PREP_TIMING_PASS" if passed else "PREP_TIMING_FAIL",
+    partial_ready=(
+        partial and structurally_valid
+        and report.get("status")=="PREP_PARTIAL"
+        and updated.get("prep_status")=="PARTIAL_STRUCTURE_COMPLETE"
+        and len(rows)==3*len(known)
+        and len(lead_rows)==len(known) and len(bench_rows)==2*len(known)
+        and win_roles==3
+        and elapsed<=round(cap*1000)
+    )
+    return (updated if passed or partial_ready else deepcopy(state)), {
+        "status": ("PREP_TIMING_PASS" if passed else
+                   "PREP_TIMING_PARTIAL" if partial_ready else "PREP_TIMING_FAIL"),
         "source_status": report.get("status", "UNKNOWN"),
         "source_reason": report.get("reason", ""),
         "source_elapsed_ms": report.get("elapsed_ms"),
         "source_stage": report.get("request_stage"),
         "source_model_elapsed_ms": report.get("model_elapsed_ms"),
         "source_prompt_chars": report.get("prompt_chars"),
-        "reason": "OK" if passed else (
+        "reason": "OK" if passed else "KNOWN_ONLY_UNCONFIRMED_OPPONENT" if partial_ready else (
             "DEADLINE_EXCEEDED" if elapsed > round(cap*1000) else
             (report.get("reason") if report.get("reason") not in ("OK","") else None)
             or "INCOMPLETE_18_OR_ROLES"),
@@ -143,6 +178,10 @@ def prep_timing_test(
         "lead_evaluated": len(lead_rows),
         "bench_evaluated": len(bench_rows),
         "win_conditions": win_roles,
+        "known_opponents":len(known),
+        "unknown_opponents":len(unknown_slots),
+        "unknown_matchups":3*len(unknown_slots),
+        "partial_ready":partial_ready,
         "pass": passed,
         "evidence_scope": ("AI_PROVISIONAL_NOT_TACTICALLY_CERTIFIED"
                            if state.get("matrix_provisional")
