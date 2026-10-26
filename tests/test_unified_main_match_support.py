@@ -511,11 +511,26 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._render({"status":"PREP_PROVISIONAL_RUNNING"})
         self.assertIn("ピカチュウ",self.window.recommendation_label.text())
         panel.state["phase"]="BATTLE"
-        panel._render({"status":"OBSERVED","screen":"COMMAND_MENU"})
-        self.assertIn("たたかう",panel.action_banner.text())
-        self.assertIn("技一覧",self.window.recommendation_label.text())
+        panel._render({"status":"PROVISIONAL_ADVICE",
+                       "screen":"COMMAND_MENU",
+                       "recommendation":"じしん。",
+                       "action":{"kind":"MOVE","move":"じしん"}})
+        self.assertIn("じしん",panel.action_banner.text())
+        self.assertIn("じしん",self.window.recommendation_label.text())
+        self.assertNotIn("技一覧",panel.action_banner.text())
         self.assertIn("対戦中",panel.phase_banner.text())
         self.assertIn("時間：",panel.deadline_banner.text())
+
+    def test_command_menu_direct_switch_is_primary_action(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","selected_three":["ピカチュウ","ギャラドス","ガブリアス"],
+                     "lead":"ピカチュウ","matrix_provisional":True,
+                     "prep_status":"CACHE_STRUCTURE_COMPLETE"}
+        panel._render({"status":"PROVISIONAL_ADVICE","screen":"COMMAND_MENU",
+                       "recommendation":"ガブリアスに交代。",
+                       "action":{"kind":"SWITCH","target":"ガブリアス"}})
+        self.assertIn("ガブリアスに交代",panel.action_banner.text())
+        self.assertNotIn("たたかう",panel.action_banner.text())
 
     def test_selected_team_automatically_prepares_matching_live_sources(self):
         from champions_assist.matrix_compatibility import matrix_matches_registered_team
