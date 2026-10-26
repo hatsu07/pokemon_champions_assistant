@@ -20,7 +20,7 @@ from .selection_vision import (
     SelectionPlanner, selection_response, selection_summary_ja, verify_selection_observation,
     SelectionBlocked, _stream_json, CHOICE_SCHEMA, VISION_SCHEMA, selection_image_content,
     retry_unresolved_opponent_six, roster_constrained_retry_guidance,
-    unmatched_opponent_slots,
+    unmatched_opponent_slots, selection_retry_image_content,
 )
 from .terminology import japanese_name
 
@@ -257,9 +257,17 @@ def advance_observation(
         output.update(selection.as_dict())
         output["recommendation"] = selection_summary_ja(selection.as_dict())
         state["phase"] = "SELECTION"
-        if selection.status in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE"):
+        if selection.status in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE",
+                                "PARTIAL_ADVICE"):
             state["opponent_six"] = list(selection.opponent_six)
-            if state["matrix_compatible"] or state["matrix_provisional"]:
+            if selection.status=="PARTIAL_ADVICE":
+                # No invented sixth row; PREP cannot claim 18/18 complete.
+                state["matrix_rows_six"] = [
+                    assets.matrix_index[name] for name in selection.opponent_six
+                    if name in assets.matrix_index]
+                state["prep_status"] = "VISUAL_PARTIAL_5_OF_6"
+                output["partial_known_opponents"] = len(state["matrix_rows_six"])
+            elif state["matrix_compatible"] or state["matrix_provisional"]:
                 state["matrix_rows_six"] = list(
                     assets.matrix_rows_for(tuple(selection.opponent_six)))
         _event(state, obs, output)
@@ -490,16 +498,19 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                         reason=reason,previous=previous,assets=assets)
                 )
                 return selection_call(
-                    phase_limit=10.0, model=model, schema=VISION_SCHEMA,
+                    phase_limit=12.0, model=model, schema=VISION_SCHEMA,
                     name="champions_opponent_six_retry",
-                    reasoning_effort=live_effort,
+                    # Same authenticated model, but higher effort and genuinely
+                    # DIFFERENT image: full frame + zoomed suspicious slot.
+                    reasoning_effort="medium",
                     instructions=message,
-                    content=selection_image_content(
-                        image,
-                        introduction="Re-read only the six RIGHT opponent slots; "
-                                     "pay special attention to the previously "
-                                     "invalid slot. Unknown remains uncertain.",
-                        include_full=True),
+                    content=selection_retry_image_content(
+                        image,introduction=(
+                            "Recheck RIGHT opponent column using full scene and "
+                            "independently enlarged suspicious slot. Previously "
+                            "invalid name is NOT proof of any species."),
+                        focus_slot=(unmatched_opponent_slots(previous,assets)[0]["slot"]
+                                    if unmatched_opponent_slots(previous,assets) else None)),
                 )
             if opponent_recognition_attempts==1:
                 observation, opponent_recognition_attempts = retry_unresolved_opponent_six(
@@ -525,6 +536,13 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                       visual_first_attempt_elapsed_ms=first_visual_elapsed_ms,
                       visual_transport_retry_elapsed_ms=transport_retry_elapsed_ms,
                       visual_image_count=vision_image_count)
+        if result.get("status")=="PARTIAL_ADVICE":
+            result["unmatched_opponent_slots"] = unmatched_opponent_slots(
+                observation,assets)
+            result["recommendation"] += (
+                "　※未判明枠は敵ポケモンを推測していません。"
+                "既知の相手だけからの緊急選出です。"
+                "18対面PREPは未完成として扱います。")
         if (result.get("status") == "BLOCKED" and
                 result.get("reason") in (
                     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
