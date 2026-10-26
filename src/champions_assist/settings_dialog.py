@@ -97,7 +97,8 @@ class _MatchupAIWorker(QThread):
                     catalog, model=self.model, access_token=auth.access_token(),
                     reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
                     progress=self.progress.emit, priority_opponents=priority,
-                    structured=True)
+                    structured=True,
+                    token_provider=lambda force: auth.access_token(force_refresh=force))
             finally:
                 from .team_ai_matrix import publish_ai_matrix
                 integrated = publish_ai_matrix(
