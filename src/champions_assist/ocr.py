@@ -47,14 +47,16 @@ class TesseractJapaneseOcr:
 
     engine_name = "tesseract-jpn+eng"
 
-    def __init__(self, *, languages: str = "jpn+eng", config: str = "--psm 6") -> None:
+    def __init__(self, *, languages: str = "jpn+eng", config: str = "--psm 6",
+                 timeout_seconds: float = 1.2) -> None:
         self.languages = languages
         self.config = config
+        self.timeout_seconds = timeout_seconds
 
     def read(self, image: np.ndarray, *, roi_name: str) -> OcrRead:
         import pytesseract
 
-        data = pytesseract.image_to_data(image, lang=self.languages, config=self.config, output_type=pytesseract.Output.DICT)
+        data = pytesseract.image_to_data(image, lang=self.languages, config=self.config, output_type=pytesseract.Output.DICT, timeout=self.timeout_seconds)
         tokens = [str(token).strip() for token in data["text"] if str(token).strip()]
         confidences = [float(value) for value in data["conf"] if str(value) not in {"", "-1"}]
         confidence = None if not confidences else sum(confidences) / (100.0 * len(confidences))
