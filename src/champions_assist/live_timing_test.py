@@ -132,6 +132,9 @@ def prep_timing_test(
         "source_status": report.get("status", "UNKNOWN"),
         "source_reason": report.get("reason", ""),
         "source_elapsed_ms": report.get("elapsed_ms"),
+        "source_stage": report.get("request_stage"),
+        "source_model_elapsed_ms": report.get("model_elapsed_ms"),
+        "source_prompt_chars": report.get("prompt_chars"),
         "reason": "OK" if passed else (
             "DEADLINE_EXCEEDED" if elapsed > round(cap*1000) else
             (report.get("reason") if report.get("reason") not in ("OK","") else None)
