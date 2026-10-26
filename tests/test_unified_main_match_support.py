@@ -649,9 +649,11 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._active_job="batch"
         panel.state={"phase":"BATTLE","our_active":"アシレーヌ"}
         panel._pending_batch=[np.zeros((16,20,3),dtype=np.uint8)]
+        panel._pending_screen_label="SWITCH_SELECTION"
         panel._completed({
             "state":{"phase":"BATTLE","our_active":"マスカーニャ"},
-            "report":{"status":"ADVICE","recommendation":"はたきおとす。"}})
+            "report":{"status":"ADVICE","screen":"MOVE_MENU",
+                      "recommendation":"はたきおとす。"}})
         self.assertEqual(panel.entries[-1]["status"],"SUPERSEDED")
         self.assertEqual(panel.state["our_active"],"アシレーヌ")
         self.assertEqual(panel.entries[-1]["recommendation"],"")
