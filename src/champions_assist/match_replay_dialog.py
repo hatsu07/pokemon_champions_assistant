@@ -592,6 +592,9 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._set_ai_status("停止要求済み／実行中のAI通信を破棄し終了処理へ移行")
+        if self._debug_log is not None:
+            self._trace_event("USER_REQUESTED_SHUTDOWN",
+                              status="RESET" if intent=="reset" else "CLOSE")
         self.reset_button.setEnabled(False)
         self._maybe_finish_shutdown()
 
@@ -1441,7 +1444,7 @@ class MatchReplayDialog(QDialog):
         for widget in (self.start_button,self.confirm_button,self.prep_button,
                        self.reconnect_button):
             widget.setEnabled(not busy)
-        self.reset_button.setEnabled(self._shutdown_intent is None and not busy)
+        self.reset_button.setEnabled(self._shutdown_intent is None)
         self.auto_button.setEnabled(True)
 
     @Slot()
