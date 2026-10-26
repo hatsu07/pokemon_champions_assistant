@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .app_config import ConfigurationError, atomic_write_text
 from .species_name_aliases import selection_base_name
+from .champions_form_index import build_form_index, get_exact_form
 
 SCHEMA = "champions-matchup-evidence-v1"
 REVIEW_SCHEMA = "champions-matchup-review-v1"
@@ -52,13 +53,13 @@ def _number(raw: object) -> int | None:
 
 
 def _lookup_species(name: str, records: dict[str, dict]) -> dict | None:
-    # Exact species/form first. Never silently map normal->Mega or regional forms.
-    return records.get(name) or records.get(selection_base_name(name))
+    # No implicit base-form fallback. Ambiguous forms remain unknown.
+    return get_exact_form(name,records)
 
 
 def _species_key(member: dict) -> str:
     name = (member.get("name") or "").split("→")[-1].strip()
-    return selection_base_name(name)
+    return name
 
 
 def _source_hashes(master: Path) -> dict[str, str]:
@@ -70,9 +71,9 @@ def build_candidate_catalog(*, master_dir: Path, team: tuple[dict, ...],
                             fields: tuple[str, ...], regulation: str) -> dict:
     """Generate one independent, non-tactical evidence record per 358x6 cell."""
     master = Path(master_dir)
-    species = {row["ポケモン名"]:row for row in _rows(master/SOURCE_FILES[0])}
+    species = build_form_index(_rows(master/SOURCE_FILES[0]))
     moves = {row["技名"]:row for row in _rows(master/SOURCE_FILES[1])}
-    learnsets = {row["ポケモン名"]:row for row in _rows(master/SOURCE_FILES[2])}
+    learnsets = build_form_index(_rows(master/SOURCE_FILES[2]))
     signatures = [member_signature(member, fields) for member in team]
     evidence = []
     for opponent, row in matrix_rows.items():
