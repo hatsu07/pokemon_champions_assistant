@@ -300,14 +300,18 @@ class SelectionPlanner:
     def choose(self, observation: Mapping[str, Any], assets: FrozenMatchAssets,
                tactical_call: Callable[[dict, float], Mapping[str, Any]],
                *, started_at: float, max_total_seconds: float = 35.0,
-               allow_test_without_matrix: bool = False) -> SelectionDecision:
+               allow_test_without_matrix: bool = False,
+               allow_partial: bool = False) -> SelectionDecision:
         details = _diagnostics(observation, assets)
         partial=False
         uncertain_names=()
         try:
             opponents = verify_selection_observation(observation, assets)
         except SelectionBlocked as exc:
-            candidate=partial_opponent_preview(observation,assets)
+            candidate=(
+                partial_opponent_preview(observation,assets)
+                if allow_partial and str(exc) in _RETRYABLE_OPPONENT_REASONS
+                else None)
             if candidate is None:
                 return SelectionDecision("BLOCKED", reason=str(exc),
                                          elapsed_ms=round((self.clock()-started_at)*1000),
