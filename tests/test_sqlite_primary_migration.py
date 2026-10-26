@@ -173,6 +173,33 @@ class SqlitePrimaryTests(unittest.TestCase):
         self.assertEqual(self.primary.hydrate_unchanged(self.catalog)["reused_from_sqlite"],0)
         self.assertEqual(len(eligible_v2_request(self.catalog,max_cells=6)["cells"]),6)
 
+    def test_sqlite_materialized_live_inputs_and_legacy_matrix_match(self):
+        from champions_assist.team_live_assets import prepare_team_assets
+        original=MASTER/"Pokemon_Champions_MC_team_2026-10-03.csv"
+        self.primary.archive_all_sources(master_dir=MASTER)
+        materialized_master,materialized_team,env=self.primary.materialize_for_live(
+            team_id=self.team,master_dir=MASTER,
+            source_path=original,environment_snapshot=None)
+        self.assertIsNone(env)
+        self.assertEqual(materialized_team.read_bytes(),original.read_bytes())
+        for name in (
+            "Pokemon_Champions_MC_move_master.csv",
+            "Pokemon_Champions_MC_usable_pokemon.csv",
+            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv",
+            "Pokemon_Champions_MC_live_selection_matrix.txt",
+            "Pokemon_Champions_MC_60sec_lookup_master.txt",
+        ):
+            self.assertEqual((materialized_master/name).read_bytes(),
+                             (MASTER/name).read_bytes())
+        old=prepare_team_assets(master_dir=MASTER,
+            data_root=self.root/"legacy-generation",
+            team_id="2"*32,team_path=original)
+        new=prepare_team_assets(master_dir=materialized_master,
+            data_root=self.root/"sqlite-generation",
+            team_id="2"*32,team_path=materialized_team)
+        self.assertEqual(new.matrix_path.read_bytes(),old.matrix_path.read_bytes())
+        self.assertEqual(new.lookup_path.read_bytes(),old.lookup_path.read_bytes())
+
     def test_401_retry_exact_once_without_resetting_saved_cells(self):
         requests=[]
         calls=[]
