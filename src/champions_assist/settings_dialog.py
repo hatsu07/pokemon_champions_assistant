@@ -54,6 +54,11 @@ class _MatchupAIWorker(QThread):
             from .team_auto_analysis import run_automatic_analysis
             from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore
             from .app_config import default_app_root
+            # Import *all* prior v28/v29 batches before a refresh can create
+            # a new fingerprint. Legacy JSON/TXT are always read-only here.
+            from .matchup_learning_store import MatchupLearningStore
+            learning=MatchupLearningStore(self.service.settings.storage.data_root)
+            migrated_before=learning.import_legacy_assets()
             # Refresh only BETWEEN matches. Network/age errors preserve the
             # previous last-good Singles evidence; never block analysis.
             refresh_status = "LAST_GOOD"
@@ -98,8 +103,14 @@ class _MatchupAIWorker(QThread):
                 integrated = publish_ai_matrix(
                     matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
                     catalog_path=catalog)
+            migrated_after=learning.import_legacy_assets()
+            coverage=learning.coverage(catalog)
             self.result_ready.emit({"ok":True, "environment_refresh":refresh_status,
-                                    **report, **reused, **integrated})
+                                    **report, **reused, **integrated,
+                                    "legacy_v28_imported":(migrated_before["imported_cells"]+
+                                                           migrated_after["imported_cells"]),
+                                    "learning_coverage":coverage,
+                                    "legacy_files_preserved":True})
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
             self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
@@ -541,7 +552,7 @@ class SettingsDialog(QDialog):
         self.singles_refresh_button=QPushButton("シングル環境データを更新（対戦前）")
         self.singles_refresh_button.clicked.connect(self._refresh_singles)
         source_row.addWidget(self.singles_refresh_button)
-        self.singles_import_button=QPushButton("ゲーム内統計JSONを取り込む")
+        self.singles_import_button=QPushButton("ゲーム内統計JSONを取り込む（任意）")
         self.singles_import_button.clicked.connect(self._import_singles)
         source_row.addWidget(self.singles_import_button)
         layout.addLayout(source_row)
@@ -549,7 +560,7 @@ class SettingsDialog(QDialog):
         self.singles_source_status.setWordWrap(True)
         layout.addWidget(self.singles_source_status)
         review_row=QHBoxLayout()
-        self.matchup_candidates_button=QPushButton("構築別358×6対面根拠JSONを確認")
+        self.matchup_candidates_button=QPushButton("AI対面評価の進捗・根拠不足を確認")
         self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
         review_row.addWidget(self.matchup_candidates_button)
         layout.addLayout(review_row)
@@ -993,24 +1004,44 @@ class SettingsDialog(QDialog):
 
     def _show_matchup_candidates(self) -> None:
         if self._match_active():
-            QMessageBox.warning(self,"対面候補の確認不可","対戦が終わってから確認してください。")
+            QMessageBox.warning(self,"確認不可","対戦が終わってから確認してください。")
             return
         record=self._selected_record()
         if record is None:return
         try:
+            from .matchup_learning_store import MatchupLearningStore
+            from .team_matchup_reuse import reuse_unchanged_matchups
+            from .team_ai_matrix import publish_ai_matrix
+            from .postmatch_matrix_notes import publish_postmatch_notes
+            store=MatchupLearningStore(self.service.settings.storage.data_root)
+            migration=store.import_legacy_assets()
             ready=self.service.prepare_team_live_assets(record.team_id,match_active=False)
-            import json
-            meta=json.loads(ready.manifest_path.read_text(encoding="utf-8"))
-            counts=meta["candidate_status_counts"]
-            path=ready.manifest_path.with_name("matchup-evidence.json")
+            catalog=ready.manifest_path.with_name("matchup-evidence.json")
+            reused=reuse_unchanged_matchups(
+                catalog,Path(self.service.settings.storage.data_root)/"live-team-assets")
+            if reused["reused_cells"]:
+                publish_ai_matrix(
+                    matrix_path=ready.matrix_path,manifest_path=ready.manifest_path,
+                    catalog_path=catalog)
+                publish_postmatch_notes(
+                    data_root=self.service.settings.storage.data_root,
+                    team_id=record.team_id,
+                    manifest_path=ready.manifest_path,matrix_path=ready.matrix_path)
+                migration=store.import_legacy_assets()
+            coverage=store.coverage(catalog)
             self.matchup_review_status.setText(
-                f"対面候補: CONFIRMED {counts['CONFIRMED']} / "
-                f"CONDITIONAL {counts['CONDITIONAL']} / UNKNOWN {counts['UNKNOWN']}。"
-                f" \nファイル: {path}"
-                " \n新構築のLIVE認定は独立した実戦検証まで保留。"
+                f"AI評価済み {coverage['ai_evaluated']}/{coverage['total_cells']}対面 "
+                f"（構造化v2 {coverage['structured_v2']}）／"
+                f"未解析 {coverage['not_analyzed']}／"
+                f"マスター不足 {coverage['source_gaps']}。"
+                f" 実戦後AI評価 {coverage['postmatch_reviews']}件。"
+                f" v28旧ファイルは削除せず保持。"
+                f" SQLite格納済み {migration['stored_cells_all_versions']}件、"
+                f"差分再利用 {reused['reused_cells']}件。"
+                f"\n元データ保存先: {catalog.parent}"
             )
-        except (OSError,ValueError,RuntimeError) as exc:
-            QMessageBox.warning(self,"対面候補の生成に失敗",str(exc))
+        except (OSError,ValueError,RuntimeError,KeyError) as exc:
+            QMessageBox.warning(self,"AI評価の状況確認に失敗",str(exc)[:250])
 
     def _start_matchup_ai(self) -> None:
         if self._match_active() or self._matchup_ai_worker is not None:
@@ -1078,6 +1109,7 @@ class SettingsDialog(QDialog):
                     result.get("source_gap_reasons",{}).items())+"。"
                    if result.get("source_gap_reasons") else "")
                 + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
+                + f" SQLiteへ移行済み {result.get('legacy_v28_imported',0)}件（元のv28ファイルは保持）。"
                 " 処理役・安全受け・KOは未検証であり暫定推奨です。")
         else:
             self.matchup_review_status.setText(
