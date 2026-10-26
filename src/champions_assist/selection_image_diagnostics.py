@@ -13,7 +13,10 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-from .selection_vision import VISION_SCHEMA, _stream_json, selection_image_content
+from .selection_vision import (
+    VISION_SCHEMA, TYPE_ICON_VISION_INSTRUCTIONS,
+    _stream_json, selection_image_content, opponent_type_mismatch_slots,
+)
 from .species_name_aliases import selection_base_name
 
 
@@ -122,7 +125,8 @@ def run_recognition_comparison(rgb: np.ndarray, *, access_token: str,
         rgb,introduction=("Extract ONLY the SIX opponent Pokémon on the RIGHT "
                           "in top-to-bottom order. Own team is preloaded; return "
                           "our_six as []. Mark uncertain opponent positions "
-                          "instead of inferring unseen species."))
+                          "instead of inferring unseen species. "
+                          + TYPE_ICON_VISION_INSTRUCTIONS))
     stat=payload_statistics(rgb,content)
     report={**stat,"model":model,"status":"ERROR",
             "correct_slots":-1,"comparison_elapsed_ms":0,
@@ -141,11 +145,16 @@ def run_recognition_comparison(rgb: np.ndarray, *, access_token: str,
             instructions=("Recognize only the right-hand six visible Pokémon, "
                           "top to bottom, from Pokémon Champions team selection. "
                           "Return unknown positions instead of guessing. "
-                          "Do not use any ground truth: none is provided."),
+                          + TYPE_ICON_VISION_INSTRUCTIONS
+                          + "Do not use any ground truth: none is provided."),
             content=content)
         raw=observed.get("opponent_six")
         names=[n for n in raw[:6] if isinstance(n,str)] if isinstance(raw,list) else []
         report["opponent_six"]=names
+        report["opponent_type_icons"]=observed.get("opponent_type_icons",[])
+        report["type_mismatch_slots"]=(
+            opponent_type_mismatch_slots(observed,assets) if assets is not None
+            else [])
         report["observed_ui"]=str(observed.get("visual_ui","UNKNOWN"))
         if correct is not None:
             report["correct_slots"]=score_observed_six(names,correct)
