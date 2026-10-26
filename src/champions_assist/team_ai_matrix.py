@@ -43,7 +43,7 @@ def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
     if catalog.get("schema") != CATALOG_SCHEMA:
         raise ConfigurationError("Champions対面根拠が不正です")
     digest = sha256(raw).hexdigest()
-    source = {(c["opponent"],c["slot"],c["member_signature"]):c
+    by_key = {(c["opponent"],c["slot"],c["member_signature"]):c
               for c in catalog["cells"]}
     notes: dict[str, dict[int, str]] = {}
     versions: dict[tuple[str,int],int] = {}
@@ -80,11 +80,11 @@ def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
             keys = []
             for r in rows:
                 key=(r["opponent"],r["slot"],r["member_signature"])
-                if key not in source or key in keys:
+                if key not in by_key or key in keys:
                     raise ValueError("matchup key missing or duplicated")
                 keys.append(key)
             if ver == 2:
-                selected=[source[k] for k in keys]
+                selected=[by_key[k] for k in keys]
                 request={
                     "catalog_sha256":digest,
                     "cells":[{"opponent":c["opponent"],"slot":c["slot"],
