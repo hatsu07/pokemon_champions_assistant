@@ -154,6 +154,7 @@ class SelectionTestDialog(QDialog):
         self.selection_display_elapsed_ms=None
         self.auto_prep_pending=False
         self.prep_completed=False
+        self.prep_attempted=False
         self.prep_limit_seconds=0.0
         self.thread=None
         self.worker=None
@@ -304,6 +305,7 @@ class SelectionTestDialog(QDialog):
         self.turn_run_button.setEnabled(False)
         self.auto_prep_pending=False
         self.prep_completed=False
+        self.prep_attempted=False
         self.test_state=None
         self.selection_started_at=perf_counter()
         self.selection_display_elapsed_ms=None
@@ -415,7 +417,7 @@ class SelectionTestDialog(QDialog):
             return
         if mode=="PREP" and self.selection_started_at is None:
             return
-        if mode=="TURN" and not self.prep_completed:
+        if mode=="TURN" and not self.prep_attempted:
             return
         if mode=="TURN" and self.turn_image is None:
             return
@@ -492,6 +494,7 @@ class SelectionTestDialog(QDialog):
             report["pass"]=False
             report["recommendation"]=""
         if mode=="PREP":
+            self.prep_attempted=True
             self.prep_completed=bool(report.get("pass"))
             if report.get("pass"):
                 self.test_state=payload["state"]
@@ -548,9 +551,9 @@ class SelectionTestDialog(QDialog):
             self._start_timing_test("PREP")
             return
         self.turn_choose_button.setEnabled(
-            self.prep_completed and self.test_state is not None)
+            self.prep_attempted and self.test_state is not None)
         self.turn_run_button.setEnabled(
-            self.prep_completed and self.test_state is not None
+            self.prep_attempted and self.test_state is not None
             and self.turn_image is not None)
 
     def closeEvent(self,event):
