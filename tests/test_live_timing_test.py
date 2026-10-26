@@ -338,6 +338,31 @@ class TimingQtFlowTest(unittest.TestCase):
         self.assertIn("未評価 3対面",self.dialog.timing_status.text())
         self.assertNotIn("合格",self.dialog.timing_status.text())
 
+    def test_partial_ui_deadline_overrun_does_not_report_partial_success(self):
+        import time
+        partial={
+            **selection_fixture(),"status":"PARTIAL_ADVICE",
+            "opponent_six":[OPP[0],OPP[1],"未判明相手3",*OPP[3:]],
+        }
+        state=selection_test_prep_state(self.assets,partial)
+        self.dialog.test_state=state
+        self.dialog.selection_started_at=time.perf_counter()-89.0
+        self.dialog.selection_display_elapsed_ms=42000
+        self.dialog.timing_requested_at=time.perf_counter()-2.0
+        self.dialog.prep_limit_seconds=43.0
+        self.dialog._timing_complete({
+            "mode":"PREP","state":state,
+            "report":{"status":"PREP_TIMING_PARTIAL",
+                      "partial_ready":True,"pass":False,
+                      "lead_evaluated":5,"bench_evaluated":10,
+                      "win_conditions":3,"known_opponents":5,
+                      "unknown_matchups":3}})
+        self.assertFalse(self.dialog.prep_completed)
+        self.assertIn("未達",self.dialog.timing_status.text())
+        self.assertNotIn("暫定PREP実行",self.dialog.timing_status.text())
+        self.assertIn("COMBINED_90S_BUDGET_EXCEEDED",
+                      self.dialog.timing_status.text())
+
     def test_prep_combined_90s_deadline_prevents_second_request(self):
         import time
         self.dialog.selection_started_at=time.perf_counter()-89.0
