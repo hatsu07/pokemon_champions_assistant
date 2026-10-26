@@ -612,38 +612,139 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIn("再接続完了",self.window.recommendation_label.text())
         self.assertEqual(panel._turn_buffer.templates,{})
 
-    def test_no_model_still_probes_without_manual_registration_and_no_duplicate(self):
+    def test_model_free_start_warns_and_limits_identical_images(self):
+        from types import SimpleNamespace
         panel=self.window._match_panel
         panel.state={"phase":"MATCHMAKING","matrix_compatible":False}
-        panel.assets=object()
+        panel.assets=SimpleNamespace(sha256={str(i):str(i) for i in range(4)})
         panel.model="test-model"
+        panel._screen_model=None
+        panel._screen_model_status="MODEL_NOT_BUNDLED"
         panel.capture_config=CaptureConfiguration(
             backend="WINDOWS_NATIVE",selected_window_identity={"hwnd":7},
             game_viewport_normalized=(0,0,1,1))
         image=np.zeros((120,200,3),dtype=np.uint8)
         image[60:,100:]=200
-        from PySide6.QtWidgets import QMessageBox
         with patch.object(QMessageBox,"question",
                           return_value=QMessageBox.StandardButton.Yes), \
-             patch.object(QMessageBox,"warning",side_effect=AssertionError("unexpected warning dialog")), \
+             patch.object(QMessageBox,"warning",
+                          return_value=QMessageBox.StandardButton.Yes) as warn, \
              patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
                    return_value=image) as cap, \
              patch.object(panel,"_queue_batch") as queue:
             panel._start_auto()
             panel._poll_timer.stop()
-            self.assertIn("標準自動判定",panel.ai_status_label.text())
-            self.assertIn("登録不要",panel.menu_detection_label.text())
-            self.assertIn("モデル未配置",panel.local_classifier_label.text())
+            self.assertEqual(warn.call_count,1)
+            self.assertIn("モデルなし",panel.ai_status_label.text())
             self.assertIsNotNone(panel.capture_preview.pixmap())
-            queue.assert_called_once()  # Initial frame is inspected immediately.
-            panel._calibrate("TEAM_SELECTION")
-            self.assertIn("選出画面",panel.menu_detection_label.text())
-            queue.assert_called_once()  # Manual action cannot duplicate a just-sent frame.
+            queue.assert_called_once()
             for _ in range(3):
                 panel._capture_next()
             queue.assert_called_once()
-            self.assertEqual(cap.call_count,5)
         panel._stop_auto()
+
+    def test_missing_preload_warns_and_does_not_start_ai(self):
+        panel=self.window._match_panel
+        panel.state=None
+        panel.assets=None
+        with patch("champions_assist.match_replay_dialog.QMessageBox.warning") as warn, \
+             patch.object(panel,"_capture_next") as capture:
+            panel._start_auto()
+        warn.assert_called_once()
+        self.assertIn("4ファイル",warn.call_args.args[1])
+        capture.assert_not_called()
+        self.assertFalse(panel._auto_running)
+
+    def test_missing_classifier_decline_keeps_auto_stopped(self):
+        from types import SimpleNamespace
+        panel=self.window._match_panel
+        panel.state={"phase":"MATCHMAKING"}
+        panel.assets=SimpleNamespace(sha256={str(i):str(i) for i in range(4)})
+        panel.model="test-model"
+        panel._screen_model=None
+        panel._screen_model_status="MODEL_NOT_BUNDLED"
+        panel.capture_config=CaptureConfiguration(
+            backend="WINDOWS_NATIVE",selected_window_identity={"hwnd":7},
+            game_viewport_normalized=(0,0,1,1))
+        with patch("champions_assist.match_replay_dialog.QMessageBox.warning",
+                   return_value=QMessageBox.StandardButton.No) as warn, \
+             patch.object(panel,"_capture_next") as capture:
+            panel._start_auto()
+        warn.assert_called_once()
+        capture.assert_not_called()
+        self.assertFalse(panel._auto_running)
+
+    def test_loaded_classifier_never_sends_non_action_or_unknown(self):
+        from champions_assist.screen_classifier import ScreenPrediction
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        frames=iter(["BATTLE_EVENT","BATTLE_EVENT","OTHER","OTHER",
+                     "UNKNOWN","UNKNOWN","UNKNOWN","TURN_ACTION","TURN_ACTION"])
+        class FakeModel:
+            def predict(self,image):
+                return ScreenPrediction(next(frames),0.99,0.95,2.0)
+        panel._screen_model=FakeModel()
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame), \
+             patch.object(panel,"_queue_batch") as send:
+            for _ in range(7):
+                panel._capture_next()
+            send.assert_not_called()
+            panel._capture_next()
+            send.assert_not_called()
+            panel._capture_next()
+            send.assert_called_once()
+            self.assertEqual(send.call_args.kwargs["screen_label"],"TURN_ACTION")
+        panel._stop_auto()
+
+    def test_model_free_fallback_does_not_spam_scene_changes(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel._screen_model=None
+        frame=np.zeros((100,160,3),dtype=np.uint8)
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame), \
+             patch.object(panel._automatic_probe,"observe",return_value=True), \
+             patch.object(panel,"_queue_batch") as send:
+            for _ in range(4):
+                panel._capture_next()
+            send.assert_called_once()
+        panel._stop_auto()
+
+    def test_prep_banner_shows_running_complete_and_incomplete(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","selected_three":["A","B","C"],
+                     "selection_assumed":True,
+                     "prep_status":"CACHE_STRUCTURE_COMPLETE",
+                     "visual_unknown_opponents":[],
+                     "prep":{"cached_matchups":18,
+                             "preserve":"A","stopper":"B","closer":"C"}}
+        panel._refresh_live_status()
+        self.assertIn("完了",panel.prep_banner.text())
+        self.assertIn("18/18",panel.prep_banner.text())
+        self.assertIn("3/3",panel.prep_banner.text())
+        self.assertIn("未確認",panel.prep_banner.text())
+        panel.state["prep_status"]="CACHE_INCOMPLETE"
+        panel._refresh_live_status()
+        self.assertIn("未完成",panel.prep_banner.text())
+        panel._prep_thread=object()
+        try:
+            panel._prep_cancel_event.clear()
+            panel._refresh_live_status()
+            self.assertIn("処理中",panel.prep_banner.text())
+        finally:
+            panel._prep_thread=None
+
+    def test_manual_controls_are_hidden_and_model_picker_exists(self):
+        panel=self.window._match_panel
+        self.assertTrue(panel.manual_batch_button.isHidden())
+        self.assertTrue(panel.prep_button.isHidden())
+        self.assertEqual(panel.classifier_choose_button.objectName(),
+                         "chooseScreenClassifier")
+        self.assertEqual(panel.prep_banner.objectName(),"live_prep_progress")
 
     def test_turn_and_switch_calibration_use_five_class_labels(self):
         panel=self.window._match_panel
