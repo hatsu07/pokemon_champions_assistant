@@ -1600,10 +1600,16 @@ class MatchReplayDialog(QDialog):
             remaining=max(0,self._prep_timer.remainingTime()//1000)
             clock=f"PREP処理期限まで約{remaining}秒"
         else:
-            current=("実際の選出を確定してください" if phase=="SELECTION"
-                     else "技選択画面の認識待ち" if phase=="BATTLE"
-                     else "ゲーム画面監視中" if self._auto_running
-                     else "監視停止中")
+            if phase=="PREP" and state.get("prep_status") in (
+                    "PENDING","CACHE_PREP_BASE_READY"):
+                cache=state.get("prep") or {}
+                current=(f"事前対面評価{cache.get('cached_matchups',0)}件を保持済み"
+                         "／勝ち筋3点の検討待ち")
+            else:
+                current=("選出の画像認識・判断待ち" if phase=="SELECTION"
+                         else "技選択画面の認識待ち" if phase=="BATTLE"
+                         else "ゲーム画面監視中" if self._auto_running
+                         else "監視停止中")
             clock="AI処理待機／ゲーム内の残り時間は未取得"
         if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
             reserve=max(0,87-(monotonic()-self._selection_screen_started))
