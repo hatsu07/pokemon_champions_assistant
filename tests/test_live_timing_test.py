@@ -85,6 +85,84 @@ class TimingCoreTest(unittest.TestCase):
         self.assertEqual(report["win_conditions"],3)
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
 
+    def test_partial_selection_runs_known_five_prep_without_18_pass(self):
+        partial={
+            **selection_fixture(),
+            "status":"PARTIAL_ADVICE",
+            "opponent_six":[OPP[0],OPP[1],"未判明相手3",*OPP[3:]],
+        }
+        state=selection_test_prep_state(self.assets,partial)
+        self.assertEqual(state["visual_unknown_opponents"],["未判明相手3"])
+        self.assertEqual(len(state["matrix_rows_six"]),5)
+        self.assertEqual(state["phase"],"PREP")
+        lead_code=("ACT=conditional|KO=unknown|DPS=move|PRI=unknown|S=unknown|"
+                   "OUR=unknown|OPP=unknown|SAFE=unknown|PROC=unverified|"
+                   "LOCK=none|MEGA=unknown")
+        bench_code=("S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
+                    "SAFE=unknown|PROC=unverified")
+        answer={
+            "lead_six":[lead_code]*5,
+            "bench_twelve":[bench_code]*10,
+            "preserve":state["selected_three"][0],
+            "stopper":state["selected_three"][1],
+            "closer":state["selected_three"][2],
+        }
+        seen=[]
+        def mock_response(_client,**kwargs):
+            import json
+            seen.append(json.loads(kwargs["content"][0]["text"]))
+            return answer
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=mock_response):
+            updated,report=prep_timing_test(
+                state=state,assets=self.assets,access_token="dummy",
+                model="mock",clock=self.clock,started_at=0,
+                client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"PREP_TIMING_PARTIAL")
+        self.assertFalse(report["pass"])
+        self.assertTrue(report["partial_ready"])
+        self.assertEqual((report["lead_evaluated"],report["bench_evaluated"],
+                          report["win_conditions"]),(5,10,3))
+        self.assertEqual(report["unknown_matchups"],3)
+        self.assertEqual(updated["prep_status"],"PARTIAL_STRUCTURE_COMPLETE")
+        self.assertEqual(len(updated["prep"]["matchups_known"]),15)
+        self.assertEqual(len(updated["prep"]["unknown_pairs"]),3)
+        self.assertNotIn("matchups_18",updated["prep"])
+        self.assertEqual(len(seen),1)
+        self.assertEqual(len(seen[0]["matrix_rows_six"]),5)
+        self.assertEqual(seen[0]["unknown_opponent_slots"],["未判明相手3"])
+        self.assertNotIn("未判明相手3",str(seen[0]["matrix_rows_six"]))
+
+    def test_partial_wrong_reply_not_promoted_to_prep(self):
+        partial={
+            **selection_fixture(),"status":"PARTIAL_ADVICE",
+            "opponent_six":[OPP[0],OPP[1],"未判明相手3",*OPP[3:]],
+        }
+        state=selection_test_prep_state(self.assets,partial)
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value={"lead_six":[],"bench_twelve":[],
+                                 "preserve":state["selected_three"][0],
+                                 "stopper":state["selected_three"][1],
+                                 "closer":state["selected_three"][2]}):
+            updated,report=prep_timing_test(
+                state=state,assets=self.assets,access_token="dummy",
+                model="mock",clock=self.clock,started_at=0,
+                client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"PREP_TIMING_FAIL")
+        self.assertFalse(report["partial_ready"])
+        self.assertIsNone(updated["prep"])
+
+    def test_partial_two_unknown_slots_are_not_inferred(self):
+        partial={
+            **selection_fixture(),"status":"PARTIAL_ADVICE",
+            "opponent_six":[OPP[0],"未判明相手2",OPP[2],
+                            "未判明相手4",OPP[4],OPP[5]],
+        }
+        state=selection_test_prep_state(self.assets,partial)
+        self.assertEqual(len(state["matrix_rows_six"]),4)
+        self.assertEqual(state["visual_unknown_opponents"],
+                         ["未判明相手2","未判明相手4"])
+
     def test_prep_over_40s_passes_inside_shared_87s_deadline(self):
         updated,report=prep_timing_test(
             state=self.state,assets=self.assets,access_token="dummy",
@@ -227,6 +305,38 @@ class TimingQtFlowTest(unittest.TestCase):
             self.dialog._clear_worker()  # previously active thread has exited
             start.assert_called_once_with("PREP")
             self.assertFalse(self.dialog.auto_prep_pending)
+
+    def test_partial_selection_schedules_prep_and_displays_conditional(self):
+        import time
+        self.dialog.selection_started_at=time.perf_counter()-4.0
+        report={
+            **selection_fixture(),"status":"PARTIAL_ADVICE",
+            "opponent_six":[OPP[0],OPP[1],"未判明相手3",*OPP[3:]],
+            "test_total_elapsed_ms":4000,
+        }
+        with patch.object(self.dialog,"_start_timing_test") as launch:
+            self.dialog._complete(report)
+            self.assertTrue(self.dialog.auto_prep_pending)
+            self.assertIsNotNone(self.dialog.test_state)
+            self.assertIn("暫定PREP",self.dialog.timing_status.text())
+            self.dialog._clear_worker()
+            launch.assert_called_once_with("PREP")
+        self.dialog.timing_requested_at=time.perf_counter()-4.0
+        self.dialog.prep_limit_seconds=83.0
+        self.dialog._timing_complete({
+            "mode":"PREP","state":self.dialog.test_state,
+            "report":{
+                "status":"PREP_TIMING_PARTIAL",
+                "reason":"KNOWN_ONLY_UNCONFIRMED_OPPONENT",
+                "pass":False,"partial_ready":True,
+                "lead_evaluated":5,"bench_evaluated":10,
+                "win_conditions":3,"known_opponents":5,"unknown_matchups":3,
+            }})
+        self.assertFalse(self.dialog.prep_completed)
+        self.assertTrue(self.dialog.prep_attempted)
+        self.assertIn("暫定PREP実行",self.dialog.timing_status.text())
+        self.assertIn("未評価 3対面",self.dialog.timing_status.text())
+        self.assertNotIn("合格",self.dialog.timing_status.text())
 
     def test_prep_combined_90s_deadline_prevents_second_request(self):
         import time
