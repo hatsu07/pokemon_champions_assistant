@@ -90,6 +90,7 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "matrix_provisional": provisional_matrix_matches_registered_team(assets),
         "matrix_rows_six": [],
         "selected_three": [], "lead": None, "opponent_six": [],
+        "visual_unknown_opponents": [],
         "our_active": "", "opponent_active": "", "observed_hp": {},
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
@@ -263,6 +264,11 @@ def advance_observation(
                                 "PARTIAL_ADVICE"):
             state["opponent_six"] = list(selection.opponent_six)
             if selection.status=="PARTIAL_ADVICE":
+                # Keep unconfirmed identity explicitly; PREP will evaluate ONLY
+                # 3 x known opponents, without a fabricated sixth matrix row.
+                state["visual_unknown_opponents"] = [
+                    name for name in selection.opponent_six
+                    if name.startswith("未判明相手")] 
                 # No invented sixth row; PREP cannot claim 18/18 complete.
                 state["matrix_rows_six"] = [
                     assets.matrix_index[name] for name in selection.opponent_six
@@ -270,6 +276,7 @@ def advance_observation(
                 state["prep_status"] = "VISUAL_PARTIAL_5_OF_6"
                 output["partial_known_opponents"] = len(state["matrix_rows_six"])
             elif state["matrix_compatible"] or state["matrix_provisional"]:
+                state["visual_unknown_opponents"] = []
                 state["matrix_rows_six"] = list(
                     assets.matrix_rows_for(tuple(selection.opponent_six)))
         _event(state, obs, output)
