@@ -214,7 +214,10 @@ class SelectionTestDialog(QDialog):
         self.tabs=QTabWidget(self)
         outer.addWidget(self.tabs)
         self.selection_page=QWidget(self.tabs)
-        self.tabs.addTab(self.selection_page,"選出画面テスト")
+        self.selection_scroll=QScrollArea(self.tabs)
+        self.selection_scroll.setWidgetResizable(True)
+        self.selection_scroll.setWidget(self.selection_page)
+        self.tabs.addTab(self.selection_scroll,"選出画面テスト")
         layout=QVBoxLayout(self.selection_page)
         heading=QLabel(
             "選出を表示した直後、同じ相手6匹・選出3匹でPREPを自動開始します。"
