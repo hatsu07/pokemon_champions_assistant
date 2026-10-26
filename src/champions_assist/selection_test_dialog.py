@@ -505,11 +505,16 @@ class SelectionTestDialog(QDialog):
                 if mode=="PREP" and total>87000
                 else "UI_DELIVERY_DEADLINE_EXCEEDED")
             report["pass"]=False
+            # UI delivery expired: a model-side partial result is NOT usable
+            # inside the game clock, regardless of its structure.
+            report["partial_ready"]=False
             report["recommendation"]=""
         if mode=="PREP":
             self.prep_attempted=True
             self.prep_completed=bool(report.get("pass"))
-            if report.get("pass") or report.get("partial_ready"):
+            if report.get("pass") or (
+                    report.get("status")=="PREP_TIMING_PARTIAL"
+                    and report.get("partial_ready")):
                 self.test_state=payload["state"]
             details=(
                 f"選出＋自動PREP90秒 "
