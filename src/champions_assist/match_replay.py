@@ -253,6 +253,7 @@ def advance_observation(
             started_at=0.0,  # elapsed_seconds starts when image is submitted.
             max_total_seconds=limit_seconds,
             allow_test_without_matrix=True,
+            allow_partial=bool(obs.get("_allow_partial",False)),
         )
         output.update(selection.as_dict())
         output["recommendation"] = selection_summary_ja(selection.as_dict())
@@ -523,6 +524,11 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
             # No own-team pixels ever override the 4-file frozen registered team.
             observation["our_six"] = []
             observation["visible_party"] = []
+            # A REAL image has been read and (if time allowed) an altered
+            # visual retry attempted. Planner may still provide a clearly
+            # partial five-of-six emergency choice; ordinary tests remain
+            # strict unless this is explicitly enabled.
+            observation["_allow_partial"] = True
         # The elapsed callback tracks the full request, not only the second model call.
         updated, result = advance_observation(
             state,assets,observation,tactical,
