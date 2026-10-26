@@ -696,6 +696,7 @@ class DesktopMainWindow(QMainWindow):
         self._unified_last_report_key = None
         self._unified_event_number = 0
         self._unified_team_id = None
+        self._unified_team_sha = ""
         self._postmatch_worker = None
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
@@ -904,6 +905,8 @@ class DesktopMainWindow(QMainWindow):
         prepared = self.settings_service.prepare_team_live_assets(
             team_id, match_active=False)
         self._unified_team_id = team_id
+        from hashlib import sha256
+        self._unified_team_sha = sha256(Path(team_path).read_bytes()).hexdigest()
         self._match_panel.matrix_source = str(prepared.matrix_path)
         self._match_panel.lookup_source = str(prepared.lookup_path)
         self._match_panel.live_assets_status = prepared.status
@@ -1033,7 +1036,8 @@ class DesktopMainWindow(QMainWindow):
                 from .matchup_learning_store import MatchupLearningStore
                 learning=MatchupLearningStore(self.settings_service.settings.storage.data_root)
                 inserted=learning.record_finished(
-                    match_id=panel.match_id,team_id=self._unified_team_id,state=state)
+                    match_id=panel.match_id,team_id=self._unified_team_id,state=state,
+                    team_signature=self._unified_team_sha)
                 if inserted:
                     # All AI transport is deferred until AFTER END and detached
                     # from the live state. Failed reviews stay pending in SQLite.
