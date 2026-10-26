@@ -771,6 +771,7 @@ class DesktopMainWindow(QMainWindow):
 
     def _build_unified_ui(self) -> None:
         """Real user-facing UI, driven exclusively by MatchReplayDialog.state."""
+        self._close_pending=False
         from .match_replay_dialog import MatchReplayDialog
         from .app_config import default_app_root
 
@@ -794,7 +795,7 @@ class DesktopMainWindow(QMainWindow):
             ("phase", "フェーズ"), ("capture", "画面監視"), ("preload", "4ファイル"),
             ("prep", "PREP"), ("selected", "選出"), ("model", "モデル"),
             ("report", "最新結果"), ("records", "ログ記録数"),
-            ("ai", "AI通信状態"),
+            ("ai", "AI通信状態"), ("clock", "処理・期限（推定）"),
         )):
             header.addWidget(QLabel(heading), (index // 4) * 2, index % 4)
             value = QLabel("—")
@@ -817,8 +818,11 @@ class DesktopMainWindow(QMainWindow):
             on_capture_reconnected=self._persist_reconnected_capture,
         )
         self._match_panel.state_changed.connect(self._on_unified_state)
+        self._match_panel.shutdown_finished.connect(self._retry_close_after_workers)
         self._match_panel.ai_status_changed.connect(
             self.header_labels["ai"].setText)
+        self._match_panel.live_clock_changed.connect(
+            self.header_labels["clock"].setText)
         self._match_scroll.setWidget(self._match_panel)
         self.tabs.addTab(self._match_scroll, "対戦支援")
         state_tab = QWidget()
@@ -947,12 +951,21 @@ class DesktopMainWindow(QMainWindow):
             prep_label += "（根拠限定）"
         self.header_labels["prep"].setText(prep_label)
         selected = state.get("selected_three") or []
-        self.header_labels["selected"].setText(
-            " / ".join(selected) if selected else "未確定")
+        proposed=panel._proposed_selection
+        if selected:
+            chosen_text="確定："+" / ".join(selected)
+            if state.get("lead"):
+                chosen_text+=" / 初手："+str(state["lead"])
+        elif proposed:
+            chosen_text="提案："+" / ".join(proposed[0])+" / 初手："+str(proposed[1])
+        else:
+            chosen_text="未提示"
+        self.header_labels["selected"].setText(chosen_text)
         self.header_labels["model"].setText(panel.model or "未設定")
         self.header_labels["report"].setText(str(report.get("status", "—")))
         self.header_labels["records"].setText(str(len(panel.entries)))
         self.header_labels["ai"].setText(panel._ai_last_status)
+        self.header_labels["clock"].setText(panel.deadline_banner.text())
 
         status = report.get("status", "")
         suggestion = str(report.get("recommendation") or "")
@@ -967,9 +980,12 @@ class DesktopMainWindow(QMainWindow):
         elif status == "CAPTURE_TARGET_RECONNECTED":
             self.recommendation_label.setText("撮影対象の再接続完了。必要な画面を登録し直して監視を再開")
         elif status in ("AUTO_STARTED", "CAPTURE_RESUMED"):
-            self.recommendation_label.setText("撮影中。次のAI判断を待機")
+            if not panel._last_selection_text:
+                self.recommendation_label.setText("撮影中。次のAI判断を待機")
         elif status == "CONFIRMED":
-            self.recommendation_label.setText("選出確定。相手初手・行動選択を待機")
+            self.recommendation_label.setText(
+                (panel._last_selection_text or "選出確定")
+                +"。相手初手・技選択画面を待機")
         elif status == "BLOCKED" and report.get("reason") in (
                 "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
                 "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
@@ -990,7 +1006,23 @@ class DesktopMainWindow(QMainWindow):
         elif status == "MATCH_END":
             self.recommendation_label.setText(suggestion or "対戦終了")
         elif status in ("OBSERVED", "RESULT_UNCONFIRMED"):
-            self.recommendation_label.setText("行動推奨待ち（現在の画面を認識中）")
+            if report.get("screen")=="COMMAND_MENU":
+                self.recommendation_label.setText(
+                    "『たたかう』を選択し、技一覧を表示してください。"
+                    "（技が表示されるまで技名は確定できません）")
+            else:
+                self.recommendation_label.setText(
+                    "行動推奨待ち（現在の画面を認識中）")
+        elif status in ("AI_REQUEST_QUEUED","PREP_PROVISIONAL_RUNNING",
+                        "PREP_RUNNING","PREP_DEADLINE_EXCEEDED",
+                        "PREP_CACHE_REUSED","PREP_CACHE_INCOMPLETE"):
+            if phase in ("SELECTION","PREP") and panel._last_selection_text:
+                self.recommendation_label.setText(
+                    panel._last_selection_text+"／PREP："+str(
+                        state.get("prep_status","未開始")))
+            elif phase=="BATTLE":
+                self.recommendation_label.setText(
+                    "ターン画面をAI確認中。行動提案は未確定です。")
 
         observations = state.get("image_observations_unverified") or []
         last_obs = observations[-1] if observations else {}
@@ -1087,6 +1119,17 @@ class DesktopMainWindow(QMainWindow):
         self._postmatch_worker=None
         if worker is not None:
             worker.deleteLater()
+        self._retry_close_after_workers()
+
+    @Slot()
+    def _retry_close_after_workers(self):
+        if not getattr(self,"_close_pending",False):
+            return
+        panel=self._match_panel
+        if (panel._thread is None and panel._prep_thread is None
+                and (self._postmatch_worker is None
+                     or not self._postmatch_worker.isRunning())):
+            QTimer.singleShot(0,self.close)
 
     def _match_active_for_settings(self) -> bool:
         if self._unified and self._match_panel.state is not None:
@@ -1371,13 +1414,15 @@ class DesktopMainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt callback name
         if self._unified:
-            if self._postmatch_worker is not None and self._postmatch_worker.isRunning():
-                # Keep Qt-owned thread alive through an in-flight review.
-                event.ignore()
-                return
-            self._match_panel._stop_auto()
-            if self._match_panel._thread is not None:
-                # Do not destroy the API worker until it terminates.
+            self._close_pending=True
+            if not self._match_panel._shutdown_ready:
+                self._match_panel.request_shutdown("close")
+            if (self._match_panel._thread is not None or
+                    self._match_panel._prep_thread is not None or
+                    (self._postmatch_worker is not None
+                     and self._postmatch_worker.isRunning())):
+                # Cancel new capture/replies now, close automatically as soon
+                # as QThreads have finished. Never force-destroy live workers.
                 event.ignore()
                 return
         else:

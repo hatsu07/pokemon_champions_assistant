@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
@@ -184,6 +184,7 @@ class SelectionTestDialog(QDialog):
         self.matrix_source=matrix_source
         self.lookup_source=lookup_source
         self.live_panel=None
+        self._close_after_workers=False
         self.live_test_counts={"selection":0,"prep":0,"turns":0,"switches":0,
                                "events":0,"result":0}
         self.live_last_phase=""
@@ -388,6 +389,7 @@ class SelectionTestDialog(QDialog):
                              if self.lookup_source is not None else None)
         self.live_panel=panel
         panel.state_changed.connect(self._on_live_state)
+        panel.shutdown_finished.connect(self._retry_close_after_workers)
         self.integration_status.setText(
             "実ゲームキャプチャの支援エンジンを接続しました。"
             "4ファイル事前ロード→監視開始で統合テストします。")
@@ -437,6 +439,18 @@ class SelectionTestDialog(QDialog):
             f"／イベント {c['events']}"
             f"／勝敗 {state.get('result','UNKNOWN')}"
             "。戦術的な正確性とゲーム操作成功を保証しません。")
+
+    @Slot()
+    def _retry_close_after_workers(self):
+        if (self._close_after_workers and self.thread is None
+                and (self.live_panel is None or
+                     (self.live_panel._thread is None
+                      and self.live_panel._prep_thread is None))):
+            # The live panel already queued shutdown_finished out of its
+            # closeEvent/cleanup. Closing here avoids a second zero-delay
+            # timer that can leave the dialog visible for another event-loop
+            # cycle (or indefinitely when events are no longer pumped).
+            self.close()
 
     def choose_image(self):
         if self.thread is not None:
@@ -841,6 +855,10 @@ class SelectionTestDialog(QDialog):
     def _clear_worker(self):
         self.thread=None
         self.worker=None
+        if self._close_after_workers:
+            self.auto_prep_pending=False
+            self._retry_close_after_workers()
+            return
         self.select_button.setEnabled(True)
         self.run_button.setEnabled(self.image is not None)
         self.preview_button.setEnabled(self.image is not None)
@@ -866,18 +884,22 @@ class SelectionTestDialog(QDialog):
             and self.event_image is not None)
 
     def closeEvent(self,event):
-        if self.thread is not None:
-            QMessageBox.information(self,"実行中","テスト通信の終了後に閉じてください")
+        self._close_after_workers=True
+        # Close is a one-shot request, not a dialog asking the user to keep
+        # retrying. Cancellation can still await an in-flight HTTP timeout.
+        self.auto_prep_pending=False
+        if self.live_panel is not None:
+            if not self.live_panel._shutdown_ready:
+                self.live_panel.request_shutdown("close")
+        if (self.thread is not None or
+                (self.live_panel is not None and (
+                 self.live_panel._thread is not None or
+                 self.live_panel._prep_thread is not None))):
+            self.integration_status.setText(
+                "終了要求を受け付けました。新規AI送信を停止し、"
+                "実行中の通信終了後にこの画面を自動的に閉じます。")
             event.ignore()
             return
-        if self.live_panel is not None:
-            self.live_panel._stop_auto()
-            if (self.live_panel._thread is not None
-                    or self.live_panel._prep_thread is not None):
-                QMessageBox.information(
-                    self,"実行中","ライブ統合テストのAI通信終了後に閉じてください")
-                event.ignore()
-                return
         if self.log:
             self.log.write("SELECTION_TEST_CLOSED")
         super().closeEvent(event)

@@ -125,6 +125,137 @@ class UnifiedMainWindowTests(unittest.TestCase):
             "recommendation": "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ"})
         self.assertEqual(len(self.store.events(panel.match_id)), 2)
 
+    def test_live_turn_unclassified_frames_do_not_discard_inflight_advice(self):
+        from champions_assist.match_replay_dialog import (
+            _should_replace_inflight, _supersedes_result)
+        self.assertFalse(_should_replace_inflight("TURN_ACTION",None))
+        self.assertFalse(_should_replace_inflight("TURN_ACTION","TURN_ACTION"))
+        self.assertTrue(_should_replace_inflight(None,"TURN_ACTION"))
+        self.assertTrue(_should_replace_inflight("TURN_ACTION","BATTLE_EVENT"))
+        move={"status":"PROVISIONAL_ADVICE","screen":"MOVE_MENU",
+              "recommendation":"じしん。"}
+        self.assertFalse(_supersedes_result(move,None))
+        self.assertFalse(_supersedes_result(move,"TURN_ACTION"))
+        self.assertTrue(_supersedes_result(move,"BATTLE_EVENT"))
+
+        panel=self.window._match_panel
+        panel.state={
+            "phase":"BATTLE","selected_three":["ピカチュウ","ドドゲザン","ガブリアス"],
+            "lead":"ピカチュウ","prep_status":"CACHE_STRUCTURE_COMPLETE",
+            "matrix_provisional":True,"matrix_compatible":False}
+        panel._auto_running=True
+        panel._thread=object()  # a running worker; no Qt thread launched
+        panel._active_job="batch"
+        panel._inflight_screen_label="TURN_ACTION"
+        image=np.zeros((80,140,3),dtype=np.uint8)
+        try:
+            panel._queue_batch([image],screen_label=None)
+            self.assertIsNone(panel._pending_batch)
+            panel._queue_batch([image],screen_label="TURN_ACTION")
+            self.assertIsNone(panel._pending_batch)
+            payload={"state":dict(panel.state),
+                     "report":{"status":"PROVISIONAL_ADVICE",
+                               "screen":"MOVE_MENU",
+                               "recommendation":"じしん。",
+                               "action":{"kind":"MOVE","move":"じしん"}}}
+            panel._completed(payload)
+            self.assertEqual(panel.entries[-1]["status"],"PROVISIONAL_ADVICE")
+            self.assertIn("じしん",panel.action_banner.text())
+            self.assertIn("じしん",self.window.recommendation_label.text())
+        finally:
+            panel._thread=None
+            panel._active_job=None
+            panel._auto_running=False
+
+    def test_busy_worker_does_not_consume_fallback_scene_transition(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","matrix_compatible":False,
+                     "matrix_provisional":True}
+        panel._auto_running=True
+        panel._thread=object()  # worker without launching network
+        panel._active_job="batch"
+        panel._screen_model=None
+        image=np.zeros((100,160,3),dtype=np.uint8)
+        try:
+            with (patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                        return_value=image),
+                  patch.object(panel._turn_buffer,"observe",return_value=None),
+                  patch.object(panel._automatic_probe,"observe") as probe,
+                  patch.object(panel,"_queue_batch") as queued):
+                panel._capture_next()
+                probe.assert_not_called()
+                queued.assert_not_called()
+        finally:
+            panel._thread=None
+            panel._active_job=None
+            panel._auto_running=False
+
+    def test_reset_during_live_worker_cancels_and_completes_automatically(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._thread=object()  # Simulate an active owned worker; no API
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        self.assertTrue(panel.reset_button.isEnabled())
+        panel._reset()
+        self.assertEqual(panel._shutdown_intent,"reset")
+        self.assertTrue(panel._cancel_event.is_set())
+        self.assertIsNotNone(panel.state)
+        # Late GPT output from a cancelled operation must be ignored.
+        panel._completed({"state":{"phase":"ENDED"},
+                          "report":{"status":"ADVICE",
+                                    "recommendation":"じしん。"}})
+        self.assertEqual(panel.state["phase"],"BATTLE")
+        panel._cleanup()
+        self.assertIsNone(panel._shutdown_intent)
+        self.assertIsNone(panel.state)
+        self.assertIsNone(panel._thread)
+        self.assertTrue(panel.reset_button.isEnabled())
+
+    def test_main_close_during_live_worker_finishes_on_cleanup(self):
+        from PySide6.QtCore import QCoreApplication
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._thread=object()
+        panel._active_job="batch"
+        panel._auto_running=True
+        self.window.show()
+        self.window.close()
+        self.assertTrue(self.window._close_pending)
+        self.assertEqual(panel._shutdown_intent,"close")
+        self.assertTrue(panel._cancel_event.is_set())
+        self.assertTrue(self.window.isVisible())
+        panel._cleanup()
+        QCoreApplication.processEvents()
+        QCoreApplication.processEvents()
+        self.assertTrue(panel._shutdown_ready)
+        self.assertFalse(self.window.isVisible())
+
+    def test_prominent_selection_and_explicit_battle_work_clock(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"SELECTION","matrix_compatible":False,
+                     "matrix_provisional":True,"selected_three":[],
+                     "prep_status":"NOT_STARTED"}
+        report={
+            "status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+            "selected_three":["ピカチュウ","ドドゲザン","ガブリアス"],
+            "lead":"ピカチュウ",
+            "recommendation":"選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ"}
+        panel._proposed_selection=(tuple(report["selected_three"]),report["lead"])
+        panel._render(report)
+        self.assertIn("初手：ピカチュウ",panel.selection_banner.text())
+        self.assertIn("提案：",self.window.header_labels["selected"].text())
+        self.assertIn("ピカチュウ",self.window.recommendation_label.text())
+        panel._render({"status":"PREP_PROVISIONAL_RUNNING"})
+        self.assertIn("ピカチュウ",self.window.recommendation_label.text())
+        panel.state["phase"]="BATTLE"
+        panel._render({"status":"OBSERVED","screen":"COMMAND_MENU"})
+        self.assertIn("たたかう",panel.action_banner.text())
+        self.assertIn("技一覧",self.window.recommendation_label.text())
+        self.assertIn("対戦中",panel.phase_banner.text())
+        self.assertIn("時間：",panel.deadline_banner.text())
+
     def test_selected_team_automatically_prepares_matching_live_sources(self):
         from champions_assist.matrix_compatibility import matrix_matches_registered_team
         team=self.service.import_team(
@@ -518,9 +649,11 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._active_job="batch"
         panel.state={"phase":"BATTLE","our_active":"アシレーヌ"}
         panel._pending_batch=[np.zeros((16,20,3),dtype=np.uint8)]
+        panel._pending_screen_label="SWITCH_SELECTION"
         panel._completed({
             "state":{"phase":"BATTLE","our_active":"マスカーニャ"},
-            "report":{"status":"ADVICE","recommendation":"はたきおとす。"}})
+            "report":{"status":"ADVICE","screen":"MOVE_MENU",
+                      "recommendation":"はたきおとす。"}})
         self.assertEqual(panel.entries[-1]["status"],"SUPERSEDED")
         self.assertEqual(panel.state["our_active"],"アシレーヌ")
         self.assertEqual(panel.entries[-1]["recommendation"],"")

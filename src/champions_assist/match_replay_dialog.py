@@ -54,6 +54,56 @@ def prep_budget_before_battle(selection_started_at: float | None, *,
     return min(prep_cap,max(0.0,preview_seconds-elapsed-input_reserve))
 
 
+# A fresh *verified* command candidate may replace stale frames, but an
+# unclassified animation is not grounds to erase a completed turn decision.
+_URGENT_SCREENS = frozenset(("TURN_ACTION", "SWITCH_SELECTION"))
+_SCREEN_PRIORITY = {
+    "TEAM_SELECTION": 1, "BATTLE_EVENT": 2,
+    "TURN_ACTION": 3, "SWITCH_SELECTION": 3,
+}
+
+
+def _should_replace_inflight(inflight: str | None,
+                             incoming: str | None) -> bool:
+    """Replace only with a NEW explicit and different game screen category.
+
+    Inflight None means a generic fallback observation, so a verified
+    TURN_ACTION or SWITCH_SELECTION is stronger. Repeated/UNKNOWN frames never
+    evict an action that is being prepared.
+    """
+    if incoming is None or incoming==inflight:
+        return False
+    if incoming=="TEAM_SELECTION" and inflight in (
+            "TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"):
+        return False
+    # A different explicit game scene is a stronger freshness signal than
+    # any presumed importance ordering (a battle event can end an old turn).
+    return incoming in _SCREEN_PRIORITY
+
+
+def _supersedes_result(report: dict, incoming: str | None) -> bool:
+    """Never cache stale recommendations that lack a validated screen.
+
+    Genuine MOVE_MENU/PARTY_MENU decisions survive mere unclassified
+    animations, but a model reply with no screen evidence must not overwrite
+    battle state when a newer frame is already pending.
+    """
+    if not incoming:
+        return report.get("screen") in (None, "", "UNKNOWN")
+    screen=report.get("screen")
+    if screen=="MOVE_MENU":
+        kind="TURN_ACTION"
+    elif screen=="PARTY_MENU":
+        kind="SWITCH_SELECTION"
+    elif screen in ("ACTION_RESOLUTION","RESULT_SCREEN"):
+        kind="BATTLE_EVENT"
+    elif screen=="TEAM_SELECTION":
+        kind="TEAM_SELECTION"
+    else:
+        kind=None
+    return _should_replace_inflight(kind,incoming)
+
+
 class _ReplayWorker(QObject):
     finished = Signal(object)
     progress = Signal(str)
@@ -215,6 +265,8 @@ class MatchReplayDialog(QDialog):
     """
     state_changed = Signal(object, object)
     ai_status_changed = Signal(str)
+    live_clock_changed = Signal(str)
+    shutdown_finished = Signal()
 
     def __init__(self, *, model: str, master_directory: str, team_path: str,
                  capture_config: CaptureConfiguration | None = None,
@@ -260,6 +312,8 @@ class MatchReplayDialog(QDialog):
         self._capture_error_count=0
         self._capture_paused=False
         self._cancel_event=Event()
+        self._shutdown_intent=None
+        self._shutdown_ready=False
         self._auto_running=False
         self._dataset_session_id=None
         self._background_capture=None
@@ -269,6 +323,10 @@ class MatchReplayDialog(QDialog):
         self._poll_timer=QTimer(self)
         self._poll_timer.setInterval(300)
         self._poll_timer.timeout.connect(self._capture_next)
+        self._status_timer=QTimer(self)
+        self._status_timer.setInterval(250)
+        self._status_timer.timeout.connect(self._refresh_live_status)
+        self._status_timer.start()
         self.assets=None
         self.state=None
         self.entries=[]
@@ -276,6 +334,9 @@ class MatchReplayDialog(QDialog):
         self._timing_trace=[]
         self._debug_log=None
         self._active_request_started=None
+        self._latest_recognition_screen=None
+        self._last_action_text=""
+        self._last_selection_text=""
         self._selection_screen_started=None
         self._prep_budget_seconds=40.0
         self._proposed_selection=None
@@ -292,6 +353,7 @@ class MatchReplayDialog(QDialog):
         self._prep_timer=QTimer(self)
         self._prep_timer.setSingleShot(True)
         self._prep_timer.timeout.connect(self._prep_deadline)
+        self.shutdown_finished.connect(self._on_shutdown_finished)
         self._ai_request_attempts=0
         self._ai_last_status="AI未送信（撮影・メニュー認識待ち）"
         panel=QVBoxLayout(self)
@@ -301,6 +363,41 @@ class MatchReplayDialog(QDialog):
         )
         intro.setWordWrap(True)
         panel.addWidget(intro)
+        self.phase_banner=QLabel("現在の画面：対戦開始待ち")
+        self.phase_banner.setObjectName("live_phase_banner")
+        self.phase_banner.setStyleSheet(
+            "QLabel#live_phase_banner {font-size: 17px; font-weight: 700;"
+            "padding: 9px; background: #253449; color: white;}")
+        self.phase_banner.setWordWrap(True)
+        panel.addWidget(self.phase_banner)
+        self.activity_banner=QLabel("アプリの作業：事前ロード待ち")
+        self.activity_banner.setObjectName("live_activity_banner")
+        self.activity_banner.setStyleSheet(
+            "QLabel#live_activity_banner {font-size: 14px; font-weight: 600;"
+            "padding: 7px; background: #334155; color: white;}")
+        self.activity_banner.setWordWrap(True)
+        panel.addWidget(self.activity_banner)
+        self.deadline_banner=QLabel("時間：画面検出待ち（ゲーム内時計は取得しません）")
+        self.deadline_banner.setObjectName("live_deadline_banner")
+        self.deadline_banner.setStyleSheet(
+            "QLabel#live_deadline_banner {font-size: 15px; font-weight: 700;"
+            "padding: 8px; background: #164e63; color: white;}")
+        self.deadline_banner.setWordWrap(True)
+        panel.addWidget(self.deadline_banner)
+        self.selection_banner=QLabel("選出：未提示")
+        self.selection_banner.setObjectName("live_selection_banner")
+        self.selection_banner.setStyleSheet(
+            "QLabel#live_selection_banner {font-size: 20px; font-weight: 800;"
+            "padding: 13px; background: #0f766e; color: white;}")
+        self.selection_banner.setWordWrap(True)
+        panel.addWidget(self.selection_banner)
+        self.action_banner=QLabel("次の行動：画面判定待ち")
+        self.action_banner.setObjectName("live_action_banner")
+        self.action_banner.setStyleSheet(
+            "QLabel#live_action_banner {font-size: 22px; font-weight: 800;"
+            "padding: 12px; background: #1d4ed8; color: white;}")
+        self.action_banner.setWordWrap(True)
+        panel.addWidget(self.action_banner)
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         self.ai_status_label=QLabel(self._ai_last_status)
@@ -402,7 +499,9 @@ class MatchReplayDialog(QDialog):
         self._render({"status":"NOT_STARTED"})
 
     def _new_match(self):
-        if self._thread is not None or self._prep_thread is not None:return
+        if (self._shutdown_intent is not None or self._thread is not None
+                or self._prep_thread is not None):
+            return
         if self._auto_running:
             QMessageBox.warning(self, "停止が必要", "自動送信を停止してから新しい対戦を開始してください。")
             return
@@ -441,6 +540,9 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self.match_id=new_id
             self._selection_screen_started=None
+            self._latest_recognition_screen=None
+            self._last_action_text=""
+            self._last_selection_text=""
             self._prep_budget_seconds=40.0
             self._proposed_selection=None
             self._proposed_prep_key=None
@@ -474,7 +576,55 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"テスト開始不可",str(exc))
 
     def _reset(self):
-        if self._thread is not None or self._prep_thread is not None:return
+        self.request_shutdown("reset")
+
+    def request_shutdown(self, intent="close"):
+        """Cancel new work now, complete reset/close after worker threads exit.
+
+        QThread termination/deletion while executing an API request is unsafe.
+        Cancellation is cooperative; the in-flight HTTP request may still need
+        to reach its bounded timeout. Never make the user retry Stop/Reset/Close.
+        """
+        if intent not in ("reset","close"):
+            raise ValueError("UNKNOWN_SHUTDOWN_INTENT")
+        if self._shutdown_intent=="close":
+            return
+        self._shutdown_intent=intent
+        self._shutdown_ready=False
+        self._restart_prep_after_cleanup=False
+        self._stop_auto()
+        self._interrupt_prep()
+        self._pending_batch=None
+        self._pending_screen_label=None
+        self._set_ai_status("停止要求済み／実行中のAI通信を破棄し終了処理へ移行")
+        if self._debug_log is not None:
+            self._trace_event("USER_REQUESTED_SHUTDOWN",
+                              status="RESET" if intent=="reset" else "CLOSE")
+        self.reset_button.setEnabled(False)
+        self._maybe_finish_shutdown()
+
+    def _maybe_finish_shutdown(self):
+        if self._shutdown_intent is None:
+            return
+        if self._thread is not None or self._prep_thread is not None:
+            return
+        intent=self._shutdown_intent
+        self._shutdown_intent=None
+        if intent=="reset":
+            self._perform_reset()
+            self.reset_button.setEnabled(True)
+        else:
+            self._shutdown_ready=True
+            # Queued emission avoids recursively closing the embedded panel
+            # from inside Qt's existing closeEvent/finished slot.
+            QTimer.singleShot(0,self.shutdown_finished.emit)
+
+    @Slot()
+    def _on_shutdown_finished(self):
+        if self._shutdown_ready and not self.embedded:
+            self.close()
+
+    def _perform_reset(self):
         self._trace_event("MATCH_RESET")
         self._stop_auto()
         self._turn_buffer.reset_turn()
@@ -618,7 +768,7 @@ class MatchReplayDialog(QDialog):
         )
 
     def _start_auto(self):
-        if self._thread is not None or self._auto_running:
+        if self._shutdown_intent is not None or self._thread is not None or self._auto_running:
             return
         if self.state is None or self.assets is None:
             QMessageBox.warning(self, "未開始", "先に新しい対戦を開始してください。")
@@ -679,8 +829,10 @@ class MatchReplayDialog(QDialog):
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._clear_capture_preview("監視停止中")
-        if self._thread is None:
-            self._set_ai_status("AI監視停止（新規画像送信なし）")
+        self._set_ai_status(
+            "監視停止／通信中の結果は破棄・ワーカー終了処理中"
+            if self._thread is not None or self._prep_thread is not None else
+            "AI監視停止（新規画像送信なし）")
         # Previously the UI could still say "自動送信中" after stopping.
         if self.state is not None:
             self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
@@ -791,6 +943,8 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"撮影失敗",str(exc))
 
     def _queue_batch(self,frames, *, screen_label=None):
+        if self._shutdown_intent is not None:
+            return
         if not self._auto_running and not self._manual_submission:
             return
         # During selection the first outstanding recognition+tactical request
@@ -807,6 +961,20 @@ class MatchReplayDialog(QDialog):
             self._trace_event("SELECTION_DUPLICATE_SUPPRESSED",
                               screen_label=screen_label or "UNCLASSIFIED")
             return
+        if self._thread is not None and self._active_job=="batch":
+            # Before any model result, protect actionable requests from a flood
+            # of unknown animations, duplicates or old event frames.
+            if not _should_replace_inflight(self._inflight_screen_label,
+                                            screen_label):
+                self._trace_event("INFLIGHT_FRAME_SUPPRESSED",
+                                  screen_label=screen_label or "UNCLASSIFIED")
+                return
+            if (self._pending_batch is not None and
+                    not _should_replace_inflight(self._pending_screen_label,
+                                                 screen_label)):
+                self._trace_event("PENDING_PRIORITY_PROTECTED",
+                                  screen_label=screen_label or "UNCLASSIFIED")
+                return
         # A newly observed turn/party/event candidate outranks PREP.
         # Never wait for a 40-second PREP API call before requesting action.
         if (self.state is not None and self.state.get("phase")=="PREP"
@@ -826,10 +994,14 @@ class MatchReplayDialog(QDialog):
                               confidence="UNVERIFIED")
         self._pending_batch=list(frames)
         self._pending_screen_label=screen_label
+        if screen_label:
+            self._latest_recognition_screen=screen_label
+            self._refresh_live_status()
         self._send_pending()
 
     def _send_pending(self):
-        if self._thread is not None or self._pending_batch is None:
+        if (self._shutdown_intent is not None or self._thread is not None
+                or self._pending_batch is None):
             return
         if self.state is None or self.state.get("phase")=="ENDED":
             self._pending_batch=None
@@ -838,8 +1010,19 @@ class MatchReplayDialog(QDialog):
         screen_label=self._pending_screen_label
         # Only the CURRENT screenshot is needed for the opponent-six preview;
         # old transition frames are unhelpful and cost capture/memory time.
-        if self.state.get("phase") in ("MATCHMAKING","SELECTION") and frames:
+        if frames and (self.state.get("phase") in ("MATCHMAKING","SELECTION")
+                       or screen_label in _URGENT_SCREENS):
+            # One *current* menu shot is sufficient for immediate turn choice:
+            # older animations cost image tokens and risk superseding action.
             frames=[frames[-1]]
+        elif frames and (
+                screen_label=="BATTLE_EVENT"
+                or (screen_label is None and self.state.get("phase")
+                    in ("PREP","BATTLE"))):
+            # Without a local classifier, one previous transition plus the
+            # current screen carries useful event context at much lower
+            # latency than repeatedly shipping four high-detail images.
+            frames=frames[-2:]
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
@@ -968,6 +1151,11 @@ class MatchReplayDialog(QDialog):
                 # also fire an unrelated image-change gate for UNKNOWN frames.
                 return
 
+        if self._thread is not None and self._active_job=="batch":
+            # Do not acknowledge/consume a fallback scene transition while
+            # GPT is already working. Otherwise the newer command frame can
+            # disappear from the gate *without ever being submitted*.
+            return
         if self._automatic_probe.observe(image,phase):
             # No bundled trained model: bounded fallback only. ChatGPT must
             # classify the screenshot before generating any tactical choice.
@@ -975,6 +1163,10 @@ class MatchReplayDialog(QDialog):
 
     @Slot(object)
     def _completed(self, payload):
+        if self._shutdown_intent is not None or self._cancel_event.is_set():
+            # A stopped HTTP request can still return a result. Never apply
+            # its stale action, advance the match, or dispatch more captures.
+            return
         report=payload["report"]
         if self._active_request_started is not None:
             report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
@@ -997,12 +1189,19 @@ class MatchReplayDialog(QDialog):
             self._pending_batch=None
             self._pending_screen_label=None
             self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
-        superseded=self._active_job=="batch" and self._pending_batch is not None
+        superseded=(
+            self._active_job=="batch" and self._pending_batch is not None
+            and _supersedes_result(report,self._pending_screen_label))
+        if self._pending_batch is not None and not superseded:
+            # A reply beats another unclassified animation/duplicate. The
+            # next new *observed* transition can still request a fresh action.
+            self._trace_event("INFLIGHT_RESULT_PROTECTED",
+                              status=report.get("status","UNKNOWN"))
+            self._pending_batch=None
+            self._pending_screen_label=None
         if superseded:
-            # Preserve the newer snapshot's *current* state rather than
-            # accepting stale facts or a stale action from an older request.
             report={**report,"status":"SUPERSEDED",
-                    "recommendation":"","warning":"NEWER_COMMAND_SCREEN_PENDING"}
+                    "recommendation":"","warning":"NEWER_VERIFIED_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
         if (not superseded and payload.get("state", {}).get("phase")=="BATTLE"
@@ -1239,14 +1438,21 @@ class MatchReplayDialog(QDialog):
     def _prep_cleanup(self):
         self._prep_thread=None
         self._prep_worker=None
+        if self._shutdown_intent is not None:
+            self._maybe_finish_shutdown()
+            return
         if self._restart_prep_after_cleanup:
             self._restart_prep_after_cleanup=False
             if self.state is not None and self.state.get("phase")=="PREP":
                 self._start_prep_auto()
 
     def _set_busy(self,busy):
-        for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button,self.reconnect_button):
+        # Stop and Reset must remain reachable during network requests.
+        for widget in (self.start_button,self.confirm_button,self.prep_button,
+                       self.reconnect_button):
             widget.setEnabled(not busy)
+        self.reset_button.setEnabled(self._shutdown_intent is None)
+        self.auto_button.setEnabled(True)
 
     @Slot()
     def _cleanup(self):
@@ -1256,6 +1462,13 @@ class MatchReplayDialog(QDialog):
         self._active_job=None
         self._inflight_screen_label=None
         self._set_busy(False)
+        if self._shutdown_intent is not None:
+            self._maybe_finish_shutdown()
+            return
+        if self._cancel_event.is_set():
+            # Stop alone cancels the pending batch. Never restart PREP after
+            # a stopped capture session.
+            return
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
         elif (self.state is not None and self.state.get("phase")=="SELECTION"
@@ -1263,6 +1476,52 @@ class MatchReplayDialog(QDialog):
               and self._proposed_prep_key is None
               and self._prep_thread is None):
             self._start_prep_auto(provisional=True)
+
+    def _refresh_live_status(self):
+        """GUI-only update. Never captures or sends an AI request."""
+        state=self.state or {}
+        phase=state.get("phase","NOT_STARTED")
+        labels={
+            "MATCHMAKING":"マッチング中・選出画面待ち",
+            "SELECTION":"選出画面・3匹と初手を決める",
+            "PREP":"選出確定・対戦準備中",
+            "BATTLE":"対戦中・ターン判断",
+            "ENDED":"対戦終了",
+            "NOT_STARTED":"開始待ち",
+        }
+        observed=self._latest_recognition_screen
+        indicator=(
+            f"／画像候補：{observed}（AI未確認）"
+            if observed and self._active_job=="batch" else "")
+        self.phase_banner.setText(
+            "現在のフェイズ："+labels.get(phase,phase)+indicator)
+        if self._active_job=="batch" and self._active_request_started is not None:
+            elapsed=monotonic()-self._active_request_started
+            current="画面をAI認識・行動判断中"
+            window=55 if phase in ("MATCHMAKING","SELECTION") else 30
+            remaining=max(0,int(window-elapsed))
+            clock=(f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
+                   + ("／ターン45秒中15秒を操作用に確保"
+                      if phase in ("PREP","BATTLE") else ""))
+        elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
+            current="PREP：既存対面評価と勝ち筋を確認中"
+            remaining=max(0,self._prep_timer.remainingTime()//1000)
+            clock=f"PREP処理期限まで約{remaining}秒"
+        else:
+            current=("実際の選出を確定してください" if phase=="SELECTION"
+                     else "技選択画面の認識待ち" if phase=="BATTLE"
+                     else "ゲーム画面監視中" if self._auto_running
+                     else "監視停止中")
+            clock="AI処理待機／ゲーム内の残り時間は未取得"
+        if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
+            reserve=max(0,87-(monotonic()-self._selection_screen_started))
+            clock+=f"／選出→PREP推定余裕 {reserve:.0f}秒"
+        if self._active_request_started is not None and self._active_job=="batch":
+            if remaining<=5:
+                clock+="【期限間近】"
+        self.activity_banner.setText("アプリの作業："+current)
+        self.deadline_banner.setText("時間："+clock+"（ローカル計測・ゲーム内時計とは別）")
+        self.live_clock_changed.emit(clock)
 
     def _render(self, report):
         state=self.state or {}
@@ -1285,7 +1544,39 @@ class MatchReplayDialog(QDialog):
             display_phase=phase
         self.status.setText(
             f"段階：{display_phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
+        if report.get("screen") == "TEAM_SELECTION" and (
+                report.get("selected_three") and report.get("lead")):
+            selection=list(report["selected_three"])
+            self._last_selection_text=(
+                "選出："+ " / ".join(selection)+"   初手："+str(report["lead"]))
+        elif state.get("selected_three") and state.get("lead"):
+            self._last_selection_text=(
+                "選出："+ " / ".join(state["selected_three"])
+                +"   初手："+str(state["lead"]))
+        if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY") and (
+                report.get("screen") in ("MOVE_MENU","PARTY_MENU")
+                and report.get("recommendation")):
+            self._last_action_text=str(report["recommendation"])
+        if report.get("status") in ("MATCH_STARTED","RESET"):
+            self._last_action_text=""
+            self._last_selection_text=""
+        if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
+                and report.get("status") in ("OBSERVED","MATCH_END")):
+            self._last_action_text=""
+        self.selection_banner.setText(self._last_selection_text or "選出：未提示")
+        if state.get("phase")=="ENDED":
+            action_text="対戦終了："+str(state.get("result","UNKNOWN"))
+        elif report.get("screen")=="COMMAND_MENU":
+            action_text="コマンド画面：『たたかう』を開いて技一覧を表示"
+        elif report.get("status") in ("SUPERSEDED","AI_REQUEST_QUEUED"):
+            action_text="新しい画面を確認中／行動提案を生成中"
+        elif self._last_action_text and state.get("phase")=="BATTLE":
+            action_text=self._last_action_text
+        else:
+            action_text="技・交代先の画像判定待ち（まだ行動提案なし）"
+        self.action_banner.setText("次の行動："+action_text)
         report["display_phase"]=display_phase
+        self._refresh_live_status()
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
             rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
@@ -1327,12 +1618,12 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"保存不可","指定の場所に書き込めません。")
 
     def closeEvent(self, event):
-        self._stop_auto()
-        if self._thread is not None or self._prep_thread is not None:
-            # Never destroy a QThread while a network request is still
-            # running. Closing will be possible after it completes.
+        if not self._shutdown_ready and (
+                self._thread is not None or self._prep_thread is not None):
+            self.request_shutdown("close")
             event.ignore()
             return
+        self._stop_auto()
         if self._debug_log is not None:
             self._debug_log.write("WINDOW_CLOSED")
         super().closeEvent(event)

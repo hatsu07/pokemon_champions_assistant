@@ -96,6 +96,33 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.assertEqual(emitted[0]["report"]["status"],"EVENT_READ_PASS")
         self.assertEqual(emitted[0]["state"]["phase"],"ENDED")
 
+    def test_live_integration_close_after_worker_without_retry_dialog(self):
+        from PySide6.QtCore import QCoreApplication
+        cfg=CaptureConfiguration(
+            backend="WINDOWS_NATIVE",
+            selected_window_identity={"hwnd":123,"pid":55},
+            game_viewport_normalized=(0.0,0.0,1.0,1.0))
+        self.dialog.master_directory=Path(self.root.name)
+        self.dialog.team_path=Path(self.root.name)/"team.csv"
+        self.dialog.capture_config=cfg
+        self.dialog.tabs.setCurrentWidget(self.dialog.integration_page)
+        live=self.dialog.live_panel
+        live.state={"phase":"BATTLE","matrix_compatible":False}
+        live._auto_running=True
+        live._thread=object()  # Simulated active worker, no network
+        live._active_job="batch"
+        self.dialog.show()
+        self.dialog.close()
+        self.assertTrue(self.dialog._close_after_workers)
+        self.assertTrue(self.dialog.isVisible())
+        self.assertEqual(live._shutdown_intent,"close")
+        self.assertTrue(live._cancel_event.is_set())
+        live._cleanup()
+        QCoreApplication.processEvents()
+        QCoreApplication.processEvents()
+        self.assertFalse(self.dialog.isVisible())
+        self.assertTrue(live._shutdown_ready)
+
     def test_live_integrated_tab_uses_real_capture_engine_not_saved_images(self):
         from champions_assist.match_replay_dialog import MatchReplayDialog
         cfg=CaptureConfiguration(
