@@ -117,12 +117,19 @@ class DesktopSettingsService:
         if match_active:
             raise ConfigurationError("対戦中はLIVEデータの作成・更新ができません")
         source=self.teams.path_for_next_match(team_id)
-        return prepare_team_assets(
+        prepared = prepare_team_assets(
             master_dir=self.master_directory,
             data_root=self.settings.storage.data_root,
             team_id=team_id,team_path=source,
             environment_snapshot=self.environment.snapshot,
         )
+        # Only a finished match produces these AI cautions. Prepare them
+        # BEFORE four-file preload; no DB access during LIVE or PREP.
+        from .postmatch_matrix_notes import publish_postmatch_notes
+        publish_postmatch_notes(
+            data_root=self.settings.storage.data_root,team_id=team_id,
+            manifest_path=prepared.manifest_path,matrix_path=prepared.matrix_path)
+        return prepared
 
     def import_matchup_reviews(self, team_id: str, path: str | Path,
                               *, match_active: bool) -> dict:
