@@ -184,6 +184,9 @@ class ClassifiedMenuGate:
             self.reset()
             self.phase=phase
         allowed={"MATCHMAKING":{"TEAM_SELECTION"},
+                 # A real command may arrive while the selection API is still
+                 # pending; keep the newer candidate for deferred dispatch.
+                 "SELECTION":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
                  "PREP":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
                  "BATTLE":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"}}.get(phase,set())
         kind=prediction.label if prediction.label in allowed else None
