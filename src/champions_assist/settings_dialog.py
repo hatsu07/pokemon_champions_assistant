@@ -1125,10 +1125,12 @@ class SettingsDialog(QDialog):
                 publish_ai_matrix(
                     matrix_path=ready.matrix_path,manifest_path=ready.manifest_path,
                     catalog_path=catalog)
+                from hashlib import sha256
                 publish_postmatch_notes(
                     data_root=self.service.settings.storage.data_root,
                     team_id=record.team_id,
-                    manifest_path=ready.manifest_path,matrix_path=ready.matrix_path)
+                    manifest_path=ready.manifest_path,matrix_path=ready.matrix_path,
+                    team_signature=sha256(Path(record.csv_path).read_bytes()).hexdigest())
                 migration=store.import_legacy_assets()
             coverage=store.coverage(catalog)
             self.matchup_review_status.setText(
