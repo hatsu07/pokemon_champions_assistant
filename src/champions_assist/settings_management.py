@@ -57,6 +57,7 @@ class DesktopSettingsService:
         self.environment = SinglesEnvironmentStore(self.settings.storage.data_root)
         self._refresh_lock = Lock()
         self._refresh_owner = None
+        self._sqlite_primary_migrated = False
 
     @property
     def first_launch(self) -> bool:
@@ -117,12 +118,29 @@ class DesktopSettingsService:
         if match_active:
             raise ConfigurationError("対戦中はLIVEデータの作成・更新ができません")
         source=self.teams.path_for_next_match(team_id)
+        from .sqlite_primary import ChampionsPrimaryData
+        primary=ChampionsPrimaryData(self.settings.storage.data_root)
+        if not self._sqlite_primary_migrated:
+            # One-time, off-match migration with byte-level audit. V28/V29
+            # originals are never moved or deleted.
+            primary.migrate(master_dir=self.master_directory)
+            self._sqlite_primary_migrated=True
+        else:
+            primary.archive_source("team_csv",team_id,source)
         prepared = prepare_team_assets(
             master_dir=self.master_directory,
             data_root=self.settings.storage.data_root,
             team_id=team_id,team_path=source,
             environment_snapshot=self.environment.snapshot,
         )
+        # Use exact-evidence v2 rows already stored in SQLite, even when a
+        # fixed-master form correction changes the derived cache fingerprint.
+        catalog_path=prepared.manifest_path.with_name("matchup-evidence.json")
+        primary.hydrate_unchanged(catalog_path)
+        from .team_ai_matrix import publish_ai_matrix
+        publish_ai_matrix(matrix_path=prepared.matrix_path,
+                          manifest_path=prepared.manifest_path,
+                          catalog_path=catalog_path)
         # Only a finished match produces these AI cautions. Prepare them
         # BEFORE four-file preload; no DB access during LIVE or PREP.
         from .postmatch_matrix_notes import publish_postmatch_notes
