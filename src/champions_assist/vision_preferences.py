@@ -8,6 +8,8 @@ import re
 import tempfile
 from .reasoning_config import VALID_EFFORTS
 
+SCREEN_DEVICES = frozenset(("auto","cpu","gpu","directml","cuda"))
+
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -24,6 +26,10 @@ class VisionPreferenceStore:
                     result["selected_model"] = data["selected_model"]
                 if isinstance(data.get("reasoning_effort"), str) and data["reasoning_effort"] in VALID_EFFORTS:
                     result["reasoning_effort"] = data["reasoning_effort"]
+                if data.get("screen_device") in SCREEN_DEVICES:
+                    result["screen_device"] = data["screen_device"]
+                if type(data.get("screen_gpu_id")) is int and 0<=data["screen_gpu_id"]<=7:
+                    result["screen_gpu_id"] = data["screen_gpu_id"]
                 return result
         except (OSError, ValueError, UnicodeError, TypeError):
             pass
@@ -34,6 +40,22 @@ class VisionPreferenceStore:
 
     def reasoning_effort(self) -> str:
         return self._read().get("reasoning_effort", "auto")
+
+    def screen_device(self) -> str:
+        return self._read().get("screen_device","auto")
+
+    def screen_gpu_id(self) -> int:
+        return self._read().get("screen_gpu_id",0)
+
+    def save_screen_device(self, device: str, gpu_id: int=0) -> None:
+        if device not in SCREEN_DEVICES:
+            raise ValueError("invalid screen classifier device")
+        if type(gpu_id) is not int or not 0<=gpu_id<=7:
+            raise ValueError("invalid screen GPU adapter index")
+        data=self._read()
+        data["screen_device"]=device
+        data["screen_gpu_id"]=gpu_id
+        self._save(data)
 
     def save_model(self, model: str) -> None:
         if not isinstance(model, str) or _MODEL.fullmatch(model) is None:
