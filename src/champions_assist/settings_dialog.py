@@ -1005,10 +1005,22 @@ class SettingsDialog(QDialog):
             QMessageBox.StandardButton.No)
         if answer!=QMessageBox.StandardButton.Yes:
             return
-        # Persist any visible manual editor changes first is intentionally
-        # NOT performed: avoid unapproved data writes.
+        # Refuse stale registered data when the user has unsaved form edits.
+        # Never silently persist these edits just to run the helper.
         doc=self._editing_document
+        for row,member in enumerate(doc.members):
+            for column,field in enumerate(self.member_columns):
+                widget=self.team_editor.cellWidget(row,column)
+                item=self.team_editor.item(row,column)
+                current=(widget.currentText() if isinstance(widget,QComboBox)
+                         else item.text() if item is not None else "").strip()
+                if current!=(member.get(field) or "").strip():
+                    self.team_status.setText(
+                        "先に現在の編集を「構築を保存」で確定してください。"
+                        "AIは未保存の構築を解析しません。")
+                    return
         self.annotation_button.setEnabled(False)
+        self.team_editor.setEnabled(False)
         self._annotation_worker=_TeamAnnotationWorker(
             [dict(x) for x in doc.members],record.team_id,doc.sha256(),
             model,prefs.reasoning_effort(),self)
@@ -1046,6 +1058,7 @@ class SettingsDialog(QDialog):
         worker=self._annotation_worker
         self._annotation_worker=None
         self.annotation_button.setEnabled(True)
+        self.team_editor.setEnabled(True)
         if worker is not None:
             worker.deleteLater()
 
