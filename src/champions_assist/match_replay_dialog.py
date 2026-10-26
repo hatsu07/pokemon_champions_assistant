@@ -1446,7 +1446,8 @@ class MatchReplayDialog(QDialog):
                         and prediction.confidence>=0.95
                         and prediction.margin>=0.50
                         and phase in ("SELECTION","PREP","BATTLE")
-                        and not self._turn_action_sent):
+                        and (not self._turn_action_sent
+                             or self._turn_event_after_action)):
                     self._begin_local_turn(prediction.label)
                 classified=self._screen_gate.observe(prediction,phase)
                 if (prediction.label=="BATTLE_EVENT"
