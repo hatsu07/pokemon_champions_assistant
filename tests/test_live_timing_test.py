@@ -58,7 +58,7 @@ class TimingCoreTest(unittest.TestCase):
 
     def fake_prep(self, elapsed=25, mutate=None):
         def runner(**kwargs):
-            self.assertLessEqual(kwargs["limit_seconds"],40)
+            self.assertLessEqual(kwargs["limit_seconds"],87)
             self.clock.now=elapsed
             state=deepcopy(kwargs["state"])
             state["prep_status"]="STRUCTURE_COMPLETE"
@@ -84,6 +84,26 @@ class TimingCoreTest(unittest.TestCase):
         self.assertEqual(report["bench_evaluated"],12)
         self.assertEqual(report["win_conditions"],3)
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
+
+    def test_prep_over_40s_passes_inside_shared_87s_deadline(self):
+        updated,report=prep_timing_test(
+            state=self.state,assets=self.assets,access_token="dummy",
+            model="mock",clock=self.clock,started_at=0,
+            limit_seconds=72,prep_runner=self.fake_prep(elapsed=50))
+        self.assertTrue(report["pass"])
+        self.assertEqual((report["lead_evaluated"],report["bench_evaluated"],
+                          report["win_conditions"]),(6,12,3))
+        self.assertEqual(report["limit_ms"],72000)
+        self.assertEqual(len(updated["prep"]["matchups_18"]),18)
+
+    def test_prep_after_shared_deadline_does_not_promote_state(self):
+        updated,report=prep_timing_test(
+            state=self.state,assets=self.assets,access_token="dummy",
+            model="mock",clock=self.clock,started_at=0,
+            limit_seconds=72,prep_runner=self.fake_prep(elapsed=74))
+        self.assertFalse(report["pass"])
+        self.assertEqual(report["reason"],"DEADLINE_EXCEEDED")
+        self.assertIsNone(updated["prep"])
 
     def test_prep_budget_shortens_after_slow_selection(self):
         updated,report=prep_timing_test(
@@ -203,10 +223,27 @@ class TimingQtFlowTest(unittest.TestCase):
         self.dialog.test_state=selection_test_prep_state(self.assets,selection_fixture())
         self.dialog._start_timing_test("PREP")
         self.assertIsNone(self.dialog.thread)
-        self.assertTrue(self.dialog.prep_completed)
+        self.assertFalse(self.dialog.prep_completed)
         self.assertIn("未達",self.dialog.timing_status.text())
         self.assertIn("90秒",self.dialog.timing_status.text())
         self.assertTrue(self.dialog.run_button.isEnabled())
+
+    def test_qt_accepts_complete_prep_over_40s_before_shared_deadline(self):
+        import time
+        self.dialog.selection_started_at=time.perf_counter()-60.0
+        self.dialog.selection_display_elapsed_ms=14000
+        self.dialog.prep_limit_seconds=73.0
+        self.dialog.timing_requested_at=time.perf_counter()-46.0
+        state=selection_test_prep_state(self.assets,selection_fixture())
+        state["prep"]=prep_payload(state)
+        self.dialog.test_state=state
+        self.dialog._timing_complete({
+            "mode":"PREP","state":state,
+            "report":{"pass":True,"status":"PREP_TIMING_PASS","reason":"OK",
+                      "lead_evaluated":6,"bench_evaluated":12,
+                      "win_conditions":3}})
+        self.assertTrue(self.dialog.prep_completed)
+        self.assertIn("合格",self.dialog.timing_status.text())
 
     def test_combined_ui_deadline_cannot_pass_even_if_prep_worker_says_pass(self):
         import time
@@ -214,6 +251,7 @@ class TimingQtFlowTest(unittest.TestCase):
         self.dialog.selection_display_elapsed_ms=20000
         self.dialog.test_state=selection_test_prep_state(self.assets,selection_fixture())
         self.dialog.timing_requested_at=time.perf_counter()-2.0
+        self.dialog.prep_limit_seconds=67.0
         self.dialog._timing_complete({
             "mode":"PREP","state":self.dialog.test_state,
             "report":{"pass":True,"status":"PREP_TIMING_PASS","reason":"OK",
