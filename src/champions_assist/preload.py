@@ -8,7 +8,7 @@ has no path back to the filesystem.
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
@@ -65,6 +65,8 @@ class FrozenMatchAssets:
     lookup_index: Mapping[str, str]
     own_team: tuple[dict[str, str], ...]
     frozen_at: str
+    matchup_cache_index: Mapping[str, Mapping[str, Mapping]] = field(
+        default_factory=lambda: MappingProxyType({}))
 
     @property
     def manifest(self) -> tuple[dict[str, str], ...]:
@@ -136,6 +138,9 @@ class MasterPreloader:
         except (UnicodeDecodeError, csv.Error, ValueError) as exc:
             raise PreloadError({"compiled_indexes": str(exc)}) from exc
 
+        from .prep_cache import compile_matchup_cache
+        matchup_cache = compile_matchup_cache(
+            contents[REQUIRED_MASTER_FILES[1]], matrix, team)
         return FrozenMatchAssets(
             contents=MappingProxyType(contents),
             sha256=MappingProxyType({name: hashlib.sha256(body).hexdigest() for name, body in raw_bytes.items()}),
@@ -143,4 +148,5 @@ class MasterPreloader:
             lookup_index=lookup,
             own_team=team,
             frozen_at=datetime.now(timezone.utc).isoformat(),
+            matchup_cache_index=matchup_cache,
         )

@@ -89,11 +89,8 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
         bench_code=("S=unknown|OUR=registered|OPP=unknown|PRI=unknown|"
                     "SAFE=unknown|PROC=unverified")
         response={
-            "lead_six":[lead_code for _ in self.opponents],
-            "bench_twelve":[
-                bench_code for _ in self.names[1:3] for _ in self.opponents
-            ],
             "preserve":self.names[0],"stopper":self.names[1],"closer":self.names[2],
+            "warning":"未評価対面は暫定で扱う",
         }
         class Stream:
             def __enter__(self):return self
@@ -113,13 +110,22 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
         state,prep=run_replay_prep(
             state=state,assets=self.assets,model="mock",access_token="dummy",
             client_factory=lambda **_:client)
-        self.assertEqual(prep["status"],"PREP_PROVISIONAL")
-        self.assertEqual(prep["matchups_evaluated"],18)
+        self.assertEqual(prep["status"],"PREP_CACHE_INCOMPLETE")
         self.assertEqual(len(state["prep"]["matchups_18"]),18)
+        # Exact registered battle sets may reuse existing reviewed matrix
+        # cells while other members remain UNKNOWN: never discard the former.
+        cached=sum(r["source"]!="MISSING" for r in state["prep"]["matchups_18"])
+        self.assertGreater(cached,0)
+        self.assertLess(cached,18)
+        self.assertEqual(prep["matchups_evaluated"],cached)
+        self.assertEqual(prep["missing_matchups"],18-cached)
+        self.assertTrue(any(r["source"]=="MISSING"
+                            for r in state["prep"]["matchups_18"]))
         self.assertEqual(client.calls[0]["stream"],True)
         self.assertNotIn("OLD TEAM",client.calls[0]["input"][0]["content"][0]["text"])
-        self.assertIn("CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY",
-                      client.calls[0]["input"][0]["content"][0]["text"])
+        self.assertEqual(client.calls[0]["text"]["format"]["name"],
+                         "champions_cached_prep_roles")
+        self.assertNotIn("lead_six",client.calls[0]["text"]["format"]["schema"]["properties"])
         state,_=advance_observation(
             state,self.assets,
             frame("COMMAND_MENU",our_active=self.names[0],

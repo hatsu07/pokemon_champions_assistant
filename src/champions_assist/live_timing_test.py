@@ -117,14 +117,28 @@ def prep_timing_test(
     unknown_slots=tuple(state.get("visual_unknown_opponents") or ())
     known=tuple(name for name in six if name not in unknown_slots)
     rows = prep.get("matchups_known" if partial else "matchups_18") or []
-    lead_rows = [r for r in rows if r.get("our_pokemon") == lead]
-    bench_rows = [r for r in rows if r.get("our_pokemon") in selected and r.get("our_pokemon") != lead]
+    cached = prep.get("source")=="FROZEN_CACHE"
+    if cached:
+        lead_rows = [
+            r for r in rows if r.get("our_pokemon")==lead
+            and r.get("source")!="MISSING"]
+        bench_rows = [
+            r for r in rows if r.get("our_pokemon") in selected
+            and r.get("our_pokemon")!=lead and r.get("source")!="MISSING"]
+    else:
+        lead_rows = [r for r in rows if r.get("our_pokemon") == lead]
+        bench_rows = [r for r in rows if r.get("our_pokemon") in selected and r.get("our_pokemon") != lead]
     required = ("preserve", "stopper", "closer")
     win_roles = sum(bool(prep.get(key) in selected) for key in required)
     # Independently validate the model's complete 18-pair + required-tag
     # structure, even when a synthetic/changed replay runner claims COMPLETE.
     structurally_valid = False
-    if len(six)==6 and len(selected)==3 and lead in selected:
+    if cached and len(six)==6 and len(selected)==3 and lead in selected:
+        from .prep_cache import validate_cached_preparation
+        structurally_valid, _ = validate_cached_preparation(
+            assets, selected, known, lead, rows,
+            (prep.get("preserve"), prep.get("stopper"), prep.get("closer")))
+    elif len(six)==6 and len(selected)==3 and lead in selected:
         try:
             parsed=PrepResult(
                 "PARTIAL" if partial else "COMPLETE",
@@ -144,8 +158,11 @@ def prep_timing_test(
             structurally_valid=False
     complete = (
         not partial and structurally_valid
-        and report.get("status") in ("PREP_STRUCTURE_OK", "PREP_PROVISIONAL")
-        and updated.get("prep_status") == "STRUCTURE_COMPLETE"
+        and report.get("status") in (
+            ("PREP_CACHE_REUSED",) if cached
+            else ("PREP_STRUCTURE_OK", "PREP_PROVISIONAL"))
+        and updated.get("prep_status") == (
+            "CACHE_STRUCTURE_COMPLETE" if cached else "STRUCTURE_COMPLETE")
         and len(six) == 6 and len(set(six)) == 6
         and len(rows) == 18 and len(lead_rows) == 6 and len(bench_rows) == 12
         and len({(r.get("our_pokemon"), r.get("opponent_pokemon")) for r in rows}) == 18
@@ -154,23 +171,36 @@ def prep_timing_test(
     passed = complete and elapsed <= round(cap*1000)
     partial_ready=(
         partial and structurally_valid
-        and report.get("status")=="PREP_PARTIAL"
-        and updated.get("prep_status")=="PARTIAL_STRUCTURE_COMPLETE"
+        and report.get("status")==(
+            "PREP_CACHE_KNOWN_ONLY" if cached else "PREP_PARTIAL")
+        and updated.get("prep_status")==(
+            "CACHE_KNOWN_ONLY" if cached else "PARTIAL_STRUCTURE_COMPLETE")
         and len(rows)==3*len(known)
         and len(lead_rows)==len(known) and len(bench_rows)==2*len(known)
         and win_roles==3
         and elapsed<=round(cap*1000)
     )
-    return (updated if passed or partial_ready else deepcopy(state)), {
+    cache_incomplete=(
+        cached and not partial and not structurally_valid
+        and report.get("status")=="PREP_CACHE_INCOMPLETE"
+        and updated.get("prep_status")=="CACHE_INCOMPLETE"
+        and win_roles==3 and len(rows)==18
+        and elapsed<=round(cap*1000))
+    return (updated if passed or partial_ready or cache_incomplete
+            else deepcopy(state)), {
         "status": ("PREP_TIMING_PASS" if passed else
-                   "PREP_TIMING_PARTIAL" if partial_ready else "PREP_TIMING_FAIL"),
+                   "PREP_TIMING_PARTIAL" if partial_ready else
+                   "PREP_TIMING_CACHE_INCOMPLETE" if cache_incomplete
+                   else "PREP_TIMING_FAIL"),
         "source_status": report.get("status", "UNKNOWN"),
         "source_reason": report.get("reason", ""),
         "source_elapsed_ms": report.get("elapsed_ms"),
         "source_stage": report.get("request_stage"),
         "source_model_elapsed_ms": report.get("model_elapsed_ms"),
         "source_prompt_chars": report.get("prompt_chars"),
-        "reason": "OK" if passed else "KNOWN_ONLY_UNCONFIRMED_OPPONENT" if partial_ready else (
+        "reason": ("CACHE_REUSED" if cached else "OK") if passed else
+        "KNOWN_ONLY_UNCONFIRMED_OPPONENT" if partial_ready else
+        "CACHED_EVIDENCE_GAPS" if cache_incomplete else (
             "DEADLINE_EXCEEDED" if elapsed > round(cap*1000) else
             (report.get("reason") if report.get("reason") not in ("OK","") else None)
             or "INCOMPLETE_18_OR_ROLES"),
@@ -181,6 +211,10 @@ def prep_timing_test(
         "known_opponents":len(known),
         "unknown_opponents":len(unknown_slots),
         "unknown_matchups":3*len(unknown_slots),
+        "cached_matchups":report.get("cached_matchups",0),
+        "missing_matchups":report.get("missing_matchups",0),
+        "source_model_elapsed_ms":report.get("model_elapsed_ms"),
+        "cache_ready":cache_incomplete,
         "partial_ready":partial_ready,
         "pass": passed,
         "evidence_scope": ("AI_PROVISIONAL_NOT_TACTICALLY_CERTIFIED"

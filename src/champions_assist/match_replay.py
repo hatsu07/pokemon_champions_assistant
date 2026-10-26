@@ -329,6 +329,28 @@ def advance_observation(
                         "Any fact that requires unverified game mechanics or damage is unknown. "
                         "Choose only visible registered legal actions; unknown may be NO_ACTION."),
             }
+            # Reuse only the CURRENT opponent's cached comparisons in a
+            # turn prompt; never resend 18 rows or override observed evidence.
+            cached_prep = state.get("prep") or {}
+            if cached_prep.get("source") == "FROZEN_CACHE":
+                known_rows = (cached_prep.get("matchups_18") or
+                              cached_prep.get("matchups_known") or [])
+                opponent_now = state.get("opponent_active")
+                current = [
+                    {"own":row["our_pokemon"],"opponent":row["opponent_pokemon"],
+                     "source":row["source"],"cell":row["matrix_cell"],
+                     "hint":row["ai_hint"]}
+                    for row in known_rows
+                    if row.get("opponent_pokemon")==opponent_now
+                ]
+                context["cached_matchup_hypotheses"] = current
+                context["cached_win_roles"] = {
+                    k:cached_prep.get(k) for k in ("preserve","stopper","closer")}
+                context["cached_warning"] = cached_prep.get("warning","")
+                context["rule"] += (
+                    " Use cached matchup notes conditionally; observed facts "
+                    "and revealed moves/items/forms always override them. "
+                    "A cached processor is NOT proof of a safe hard switch.")
             if state["matrix_compatible"]:
                 context["frozen_gate"] = assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"]
             # Otherwise, the matrix and team-specific LIVE gate are not used.
@@ -641,6 +663,169 @@ def _ordered_prep_pairs(lead: str, selected_three, opponents):
              for opponent in opponents])
 
 
+CACHE_ROLE_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "preserve": {"type": "string"}, "stopper": {"type": "string"},
+        "closer": {"type": "string"}, "warning": {"type": "string"},
+    },
+    "required": ["preserve", "stopper", "closer", "warning"],
+}
+
+
+def _run_cached_prep(*, state: dict, assets: FrozenMatchAssets,
+                     access_token: str, model: str,
+                     limit_seconds: float, client_factory, reasoning_effort: str):
+    """Reuse off-match evidence. GPT supplies ONLY three contextual team roles.
+
+    This path never regenerates 18 detailed decisions. Unknown cached cells
+    stay explicitly missing and can never become complete by type inference.
+    """
+    from .prep_cache import cached_pairs, cached_evidence_count, validate_cached_preparation
+
+    started = perf_counter()
+    updated = deepcopy(state)
+    opponents = tuple(updated["opponent_six"])
+    unknown = tuple(updated.get("visual_unknown_opponents") or ())
+    partial = bool(unknown)
+    known = tuple(name for name in opponents if name not in unknown)
+    selected = tuple(updated["selected_three"])
+    lead = updated["lead"]
+    compatible = updated["matrix_compatible"] or updated.get("matrix_provisional", False)
+    # Both reviewed and exact-team provisional evidence can be reused, but
+    # a different team's historical matrix must never become tactic guidance.
+    if not compatible or len(opponents) != 6 or len(known) not in (4, 5, 6):
+        updated["prep_status"] = "UNAVAILABLE_MATRIX_MISMATCH"
+        return updated, {"status": "PREP_UNAVAILABLE", "reason": "OWN_MATRIX_MISMATCH"}
+    if (len(set(opponents)) != 6 or len(selected) != 3 or
+            len(set(selected)) != 3 or lead not in selected):
+        return updated, {"status": "PREP_UNAVAILABLE", "reason": "CACHE_INPUT_INVALID"}
+    if any(name not in assets.matrix_index for name in known):
+        return updated, {"status": "PREP_UNAVAILABLE", "reason": "CACHE_OPPONENT_UNKNOWN"}
+    rows = cached_pairs(assets, selected, known, lead)
+    if len(rows) != len(known) * 3:
+        return updated, {"status": "PREP_UNAVAILABLE", "reason": "CACHE_PAIRS_MISSING"}
+    cached_count = cached_evidence_count(rows)
+    missing_count = len(rows) - cached_count
+    # The cache is completely frozen before matchmaking. In the model request,
+    # only the selected 3x6 compact evidence is passed, never all 6x262 rows.
+    compact = [
+        {"our": r["our_pokemon"], "opp": r["opponent_pokemon"],
+         "source": r["source"], "cell": r["matrix_cell"],
+         "hint": r["ai_hint"][:155]}
+        for r in rows
+    ]
+    warnings = [
+        {"opponent": name,
+         "warning": assets.matchup_cache_index[lead][name]["opponent_warning"][:230]}
+        for name in known
+    ]
+    prompt = {
+        "selected_three": selected, "lead": lead,
+        "known_opponents": known, "unknown_slots": unknown,
+        "cached_matchups": compact, "opponent_warnings": warnings,
+        "own_team": [dict(m) for m in assets.own_team if m["name"] in selected],
+        "missing_matchups": missing_count,
+    }
+    encoded = json.dumps(prompt, ensure_ascii=False, separators=(",", ":"))
+    started_model = perf_counter()
+    try:
+        if client_factory is None:
+            from openai import OpenAI
+            client_factory = OpenAI
+        client = client_factory(api_key=access_token, base_url="https://api.openai.com/v1",
+                                timeout=limit_seconds, max_retries=0)
+        response = _stream_json(
+            client, model=model, schema=CACHE_ROLE_SCHEMA,
+            name="champions_cached_prep_roles",
+            reasoning_effort="low" if reasoning_effort == "auto" else reasoning_effort,
+            instructions=(
+                "Pokémon Champions. PREP is ALREADY evaluated off-match; "
+                "do NOT repeat 18 matchup assessments or certify unknown cells. "
+                "Choose exactly three selected-team names for preserve, stopper "
+                "and closer using cached evidence, registered moves and threats. "
+                "Do not infer SV/ZA mechanics, opponent sets, KO ranges or safe "
+                "switches. A cached AI hint is a CONDITIONAL tactical hypothesis, "
+                "not a fact. Distinguish processors from safe switches. "
+                "Return concise Japanese warning text (up to 100 characters) "
+                "for only the greatest unresolved risk. Do not invent species "
+                "for unknown slots. Roles may be the same member if appropriate. "
+                "The match timer is strict; produce minimal JSON immediately."
+            ),
+            content=[{"type": "input_text", "text": encoded}],
+        )
+        model_ms = round((perf_counter()-started_model)*1000)
+    except Exception as exc:
+        updated["prep_status"] = "CACHE_ROLE_ERROR"
+        return updated, {
+            "status": "PREP_CACHE_INCOMPLETE", "reason": type(exc).__name__,
+            "request_stage": "CACHE_ROLE_MODEL",
+            "cached_matchups": cached_count, "missing_matchups": missing_count,
+            "model_elapsed_ms": round((perf_counter()-started_model)*1000),
+            "elapsed_ms": round((perf_counter()-started)*1000),
+        }
+    roles = (response.get("preserve"), response.get("stopper"),
+             response.get("closer"))
+    role_count = sum(isinstance(role, str) and role in selected for role in roles)
+    elapsed = round((perf_counter()-started)*1000)
+    if elapsed > limit_seconds*1000:
+        updated["prep_status"] = "DEADLINE_EXCEEDED"
+        return updated, {
+            "status": "PREP_DEADLINE_EXCEEDED", "reason": "DEADLINE_EXCEEDED",
+            "request_stage": "CACHE_ROLE_MODEL", "elapsed_ms": elapsed,
+            "model_elapsed_ms": model_ms, "prompt_chars": len(encoded),
+            "cached_matchups": cached_count, "missing_matchups": missing_count,
+            "win_conditions": role_count,
+        }
+    if role_count != 3:
+        updated["prep_status"] = "CACHE_ROLES_INCOMPLETE"
+        return updated, {
+            "status": "PREP_CACHE_INCOMPLETE", "reason": "CACHE_ROLES_INVALID",
+            "request_stage": "CACHE_ROLE_VALIDATE", "elapsed_ms": elapsed,
+            "model_elapsed_ms": model_ms, "prompt_chars": len(encoded),
+            "cached_matchups": cached_count, "missing_matchups": missing_count,
+            "win_conditions": role_count,
+        }
+    complete_evidence, count = validate_cached_preparation(
+        assets, selected, known, lead, rows, roles)
+    full = not partial and complete_evidence and len(rows) == 18
+    status = ("PREP_CACHE_REUSED" if full else
+              "PREP_CACHE_KNOWN_ONLY" if partial and complete_evidence else
+              "PREP_CACHE_INCOMPLETE")
+    updated["prep_status"] = ("CACHE_STRUCTURE_COMPLETE" if full else
+                              "CACHE_KNOWN_ONLY" if partial and complete_evidence else
+                              "CACHE_INCOMPLETE")
+    updated["prep"] = {
+        "matchups_known" if partial else "matchups_18": rows,
+        "unknown_opponent_slots": list(unknown),
+        "unknown_pairs": [
+            {"our_pokemon": own, "opponent_pokemon": name}
+            for own in selected for name in unknown],
+        "preserve": roles[0], "stopper": roles[1], "closer": roles[2],
+        "warning": str(response.get("warning") or "")[:100],
+        "source": "FROZEN_CACHE",
+        "cached_matchups": count, "missing_matchups": missing_count,
+        "note": (
+            "事前評価キャッシュを再利用。AI予測は実戦ログで継続補正。"
+            "処理役と安全受けは別判定。未評価は未評価のまま。"
+        ),
+    }
+    return updated, {
+        "status": status,
+        "reason": "CACHE_REUSED" if full else
+                  "UNKNOWN_VISUAL_OPPONENT" if partial else
+                  "CACHED_EVIDENCE_GAPS",
+        "request_stage": "CACHE_ROLE_VALIDATE",
+        "elapsed_ms": elapsed, "model_elapsed_ms": model_ms,
+        "prompt_chars": len(encoded),
+        "cached_matchups": count, "missing_matchups": missing_count,
+        "matchups_evaluated": count, "win_conditions": role_count,
+        "unknown_matchups": 3*len(unknown),
+        "message": ("キャッシュ18対面＋勝ち筋3点。" if full else
+                    f"暫定キャッシュ{count}/{len(rows)}対面＋勝ち筋3点。"),
+    }
+
+
 def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str,
                     model: str, limit_seconds: float = 87.0,
                     client_factory=None, reasoning_effort: str = "auto") -> tuple[dict, dict]:
@@ -658,6 +843,12 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         return updated,{"status":"BLOCKED","reason":"PREP_NOT_EXPECTED"}
     unknown_slots=tuple(updated.get("visual_unknown_opponents") or ())
     partial=bool(unknown_slots)
+    if (assets.matchup_cache_index and
+            (updated["matrix_compatible"] or updated.get("matrix_provisional", False))):
+        return _run_cached_prep(
+            state=state, assets=assets, access_token=access_token, model=model,
+            limit_seconds=limit_seconds, client_factory=client_factory,
+            reasoning_effort=reasoning_effort)
     if not (updated["matrix_compatible"] or updated.get("matrix_provisional",False) or partial):
         updated["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
         return updated,{"status":"PREP_UNAVAILABLE","reason":"OWN_MATRIX_MISMATCH",
