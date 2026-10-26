@@ -33,7 +33,7 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(right.shape[:2],(624,int(1048*.45)))
         self.assertGreater(int(right[250,150,0]),int(right[250,150,2]))
         descriptions=[item["text"] for item in inputs if item["type"]=="input_text"]
-        self.assertIn("OPPONENT_RIGHT_SIX_ONLY",descriptions[1])
+        self.assertIn("Extra enlarged RIGHT opponent slot",descriptions[1])
         self.assertNotIn("PLAYER_LEFT_SIX_ONLY",str(descriptions))
         self.assertTrue(all(item.get("detail")=="high"
                             for item in inputs if item["type"]=="input_image"))
