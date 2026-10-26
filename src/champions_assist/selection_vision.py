@@ -111,6 +111,67 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         raise SelectionBlocked("OPPONENT_MATRIX_MISSING") from exc
     return tuple(resolved)
 
+def unmatched_opponent_slots(raw: Mapping[str, Any],
+                             assets: FrozenMatchAssets) -> list[dict[str, Any]]:
+    """Report invalid opponent slots; NEVER guess a replacement species.
+
+    A one-to-one form expansion is accepted by the existing validator. Unknown
+    labels, e.g. an out-of-roster hallucination, are independently diagnosed.
+    """
+    names = raw.get("opponent_six")
+    if not isinstance(names,list):
+        return []
+    missing = []
+    for index,name in enumerate(names[:6],start=1):
+        if not isinstance(name,str):
+            continue
+        canonical = _display_name(name)
+        if canonical in assets.matrix_index:
+            continue
+        if any(key.startswith(canonical + "（")
+               for key in assets.matrix_index):
+            continue
+        missing.append({"slot":index,"label":name[:70]})
+    return missing
+
+
+def roster_constrained_retry_guidance(
+    *, reason: str, previous: Mapping[str, Any],
+    assets: FrozenMatchAssets,
+) -> str:
+    """Constrain the SECOND visual reading to the already preloaded matrix.
+
+    Names listed here are only a vocabulary, not observations. No external
+    game database/web request is performed; this is safe inside LIVE timing.
+    """
+    if reason != "OPPONENT_MATRIX_MISSING":
+        return ""
+    invalid = unmatched_opponent_slots(previous,assets)
+    focus = ",".join(
+        f"{item['slot']}:{item['label']}" for item in invalid) or "unresolved"
+    # A freeze of 358 canonical row labels is small and bounded. Do not let a
+    # corrupted/unbounded index turn a retry into a huge model prompt.
+    choices = list(assets.matrix_index)
+    if len(choices)>500:
+        return ("Earlier guessed species failed matrix validation. Re-examine "
+                "all six right sprites; do not repeat an invalid guess.")
+    return (
+        "CRITICAL: one or more previously proposed opponent names were NOT "
+        "present in the frozen Pokémon Champions matrix. "
+        f"Invalid opponent slots/guesses: {focus}. "
+        "Those labels are not verified. Specifically inspect these slots "
+        "again based on the IMAGE, not the previous guess or game meta. "
+        "The following are ONLY an allowed naming vocabulary, NOT evidence "
+        "that any candidate is on screen. Choose a candidate ONLY when "
+        "visually supported; if not identifiable leave its slot uncertain. "
+        "Respond with the exact Japanese species/form label from this frozen "
+        "matrix where possible. Do NOT choose the first or nearest entry, "
+        "do NOT invent a species outside these keys, and do NOT automatically "
+        "substitute a guessed invalid species. "
+        "MATRIX_CANONICAL_NAMES: " + " / ".join(choices)
+    )
+
+
 _RETRYABLE_OPPONENT_REASONS = frozenset({
     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
@@ -449,7 +510,9 @@ def run_selection_image(image, *, access_token: str, model: str,
                 "identify distinct Pokémon/forms only when actually visible. "
                 "If any remains unreadable, omit it and mark the uncertain "
                 "opponent slot; do NOT infer from meta or the known player team. "
-                "Set our_six to []."
+                "Set our_six to []. " +
+                roster_constrained_retry_guidance(
+                    reason=reason,previous=previous,assets=assets)
             )
             return _stream_json(
                 client, model=model, schema=VISION_SCHEMA,
