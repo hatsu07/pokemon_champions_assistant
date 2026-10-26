@@ -272,6 +272,12 @@ class TimingQtFlowTest(unittest.TestCase):
         self.assertIn("未達",self.dialog.timing_status.text())
         self.assertIn("COMBINED_90S_BUDGET_EXCEEDED",
                       self.dialog.timing_status.text())
+        self.assertFalse(self.dialog.prep_completed)
+        self.assertTrue(self.dialog.prep_attempted)
+        self.dialog._clear_worker()
+        # Turn screenshot benchmark remains usable as a separate test, while
+        # incomplete PREP never becomes a verified tactical cache.
+        self.assertTrue(self.dialog.turn_choose_button.isEnabled())
 
 
 if __name__=="__main__":
