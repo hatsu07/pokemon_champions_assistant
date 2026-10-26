@@ -351,10 +351,12 @@ class SelectionTestDialog(QDialog):
                    if report["matrix_ai_missing_opponents"] else "")
             )
         self.details.setText(result)
-        self.selection_display_elapsed_ms=round(
-            (perf_counter()-self.selection_started_at)*1000)
+        self.selection_display_elapsed_ms=(
+            round((perf_counter()-self.selection_started_at)*1000)
+            if self.selection_started_at is not None else None)
         self.test_state=None
-        if status in ("OK","PROVISIONAL_ADVICE"):
+        if (self.selection_started_at is not None
+                and status in ("OK","PROVISIONAL_ADVICE")):
             try:
                 from .live_timing_test import selection_test_prep_state
                 self.test_state=selection_test_prep_state(self.assets,report)
