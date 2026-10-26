@@ -58,6 +58,7 @@ class DesktopSettingsService:
         self._refresh_lock = Lock()
         self._refresh_owner = None
         self._sqlite_primary_migrated = False
+        self.sqlite_migration_report: dict | None = None
 
     @property
     def first_launch(self) -> bool:
@@ -123,7 +124,7 @@ class DesktopSettingsService:
         if not self._sqlite_primary_migrated:
             # One-time, off-match migration with byte-level audit. V28/V29
             # originals are never moved or deleted.
-            primary.migrate(master_dir=self.master_directory)
+            self.sqlite_migration_report=primary.migrate(master_dir=self.master_directory)
             self._sqlite_primary_migrated=True
         else:
             primary.archive_source("team_csv",team_id,source)
