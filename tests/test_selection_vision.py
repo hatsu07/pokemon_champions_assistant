@@ -7,6 +7,7 @@ from champions_assist.selection_vision import (
     SelectionPlanner, verify_selection_observation, SelectionBlocked,
     selection_summary_ja, unmatched_opponent_slots,
     roster_constrained_retry_guidance, retry_unresolved_opponent_six,
+    selection_retry_image_content,
 )
 
 OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
@@ -110,6 +111,50 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(again,2)
         with self.assertRaises(SelectionBlocked):
             verify_selection_observation(second_bad,frozen)
+
+    def test_after_second_visual_error_still_offers_partial_selection(self):
+        frozen=assets()
+        obs=observation()
+        obs["opponent_six"][2]="Gouging Fire"
+        calls=[]
+        def choose(context,remaining):
+            calls.append(context)
+            return {"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        planner=SelectionPlanner(clock=lambda:8.0)
+        # Default entrypoint stays strict so untrusted image results are
+        # never silently turned into incomplete selections.
+        strict=planner.choose(obs,frozen,choose,started_at=0)
+        self.assertEqual(strict.status,"BLOCKED")
+        self.assertEqual(calls,[])
+        # The live replay opts in only after an attempted revised visual read.
+        advisory=planner.choose(obs,frozen,choose,started_at=0,allow_partial=True)
+        self.assertEqual(advisory.status,"PARTIAL_ADVICE")
+        self.assertEqual(advisory.selected_three,OWN[:3])
+        self.assertEqual(advisory.lead,OWN[0])
+        self.assertEqual(advisory.opponent_six[2],"未判明相手3")
+        self.assertEqual(len(calls),1)
+        self.assertEqual(len(calls[0]["matrix_rows_six"]),5)
+        self.assertEqual(calls[0]["unknown_opponent_slots"],["未判明相手3"])
+        self.assertIn("PREP未完成",selection_summary_ja(advisory.as_dict()))
+
+    def test_retry_changes_image_evidence_not_same_right_crop(self):
+        import numpy as np
+        from unittest.mock import patch
+        img=np.zeros((600,1000,3),dtype=np.uint8)
+        # The 3rd opponent row has a distinctive pattern in the right slots.
+        img[210:275,780:980,:]=[80,155,245]
+        sent=[]
+        def uri(x):
+            sent.append(tuple(x.shape))
+            return "data:image/jpeg;base64,TEST"
+        with patch("champions_assist.vision_api_benchmark.jpeg_data_uri",side_effect=uri):
+            result=selection_retry_image_content(
+                img,introduction="Re-read enlarged slot",focus_slot=3)
+        self.assertEqual(sum(i["type"]=="input_image" for i in result),2)
+        self.assertEqual(sent[0],img.shape)
+        self.assertNotEqual(sent[1],img.shape)
+        self.assertLess(sent[1][1],img.shape[1])
+        self.assertGreater(sent[1][0],100)
 
     def test_retry_never_runs_after_time_budget_exhausted(self):
         valid=("ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
