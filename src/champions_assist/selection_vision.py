@@ -463,6 +463,52 @@ def selection_image_content(image, *, introduction: str,
     return content
 
 
+def selection_retry_image_content(image, *, introduction: str,
+                                  focus_slot: int | None = None) -> list[dict]:
+    """Changed evidence on retry: full screen + independent zoomed target.
+
+    First image sent by the LIVE call is a right-column crop. A second retry
+    must not send those same pixels/scales again. The focus region is an
+    unverified opponent slot, not a fabricated Pokémon identity.
+    """
+    from .vision_api_benchmark import jpeg_data_uri
+    import cv2
+    content=[{"type":"input_text","text":introduction}]
+    if not hasattr(image,"shape") or len(image.shape)!=3:
+        return selection_image_content(image,introduction=introduction,include_full=True)
+    height,width=image.shape[:2]
+    if width<480 or height<240 or not 1.15<=width/height<=3.0:
+        return selection_image_content(image,introduction=introduction,include_full=True)
+    content.append({"type":"input_image","image_url":jpeg_data_uri(image),
+                    "detail":"high"})
+    # A central portion of the opponent column is zoomed independently from
+    # the first 45%-width right-crop. Avoid enhancement that invents details.
+    x0=int(width*0.78)
+    x1=min(width,int(width*0.985))
+    slot=focus_slot if type(focus_slot) is int and 1<=focus_slot<=6 else None
+    if slot is not None:
+        # Team screen right side: six evenly spaced rows from approx 8%-83%.
+        center=(0.08+(slot-0.5)*0.125)*height
+        y0=max(0,int(center-0.11*height))
+        y1=min(height,int(center+0.11*height))
+    else:
+        y0=int(height*0.05)
+        y1=int(height*0.86)
+    crop=image[y0:y1,x0:x1,:].copy()
+    if crop.size:
+        factor=min(2.0,1200/max(crop.shape[:2]))
+        if factor>1.0:
+            crop=cv2.resize(crop,None,fx=factor,fy=factor,
+                            interpolation=cv2.INTER_NEAREST)
+        content.append({"type":"input_text","text":(
+            f"Extra enlarged RIGHT opponent slot {slot} only. "
+            "Compare sprite silhouette, types/icons and displayed name against "
+            "the full screen. If still unreadable, do not infer identity.")})
+        content.append({"type":"input_image","image_url":jpeg_data_uri(crop),
+                        "detail":"high"})
+    return content
+
+
 def run_selection_image(image, *, access_token: str, model: str,
                         assets: FrozenMatchAssets, total_seconds: float = 35.0,
                         client_factory=None, allow_test_without_matrix: bool = False,
@@ -517,12 +563,13 @@ def run_selection_image(image, *, access_token: str, model: str,
             return _stream_json(
                 client, model=model, schema=VISION_SCHEMA,
                 name="champions_opponent_six_retry",
-                reasoning_effort=reasoning_effort,
+                reasoning_effort="medium" if reasoning_effort in ("auto","low") else reasoning_effort,
                 instructions=correction,
-                content=selection_image_content(
-                    image,introduction="Re-read the RIGHT six sprites; use the "
-                    "frozen Champions vocabulary from the separate instructions, "
-                    "and do not guess uncertain slots."),
+                content=selection_retry_image_content(
+                    image,introduction="Use the FULL frame plus enlarged suspicious "
+                    "right slot; do not repeat the first read.",
+                    focus_slot=(unmatched_opponent_slots(previous,assets)[0]["slot"]
+                                if unmatched_opponent_slots(previous,assets) else None)),
             )
         visible, attempts = retry_unresolved_opponent_six(
             visible, assets, retry_view,
