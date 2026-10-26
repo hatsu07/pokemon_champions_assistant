@@ -348,12 +348,12 @@ class SelectionTestDialog(QDialog):
         icons=(observations.get("opponent_type_icons") if isinstance(observations,dict)
                else None) or report.get("observed_type_icons")
         if isinstance(icons,list) and len(icons)==6:
-            result+=("\\n視認タイプ（AI読取・未確定）: "
+            result+=("\n視認タイプ（AI読取・未確定）: "
                      + " / ".join("+".join(v) if isinstance(v,list) and v
                                   else "不明" for v in icons))
         conflict=report.get("type_mismatch_slots") or []
         if conflict:
-            result+="\\nタイプ矛盾枠（要確認）: "+", ".join(
+            result+="\nタイプ矛盾枠（要確認）: "+", ".join(
                 str(n)+"番" for n in conflict)
         unmatched=report.get("unmatched_opponent_slots") or []
         if unmatched and status in ("BLOCKED","PARTIAL_ADVICE"):
