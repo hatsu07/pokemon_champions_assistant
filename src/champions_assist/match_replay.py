@@ -592,21 +592,41 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
 PREP_SCHEMA = {
     "type":"object","additionalProperties":False,
     "properties":{
-        "matchups_18":{
-            "type":"array","items":{"type":"object","additionalProperties":False,
-                "properties":{
-                    "our_pokemon":{"type":"string"},
-                    "opponent_pokemon":{"type":"string"},
-                    "eval_code":{"type":"string"},
-                },
-                "required":["our_pokemon","opponent_pokemon","eval_code"]},
-        },
+        # The pairs are already determined by the frozen selected three and
+        # opponent six. Repeating 36 species names in the output is unnecessary.
+        "lead_six":{"type":"array","items":{"type":"string"}},
+        "bench_twelve":{"type":"array","items":{"type":"string"}},
         "preserve":{"type":"string"},
         "stopper":{"type":"string"},
         "closer":{"type":"string"},
     },
-    "required":["matchups_18","preserve","stopper","closer"],
+    "required":["lead_six","bench_twelve","preserve","stopper","closer"],
 }
+
+
+def _prep_gate_excerpt(source: str) -> str:
+    """Keep core safety gates, not unrelated selection/timing/live sections.
+
+    Do not send the old PREP_40S deadline to a shared-clock PREP request.
+    An excerpt is never a new tactical rule or an inferred game mechanic.
+    """
+    sections = {"[REF]", "[CORE]", "[SWITCH_GATE]", "[ATTACK_GATE]",
+                "[PRIORITY_GATE]", "[GUARANTEE_GATE]"}
+    selected = []
+    include = False
+    for line in source.splitlines():
+        if line.startswith("[") and line.endswith("]"):
+            include = line in sections
+        if include:
+            selected.append(line)
+    return "\n".join(selected)
+
+
+def _ordered_prep_pairs(lead: str, selected_three, opponents):
+    """Wire order: first the six lead pairs, then each bench member's six."""
+    return ([(lead, opponent) for opponent in opponents] +
+            [(own, opponent) for own in selected_three if own != lead
+             for opponent in opponents])
 
 
 def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str,
@@ -645,20 +665,26 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "opponent_six":updated["opponent_six"],
             "matrix_rows_six":list(rows),
             "lookup_rows_critical":lookup,
-            "registered_team":list(assets.own_team),
-            "frozen_gate":(assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"]
-                           if not provisional else ""),
+            "selected_team":[member for member in assets.own_team
+                             if member["name"] in updated["selected_three"]],
+            "prep_gate_rules":(_prep_gate_excerpt(
+                assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"])
+                if not provisional else ""),
             "evidence_scope":("CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY" if provisional
                               else "EXACT_VERIFIED_BASELINE"),
-            "evaluation_format":{
-                "lead":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
-                "bench":"S|OUR|OPP|PRI|SAFE|PROC",
-                "example":"S=faster|OUR=observed_move|OPP=unknown|PRI=none|SAFE=unknown|PROC=needs_damage_check",
+            "response_order":{
+                "lead_six":"six strings in opponent_six order for the lead",
+                "bench_twelve":"six strings per selected_three member except lead, "
+                               "in selected_three order, each in opponent_six order",
+                "lead_tags":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
+                "bench_tags":"S|OUR|OPP|PRI|SAFE|PROC",
+                "format":"Every string has TAG=value components separated by |; "
+                         "unknown is allowed except ACT/DPS/PROC must be assessed.",
             },
         }
         answer=_stream_json(
             client,model=model,schema=PREP_SCHEMA,name="champions_replay_prep",
-            reasoning_effort=reasoning_effort,
+            reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Champions 40-second PREP. Compare ALL selected 3 x opponent 6 "
                 "= 18 pairs once using these six frozen LIVE matrix rows as PRIMARY. "
@@ -666,8 +692,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "only and NEVER certify KO, processing roles or safe switching. "
                 "Use at most two supplied secondary lookup rows ONLY for explicit "
                 "critical warnings; do not search all six again. "
-                "For each lead matchup provide all required key=value tags "
-                "separated by |, and for each bench matchup provide all its tags. "
+                "Return lead_six as six compact TAG=value strings in exact "
+                "opponent_six order; return bench_twelve as twelve strings in "
+                "selected_three order excluding lead, six opponent_six entries "
+                "per bench member. Do NOT repeat Pokémon names inside each entry. "
+                "Every entry must include all its required tags. "
                 "Do not invent moves or type facts. SAFE means safe to SWITCH IN, "
                 "which is different from PROC meaning it can finish a matchup. "
                 "Preserve one key member, identify a stopper and closer. "
@@ -681,12 +710,18 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             ),
             content=[{"type":"input_text","text":json.dumps(prompt,ensure_ascii=False)}],
         )
+        lead_codes=answer.get("lead_six",[])
+        bench_codes=answer.get("bench_twelve",[])
+        # Never zip-truncate missing or extra model rows into a seemingly
+        # complete matchup cache. The validator will reject 0 or >18 pairs.
+        codes=lead_codes+bench_codes
+        expected=_ordered_prep_pairs(
+            updated["lead"], updated["selected_three"], opponents)
         result=PrepResult(
             "COMPLETE",
-            tuple(PrepMatchup(str(row["our_pokemon"]),
-                              str(row["opponent_pokemon"]),
-                              str(row["eval_code"]))
-                  for row in answer.get("matchups_18",[])),
+            tuple(PrepMatchup(own, opponent, str(code))
+                  for (own,opponent),code in zip(expected,codes))
+            if len(lead_codes)==6 and len(bench_codes)==12 else (),
             str(answer.get("preserve") or ""),
             str(answer.get("stopper") or ""),
             str(answer.get("closer") or ""),
