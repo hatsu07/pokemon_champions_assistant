@@ -70,6 +70,77 @@ def _diagnostics(raw: Mapping[str, Any], assets: FrozenMatchAssets) -> dict:
     )
 
 
+
+# The same GPT vision call reports icon glyphs independently of names.
+# Only frozen Champions matrix column 2 supplies species/form typing.
+TYPE_ICON_ALIASES = {
+    "normal": "ノーマル", "fire": "ほのお", "water": "みず",
+    "electric": "でんき", "grass": "くさ", "ice": "こおり",
+    "fighting": "かくとう", "poison": "どく", "ground": "じめん",
+    "flying": "ひこう", "psychic": "エスパー", "bug": "むし",
+    "rock": "いわ", "ghost": "ゴースト", "dragon": "ドラゴン",
+    "dark": "あく", "steel": "はがね", "fairy": "フェアリー",
+}
+KNOWN_TYPE_ICONS = frozenset(TYPE_ICON_ALIASES.values())
+
+
+def _type_label(value: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().removesuffix("タイプ").strip()
+    if text in KNOWN_TYPE_ICONS:
+        return text
+    return TYPE_ICON_ALIASES.get(text.lower())
+
+
+def opponent_type_mismatch_slots(
+    raw: Mapping[str, Any], assets: FrozenMatchAssets,
+) -> list[dict[str, Any]]:
+    """Visual icon-vs-matrix contradiction detector, not identity proof.
+
+    [] means unreadable; a single observed icon can be partial evidence.
+    Mega preview may show base-form types: do not reject a Mega on its
+    changed type alone. No unverified mechanics or extra files are queried.
+    """
+    icons_by_slot = raw.get("opponent_type_icons")
+    names = raw.get("opponent_six")
+    if not isinstance(icons_by_slot, list) or len(icons_by_slot) != 6:
+        return []
+    if not isinstance(names, list) or len(names) != 6:
+        return []
+    mismatches = []
+    for index, (name, icons) in enumerate(zip(names, icons_by_slot), start=1):
+        if not isinstance(name, str) or not isinstance(icons, list):
+            continue
+        if not 1 <= len(icons) <= 2:
+            continue
+        seen = [_type_label(icon) for icon in icons]
+        if None in seen or len(set(seen)) != len(seen):
+            continue
+        canonical = _display_name(name)
+        possible = [canonical] if canonical in assets.matrix_index else [
+            key for key in assets.matrix_index if key.startswith(canonical + "（")]
+        if len(possible) != 1:
+            continue
+        full_name = possible[0]
+        if full_name.startswith("メガ"):
+            continue
+        columns = assets.matrix_index[full_name].split("|")
+        if len(columns) < 3:
+            continue
+        expected = [_type_label(part) for part in columns[1].split("/")]
+        if not 1 <= len(expected) <= 2 or None in expected:
+            continue
+        if not set(seen).issubset(expected) or (
+            len(seen) == 2 and set(seen) != set(expected)
+        ):
+            mismatches.append({
+                "slot": index, "observed_icons": list(seen),
+                "matrix_types": list(expected),
+            })
+    return mismatches
+
+
 def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAssets) -> tuple[str, ...]:
     if raw.get("visual_ui") != "TEAM_SELECTION":
         raise SelectionBlocked("NOT_TEAM_SELECTION")
@@ -109,6 +180,8 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         assets.matrix_rows_for(tuple(resolved))
     except (ValueError, KeyError) as exc:
         raise SelectionBlocked("OPPONENT_MATRIX_MISSING") from exc
+    if opponent_type_mismatch_slots(raw, assets):
+        raise SelectionBlocked("OPPONENT_TYPE_MISMATCH")
     return tuple(resolved)
 
 def unmatched_opponent_slots(raw: Mapping[str, Any],
@@ -132,6 +205,11 @@ def unmatched_opponent_slots(raw: Mapping[str, Any],
                for key in assets.matrix_index):
             continue
         missing.append({"slot":index,"label":name[:70]})
+    for issue in opponent_type_mismatch_slots(raw, assets):
+        if not any(item["slot"] == issue["slot"] for item in missing):
+            name = names[issue["slot"] - 1]
+            missing.append({"slot": issue["slot"], "label": name[:70]})
+    missing.sort(key=lambda item: item["slot"])
     return missing
 
 
@@ -144,6 +222,17 @@ def roster_constrained_retry_guidance(
     Names listed here are only a vocabulary, not observations. No external
     game database/web request is performed; this is safe inside LIVE timing.
     """
+    if reason == "OPPONENT_TYPE_MISMATCH":
+        return (
+            "First-read icon glyphs DISAGREE with the candidate's frozen "
+            "Champions matrix types: "
+            + json.dumps(opponent_type_mismatch_slots(previous, assets),
+                         ensure_ascii=False)
+            + ". Both the candidate species and glyph readings are UNTRUSTED. "
+            "Re-read graphics and visible type icons independently. "
+            "Do NOT change a species merely to fit an expected type, and "
+            "do NOT invent unreadable glyphs. "
+        )
     if reason != "OPPONENT_MATRIX_MISSING":
         return ""
     invalid = unmatched_opponent_slots(previous,assets)
@@ -175,7 +264,7 @@ def roster_constrained_retry_guidance(
 _RETRYABLE_OPPONENT_REASONS = frozenset({
     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
-    "OPPONENT_MATRIX_MISSING",
+    "OPPONENT_MATRIX_MISSING", "OPPONENT_TYPE_MISMATCH",
 })
 
 
@@ -235,11 +324,13 @@ def partial_opponent_preview(raw: Mapping[str, Any],
     names=[]
     unresolved=[]
     seen=set()
+    type_unresolved = {v["slot"] for v in opponent_type_mismatch_slots(raw, assets)}
     for index,name in enumerate(raw_names,1):
         canonical=_display_name(name)
         choices=[canonical] if canonical in assets.matrix_index else [
             key for key in assets.matrix_index if key.startswith(canonical+"（")]
-        resolved=choices[0] if len(choices)==1 and choices[0] not in seen else None
+        resolved=(choices[0] if index not in type_unresolved
+                  and len(choices)==1 and choices[0] not in seen else None)
         if resolved:
             names.append(resolved)
             seen.add(resolved)
@@ -426,6 +517,7 @@ _BLOCK_REASONS_JA = {
     "UNCERTAIN_TEAM_SLOT": "判別できなかったポケモンがいます。",
     "OPPONENT_MATRIX_MISSING": "相手の一部がLIVEマトリクスにありません。",
     "OPPONENT_FORM_AMBIGUOUS": "相手のフォルムを特定できません。",
+    "OPPONENT_TYPE_MISMATCH": "ポケモン候補とタイプアイコンの読み取りが矛盾しています。",
     "INVALID_SELECTION": "選出候補3匹が正しくありません。",
     "SELECTION_OUTSIDE_REGISTERED_TEAM": "登録構築にいないポケモンが選ばれました。",
     "LEAD_NOT_SELECTED": "初手が選出3匹に含まれていません。",
@@ -469,9 +561,10 @@ VISION_SCHEMA = {
         "visual_ui": {"type": "string", "enum": ["TEAM_SELECTION", "UNKNOWN"]},
         "our_six": {"type": "array", "items": {"type": "string"}},
         "opponent_six": {"type": "array", "items": {"type": "string"}},
+        "opponent_type_icons": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
         "uncertain_slots": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["visual_ui", "our_six", "opponent_six", "uncertain_slots"],
+    "required": ["visual_ui", "our_six", "opponent_six", "opponent_type_icons", "uncertain_slots"],
 }
 CHOICE_SCHEMA = {
     "type": "object", "additionalProperties": False,
