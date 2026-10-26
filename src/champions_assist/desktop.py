@@ -969,11 +969,14 @@ class DesktopMainWindow(QMainWindow):
 
         status = report.get("status", "")
         suggestion = str(report.get("recommendation") or "")
-        if status in ("TEST_ONLY", "PROVISIONAL_ADVICE", "ADVICE", "OK") and suggestion:
+        if status in ("TEST_ONLY", "PROVISIONAL_ADVICE", "PARTIAL_ADVICE",
+                      "ADVICE", "OK") and suggestion:
             if status == "TEST_ONLY":
                 suggestion = "【機能試験・戦術未検証】" + suggestion
             elif status == "PROVISIONAL_ADVICE":
                 suggestion = "【暫定AI判断・対面未検証】" + suggestion
+            elif status == "PARTIAL_ADVICE":
+                suggestion = "【相手一部未確定／既知対面のみPREP】" + suggestion
             self.recommendation_label.setText(suggestion)
         elif status in ("MATCH_STARTED", "RESET"):
             self.recommendation_label.setText("推奨: 試合開始待ち")
@@ -1015,7 +1018,9 @@ class DesktopMainWindow(QMainWindow):
                     "行動推奨待ち（現在の画面を認識中）")
         elif status in ("AI_REQUEST_QUEUED","PREP_PROVISIONAL_RUNNING",
                         "PREP_RUNNING","PREP_DEADLINE_EXCEEDED",
-                        "PREP_CACHE_REUSED","PREP_CACHE_INCOMPLETE"):
+                        "PREP_CACHE_REUSED","PREP_CACHE_KNOWN_ONLY",
+                        "PREP_PARTIAL","PREP_CACHE_INCOMPLETE",
+                        "PROVISIONAL_PREP_STORED"):
             if phase in ("SELECTION","PREP") and panel._last_selection_text:
                 self.recommendation_label.setText(
                     panel._last_selection_text+"／PREP："+str(
