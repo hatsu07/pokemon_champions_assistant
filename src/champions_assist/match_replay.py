@@ -557,8 +557,8 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                 result.get("reason") in (
                     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
                     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
-                    "OPPONENT_MATRIX_MISSING")):
-            if result.get("reason") == "OPPONENT_MATRIX_MISSING":
+                    "OPPONENT_MATRIX_MISSING", "OPPONENT_TYPE_MISMATCH")):
+            if result.get("reason") in ("OPPONENT_MATRIX_MISSING", "OPPONENT_TYPE_MISMATCH"):
                 result["unmatched_opponent_slots"] = unmatched_opponent_slots(
                     observation,assets)
             result["recommendation"] = (
