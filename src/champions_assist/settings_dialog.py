@@ -54,6 +54,11 @@ class _MatchupAIWorker(QThread):
             from .team_auto_analysis import run_automatic_analysis
             from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore
             from .app_config import default_app_root
+            # Import *all* prior v28/v29 batches before a refresh can create
+            # a new fingerprint. Legacy JSON/TXT are always read-only here.
+            from .matchup_learning_store import MatchupLearningStore
+            learning=MatchupLearningStore(self.service.settings.storage.data_root)
+            migrated_before=learning.import_legacy_assets()
             # Refresh only BETWEEN matches. Network/age errors preserve the
             # previous last-good Singles evidence; never block analysis.
             refresh_status = "LAST_GOOD"
@@ -98,11 +103,41 @@ class _MatchupAIWorker(QThread):
                 integrated = publish_ai_matrix(
                     matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
                     catalog_path=catalog)
+            migrated_after=learning.import_legacy_assets()
+            coverage=learning.coverage(catalog)
             self.result_ready.emit({"ok":True, "environment_refresh":refresh_status,
-                                    **report, **reused, **integrated})
+                                    **report, **reused, **integrated,
+                                    "legacy_v28_imported":(migrated_before["imported_cells"]+
+                                                           migrated_after["imported_cells"]),
+                                    "learning_coverage":coverage,
+                                    "legacy_files_preserved":True})
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
             self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
+
+
+class _TeamAnnotationWorker(QThread):
+    result_ready=Signal(object)
+
+    def __init__(self, members, team_id, team_sha, model, effort, parent=None):
+        super().__init__(parent)
+        self.members,self.team_id,self.team_sha=members,team_id,team_sha
+        self.model,self.effort=model,effort
+
+    def run(self):
+        try:
+            from .team_annotation_ai import request_annotation_draft
+            from .siwc_auth import ChatGPTSignIn,ProtectedSessionStore
+            from .app_config import default_app_root
+            token=ChatGPTSignIn(ProtectedSessionStore(default_app_root())).access_token()
+            draft=request_annotation_draft(self.members,model=self.model,
+                                           access_token=token,
+                                           reasoning_effort=self.effort)
+            self.result_ready.emit({"ok":True,"team_id":self.team_id,
+                                    "team_sha":self.team_sha,"draft":draft})
+        except Exception as exc:
+            from .team_ai_analysis import safe_ai_error
+            self.result_ready.emit({"ok":False,"error":safe_ai_error(exc)})
 
 
 class _SinglesRefreshWorker(QThread):
@@ -391,6 +426,7 @@ class SettingsDialog(QDialog):
         self._team_validation_refreshed = False
         self._singles_worker = None
         self._matchup_ai_worker = None
+        self._annotation_worker = None
         self.setWindowTitle("初回設定" if first_launch else "設定")
         self.setMinimumSize(780, 600)
         self._build_ui()
@@ -523,7 +559,10 @@ class SettingsDialog(QDialog):
         for button in (create_button, import_button, duplicate_button, select_button, export_button, delete_button):
             buttons.addWidget(button)
         layout.addLayout(buttons)
-        layout.addWidget(QLabel("新規作成はCSV不要。role（役割）は任意です。空欄ならAIが技・持ち物・特性・配分と相手6匹から対戦ごとに判断します。"))
+        layout.addWidget(QLabel("role（役割）は任意。AIの役割・変化・注意案は空欄だけに仮入力し、構築を保存するまで確定しません。"))
+        self.annotation_button=QPushButton("選択構築のrole・form_change・runtime_noteをAIで補助入力")
+        self.annotation_button.clicked.connect(self._start_team_annotation)
+        layout.addWidget(self.annotation_button)
         self.team_list = QTableWidget(0, 5)
         self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用"])
         self.team_list.itemSelectionChanged.connect(self._load_selected_team_editor)
@@ -541,7 +580,7 @@ class SettingsDialog(QDialog):
         self.singles_refresh_button=QPushButton("シングル環境データを更新（対戦前）")
         self.singles_refresh_button.clicked.connect(self._refresh_singles)
         source_row.addWidget(self.singles_refresh_button)
-        self.singles_import_button=QPushButton("ゲーム内統計JSONを取り込む")
+        self.singles_import_button=QPushButton("ゲーム内統計JSONを取り込む（任意）")
         self.singles_import_button.clicked.connect(self._import_singles)
         source_row.addWidget(self.singles_import_button)
         layout.addLayout(source_row)
@@ -549,7 +588,7 @@ class SettingsDialog(QDialog):
         self.singles_source_status.setWordWrap(True)
         layout.addWidget(self.singles_source_status)
         review_row=QHBoxLayout()
-        self.matchup_candidates_button=QPushButton("構築別358×6対面根拠JSONを確認")
+        self.matchup_candidates_button=QPushButton("AI対面評価の進捗・根拠不足を確認")
         self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
         review_row.addWidget(self.matchup_candidates_button)
         layout.addLayout(review_row)
@@ -838,9 +877,14 @@ class SettingsDialog(QDialog):
     def _show_team_validation(self, record: RegisteredTeam) -> None:
         reasons = record.validation.reasons
         if reasons:
+            only_master_limit=all(
+                "性格/AP配分のChampions検証根拠は未収録" in reason for reason in reasons)
             self.team_status.setText(
-                f"{record.validation.status}: {len(reasons)}件の確認事項があります。"
-                " 下の欄をスクロールして確認してください。"
+                (f"構築の手動修正は不要：固定マスターの性格/AP検証機能が"
+                 f"{len(reasons)}匹分未収録（AI対面解析は利用可）。"
+                 if only_master_limit else
+                 f"{record.validation.status}: {len(reasons)}件の確認事項。"
+                 " 詳細を下に表示します。")
             )
             self.team_validation_details.setPlainText(
                 "\n".join(f"{index}. {reason}" for index, reason in enumerate(reasons, 1))
@@ -936,6 +980,88 @@ class SettingsDialog(QDialog):
         except (ConfigurationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, "構築を複製できません", str(exc))
 
+    def _start_team_annotation(self) -> None:
+        if self._annotation_worker is not None or self._match_active():
+            return
+        record=self._selected_record()
+        if record is None:
+            return
+        # Refuse stale editors; suggestions refer to the exact saved CSV.
+        if self._editing_team_id!=record.team_id or self._editing_document is None:
+            return
+        from .vision_preferences import VisionPreferenceStore
+        from .app_config import default_app_root
+        prefs=VisionPreferenceStore(default_app_root())
+        model=prefs.selected_model()
+        if not model:
+            QMessageBox.warning(self,"モデル未設定","ChatGPTタブでモデルを選んでください。")
+            return
+        answer=QMessageBox.question(
+            self,"構築AI入力案",
+            "登録済みの6匹・技・持ち物・配分だけをChatGPTに送信して、"
+            "役割と注意の入力案を作成します。既存値は上書きせず、"
+            "構築保存まで反映しません。開始しますか？",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer!=QMessageBox.StandardButton.Yes:
+            return
+        # Refuse stale registered data when the user has unsaved form edits.
+        # Never silently persist these edits just to run the helper.
+        doc=self._editing_document
+        for row,member in enumerate(doc.members):
+            for column,field in enumerate(self.member_columns):
+                widget=self.team_editor.cellWidget(row,column)
+                item=self.team_editor.item(row,column)
+                current=(widget.currentText() if isinstance(widget,QComboBox)
+                         else item.text() if item is not None else "").strip()
+                if current!=(member.get(field) or "").strip():
+                    self.team_status.setText(
+                        "先に現在の編集を「構築を保存」で確定してください。"
+                        "AIは未保存の構築を解析しません。")
+                    return
+        self.annotation_button.setEnabled(False)
+        self.team_editor.setEnabled(False)
+        self._annotation_worker=_TeamAnnotationWorker(
+            [dict(x) for x in doc.members],record.team_id,doc.sha256(),
+            model,prefs.reasoning_effort(),self)
+        self._annotation_worker.result_ready.connect(self._team_annotation_result)
+        self._annotation_worker.finished.connect(self._team_annotation_finished)
+        self._annotation_worker.start()
+
+    def _team_annotation_result(self, result: dict) -> None:
+        if not result.get("ok"):
+            self.team_status.setText("構築AI補助入力失敗："+result.get("error","不明"))
+            return
+        if (self._editing_document is None or self._editing_team_id!=result["team_id"]
+                or self._editing_document.sha256()!=result["team_sha"]):
+            self.team_status.setText("構築が変更されたためAI入力案を破棄しました")
+            return
+        changed=0
+        for row,proposal in enumerate(result["draft"]):
+            for field in ("role","form_change","runtime_note"):
+                col=self.member_columns.index(field)
+                widget=self.team_editor.cellWidget(row,col)
+                item=self.team_editor.item(row,col)
+                current=(widget.currentText() if isinstance(widget,QComboBox)
+                         else item.text() if item is not None else "").strip()
+                if not current and proposal[field].strip():
+                    if isinstance(widget,QComboBox):
+                        widget.setCurrentText(proposal[field])
+                    else:
+                        self.team_editor.setItem(row,col,QTableWidgetItem(proposal[field]))
+                    changed+=1
+        self.team_status.setText(
+            f"AIの入力案 {changed}欄を空欄に仮入力。確認後、構築を保存してください。"
+            " 未検証の戦術提案であり、自動確定はしません。")
+
+    def _team_annotation_finished(self) -> None:
+        worker=self._annotation_worker
+        self._annotation_worker=None
+        self.annotation_button.setEnabled(True)
+        self.team_editor.setEnabled(True)
+        if worker is not None:
+            worker.deleteLater()
+
     def _singles_source_message(self) -> str:
         try:
             receipt=self.service.environment.summary()
@@ -993,24 +1119,46 @@ class SettingsDialog(QDialog):
 
     def _show_matchup_candidates(self) -> None:
         if self._match_active():
-            QMessageBox.warning(self,"対面候補の確認不可","対戦が終わってから確認してください。")
+            QMessageBox.warning(self,"確認不可","対戦が終わってから確認してください。")
             return
         record=self._selected_record()
         if record is None:return
         try:
+            from .matchup_learning_store import MatchupLearningStore
+            from .team_matchup_reuse import reuse_unchanged_matchups
+            from .team_ai_matrix import publish_ai_matrix
+            from .postmatch_matrix_notes import publish_postmatch_notes
+            store=MatchupLearningStore(self.service.settings.storage.data_root)
+            migration=store.import_legacy_assets()
             ready=self.service.prepare_team_live_assets(record.team_id,match_active=False)
-            import json
-            meta=json.loads(ready.manifest_path.read_text(encoding="utf-8"))
-            counts=meta["candidate_status_counts"]
-            path=ready.manifest_path.with_name("matchup-evidence.json")
+            catalog=ready.manifest_path.with_name("matchup-evidence.json")
+            reused=reuse_unchanged_matchups(
+                catalog,Path(self.service.settings.storage.data_root)/"live-team-assets")
+            if reused["reused_cells"]:
+                publish_ai_matrix(
+                    matrix_path=ready.matrix_path,manifest_path=ready.manifest_path,
+                    catalog_path=catalog)
+                from hashlib import sha256
+                publish_postmatch_notes(
+                    data_root=self.service.settings.storage.data_root,
+                    team_id=record.team_id,
+                    manifest_path=ready.manifest_path,matrix_path=ready.matrix_path,
+                    team_signature=sha256(Path(record.csv_path).read_bytes()).hexdigest())
+                migration=store.import_legacy_assets()
+            coverage=store.coverage(catalog)
             self.matchup_review_status.setText(
-                f"対面候補: CONFIRMED {counts['CONFIRMED']} / "
-                f"CONDITIONAL {counts['CONDITIONAL']} / UNKNOWN {counts['UNKNOWN']}。"
-                f" \nファイル: {path}"
-                " \n新構築のLIVE認定は独立した実戦検証まで保留。"
+                f"AI評価済み {coverage['ai_evaluated']}/{coverage['total_cells']}対面 "
+                f"（構造化v2 {coverage['structured_v2']}）／"
+                f"未解析 {coverage['not_analyzed']}／"
+                f"マスター不足 {coverage['source_gaps']}。"
+                f" 実戦後AI評価 {coverage['postmatch_reviews']}件。"
+                f" v28旧ファイルは削除せず保持。"
+                f" SQLite格納済み {migration['stored_cells_all_versions']}件、"
+                f"差分再利用 {reused['reused_cells']}件。"
+                f"\n元データ保存先: {catalog.parent}"
             )
-        except (OSError,ValueError,RuntimeError) as exc:
-            QMessageBox.warning(self,"対面候補の生成に失敗",str(exc))
+        except (OSError,ValueError,RuntimeError,KeyError) as exc:
+            QMessageBox.warning(self,"AI評価の状況確認に失敗",str(exc)[:250])
 
     def _start_matchup_ai(self) -> None:
         if self._match_active() or self._matchup_ai_worker is not None:
@@ -1078,6 +1226,7 @@ class SettingsDialog(QDialog):
                     result.get("source_gap_reasons",{}).items())+"。"
                    if result.get("source_gap_reasons") else "")
                 + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
+                + f" SQLiteへ移行済み {result.get('legacy_v28_imported',0)}件（元のv28ファイルは保持）。"
                 " 処理役・安全受け・KOは未検証であり暫定推奨です。")
         else:
             self.matchup_review_status.setText(
@@ -1293,6 +1442,8 @@ class SettingsDialog(QDialog):
         super().accept()
 
     def reject(self) -> None:
+        if self._annotation_worker is not None:
+            return
         if self._matchup_ai_worker is not None:return
         if self._chatgpt_job_busy():
             QMessageBox.information(self, "ChatGPT処理中", "ChatGPTの処理が終わってから設定を閉じてください。")
@@ -1301,6 +1452,10 @@ class SettingsDialog(QDialog):
         super().reject()
 
     def closeEvent(self, event) -> None:
+        if self._annotation_worker is not None and self._annotation_worker.isRunning():
+            self.team_status.setText("構築AI入力案の通信終了後に閉じてください")
+            event.ignore()
+            return
         # A live QThread is a child of the embedded panel. Destroying Settings
         # while it runs can crash Qt ("QThread: Destroyed while thread is still
         # running"). Never close the dialog until the worker cleans up.
