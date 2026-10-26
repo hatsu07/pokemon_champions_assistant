@@ -9,6 +9,7 @@
 - `src/champions_assist/selection_test_dialog.py`: 87秒から選出経過時間を差し引き、認証・ワーカー起動・PREP結果のQt表示まで同じ期限で判定。PREP不合格は `prep_completed=False` としターン試験の前提にしない。
 - `src/champions_assist/live_timing_test.py`: PREP呼び出しの上限を共有残余時間へ。検証可能な18対面（初手6＋控え12）と温存・切り返し・締め役3点をすべて要求。遅延結果は破棄する。
 - `src/champions_assist/fsm.py`: 実セッション側も相手6匹を受けた時計から87秒後の締切に統一。別途ゲーム画面の残り時間が示される場合は3秒確保した短い方を用いる。 `S04_PREP_40S` は既存wireの互換性のため名前だけ残す。
+- `src/champions_assist/real_battle_validation.py`: Windows実戦の記録も、選出画面表示開始からPREP終了まで共有87秒以内で判定。旧40秒方式の証拠と混同しないよう、実機証拠schemaをv2に更新。
 - `src/champions_assist/match_replay.py`: AI出力を位置が確定した `lead_six[6]` と `bench_twelve[12]` のTAG=value文字列に圧縮。Pythonは既知の3匹×6匹への**結び付けと形式検証のみ**を担い、戦術選択を生成しない。6+12件を受け取れない場合は不合格。選出した自軍3匹だけとLIVEゲートの戦術安全関連節を入力し、不要なデータを圧縮する。モデル設定が `auto` の場合だけPREPは `low` を使う（明示選択した思考強度は尊重）。
 - `masters/Pokemon_Champions_MC_live_decision_gate.txt`: タイミング部分をv6に更新。前のv5原本は `masters/Pokemon_Champions_MC_live_decision_gate_v5_archive_2026-10-26.txt` にアーカイブしSHAマニフェストを更新。選出と先制技・技固定・安全受けの判断条件は保持。
 
@@ -21,7 +22,7 @@
 ## 受入テスト
 
 ```bash
-docker compose run --rm dev python -m unittest tests.test_phase_2 tests.test_match_replay tests.test_live_timing_test -v
+docker compose run --rm dev python -m unittest tests.test_phase_2 tests.test_match_replay tests.test_live_timing_test tests.test_real_battle_validation -v
 ```
 
 - PREPの完了が40秒超でも87秒共有期限内なら、18対面＋役割3点が正しければ合格。
