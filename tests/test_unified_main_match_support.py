@@ -153,11 +153,60 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._completed({"state":deepcopy(preview),"report":incoming})
         self.assertEqual(panel.entries[-1]["status"],"PARTIAL_ADVICE")
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
+        self.assertEqual(panel.state["phase"],"PREP")
+        self.assertTrue(panel.state["selection_assumed"])
+        self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
+        self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
+        self.assertIsNone(panel.state["prep"]["preserve"])
         self.assertIn("選出：",self.window.recommendation_label.text())
         self.assertIn("初手：",panel.selection_banner.text())
+        self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as prep:
             panel._cleanup()
-        prep.assert_called_once_with(provisional=True)
+        prep.assert_called_once_with()
+
+    def test_full_selection_auto_adopt_prefills_eighteen_and_starts_prep(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN, OPP
+        temp, assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        prepared=chosen_state(assets)
+        preview=deepcopy(prepared)
+        preview["phase"]="SELECTION"
+        preview["selected_three"]=[]
+        preview["lead"]=None
+        preview["prep"]=None
+        preview["prep_status"]="NOT_STARTED"
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=preview
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        panel._active_request_frame=frame
+        incoming={
+            "status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+            "selected_three":list(OWN[:3]),"lead":OWN[0],
+            "recommendation":"選出："+" / ".join(OWN[:3])+" 初手："+OWN[0],
+        }
+        panel._completed({"state":deepcopy(preview),"report":incoming})
+        self.assertEqual(panel.state["phase"],"PREP")
+        self.assertTrue(panel.state["selection_assumed"])
+        self.assertEqual(panel.state["selected_three"],list(OWN[:3]))
+        self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
+        self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+        self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
+        self.assertEqual(panel._automatic_probe._phase,"PREP")
+        self.assertTrue(panel.confirm_button.isHidden())
+        with patch.object(panel,"_start_prep_auto") as start:
+            panel._cleanup()
+            start.assert_called_once_with()
+        self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
+        self.assertTrue(any(e.get("event")=="AUTO_SELECTION_ASSUMED"
+                            for e in getattr(panel,"_timing_trace",[]))
+                        or panel.state["selection_assumed"])
 
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
