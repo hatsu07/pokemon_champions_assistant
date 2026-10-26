@@ -186,15 +186,11 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         raise SelectionBlocked("OPPONENT_SIX_DUPLICATES")
     if raw.get("uncertain_slots"):
         raise SelectionBlocked("UNCERTAIN_TEAM_SLOT")
-    # Legacy/manual observations may have no icon field, but a real GPT
-    # structured response must not silently drop, reorder, or duplicate slots.
-    if "opponent_type_icons" in raw:
-        icons = raw["opponent_type_icons"]
-        if (not isinstance(icons, list) or len(icons) != 6 or
-                any(not isinstance(row, list) or len(row) > 2 or
-                    any(not isinstance(name, str) for name in row)
-                    for row in icons)):
-            raise SelectionBlocked("OPPONENT_TYPE_EVIDENCE_INVALID")
+    # Type icons are *optional* diagnostic evidence. Even a malformed
+    # independent icon array must not veto six distinct, resolved names or
+    # trigger a second expensive model request. Mismatched/invalid glyphs
+    # provide NO trusted matchup type; the frozen matrix supplies that.
+    # The raw observation is still available for error diagnostics.
     # Species-only names may be under a fully qualified form key in the
     # matrix. Resolve them ONLY if there is precisely one matching candidate.
     # e.g. Raichu with normal + Alolan forms must remain ambiguous.
@@ -305,7 +301,6 @@ _RETRYABLE_OPPONENT_REASONS = frozenset({
     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
     "OPPONENT_MATRIX_MISSING",
-    "OPPONENT_TYPE_EVIDENCE_INVALID",
 })
 
 
