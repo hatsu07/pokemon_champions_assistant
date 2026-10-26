@@ -87,7 +87,8 @@ class FullReplayTest(unittest.TestCase):
         out=self.advance(frame(
             "COMMAND_MENU",our_active="Pikachu",opponent_active="Meowscarada"))
         self.assertEqual(self.state["phase"],"BATTLE")
-        self.assertEqual(out["status"],"OBSERVED")
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertEqual(out["recommendation"],"10まんボルト。")
         out=self.advance(frame(
             "MOVE_MENU",our_active="Pikachu",opponent_active="Meowscarada",
             visible_moves=["Thunderbolt","Protect","Quick Attack"],our_hp="112/112"))
@@ -163,7 +164,8 @@ class FullReplayTest(unittest.TestCase):
             frame("COMMAND_MENU",our_active="Gyarados",
                   opponent_active="Meowscarada"),
             choose,elapsed_seconds=lambda:1.0)
-        self.assertEqual(report["status"],"OBSERVED")
+        self.assertEqual(report["status"],"TEST_ONLY")
+        self.assertEqual(report["recommendation"],"じしん。")
         self.assertEqual(updated["phase"],"BATTLE")
         self.assertEqual(updated["observed_lead"],"ギャラドス")
         self.assertEqual(updated["lead"],"ギャラドス")
@@ -189,6 +191,88 @@ class FullReplayTest(unittest.TestCase):
         self.assertEqual(updated["observed_lead"],"ピカチュウ")
         self.assertEqual(updated["selected_three"],selected)
         self.assertIsNotNone(updated["prep"])
+
+    def test_command_menu_recommends_four_registered_move_without_visible_moves(self):
+        state=new_replay(self.assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],opponent_six=list(OPP))
+        calls=[]
+        def tactical(context, remaining, kind):
+            self.assertEqual(kind,"ACTION")
+            self.assertEqual(context["screen"],"COMMAND_MENU")
+            self.assertEqual(context["registered_move_options"],
+                             ["10まんボルト","まもる","でんこうせっか","かみくだく"])
+            self.assertEqual(context["selected_switch_options"],list(OWN[1:3]))
+            calls.append(context)
+            return {"action_kind":"MOVE","move":"Thunderbolt",
+                    "switch_target":"","warning":""}
+        next_state,out=advance_observation(
+            state,self.assets,frame("COMMAND_MENU",
+                our_active="Pikachu",opponent_active="Meowscarada",
+                visible_moves=[],visible_party=[]),
+            tactical,elapsed_seconds=lambda:2.0)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(next_state["phase"],"BATTLE")
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertEqual(out["screen"],"COMMAND_MENU")
+        self.assertEqual(out["recommendation"],"10まんボルト。")
+        self.assertEqual(out["action_basis"],
+                         "REGISTERED_COMMAND_OPTIONS_UNVERIFIED_CURRENT_LEGALITY")
+
+    def test_command_menu_can_hard_switch_into_preselected_bench(self):
+        state=new_replay(self.assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],opponent_six=list(OPP))
+        _,out=advance_observation(
+            state,self.assets,
+            frame("COMMAND_MENU",our_active="Pikachu",opponent_active="Meowscarada",
+                  visible_party=[]),
+            lambda context,*args: {"action_kind":"SWITCH","move":"",
+                                   "switch_target":"Garchomp","warning":""},
+            elapsed_seconds=lambda:1.0)
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertEqual(out["recommendation"],"ガブリアスに交代。")
+        self.assertFalse(out["selected_bench_unconfirmed"])
+
+    def test_command_menu_rejects_unknown_moves_unselected_switch_and_lock(self):
+        state=new_replay(self.assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],opponent_six=list(OPP))
+        choices=[
+            ({"action_kind":"MOVE","move":"UnregisteredMove",
+              "switch_target":"","warning":""},"MOVE_NOT_REGISTERED"),
+            ({"action_kind":"SWITCH","move":"","switch_target":"Gengar",
+              "warning":""},"SWITCH_TARGET_NOT_SELECTED"),
+        ]
+        for answer,reason in choices:
+            with self.subTest(reason=reason):
+                _,out=advance_observation(
+                    state,self.assets,
+                    frame("COMMAND_MENU",our_active="Pikachu",
+                          opponent_active="Meowscarada"),
+                    lambda *args:answer,elapsed_seconds=lambda:1.0)
+                self.assertEqual(out["status"],"BLOCKED")
+                self.assertEqual(out["reason"],reason)
+        state["battle_evidence"]["choice_lock"]={
+            "pokemon":"ピカチュウ","move":"まもる"}
+        _,out=advance_observation(
+            state,self.assets,
+            frame("COMMAND_MENU",our_active="Pikachu",opponent_active="Meowscarada"),
+            lambda *args:{"action_kind":"MOVE","move":"10まんボルト",
+                          "switch_target":"","warning":""},
+            elapsed_seconds=lambda:1.0)
+        self.assertEqual(out["reason"],"CHOICE_LOCK_VIOLATION")
+
+    def test_command_menu_unknown_actor_never_chooses_a_move(self):
+        state=new_replay(self.assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],opponent_six=list(OPP))
+        called=[]
+        _,out=advance_observation(
+            state,self.assets,frame("COMMAND_MENU",opponent_active="Meowscarada"),
+            lambda *args:called.append(True),elapsed_seconds=lambda:1.0)
+        self.assertEqual(out["reason"],"OWN_ACTIVE_UNCONFIRMED")
+        self.assertEqual(called,[])
 
     def test_no_battle_decision_without_confirming_selection(self):
         self.advance(frame("TEAM_SELECTION",our_six=list(OWN),opponent_six=list(OPP)))
