@@ -630,13 +630,16 @@ def _ordered_prep_pairs(lead: str, selected_three, opponents):
 
 
 def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str,
-                    model: str, limit_seconds: float = 40.0,
+                    model: str, limit_seconds: float = 87.0,
                     client_factory=None, reasoning_effort: str = "auto") -> tuple[dict, dict]:
-    """Optional 40s PREP test; complete only when all 18 tags validate."""
+    """Bounded by caller shared-clock budget; complete only if all 18 validate."""
     from .prep import (
         build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
     )
     started=perf_counter()
+    stage="SETUP"
+    model_elapsed_ms=None
+    prompt_chars=0
     updated=deepcopy(state)
     if updated.get("phase")!="PREP" or len(updated.get("selected_three",[]))!=3:
         return updated,{"status":"BLOCKED","reason":"PREP_NOT_EXPECTED"}
@@ -682,11 +685,16 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                          "unknown is allowed except ACT/DPS/PROC must be assessed.",
             },
         }
+        prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
+        prompt_chars=len(prompt_text)
+        model_started=perf_counter()
+        stage="MODEL_RESPONSE"
         answer=_stream_json(
             client,model=model,schema=PREP_SCHEMA,name="champions_replay_prep",
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
-                "Champions 40-second PREP. Compare ALL selected 3 x opponent 6 "
+                "Champions shared-clock PREP (no independent 40-second cap). "
+                "Complete before caller deadline. Compare ALL selected 3 x opponent 6 "
                 "= 18 pairs once using these six frozen LIVE matrix rows as PRIMARY. "
                 "AI_UNVERIFIED matrix notes are provisional conditional hypotheses "
                 "only and NEVER certify KO, processing roles or safe switching. "
@@ -708,8 +716,10 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "and unsafe hard switches explicitly. If uncertain use explicit "
                 "'unknown' values; never claim competitive validation."
             ),
-            content=[{"type":"input_text","text":json.dumps(prompt,ensure_ascii=False)}],
+            content=[{"type":"input_text","text":prompt_text}],
         )
+        model_elapsed_ms=round((perf_counter()-model_started)*1000)
+        stage="VALIDATE"
         lead_codes=answer.get("lead_six",[])
         bench_codes=answer.get("bench_twelve",[])
         # Never zip-truncate missing or extra model rows into a seemingly
@@ -730,7 +740,9 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         elapsed=round((perf_counter()-started)*1000)
         if elapsed>limit_seconds*1000:
             updated["prep_status"]="DEADLINE_EXCEEDED"
-            return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed}
+            return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed,
+                            "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
+                            "prompt_chars":prompt_chars}
         updated["prep_status"]="STRUCTURE_COMPLETE" if validation.complete else "INCOMPLETE"
         if validation.complete:
             updated["prep"]={
@@ -747,11 +759,15 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                  "事前評価完了（構造検証）。") if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
                         "reason":validation.reason,"elapsed_ms":elapsed,
+                        "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
+                        "prompt_chars":prompt_chars,
                         "matchups_evaluated":len(result.matchups_18),
                         "message":message}
     except Exception as exc:
         updated["prep_status"]="ERROR"
         return updated,{"status":"PREP_ERROR","reason":type(exc).__name__,
+                        "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
+                        "prompt_chars":prompt_chars,
                         "elapsed_ms":round((perf_counter()-started)*1000)}
 
 
