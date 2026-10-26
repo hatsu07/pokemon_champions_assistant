@@ -22,7 +22,8 @@ def _clean(value: object, n: int) -> str:
 
 
 def publish_postmatch_notes(*, data_root: str | Path, team_id: str,
-                            manifest_path: str | Path, matrix_path: str | Path) -> dict:
+                            manifest_path: str | Path, matrix_path: str | Path,
+                            team_signature: str = "") -> dict:
     matrix_path=Path(matrix_path)
     manifest_path=Path(manifest_path)
     manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -34,7 +35,8 @@ def publish_postmatch_notes(*, data_root: str | Path, team_id: str,
     store=MatchupLearningStore(data_root)
     if not store.db_path.is_file():
         return {"postmatch_hint_rows":0,"status":"NO_FINISHED_REVIEWS"}
-    reviews=store.recent_review_notes(team_id,limit=15)
+    reviews=store.recent_review_notes(team_id,limit=15,
+                                      team_signature=team_signature)
     if not reviews and manifest.get("postmatch_hint_rows",0)==0:
         return {"postmatch_hint_rows":0,"status":"NO_FINISHED_REVIEWS"}
     matched={}
