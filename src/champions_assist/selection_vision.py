@@ -519,7 +519,10 @@ def run_selection_image(image, *, access_token: str, model: str,
                 name="champions_opponent_six_retry",
                 reasoning_effort=reasoning_effort,
                 instructions=correction,
-                content=selection_image_content(image,introduction=correction),
+                content=selection_image_content(
+                    image,introduction="Re-read the RIGHT six sprites; use the "
+                    "frozen Champions vocabulary from the separate instructions, "
+                    "and do not guess uncertain slots."),
             )
         visible, attempts = retry_unresolved_opponent_six(
             visible, assets, retry_view,
