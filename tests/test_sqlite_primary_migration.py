@@ -101,6 +101,23 @@ class SqlitePrimaryTests(unittest.TestCase):
         self.assertIsNone(get_exact_form("ロトム（未実装のすがた）",species))
         self.assertIsNone(get_exact_form("ロトム",species))
 
+    def test_all_358_live_opponents_have_exact_fixed_master_forms(self):
+        matrix=(MASTER/"Pokemon_Champions_MC_live_selection_matrix.txt").read_text(
+            encoding="utf-8-sig")
+        with (MASTER/"Pokemon_Champions_MC_usable_pokemon.csv").open(
+                encoding="utf-8-sig",newline="") as stream:
+            species=build_form_index(list(csv.DictReader(stream)))
+        with (MASTER/"Pokemon_Champions_MC_pokemon_learnsets_linked.csv").open(
+                encoding="utf-8-sig",newline="") as stream:
+            learn=build_form_index(list(csv.DictReader(stream)))
+        opponents=[line.split("|")[0] for line in matrix.splitlines()
+                   if line and not line.startswith("#")]
+        self.assertEqual(len(opponents),358)
+        unresolved=[name for name in opponents
+                    if get_exact_form(name,species) is None
+                    or get_exact_form(name,learn) is None]
+        self.assertEqual(unresolved,[])
+
     def test_sqlite_first_resumes_without_json_mirror(self):
         req=eligible_v2_request(self.catalog,max_cells=3)
         proposal=fake_reply(req)
