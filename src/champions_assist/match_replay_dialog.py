@@ -301,7 +301,9 @@ class MatchReplayDialog(QDialog):
         self._screen_gate=ClassifiedMenuGate()
         # Missing/unvalidated training weights are not silently treated as
         # a working visual model. Default CPU is cheap and deterministic.
-        self._screen_model,self._screen_model_status=load_bundled_classifier(device="cpu")
+        self._screen_model_directory=None
+        self._screen_model,self._screen_model_status=self._load_selected_screen_classifier()
+        self._fallback_last_dispatched_at=None
         self._classifier_unknown_streak=0
         self._deferred_fallback_batch=None
         self._last_observed_ui=None
@@ -421,6 +423,10 @@ class MatchReplayDialog(QDialog):
         self.local_classifier_label=QLabel(self._local_classifier_message())
         self.local_classifier_label.setWordWrap(True)
         panel.addWidget(self.local_classifier_label)
+        self.classifier_choose_button=QPushButton("画面分類モデルを設定（検証済みONNX）")
+        self.classifier_choose_button.setObjectName("chooseScreenClassifier")
+        self.classifier_choose_button.clicked.connect(self._choose_screen_classifier)
+        panel.addWidget(self.classifier_choose_button)
         # Render the same frames that go to AI, without another acquisition.
         self.capture_preview_title=QLabel("キャプチャプレビュー（ChatGPT送信対象のゲーム領域）")
         panel.addWidget(self.capture_preview_title)
@@ -753,11 +759,62 @@ class MatchReplayDialog(QDialog):
         except (AutoCaptureUnavailable,OSError,ValueError) as exc:
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
 
+    def _load_selected_screen_classifier(self):
+        """Load an optional validated five-class ONNX directory from user settings."""
+        choice=self.store_root/"screen_classifier_choice.json"
+        directory=None
+        try:
+            if choice.is_file():
+                data=json.loads(choice.read_text(encoding="utf-8"))
+                if not isinstance(data,dict) or not isinstance(data.get("directory"),str):
+                    return None,"MODEL_CONFIG_INVALID"
+                directory=Path(data["directory"])
+        except (OSError,ValueError,TypeError):
+            return None,"MODEL_CONFIG_INVALID"
+        self._screen_model_directory=directory
+        return load_bundled_classifier(model_dir=directory,device="cpu")
+
+    def _choose_screen_classifier(self):
+        if self._auto_running or self._thread is not None or self._prep_thread is not None:
+            QMessageBox.warning(self,"画面分類モデル","監視を停止してから設定してください。")
+            return
+        directory=QFileDialog.getExistingDirectory(
+            self,"検証済み5分類ONNXモデルのフォルダーを指定",
+            str(self._screen_model_directory or self.store_root))
+        if not directory:
+            return
+        model,status=load_bundled_classifier(model_dir=directory,device="cpu")
+        if model is None:
+            QMessageBox.warning(self,"利用できない画面分類モデル",
+                "検証済み5分類ONNXとマニフェストが必要です。理由："+status)
+            return
+        try:
+            self.store_root.mkdir(parents=True,exist_ok=True)
+            target=self.store_root/"screen_classifier_choice.json"
+            temporary=target.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps({"directory":str(Path(directory).resolve())}),
+                encoding="utf-8")
+            temporary.replace(target)
+        except OSError:
+            QMessageBox.warning(self,"モデル設定の保存に失敗",
+                                "ローカル設定フォルダーに書き込めません。")
+            return
+        self._screen_model_directory=Path(directory)
+        self._screen_model=model
+        self._screen_model_status=status
+        self._screen_gate.reset()
+        self._last_local_class=None
+        self.local_classifier_label.setText(self._local_classifier_message())
+        self._trace_event("SCREEN_CLASSIFIER_CONFIGURED",status=status)
+
     def _local_classifier_message(self) -> str:
         if self._screen_model is not None:
-            return "画面判別: 検証用ONNX分類器 / CPU / 画面登録不要"
-        return ("画面判別: 学習済みモデル未配置（"+self._screen_model_status+
-                "）。CPU画像変化検出 → ChatGPT確認。精度未検証")
+            origin="指定フォルダー" if self._screen_model_directory else "同梱"
+            return ("画面判別: 検証済み5分類ONNX利用中 / "+origin+
+                    " / "+self._screen_model_status)
+        return ("画面判別: 未設定・利用不可（"+self._screen_model_status+
+                "）。開始前に警告、低頻度の画像変化検出を使用します。")
 
     def _set_ai_status(self, status: str) -> None:
         """Status of the AI workflow, separate from local capture state."""
