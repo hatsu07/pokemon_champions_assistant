@@ -446,7 +446,11 @@ class SelectionTestDialog(QDialog):
                 and (self.live_panel is None or
                      (self.live_panel._thread is None
                       and self.live_panel._prep_thread is None))):
-            QTimer.singleShot(0,self.close)
+            # The live panel already queued shutdown_finished out of its
+            # closeEvent/cleanup. Closing here avoids a second zero-delay
+            # timer that can leave the dialog visible for another event-loop
+            # cycle (or indefinitely when events are no longer pumped).
+            self.close()
 
     def choose_image(self):
         if self.thread is not None:
