@@ -738,6 +738,24 @@ class UnifiedMainWindowTests(unittest.TestCase):
         finally:
             panel._prep_thread=None
 
+    def test_model_picker_saves_path_and_activates_verified_model(self):
+        panel=self.window._match_panel
+        model=object()
+        directory=self.root/"five-class-model"
+        directory.mkdir()
+        with patch("champions_assist.match_replay_dialog.QFileDialog.getExistingDirectory",
+                   return_value=str(directory)), \
+             patch("champions_assist.match_replay_dialog.load_bundled_classifier",
+                   return_value=(model,"MODEL_READY_CPU")) as loader:
+            panel._choose_screen_classifier()
+            loaded,status=panel._load_selected_screen_classifier()
+        self.assertIs(loaded,model)
+        self.assertEqual(status,"MODEL_READY_CPU")
+        self.assertIs(panel._screen_model,model)
+        self.assertIn("5分類ONNX利用中",panel.local_classifier_label.text())
+        self.assertTrue((self.root/"screen_classifier_choice.json").is_file())
+        self.assertEqual(loader.call_count,2)
+
     def test_manual_controls_are_hidden_and_model_picker_exists(self):
         panel=self.window._match_panel
         self.assertTrue(panel.manual_batch_button.isHidden())
@@ -760,8 +778,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._calibrate("SWITCH_SELECTION")
             self.assertIn("TURN_ACTION",panel._turn_buffer.templates)
             self.assertIn("SWITCH_SELECTION",panel._turn_buffer.templates)
-            self.assertIn("技選択画面",panel.menu_detection_label.text())
-            self.assertIn("交代画面",panel.menu_detection_label.text())
+            self.assertIn("自動検出",panel.menu_detection_label.text())
             self.assertTrue(panel._eligible_menu("TURN_ACTION"))
             self.assertTrue(panel._eligible_menu("SWITCH_SELECTION"))
             panel._auto_running=True
