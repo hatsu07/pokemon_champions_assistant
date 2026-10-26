@@ -1798,6 +1798,38 @@ class MatchReplayDialog(QDialog):
         """GUI-only update. Never captures or sends an AI request."""
         state=self.state or {}
         phase=state.get("phase","NOT_STARTED")
+        prep=state.get("prep") or {}
+        prep_status=state.get("prep_status","NOT_STARTED")
+        expected=3*(6-len(state.get("visual_unknown_opponents") or []))
+        done=prep.get("cached_matchups",0)
+        if not isinstance(done,int):
+            done=0
+        roles=sum(
+            isinstance(prep.get(k),str)
+            and prep.get(k) in (state.get("selected_three") or ())
+            for k in ("preserve","stopper","closer"))
+        progress=f"対面 {done}/{expected}・勝ち筋 {roles}/3"
+        complete_statuses={
+            "CACHE_STRUCTURE_COMPLETE","STRUCTURE_COMPLETE",
+            "CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE"}
+        incomplete_statuses={
+            "CACHE_INCOMPLETE","INCOMPLETE","UNAVAILABLE_MATRIX_MISMATCH",
+            "DEADLINE_EXCEEDED","ERROR","INTERRUPTED_BY_NEW_BATTLE_SCREEN"}
+        if self._prep_thread is not None and not self._prep_cancel_event.is_set():
+            prep_text="PREP：処理中（AI評価実行中）／"+progress
+        elif prep_status in complete_statuses:
+            prep_text="PREP：事前評価完了（構造確認）／"+progress
+            if prep_status in ("CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE"):
+                prep_text+="／未知相手あり・部分評価"
+        elif prep_status in incomplete_statuses:
+            prep_text="PREP：未完成・中断・エラー／"+progress+"／"+str(prep_status)
+        elif phase in ("PREP","BATTLE"):
+            prep_text="PREP：処理待ち・評価途中／"+progress
+        else:
+            prep_text="PREP：選出待ち（未開始）"
+        if state.get("selection_assumed") and phase in ("PREP","BATTLE"):
+            prep_text+="／実際の選出3匹は未確認"
+        self.prep_banner.setText(prep_text)
         labels={
             "MATCHMAKING":"マッチング中・選出画面待ち",
             "SELECTION":"選出画面・3匹と初手を決める",
