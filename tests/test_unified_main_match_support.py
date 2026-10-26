@@ -159,7 +159,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertIsNone(panel.state["prep"]["preserve"])
         self.assertIn("選出：",self.window.recommendation_label.text())
-        self.assertIn("初手：",panel.selection_banner.text())
+        self.assertIn("初手（提案）：",panel.selection_banner.text())
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as prep:
             panel._cleanup()
@@ -363,7 +363,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             "recommendation":"選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ"}
         panel._proposed_selection=(tuple(report["selected_three"]),report["lead"])
         panel._render(report)
-        self.assertIn("初手：ピカチュウ",panel.selection_banner.text())
+        self.assertIn("初手（提案）：ピカチュウ",panel.selection_banner.text())
         self.assertIn("提案：",self.window.header_labels["selected"].text())
         self.assertIn("ピカチュウ",self.window.recommendation_label.text())
         panel._render({"status":"PREP_PROVISIONAL_RUNNING"})
