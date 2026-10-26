@@ -381,16 +381,18 @@ class ScreenClassifierTests(unittest.TestCase):
     def test_local_gate_keeps_urgent_command_during_selection_api(self):
         gate=ClassifiedMenuGate()
         turn=ScreenPrediction("TURN_ACTION",0.99,0.95,2.0)
-        self.assertIsNone(gate.observe(turn,"SELECTION"))
+        # A confident urgent command triggers on the first classifier frame.
         self.assertEqual(gate.observe(turn,"SELECTION"),"TURN_ACTION")
         self.assertIsNone(gate.observe(turn,"SELECTION"))
+        unsure=ScreenPrediction("SWITCH_SELECTION",0.80,0.30,2.0)
+        self.assertIsNone(gate.observe(unsure,"SELECTION"))
+        self.assertEqual(gate.observe(unsure,"SELECTION"),"SWITCH_SELECTION")
 
     def test_local_gate_blocks_irrelevant_phase_and_rearms_for_next_battle_command(self):
         gate=ClassifiedMenuGate()
         def p(label):
             return ScreenPrediction(label,0.99,0.95,2.0)
         self.assertIsNone(gate.observe(p("TEAM_SELECTION"),"BATTLE"))
-        self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
         self.assertEqual(gate.observe(p("TURN_ACTION"),"BATTLE"),"TURN_ACTION")
         self.assertIsNone(gate.observe(p("TURN_ACTION"),"BATTLE"))
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
@@ -401,8 +403,8 @@ class ScreenClassifierTests(unittest.TestCase):
         self.assertIsNone(gate.observe(p("OTHER"),"BATTLE"))
         self.assertIsNone(gate.observe(p("BATTLE_EVENT"),"BATTLE"))
         self.assertEqual(gate.observe(p("BATTLE_EVENT"),"BATTLE"),"BATTLE_EVENT")
-        self.assertIsNone(gate.observe(p("SWITCH_SELECTION"),"BATTLE"))
         self.assertEqual(gate.observe(p("SWITCH_SELECTION"),"BATTLE"),"SWITCH_SELECTION")
+        self.assertIsNone(gate.observe(p("SWITCH_SELECTION"),"BATTLE"))
 
 
 if __name__=="__main__":
