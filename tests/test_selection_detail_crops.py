@@ -104,11 +104,9 @@ class SelectionDetailImageTests(unittest.TestCase):
 
     def test_type_icon_conflict_retries_same_gpt_model_once(self):
         original=fixture_assets()
-        types=["でんき","あく/はがね","ドラゴン/じめん",
-               "みず/フェアリー","みず/ひこう","ゴースト/どく"]
         # Complete, typed test rows from the frozen Champions master format.
-        correct_types=["でんき","あく/はがね","ドラゴン/じめん",
-                       "みず/フェアリー","みず/ひこう","ゴースト/どく"]
+        correct_types=["くさ/あく","みず/フェアリー","ドラゴン/じめん",
+                       "かくとう/はがね","はがね/ゴースト","ゴースト/フェアリー"]
         frozen=FrozenMatchAssets(
             contents=original.contents,sha256=original.sha256,
             matrix_index=MappingProxyType({
@@ -116,14 +114,14 @@ class SelectionDetailImageTests(unittest.TestCase):
             lookup_index=original.lookup_index,own_team=original.own_team,
             frozen_at=original.frozen_at)
         wrong=frame("TEAM_SELECTION",opponent_six=list(OPP),
-                    opponent_type_icons=[["でんき"],["あく","はがね"],
-                                         ["エスパー"],["みず","フェアリー"],
-                                         ["みず","ひこう"],["ゴースト","どく"]])
+                    opponent_type_icons=[["くさ","あく"],["みず","フェアリー"],
+                                         ["エスパー"],["かくとう","はがね"],
+                                         ["はがね","ゴースト"],["ゴースト","フェアリー"]])
         corrected=frame("TEAM_SELECTION",opponent_six=list(OPP),
-                        opponent_type_icons=[["でんき"],["あく","はがね"],
+                        opponent_type_icons=[["くさ","あく"],["みず","フェアリー"],
                                              ["ドラゴン","じめん"],
-                                             ["みず","フェアリー"],
-                                             ["みず","ひこう"],["ゴースト","どく"]])
+                                             ["かくとう","はがね"],
+                                             ["はがね","ゴースト"],["ゴースト","フェアリー"]])
         chosen={"selected_three":list(OWN[:3]),"lead":OWN[0]}
         client,calls=self.fake_client([wrong,corrected,chosen])
         state,report=run_replay_image(
