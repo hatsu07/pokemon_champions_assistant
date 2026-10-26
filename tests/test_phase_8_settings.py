@@ -72,6 +72,33 @@ class Phase8SettingsTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_gpu_settings_tab_saves_provider_adapter_and_restores(self) -> None:
+        from champions_assist.vision_preferences import VisionPreferenceStore
+        prefs=VisionPreferenceStore(self.app_root)
+        dialog=SettingsDialog(self.service,match_active=lambda:False)
+        try:
+            self.assertEqual(dialog.screen_device_box.currentData(),"auto")
+            self.assertEqual(dialog.screen_gpu_id.value(),0)
+            self.assertTrue(dialog.tabs.indexOf(dialog.screen_device_box.parentWidget())>=0
+                            or dialog.screen_device_box.isWidgetType())
+            dialog.screen_device_box.setCurrentIndex(
+                dialog.screen_device_box.findData("directml"))
+            dialog.screen_gpu_id.setValue(1)
+            dialog._save()
+            self.assertEqual(prefs.screen_device(),"directml")
+            self.assertEqual(prefs.screen_gpu_id(),1)
+        finally:
+            dialog.close()
+        reopened=SettingsDialog(self.service,match_active=lambda:False)
+        try:
+            self.assertEqual(reopened.screen_device_box.currentData(),"directml")
+            self.assertEqual(reopened.screen_gpu_id.value(),1)
+            reopened.screen_device_box.setCurrentIndex(
+                reopened.screen_device_box.findData("cpu"))
+            self.assertFalse(reopened.screen_gpu_id.isEnabled())
+        finally:
+            reopened.close()
+
     def test_roi_interactive_creation_move_resize_pixel_edit_and_nudge(self) -> None:
         label = RoiPreviewLabel()
         changes: list[object] = []

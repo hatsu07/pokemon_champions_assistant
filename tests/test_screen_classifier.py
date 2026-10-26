@@ -211,6 +211,79 @@ class ScreenClassifierTests(unittest.TestCase):
         with self.assertRaisesRegex(ScreenClassifierError,"LABELS"):
             ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:DummySession())
 
+    def test_auto_prefers_directml_gpu_and_adapter_index(self):
+        called=[]
+        class GPU(DummySession):
+            def get_providers(self):
+                return ["DmlExecutionProvider","CPUExecutionProvider"]
+        def factory(*a,**kw):
+            called.append(kw["providers"])
+            return GPU()
+        klass,status=load_bundled_classifier(
+            model_path=self.model,device="auto",gpu_id=2,
+            available_providers=["DmlExecutionProvider","CPUExecutionProvider"],
+            session_factory=factory)
+        self.assertIsNotNone(klass)
+        self.assertEqual(status,"MODEL_READY_GPU_DML_2")
+        self.assertEqual(klass.predict(np.zeros((50,60,3),dtype=np.uint8)).source,
+                         "ONNX_GPU_DML")
+        self.assertEqual(called[0],[("DmlExecutionProvider",{"device_id":2}),
+                                   "CPUExecutionProvider"])
+
+    def test_auto_falls_back_to_cpu_when_gpu_provider_cannot_start(self):
+        class CPU(DummySession):
+            def get_providers(self):
+                return ["CPUExecutionProvider"]
+        def factory(*a,**kw):
+            if isinstance(kw["providers"][0],tuple):
+                raise RuntimeError("GPU adapter unavailable")
+            return CPU()
+        klass,status=load_bundled_classifier(
+            model_path=self.model,device="auto",
+            available_providers=["DmlExecutionProvider","CPUExecutionProvider"],
+            session_factory=factory)
+        self.assertIsNotNone(klass)
+        self.assertEqual(status,"MODEL_READY_CPU")
+        self.assertEqual(klass.provider,"CPUExecutionProvider")
+
+    def test_forced_gpu_fails_instead_of_falsely_reporting_cpu_as_gpu(self):
+        klass,status=load_bundled_classifier(
+            model_path=self.model,device="directml",
+            available_providers=["CPUExecutionProvider"],
+            session_factory=lambda *a,**kw:DummySession())
+        self.assertIsNone(klass)
+        self.assertIn("GPU_PROVIDER_UNAVAILABLE",status)
+
+    def test_cuda_selection_and_wrong_gpu_index(self):
+        class CUDA(DummySession):
+            def get_providers(self):
+                return ["CUDAExecutionProvider","CPUExecutionProvider"]
+        klass,status=load_bundled_classifier(
+            model_path=self.model,device="cuda",gpu_id=1,
+            available_providers=["CUDAExecutionProvider","CPUExecutionProvider"],
+            session_factory=lambda *a,**kw:CUDA())
+        self.assertEqual(status,"MODEL_READY_GPU_CUDA_1")
+        self.assertEqual(klass.predict(np.zeros((50,60,3),dtype=np.uint8)).source,
+                         "ONNX_GPU_CUDA")
+        klass,status=load_bundled_classifier(
+            model_path=self.model,device="auto",gpu_id=9,
+            session_factory=lambda *a,**kw:DummySession())
+        self.assertIsNone(klass)
+        self.assertIn("INVALID_SCREEN_GPU_INDEX",status)
+
+    def test_silent_ort_gpu_provider_fallback_is_not_mislabelled(self):
+        class OnlyCPU(DummySession):
+            def get_providers(self):
+                return ["CPUExecutionProvider"]
+        def factory(*a,**kw):
+            return OnlyCPU()
+        klass,status=load_bundled_classifier(
+            model_path=self.model,device="auto",
+            available_providers=["DmlExecutionProvider","CPUExecutionProvider"],
+            session_factory=factory)
+        self.assertEqual(status,"MODEL_READY_CPU")
+        self.assertEqual(klass.provider,"CPUExecutionProvider")
+
     def test_model_data_never_needs_gpu_in_auto_mode(self):
         options=[]
         def factory(*a,**kw):

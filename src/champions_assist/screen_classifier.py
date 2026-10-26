@@ -51,26 +51,75 @@ class ScreenClassifier:
     def __init__(self, model_path: str | Path, manifest_path: str | Path | None,
                  *, device: str="cpu", session_factory=None,
                  experimental_for_labelling: bool=False,
-                 allow_unvalidated_for_trial: bool=False):
+                 allow_unvalidated_for_trial: bool=False,
+                 gpu_id: int=0, available_providers=None):
         path=Path(model_path)
-        if device not in ("cpu","auto","gpu"):
+        if device not in ("cpu","auto","gpu","directml","cuda"):
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_DEVICE")
+        if type(gpu_id) is not int or not 0<=gpu_id<=7:
+            raise ScreenClassifierError("INVALID_SCREEN_GPU_INDEX")
         if session_factory is None:
             import onnxruntime as ort
             session_factory=ort.InferenceSession
-            available=ort.get_available_providers()
+            available=set(ort.get_available_providers())
         else:
-            available=["CPUExecutionProvider","CUDAExecutionProvider"]
-        providers=["CPUExecutionProvider"]
-        if device=="gpu":
-            if "CUDAExecutionProvider" not in available:
-                raise ScreenClassifierError("GPU_PROVIDER_UNAVAILABLE")
-            providers=["CUDAExecutionProvider","CPUExecutionProvider"]
+            # Injected test sessions never need a driver or actual hardware.
+            available=set(available_providers or ("CPUExecutionProvider",))
+        if device=="cpu":
+            candidates=["CPUExecutionProvider"]
+        elif device=="cuda":
+            candidates=["CUDAExecutionProvider"]
+        elif device=="directml":
+            candidates=["DmlExecutionProvider"]
+        else:
+            # On Windows, DirectML accelerates Intel/AMD/NVIDIA GPUs.
+            # CUDA remains an option where its runtime is installed.
+            candidates=["DmlExecutionProvider","CUDAExecutionProvider"]
+            if device=="auto":
+                candidates.append("CPUExecutionProvider")
+        last_failure=None
         session=None
+        active_provider=None
+        for candidate in candidates:
+            if candidate not in available:
+                continue
+            try:
+                if candidate=="CPUExecutionProvider":
+                    requested=["CPUExecutionProvider"]
+                else:
+                    requested=[(candidate,{"device_id":gpu_id}),
+                               "CPUExecutionProvider"]
+                kwargs={"providers":requested}
+                if candidate=="DmlExecutionProvider" and session_factory==getattr(
+                        locals().get("ort",None),"InferenceSession",None):
+                    opts=ort.SessionOptions()
+                    opts.enable_mem_pattern=False
+                    opts.execution_mode=ort.ExecutionMode.ORT_SEQUENTIAL
+                    kwargs["sess_options"]=opts
+                attempt=session_factory(str(path),**kwargs)
+                # ORT may silently fail to attach a provider and use CPU:
+                # never display GPU unless the session really advertises it.
+                actual=attempt.get_providers() if hasattr(attempt,"get_providers") else [
+                    requested[0][0] if isinstance(requested[0],tuple)
+                    else requested[0]]
+                if candidate not in actual:
+                    last_failure="GPU_PROVIDER_NOT_ACTIVE"
+                    continue
+                session=attempt
+                active_provider=candidate
+                break
+            except (RuntimeError,ValueError,OSError,TypeError) as exc:
+                last_failure=type(exc).__name__
+                if device not in ("auto","gpu"):
+                    raise ScreenClassifierError(
+                        "GPU_SESSION_INIT_FAILED_"+last_failure) from exc
+        if session is None:
+            if device in ("auto","cpu"):
+                raise ScreenClassifierError("CPU_SESSION_UNAVAILABLE")
+            raise ScreenClassifierError("GPU_PROVIDER_UNAVAILABLE_"+str(last_failure or "NOT_INSTALLED"))
         if manifest_path is None:
             # Metadata is stored in ONNX's custom_metadata_map, so load the
             # runtime session once to retrieve it. No separate JSON is needed.
-            session=session_factory(str(path),providers=providers)
             metadata=session.get_modelmeta().custom_metadata_map
             raw=metadata.get(EMBEDDED_MANIFEST_KEY)
             if not raw:
@@ -111,8 +160,6 @@ class ScreenClassifier:
                 raise ScreenClassifierError("INVALID_SCREEN_MODEL_CHECKSUM")
             if sha256(path.read_bytes()).hexdigest()!=digest.lower():
                 raise ScreenClassifierError("SCREEN_MODEL_CHECKSUM_MISMATCH")
-        if session is None:
-            session=session_factory(str(path),providers=providers)
         inputs=session.get_inputs()
         if len(inputs)!=1:
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_INPUTS")
@@ -122,7 +169,9 @@ class ScreenClassifier:
         self.size=tuple(input_size)
         self.mean=np.asarray(mean,dtype=np.float32).reshape(1,3,1,1)
         self.std=np.asarray(std,dtype=np.float32).reshape(1,3,1,1)
-        self.device="gpu" if providers[0]=="CUDAExecutionProvider" else "cpu"
+        self.device="gpu" if active_provider!="CPUExecutionProvider" else "cpu"
+        self.provider=active_provider
+        self.gpu_id=gpu_id if self.device=="gpu" else None
         self.min_confidence=float(info.get("min_confidence",0.90))
         self.min_margin=float(info.get("min_margin",0.20))
         if (not 0.5<=self.min_confidence<1.0 or
@@ -155,13 +204,16 @@ class ScreenClassifier:
                else UNDETERMINED)
         return ScreenPrediction(
             label,confidence,margin,(perf_counter()-started)*1000,
-            "ONNX_GPU" if self.device=="gpu" else "ONNX_CPU")
+            ("ONNX_GPU_DML" if self.provider=="DmlExecutionProvider" else
+             "ONNX_GPU_CUDA" if self.provider=="CUDAExecutionProvider" else
+             "ONNX_CPU"))
 
 
 def load_bundled_classifier(*, model_dir: str | Path | None=None,
                             model_path: str | Path | None=None,
-                            device: str="cpu", session_factory=None,
-                            allow_unvalidated_for_trial: bool=False):
+                            device: str="auto", session_factory=None,
+                            allow_unvalidated_for_trial: bool=False,
+                            gpu_id: int=0, available_providers=None):
     """Load selected ONNX + optional same-name JSON, or ONNX-only metadata.
 
     The default caller remains strict. Trial use must be an explicit opt-in;
@@ -182,9 +234,13 @@ def load_bundled_classifier(*, model_dir: str | Path | None=None,
         classifier=ScreenClassifier(
             model,manifest if manifest.is_file() else None,device=device,
             session_factory=session_factory,
-            allow_unvalidated_for_trial=allow_unvalidated_for_trial)
+            allow_unvalidated_for_trial=allow_unvalidated_for_trial,
+            gpu_id=gpu_id,available_providers=available_providers)
         prefix="MODEL_TRIAL_" if classifier.experimental else "MODEL_READY_"
-        return classifier,prefix+classifier.device.upper()
+        suffix=("GPU_DML_"+str(classifier.gpu_id) if classifier.provider=="DmlExecutionProvider"
+                else "GPU_CUDA_"+str(classifier.gpu_id) if classifier.provider=="CUDAExecutionProvider"
+                else "CPU")
+        return classifier,prefix+suffix
     except ScreenClassifierError as exc:
         return None,"MODEL_LOAD_FAILED_"+str(exc)
     except (OSError,ValueError,ImportError,RuntimeError) as exc:

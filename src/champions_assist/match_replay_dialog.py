@@ -297,6 +297,7 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
+        self._event_frames=[]
         self._automatic_probe=AutomaticVisualProbe(
             min_gap=8.0,matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
@@ -649,6 +650,7 @@ class MatchReplayDialog(QDialog):
         self._trace_event("MATCH_RESET")
         self._stop_auto()
         self._turn_buffer.reset_turn()
+        self._event_frames.clear()
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._last_local_class=None
@@ -745,6 +747,7 @@ class MatchReplayDialog(QDialog):
             self._capture_gate.reset()
             # Recalibrate command screens if target/window content changed.
             self._turn_buffer=TurnCaptureBuffer()
+            self._event_frames.clear()
             self._automatic_probe.reset()
             self._screen_gate.reset()
             self._last_local_class=None
@@ -761,8 +764,15 @@ class MatchReplayDialog(QDialog):
         except (AutoCaptureUnavailable,OSError,ValueError) as exc:
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
 
+    def _screen_gpu_settings(self):
+        from .vision_preferences import VisionPreferenceStore
+        prefs=VisionPreferenceStore(self.store_root)
+        return prefs.screen_device(),prefs.screen_gpu_id()
+
     def _load_selected_screen_classifier(self):
-        """Restore an explicitly chosen ONNX; support older directory settings."""
+        """Restore ONNX with the configured GPU preference; CPU fallback in auto."""
+        device,gpu_id=self._screen_gpu_settings()
+        self._loaded_screen_gpu_settings=(device,gpu_id)
         choice=self.store_root/"screen_classifier_choice.json"
         model_path=None
         allow_trial=False
@@ -785,9 +795,9 @@ class MatchReplayDialog(QDialog):
         self._screen_model_path=model_path
         self._screen_model_directory=model_path.parent if model_path is not None else None
         if model_path is None:
-            return load_bundled_classifier(device="cpu")
+            return load_bundled_classifier(device=device,gpu_id=gpu_id)
         return load_bundled_classifier(
-            model_path=model_path,device="cpu",
+            model_path=model_path,device=device,gpu_id=gpu_id,
             allow_unvalidated_for_trial=allow_trial)
 
     def _choose_screen_classifier(self):
@@ -804,8 +814,10 @@ class MatchReplayDialog(QDialog):
             return
         path=Path(selected)
         # Trial is explicit. No spoofed validated=true or checksum bypass.
+        device,gpu_id=self._screen_gpu_settings()
         model,status=load_bundled_classifier(
-            model_path=path,device="cpu",allow_unvalidated_for_trial=True)
+            model_path=path,device=device,gpu_id=gpu_id,
+            allow_unvalidated_for_trial=True)
         if model is None:
             reasons={
                 "MODEL_LOAD_FAILED_SCREEN_MODEL_NOT_VALIDATED":
@@ -851,6 +863,7 @@ class MatchReplayDialog(QDialog):
                                 "ローカル設定フォルダーに書き込めません。")
             return
         self._screen_model_path=path
+        self._loaded_screen_gpu_settings=(device,gpu_id)
         self._screen_model_directory=path.parent
         self._screen_model=model
         self._screen_model_status=status
@@ -912,6 +925,15 @@ class MatchReplayDialog(QDialog):
         if not self.capture_config.game_viewport_normalized:
             QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
             return
+        # Settings can change while the panel stays open. Reload before the
+        # NEXT capture session, never mutate an in-flight inference session.
+        if self._screen_gpu_settings()!=getattr(
+                self,"_loaded_screen_gpu_settings",None):
+            self._screen_model,self._screen_model_status=(
+                self._load_selected_screen_classifier())
+            self._screen_gate.reset()
+            self.local_classifier_label.setText(
+                self._local_classifier_message())
         if (self._screen_model is not None
                 and getattr(self._screen_model,"experimental",False)):
             answer=QMessageBox.warning(
@@ -958,6 +980,7 @@ class MatchReplayDialog(QDialog):
         self._cancel_event.clear()
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
+        self._event_frames.clear()
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._last_local_class=None
@@ -1190,11 +1213,11 @@ class MatchReplayDialog(QDialog):
         screen_label=self._pending_screen_label
         # Only the CURRENT screenshot is needed for the opponent-six preview;
         # old transition frames are unhelpful and cost capture/memory time.
-        if frames and (self.state.get("phase") in ("MATCHMAKING","SELECTION")
-                       or screen_label in _URGENT_SCREENS):
-            # One *current* menu shot is sufficient for immediate turn choice:
-            # older animations cost image tokens and risk superseding action.
+        if frames and self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             frames=[frames[-1]]
+        elif frames and screen_label in _URGENT_SCREENS:
+            # Preserve preceding event text without standalone paid event calls.
+            frames=self._frames_for_action(frames[-1])
         elif frames and (
                 screen_label=="BATTLE_EVENT"
                 or (screen_label is None and self.state.get("phase")
@@ -1339,6 +1362,8 @@ class MatchReplayDialog(QDialog):
                         f"確信度 {prediction.confidence:.2f} / "
                         f"{prediction.latency_ms:.1f}ms / {prediction.source}")
                 classified=self._screen_gate.observe(prediction,phase)
+                if prediction.label=="BATTLE_EVENT" and phase in ("PREP","BATTLE"):
+                    self._remember_event_frame(image)
                 if classified=="BATTLE_EVENT":
                     # Non-interactive event animation: do not pay for an AI
                     # request until the next actionable screen appears.
@@ -1359,6 +1384,26 @@ class MatchReplayDialog(QDialog):
                 return
 
         self._observe_fallback_transition(image,phase)
+
+    def _remember_event_frame(self,image):
+        """Buffer two distinct event images locally, without extra AI requests."""
+        signature=AutomaticVisualProbe._small(image)
+        if self._event_frames:
+            last=AutomaticVisualProbe._small(self._event_frames[-1])
+            if float(np.mean(np.abs(signature-last)))<0.025:
+                return
+        self._event_frames.append(image.copy())
+        self._event_frames=self._event_frames[-2:]
+        self._trace_event("BATTLE_EVENT_FRAME_BUFFERED",
+                          pending_count=len(self._event_frames))
+
+    def _frames_for_action(self,command_image):
+        """One current action screen + at most two preceding event screenshots."""
+        frames=self._event_frames[-2:]+[command_image.copy()]
+        self._event_frames.clear()
+        self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",
+                          image_count=len(frames))
+        return frames
 
     def _observe_fallback_transition(self,image,phase):
         """Model-free fallback is rate-limited; a scene change is NOT a menu."""
@@ -1987,14 +2032,14 @@ class MatchReplayDialog(QDialog):
                 "選出"+assumption+"："+ " / ".join(state["selected_three"])
                 +"   初手："+str(state["lead"]))
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY") and (
-                report.get("screen") in ("MOVE_MENU","PARTY_MENU")
+                report.get("screen") in ("COMMAND_MENU","MOVE_MENU","PARTY_MENU")
                 and report.get("recommendation")):
             self._last_action_text=str(report["recommendation"])
         if report.get("status") in ("MATCH_STARTED","RESET"):
             self._last_action_text=""
             self._last_selection_text=""
         if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
-                and report.get("status") in ("OBSERVED","MATCH_END")):
+                and report.get("status") in ("OBSERVED","MATCH_END","BLOCKED","NO_ACTION")):
             self._last_action_text=""
         self.selection_banner.setText(
             self._last_selection_text+"（実選出未確認）"
@@ -2002,10 +2047,11 @@ class MatchReplayDialog(QDialog):
             else self._last_selection_text or "選出：未提示")
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
-        elif report.get("screen")=="COMMAND_MENU":
-            action_text="コマンド画面：『たたかう』を開いて技一覧を表示"
         elif report.get("status") in ("SUPERSEDED","AI_REQUEST_QUEUED"):
-            action_text="新しい画面を確認中／行動提案を生成中"
+            action_text="現在の対面から技4つ・選出控え2匹を比較中"
+        elif report.get("screen")=="COMMAND_MENU" and (
+                report.get("status") not in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
+            action_text="技4つ・交代先の判定未成立（AIによる提案なし）"
         elif self._last_action_text and state.get("phase")=="BATTLE":
             action_text=self._last_action_text
         else:

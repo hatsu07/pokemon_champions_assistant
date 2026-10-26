@@ -511,11 +511,26 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._render({"status":"PREP_PROVISIONAL_RUNNING"})
         self.assertIn("ピカチュウ",self.window.recommendation_label.text())
         panel.state["phase"]="BATTLE"
-        panel._render({"status":"OBSERVED","screen":"COMMAND_MENU"})
-        self.assertIn("たたかう",panel.action_banner.text())
-        self.assertIn("技一覧",self.window.recommendation_label.text())
+        panel._render({"status":"PROVISIONAL_ADVICE",
+                       "screen":"COMMAND_MENU",
+                       "recommendation":"じしん。",
+                       "action":{"kind":"MOVE","move":"じしん"}})
+        self.assertIn("じしん",panel.action_banner.text())
+        self.assertIn("じしん",self.window.recommendation_label.text())
+        self.assertNotIn("技一覧",panel.action_banner.text())
         self.assertIn("対戦中",panel.phase_banner.text())
         self.assertIn("時間：",panel.deadline_banner.text())
+
+    def test_command_menu_direct_switch_is_primary_action(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","selected_three":["ピカチュウ","ギャラドス","ガブリアス"],
+                     "lead":"ピカチュウ","matrix_provisional":True,
+                     "prep_status":"CACHE_STRUCTURE_COMPLETE"}
+        panel._render({"status":"PROVISIONAL_ADVICE","screen":"COMMAND_MENU",
+                       "recommendation":"ガブリアスに交代。",
+                       "action":{"kind":"SWITCH","target":"ガブリアス"}})
+        self.assertIn("ガブリアスに交代",panel.action_banner.text())
+        self.assertNotIn("たたかう",panel.action_banner.text())
 
     def test_selected_team_automatically_prepares_matching_live_sources(self):
         from champions_assist.matrix_compatibility import matrix_matches_registered_team
@@ -674,6 +689,29 @@ class UnifiedMainWindowTests(unittest.TestCase):
         warn.assert_called_once()
         capture.assert_not_called()
         self.assertFalse(panel._auto_running)
+
+    def test_battle_event_frames_are_buffered_until_next_action(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        first=np.zeros((100,160,3),dtype=np.uint8)
+        second=np.full_like(first,180)
+        command=np.full_like(first,255)
+        panel._event_frames.clear()
+        with patch.object(panel,"_queue_batch") as send:
+            panel._remember_event_frame(first)
+            panel._remember_event_frame(first.copy())
+            panel._remember_event_frame(second)
+            send.assert_not_called()
+        self.assertEqual(len(panel._event_frames),2)
+        frames=panel._frames_for_action(command)
+        self.assertEqual(len(frames),3)
+        self.assertTrue(np.array_equal(frames[0],first))
+        self.assertTrue(np.array_equal(frames[1],second))
+        self.assertTrue(np.array_equal(frames[2],command))
+        self.assertEqual(panel._event_frames,[])
+        self.assertTrue(any(row.get("event")=="BATTLE_EVENT_FRAMES_INCLUDED"
+                            and row.get("image_count")==3
+                            for row in panel._timing_trace))
 
     def test_loaded_classifier_never_sends_non_action_or_unknown(self):
         from champions_assist.screen_classifier import ScreenPrediction

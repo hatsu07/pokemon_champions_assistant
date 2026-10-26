@@ -50,6 +50,24 @@ class VisionPersistenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 first.save_model("unsafe\nmodel")
 
+    def test_screen_gpu_preference_defaults_to_auto_and_persists_adapter(self):
+        with tempfile.TemporaryDirectory() as root:
+            prefs=VisionPreferenceStore(root)
+            self.assertEqual(prefs.screen_device(),"auto")
+            self.assertEqual(prefs.screen_gpu_id(),0)
+            prefs.save_model("gpt-5.6-terra")
+            prefs.save_screen_device("directml",2)
+            restored=VisionPreferenceStore(root)
+            self.assertEqual(restored.screen_device(),"directml")
+            self.assertEqual(restored.screen_gpu_id(),2)
+            self.assertEqual(restored.selected_model(),"gpt-5.6-terra")
+            with self.assertRaises(ValueError):
+                prefs.save_screen_device("not-a-provider",0)
+            with self.assertRaises(ValueError):
+                prefs.save_screen_device("cuda",99)
+            with self.assertRaises(ValueError):
+                prefs.save_screen_device("cuda",True)
+
     def test_model_combobox_selection_is_restored_on_new_dialog(self):
         with tempfile.TemporaryDirectory() as root:
             with patch.object(VisionBenchmarkDialog, "_auth",return_value=FakeDisconnectedAuth()):
