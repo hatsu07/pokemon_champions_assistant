@@ -7,7 +7,8 @@ from champions_assist.selection_vision import (
     SelectionPlanner, verify_selection_observation, SelectionBlocked,
     selection_summary_ja, unmatched_opponent_slots,
     roster_constrained_retry_guidance, retry_unresolved_opponent_six,
-    selection_retry_image_content,
+    partial_opponent_preview,
+    selection_retry_image_content, opponent_type_mismatch_slots,
 )
 
 OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
@@ -25,6 +26,26 @@ def assets():
     )
 def observation():
     return {"visual_ui":"TEAM_SELECTION","our_six":[name.split("→",1)[0].strip() for name in OWN],"opponent_six":list(OPP),"uncertain_slots":[]}
+
+def typed_assets():
+    """Type labels transcribed from the pinned Champions matrix test rows."""
+    source = assets()
+    types = {
+        "ピカチュウ": "でんき",
+        "ドドゲザン": "あく/はがね",
+        "ゲンガー": "ゴースト/どく",
+        "マリルリ": "みず/フェアリー",
+        "ギャラドス": "みず/ひこう",
+        "カイリュー": "ドラゴン/ひこう",
+    }
+    return FrozenMatchAssets(
+        contents=source.contents, sha256=source.sha256,
+        matrix_index=MappingProxyType(
+            {name: name + "|" + types[name] + "|0" for name in OPP}),
+        lookup_index=source.lookup_index,
+        own_team=source.own_team, frozen_at=source.frozen_at,
+    )
+
 
 class SelectionVisionTest(unittest.TestCase):
     def test_exact_user_english_screenshot_matches_japanese_registered_team(self):
@@ -63,6 +84,78 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.as_dict()["only_in_registered_team"],[])
         self.assertEqual(len(calls),1)
         self.assertEqual(calls[0]["own_roster_source"],"PRELOADED_USER_SELECTED_TEAM_NOT_VISION")
+
+    def test_independent_visible_type_icons_agree_with_champions_matrix(self):
+        frozen=typed_assets()
+        observed=observation()
+        observed["opponent_type_icons"]=[
+            ["でんき"],["あく","はがね"],["ゴースト","どく"],
+            ["みず","フェアリー"],["みず","ひこう"],["ドラゴン","ひこう"],
+        ]
+        self.assertEqual(verify_selection_observation(observed,frozen),OPP)
+        self.assertEqual(opponent_type_mismatch_slots(observed,frozen),[])
+        # Partial icon readings are not fabricated into a second type.
+        observed["opponent_type_icons"][3]=["water"]
+        self.assertEqual(verify_selection_observation(observed,frozen),OPP)
+        observed["opponent_type_icons"][3]=[]
+        self.assertEqual(verify_selection_observation(observed,frozen),OPP)
+
+    def test_type_conflict_is_retried_not_replaced_by_python(self):
+        frozen=typed_assets()
+        observed=observation()
+        observed["opponent_type_icons"]=[
+            ["でんき"],["あく","はがね"],["エスパー"],
+            ["みず","フェアリー"],["みず","ひこう"],["ドラゴン","ひこう"],
+        ]
+        mismatch=opponent_type_mismatch_slots(observed,frozen)
+        self.assertEqual([item["slot"] for item in mismatch],[3])
+        self.assertEqual(mismatch[0]["matrix_types"],["ゴースト","どく"])
+        with self.assertRaisesRegex(SelectionBlocked,"OPPONENT_TYPE_MISMATCH"):
+            verify_selection_observation(observed,frozen)
+        self.assertEqual(unmatched_opponent_slots(observed,frozen),[
+            {"slot":3,"label":"ゲンガー"}])
+        self.assertIn("UNTRUSTED",roster_constrained_retry_guidance(
+            reason="OPPONENT_TYPE_MISMATCH",previous=observed,assets=frozen))
+        attempts=[]
+        def retry(reason,previous):
+            attempts.append(reason)
+            return {**previous,"opponent_type_icons":[
+                ["でんき"],["あく","はがね"],["ゴースト","どく"],
+                ["みず","フェアリー"],["みず","ひこう"],["ドラゴン","ひこう"]]}
+        fixed,n=retry_unresolved_opponent_six(
+            observed,frozen,retry,remaining_seconds=lambda:40.0)
+        self.assertEqual((n,attempts),(2,["OPPONENT_TYPE_MISMATCH"]))
+        self.assertEqual(verify_selection_observation(fixed,frozen),OPP)
+
+    def test_type_conflict_after_retry_keeps_unknown_slot(self):
+        frozen=typed_assets()
+        observed=observation()
+        observed["opponent_type_icons"]=[
+            [],[],["エスパー"],[],[],[],
+        ]
+        partial=partial_opponent_preview(observed,frozen)
+        self.assertIsNotNone(partial)
+        names,unresolved=partial
+        self.assertEqual(names[2],"未判明相手3")
+        self.assertEqual(unresolved,("未判明相手3",))
+        self.assertNotIn("ゲンガー",names)
+
+    def test_type_evidence_absence_and_unverified_mega_preview(self):
+        frozen=typed_assets()
+        # Existing tests and manually entered observations without type-icon
+        # fields remain possible; they are not claimed to be type-verified.
+        self.assertEqual(verify_selection_observation(observation(),frozen),OPP)
+        matrix=dict(frozen.matrix_index)
+        matrix["メガリザードンX"]="メガリザードンX|ほのお/ドラゴン|100"
+        mega=FrozenMatchAssets(
+            contents=frozen.contents,sha256=frozen.sha256,
+            matrix_index=MappingProxyType(matrix),lookup_index=frozen.lookup_index,
+            own_team=frozen.own_team,frozen_at=frozen.frozen_at)
+        obs=observation()
+        obs["opponent_six"][0]="メガリザードンX"
+        obs["opponent_type_icons"]=[["ほのお","ひこう"],[],[],[],[],[]]
+        self.assertEqual(opponent_type_mismatch_slots(obs,mega),[])
+        self.assertEqual(verify_selection_observation(obs,mega)[0],"メガリザードンX")
 
     def test_out_of_roster_vision_hallucination_is_not_missing_ai_evidence(self):
         # Captured on 2026-10-26: five correct English names, slot 3 was
