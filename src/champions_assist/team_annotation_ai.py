@@ -45,7 +45,8 @@ def validate_annotation_draft(members: list[dict], value: dict) -> list[dict]:
         for k in ("role","form_change","runtime_note"):
             field=item[k]
             if (not isinstance(field,str) or len(field)>180
-                    or any(c in field for c in ("\r","\n","<",">"))):
+                    or any(c in field for c in ("\r","\n","<"))
+                    or (k!="form_change" and ">" in field)):
                 raise ConfigurationError("構築AI入力案に不正な文字列があります")
         own_name=members[item["slot"]].get("name","")
         allowed_form=("" if "→" not in own_name else
