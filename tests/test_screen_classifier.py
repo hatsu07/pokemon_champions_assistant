@@ -12,15 +12,19 @@ from PIL import Image
 
 from champions_assist.screen_classifier import (
     LABELS,ClassifiedMenuGate,ScreenClassifier,ScreenClassifierError,
-    ScreenPrediction,load_bundled_classifier,
+    ScreenPrediction,load_bundled_classifier,EMBEDDED_MANIFEST_KEY,
 )
 
 
 class DummySession:
-    def __init__(self, logits=None):
+    def __init__(self, logits=None, metadata=None):
         self.calls=[]
+        self.metadata=metadata or {}
         self.logits=np.array([logits if logits is not None
             else [9,-10,-10,-10,-10]],dtype=np.float32)
+
+    def get_modelmeta(self):
+        return type("ModelMeta",(),{"custom_metadata_map":self.metadata})()
 
     def get_inputs(self):
         return [type("Input",(),{"name":"rgb"})()]
@@ -88,7 +92,114 @@ class ScreenClassifierTests(unittest.TestCase):
         empty,status=load_bundled_classifier(model_dir=self.root,
                      session_factory=lambda *a,**k:DummySession())
         self.assertIsNone(empty)
-        self.assertIn("ScreenClassifierError",status)
+        self.assertEqual(status,"MODEL_LOAD_FAILED_SCREEN_MODEL_NOT_VALIDATED")
+
+    def test_trial_requires_explicit_opt_in_and_keeps_original_false(self):
+        self.config["validated"]=False
+        self.write_config()
+        strict,status=load_bundled_classifier(
+            model_path=self.model,session_factory=lambda *a,**kw:DummySession())
+        self.assertIsNone(strict)
+        self.assertEqual(status,"MODEL_LOAD_FAILED_SCREEN_MODEL_NOT_VALIDATED")
+        trial,status=load_bundled_classifier(
+            model_path=self.model,allow_unvalidated_for_trial=True,
+            session_factory=lambda *a,**kw:DummySession())
+        self.assertIsNotNone(trial)
+        self.assertTrue(trial.experimental)
+        self.assertEqual(status,"MODEL_TRIAL_CPU")
+        self.assertIs(self.config["validated"],False)
+        self.assertIs(json.loads(self.meta.read_text())["validated"],False)
+
+    def test_embedded_metadata_supports_standalone_onnx_without_json(self):
+        self.meta.unlink()
+        embedded={k:v for k,v in self.config.items() if k!="sha256"}
+        metadata={EMBEDDED_MANIFEST_KEY:json.dumps(embedded)}
+        def factory(*args,**kwargs):
+            return DummySession(metadata=metadata)
+        classifier,status=load_bundled_classifier(
+            model_path=self.model,session_factory=factory)
+        self.assertIsNotNone(classifier)
+        self.assertEqual(status,"MODEL_READY_CPU")
+        self.assertEqual(classifier.labels,tuple(LABELS))
+        self.assertEqual(classifier.size,(160,160))
+
+    def test_standalone_model_without_metadata_is_refused(self):
+        self.meta.unlink()
+        classifier,status=load_bundled_classifier(
+            model_path=self.model,
+            allow_unvalidated_for_trial=True,
+            session_factory=lambda *a,**kw:DummySession())
+        self.assertIsNone(classifier)
+        self.assertEqual(status,"MODEL_LOAD_FAILED_SCREEN_MODEL_METADATA_MISSING")
+
+    def test_embedded_trial_preserves_unvalidated_and_rejects_old_labels(self):
+        self.meta.unlink()
+        embedded={k:v for k,v in self.config.items() if k!="sha256"}
+        embedded["validated"]=False
+        session=lambda *a,**k:DummySession(metadata={
+            EMBEDDED_MANIFEST_KEY:json.dumps(embedded)})
+        trial,status=load_bundled_classifier(
+            model_path=self.model,allow_unvalidated_for_trial=True,
+            session_factory=session)
+        self.assertIsNotNone(trial)
+        self.assertEqual(status,"MODEL_TRIAL_CPU")
+        embedded["labels"]=["MATCHMAKING","TEAM_SELECTION","MOVE_MENU",
+                            "PARTY_MENU","BATTLE_EVENT","RESULT","UNKNOWN"]
+        invalid,status=load_bundled_classifier(
+            model_path=self.model,allow_unvalidated_for_trial=True,
+            session_factory=session)
+        self.assertIsNone(invalid)
+        self.assertEqual(status,"MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_LABELS")
+
+    def test_trial_never_ignores_checksum_mismatch(self):
+        self.config["validated"]=False
+        self.write_config()
+        self.model.write_bytes(b"changed bytes")
+        invalid,status=load_bundled_classifier(
+            model_path=self.model,allow_unvalidated_for_trial=True,
+            session_factory=lambda *a,**kw:DummySession())
+        self.assertIsNone(invalid)
+        self.assertEqual(status,"MODEL_LOAD_FAILED_SCREEN_MODEL_CHECKSUM_MISMATCH")
+
+    def test_converter_keeps_original_and_embeds_metadata_without_sha(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        from scripts.embed_screen_classifier_metadata import convert_to_standalone
+        graph=SimpleNamespace(metadata_props=[])
+        added=[]
+        fake_onnx=SimpleNamespace(
+            load=lambda filename:graph,
+            helper=SimpleNamespace(set_model_props=lambda model,values:added.append(values)),
+            checker=SimpleNamespace(check_model=lambda model:None),
+            save_model=lambda model,filename:Path(filename).write_bytes(b"standalone fixture"),
+        )
+        target=self.root/"standalone.onnx"
+        original=self.model.read_bytes()
+        with patch.dict(sys.modules,{"onnx":fake_onnx}):
+            created=convert_to_standalone(self.model,self.meta,target)
+        self.assertEqual(created,target.resolve())
+        self.assertEqual(self.model.read_bytes(),original)
+        self.assertEqual(target.read_bytes(),b"standalone fixture")
+        embedded=json.loads(added[0][EMBEDDED_MANIFEST_KEY])
+        self.assertEqual(embedded["labels"],list(LABELS))
+        self.assertNotIn("sha256",embedded)
+        self.assertIs(embedded["validated"],True)
+
+    def test_converter_never_overwrites_and_rejects_bad_source_digest(self):
+        from scripts.embed_screen_classifier_metadata import convert_to_standalone
+        with self.assertRaisesRegex(ValueError,"NEW_FILE"):
+            convert_to_standalone(self.model,self.meta,self.model)
+        destination=self.root/"standalone.onnx"
+        destination.write_bytes(b"existing output")
+        with self.assertRaisesRegex(ValueError,"NEW_FILE"):
+            convert_to_standalone(self.model,self.meta,destination)
+        self.assertEqual(destination.read_bytes(),b"existing output")
+        self.model.write_bytes(b"checksum changed")
+        with self.assertRaisesRegex(ScreenClassifierError,"CHECKSUM"):
+            convert_to_standalone(
+                self.model,self.meta,self.root/"new-standalone.onnx")
+        self.assertFalse((self.root/"new-standalone.onnx").exists())
 
     def test_checksum_or_labels_mismatch_blocks_loading(self):
         self.model.write_bytes(b"tampered model")

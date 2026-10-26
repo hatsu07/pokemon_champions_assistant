@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -738,13 +739,15 @@ class UnifiedMainWindowTests(unittest.TestCase):
         finally:
             panel._prep_thread=None
 
-    def test_model_picker_saves_path_and_activates_verified_model(self):
+    def test_model_picker_selects_onnx_file_and_restores_path(self):
         panel=self.window._match_panel
+        panel.store_root=self.root/"picker-local-settings"
         model=object()
-        directory=self.root/"five-class-model"
-        directory.mkdir()
-        with patch("champions_assist.match_replay_dialog.QFileDialog.getExistingDirectory",
-                   return_value=str(directory)), \
+        model_path=self.root/"five-class-model"/"champions_screen_classifier.onnx"
+        model_path.parent.mkdir()
+        model_path.write_bytes(b"fixture")
+        with patch("champions_assist.match_replay_dialog.QFileDialog.getOpenFileName",
+                   return_value=(str(model_path),"ONNXモデル (*.onnx)")), \
              patch("champions_assist.match_replay_dialog.load_bundled_classifier",
                    return_value=(model,"MODEL_READY_CPU")) as loader:
             panel._choose_screen_classifier()
@@ -753,8 +756,74 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(status,"MODEL_READY_CPU")
         self.assertIs(panel._screen_model,model)
         self.assertIn("5分類ONNX利用中",panel.local_classifier_label.text())
-        self.assertTrue((panel.store_root/"screen_classifier_choice.json").is_file())
+        stored=json.loads(
+            (panel.store_root/"screen_classifier_choice.json").read_text())
+        self.assertEqual(stored["model_path"],str(model_path.resolve()))
+        self.assertIs(stored["trial_opt_in"],False)
         self.assertEqual(loader.call_count,2)
+        self.assertEqual(loader.call_args.kwargs["model_path"],model_path.resolve())
+
+    def test_trial_picker_warning_and_restart_warning(self):
+        from types import SimpleNamespace
+        panel=self.window._match_panel
+        panel.store_root=self.root/"trial-local-settings"
+        model=SimpleNamespace(experimental=True)
+        model_path=self.root/"trial.onnx"
+        model_path.write_bytes(b"fixture")
+        panel._screen_model=None
+        with patch("champions_assist.match_replay_dialog.QFileDialog.getOpenFileName",
+                   return_value=(str(model_path),"ONNX (*.onnx)")), \
+             patch("champions_assist.match_replay_dialog.load_bundled_classifier",
+                   return_value=(model,"MODEL_TRIAL_CPU")), \
+             patch("champions_assist.match_replay_dialog.QMessageBox.warning",
+                   return_value=QMessageBox.StandardButton.No):
+            panel._choose_screen_classifier()
+        self.assertIsNone(panel._screen_model)
+        self.assertFalse((panel.store_root/"screen_classifier_choice.json").exists())
+
+        with patch("champions_assist.match_replay_dialog.QFileDialog.getOpenFileName",
+                   return_value=(str(model_path),"ONNX (*.onnx)")), \
+             patch("champions_assist.match_replay_dialog.load_bundled_classifier",
+                   return_value=(model,"MODEL_TRIAL_CPU")), \
+             patch("champions_assist.match_replay_dialog.QMessageBox.warning",
+                   return_value=QMessageBox.StandardButton.Yes):
+            panel._choose_screen_classifier()
+        self.assertIs(panel._screen_model,model)
+        self.assertIn("未検証・試験モード",panel.local_classifier_label.text())
+        stored=json.loads(
+            (panel.store_root/"screen_classifier_choice.json").read_text())
+        self.assertTrue(stored["trial_opt_in"])
+
+        panel.state={"phase":"MATCHMAKING"}
+        panel.assets=SimpleNamespace(sha256={str(i):str(i) for i in range(4)})
+        panel.model="test-model"
+        panel.capture_config=CaptureConfiguration(
+            backend="WINDOWS_NATIVE",selected_window_identity={"hwnd":7},
+            game_viewport_normalized=(0,0,1,1))
+        with patch("champions_assist.match_replay_dialog.QMessageBox.warning",
+                   return_value=QMessageBox.StandardButton.No) as warn, \
+             patch.object(panel,"_capture_next") as capture:
+            panel._start_auto()
+        warn.assert_called_once()
+        self.assertFalse(panel._auto_running)
+        capture.assert_not_called()
+
+    def test_legacy_model_directory_setting_remains_readable(self):
+        panel=self.window._match_panel
+        panel.store_root=self.root/"legacy-local-settings"
+        panel.store_root.mkdir(parents=True)
+        old=self.root/"old-model"
+        old.mkdir()
+        (panel.store_root/"screen_classifier_choice.json").write_text(
+            json.dumps({"directory":str(old)}))
+        model=object()
+        with patch("champions_assist.match_replay_dialog.load_bundled_classifier",
+                   return_value=(model,"MODEL_READY_CPU")) as loader:
+            loaded,status=panel._load_selected_screen_classifier()
+        self.assertIs(loaded,model)
+        self.assertEqual(status,"MODEL_READY_CPU")
+        self.assertEqual(loader.call_args.kwargs["model_path"],
+                         old/"champions_screen_classifier.onnx")
 
     def test_manual_controls_are_hidden_and_model_picker_exists(self):
         panel=self.window._match_panel

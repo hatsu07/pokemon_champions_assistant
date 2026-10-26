@@ -303,6 +303,7 @@ class MatchReplayDialog(QDialog):
         # Missing/unvalidated training weights are not silently treated as
         # a working visual model. Default CPU is cheap and deterministic.
         self._screen_model_directory=None
+        self._screen_model_path=None
         self._screen_model,self._screen_model_status=self._load_selected_screen_classifier()
         self._fallback_last_dispatched_at=None
         self._classifier_unknown_streak=0
@@ -424,7 +425,7 @@ class MatchReplayDialog(QDialog):
         self.local_classifier_label=QLabel(self._local_classifier_message())
         self.local_classifier_label.setWordWrap(True)
         panel.addWidget(self.local_classifier_label)
-        self.classifier_choose_button=QPushButton("画面分類モデルを設定（検証済みONNX）")
+        self.classifier_choose_button=QPushButton("画面分類ONNXファイルを選択")
         self.classifier_choose_button.setObjectName("chooseScreenClassifier")
         self.classifier_choose_button.clicked.connect(self._choose_screen_classifier)
         panel.addWidget(self.classifier_choose_button)
@@ -761,58 +762,111 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
 
     def _load_selected_screen_classifier(self):
-        """Load an optional validated five-class ONNX directory from user settings."""
+        """Restore an explicitly chosen ONNX; support older directory settings."""
         choice=self.store_root/"screen_classifier_choice.json"
-        directory=None
+        model_path=None
+        allow_trial=False
         try:
             if choice.is_file():
                 data=json.loads(choice.read_text(encoding="utf-8"))
-                if not isinstance(data,dict) or not isinstance(data.get("directory"),str):
+                if not isinstance(data,dict):
                     return None,"MODEL_CONFIG_INVALID"
-                directory=Path(data["directory"])
+                if isinstance(data.get("model_path"),str):
+                    model_path=Path(data["model_path"])
+                    allow_trial=data.get("trial_opt_in") is True
+                elif isinstance(data.get("directory"),str):
+                    # Upgrade in place without changing the user's files.
+                    from .screen_classifier import MODEL_FILE
+                    model_path=Path(data["directory"])/MODEL_FILE
+                else:
+                    return None,"MODEL_CONFIG_INVALID"
         except (OSError,ValueError,TypeError):
             return None,"MODEL_CONFIG_INVALID"
-        self._screen_model_directory=directory
-        return load_bundled_classifier(model_dir=directory,device="cpu")
+        self._screen_model_path=model_path
+        self._screen_model_directory=model_path.parent if model_path is not None else None
+        if model_path is None:
+            return load_bundled_classifier(device="cpu")
+        return load_bundled_classifier(
+            model_path=model_path,device="cpu",
+            allow_unvalidated_for_trial=allow_trial)
 
     def _choose_screen_classifier(self):
         if self._auto_running or self._thread is not None or self._prep_thread is not None:
             QMessageBox.warning(self,"画面分類モデル","監視を停止してから設定してください。")
             return
-        directory=QFileDialog.getExistingDirectory(
-            self,"検証済み5分類ONNXモデルのフォルダーを指定",
-            str(self._screen_model_directory or self.store_root))
-        if not directory:
+        from .screen_classifier import MODEL_FILE
+        initial=str(self._screen_model_path or
+                    (self._screen_model_directory or self.store_root)/MODEL_FILE)
+        selected,_=QFileDialog.getOpenFileName(
+            self,"画面分類ONNXを選択（JSONはあれば自動読込）",
+            initial,"ONNXモデル (*.onnx)")
+        if not selected:
             return
-        model,status=load_bundled_classifier(model_dir=directory,device="cpu")
+        path=Path(selected)
+        # Trial is explicit. No spoofed validated=true or checksum bypass.
+        model,status=load_bundled_classifier(
+            model_path=path,device="cpu",allow_unvalidated_for_trial=True)
         if model is None:
-            QMessageBox.warning(self,"利用できない画面分類モデル",
-                "検証済み5分類ONNXとマニフェストが必要です。理由："+status)
+            reasons={
+                "MODEL_LOAD_FAILED_SCREEN_MODEL_NOT_VALIDATED":
+                    "未検証モデルは試験モードでのみ使えます。",
+                "MODEL_LOAD_FAILED_SCREEN_MODEL_CHECKSUM_MISMATCH":
+                    "ONNXとJSONのSHA-256が一致しません。正しいペアを選んでください。",
+                "MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_LABELS":
+                    "5分類のラベルと順序が現行仕様に対応していません。",
+                "MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_MANIFEST":
+                    "JSONまたは内蔵メタデータのschema_versionが2ではありません。",
+                "MODEL_LOAD_FAILED_SCREEN_MODEL_METADATA_MISSING":
+                    "対応するJSONもONNX内部の5分類メタデータもありません。",
+                "MODEL_NOT_BUNDLED":"ONNXファイルが見つかりません。",
+                "MODEL_PATH_NOT_ONNX":"ONNXファイル（.onnx）を選択してください。",
+            }
+            QMessageBox.warning(self,"画面分類モデルを読み込めません",
+                "理由："+status+"\n"+
+                reasons.get(status,"ONNX形式・設定情報・実行環境を確認してください。")+
+                "\n対応するJSONがあれば自動照合し、無ければ"
+                "ONNX内部のメタデータを使用します。")
             return
+        trial=bool(getattr(model,"experimental",False))
+        if trial:
+            response=QMessageBox.warning(
+                self,"未検証モデル：試験利用の確認",
+                "このONNXは5分類に対応していますが、実機精度の検証基準を"
+                "満たしていません。\n誤判定による不要なAI通信・行動判断の"
+                "遅れが生じる可能性があります。\n未検証のまま試験利用しますか？",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if response!=QMessageBox.StandardButton.Yes:
+                return
         try:
             self.store_root.mkdir(parents=True,exist_ok=True)
             target=self.store_root/"screen_classifier_choice.json"
             temporary=target.with_suffix(".tmp")
-            temporary.write_text(
-                json.dumps({"directory":str(Path(directory).resolve())}),
-                encoding="utf-8")
+            temporary.write_text(json.dumps({
+                "model_path":str(path.resolve()),"trial_opt_in":trial
+            },ensure_ascii=False),encoding="utf-8")
             temporary.replace(target)
         except OSError:
             QMessageBox.warning(self,"モデル設定の保存に失敗",
                                 "ローカル設定フォルダーに書き込めません。")
             return
-        self._screen_model_directory=Path(directory)
+        self._screen_model_path=path
+        self._screen_model_directory=path.parent
         self._screen_model=model
         self._screen_model_status=status
         self._screen_gate.reset()
         self._last_local_class=None
         self.local_classifier_label.setText(self._local_classifier_message())
-        self._trace_event("SCREEN_CLASSIFIER_CONFIGURED",status=status)
+        self._trace_event("SCREEN_CLASSIFIER_CONFIGURED",
+                          status=status,trial=trial)
 
     def _local_classifier_message(self) -> str:
         if self._screen_model is not None:
-            origin="指定フォルダー" if self._screen_model_directory else "同梱"
-            return ("画面判別: 検証済み5分類ONNX利用中 / "+origin+
+            source="指定したONNX" if self._screen_model_path else "同梱"
+            if getattr(self._screen_model,"experimental",False):
+                return ("画面判別: 【未検証・試験モード】5分類ONNX / "+
+                        source+" / "+self._screen_model_status)
+            return ("画面判別: 検証済み5分類ONNX利用中 / "+source+
                     " / "+self._screen_model_status)
         return ("画面判別: 未設定・利用不可（"+self._screen_model_status+
                 "）。開始前に警告、低頻度の画像変化検出を使用します。")
@@ -858,6 +912,19 @@ class MatchReplayDialog(QDialog):
         if not self.capture_config.game_viewport_normalized:
             QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
             return
+        if (self._screen_model is not None
+                and getattr(self._screen_model,"experimental",False)):
+            answer=QMessageBox.warning(
+                self,"未検証ONNX：対戦での試験利用",
+                "現在は未検証の5分類ONNXが選択されています。"
+                "操作画面の誤判定や追加AI通信の可能性があります。"
+                "この対戦で試験利用しますか？",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            self._trace_event("TRIAL_CLASSIFIER_START_WARNING",
+                              proceeded=answer==QMessageBox.StandardButton.Yes)
+            if answer!=QMessageBox.StandardButton.Yes:
+                return
         if self._screen_model is None:
             answer=QMessageBox.warning(
                 self,"画面分類モデルが未設定・利用不可",
@@ -912,7 +979,11 @@ class MatchReplayDialog(QDialog):
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
         self._update_menu_detection_label()
         self._set_ai_status(
-            "5分類モデル監視中（操作画面のみAI送信）" if self._screen_model is not None
+            "未検証5分類ONNXで試験監視中（誤判定に注意）"
+            if self._screen_model is not None
+            and getattr(self._screen_model,"experimental",False)
+            else "5分類モデル監視中（操作画面のみAI送信）"
+            if self._screen_model is not None
             else "分類モデルなし：画像変化を低頻度でAI確認（誤認識の可能性あり）")
         self._capture_next()
 
