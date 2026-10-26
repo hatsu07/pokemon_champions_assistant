@@ -578,14 +578,53 @@ class SelectionTestDialog(QDialog):
     def run_turn_test(self):
         self._start_timing_test("TURN")
 
+    def _pick_diagnostic_image(self, title):
+        if self.thread is not None:
+            return None
+        source,_=QFileDialog.getOpenFileName(
+            self,title,"","画像 (*.png *.jpg *.jpeg)")
+        if not source:
+            return None
+        try:
+            return load_test_image(source)
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,"テスト画像を読み込めません",str(exc))
+            return None
+
+    def choose_switch_image(self):
+        image=self._pick_diagnostic_image("交代先選択画面")
+        if image is not None:
+            self.switch_image=image
+            self.switch_status.setText("交代画面を読込済み。合法な交代先が表示されているか検証します。")
+            self.switch_run_button.setEnabled(
+                self.test_state is not None and self.prep_attempted)
+
+    def choose_event_image(self):
+        image=self._pick_diagnostic_image("バトルイベント画面")
+        if image is not None:
+            self.event_image=image
+            self.event_status.setText("イベント画像を読込済み。戦闘状態への観測反映を検証します。")
+            self.event_run_button.setEnabled(
+                self.test_state is not None and self.prep_attempted)
+
+    def run_switch_test(self):
+        self._start_timing_test("SWITCH")
+
+    def run_event_test(self):
+        self._start_timing_test("EVENT")
+
     def _start_timing_test(self, mode):
         if self.thread is not None or self.test_state is None:
             return
         if mode=="PREP" and self.selection_started_at is None:
             return
-        if mode=="TURN" and not self.prep_attempted:
+        if mode in ("TURN","SWITCH","EVENT") and not self.prep_attempted:
             return
         if mode=="TURN" and self.turn_image is None:
+            return
+        if mode=="SWITCH" and self.switch_image is None:
+            return
+        if mode=="EVENT" and self.event_image is None:
             return
         self.select_button.setEnabled(False)
         self.run_button.setEnabled(False)
@@ -593,9 +632,15 @@ class SelectionTestDialog(QDialog):
         self.compare_button.setEnabled(False)
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
+        self.switch_choose_button.setEnabled(False)
+        self.switch_run_button.setEnabled(False)
+        self.event_choose_button.setEnabled(False)
+        self.event_run_button.setEnabled(False)
         self.timing_status.setText(
             "PREP：選出開始から87秒以内に初手6＋控え12＋勝ち筋3点を検査中…"
             if mode=="PREP" else
+            "画像認識・判明イベントの反映中…" if mode=="EVENT" else
+            "交代先の画面判別・合法手検査中…" if mode=="SWITCH" else
             "ターン30秒：画像認識＋AI判断＋合法手検査中…")
         self.timing_requested_at=perf_counter()
         prep_limit=87.0
@@ -621,7 +666,10 @@ class SelectionTestDialog(QDialog):
                            model=self.model)
         self.thread=QThread(self)
         self.worker=_TimingTestWorker(
-            mode=mode,image=self.turn_image if mode=="TURN" else None,
+            mode=mode,image=(
+                self.turn_image if mode=="TURN" else
+                self.switch_image if mode=="SWITCH" else
+                self.event_image if mode=="EVENT" else None),
             assets=self.assets,state=self.test_state,app_root=self.app_root,
             model=self.model,reasoning_effort=self.reasoning_effort,
             requested_at=self.timing_requested_at,
@@ -693,6 +741,20 @@ class SelectionTestDialog(QDialog):
                 f"／AI元結果: {report.get('source_status','UNKNOWN')}"
                 f"／AI元理由: {report.get('source_reason','-')}"
                 "。構造と時間の検証であり、戦術的正確性は未検証。")
+        elif mode=="EVENT":
+            valid=bool(report.get("pass"))
+            if valid:
+                self.test_state=payload["state"]
+            details=(
+                f"バトルイベント読取 {'成功' if valid else '失敗'}"
+                f"／画面: {report.get('screen_observation','UNKNOWN')}"
+                f"／イベント: {report.get('event','NONE')}"
+                f"／結果: {report.get('match_result','UNKNOWN')}"
+                f"／状態: {report.get('state_phase','UNKNOWN')}"
+                f"／読み取ったメッセージ: {' / '.join(report.get('messages') or []) or 'なし'}"
+                f"／所要時間: {wall/1000:.3f}秒"
+                f"／理由: {report.get('reason','UNKNOWN')}")
+            self.event_status.setText(details)
         else:
             self.timing_results.append({
                 "pass":bool(report.get("pass")), "elapsed_ms":wall,
@@ -713,6 +775,10 @@ class SelectionTestDialog(QDialog):
                 f"、p95 {p95/1000:.3f}秒"
                 f"（全件30秒以下が目標）。")
         self.timing_status.setText(details)
+        if mode=="TURN":
+            self.turn_status.setText(details)
+        elif mode=="SWITCH":
+            self.switch_status.setText(details)
         if self.log:
             safe={k:v for k,v in report.items()
                   if k not in ("state","observation","screen_image")}
@@ -737,6 +803,14 @@ class SelectionTestDialog(QDialog):
         self.turn_run_button.setEnabled(
             self.prep_attempted and self.test_state is not None
             and self.turn_image is not None)
+        self.switch_choose_button.setEnabled(True)
+        self.event_choose_button.setEnabled(True)
+        self.switch_run_button.setEnabled(
+            self.prep_attempted and self.test_state is not None
+            and self.switch_image is not None)
+        self.event_run_button.setEnabled(
+            self.prep_attempted and self.test_state is not None
+            and self.event_image is not None)
 
     def closeEvent(self,event):
         if self.thread is not None:
