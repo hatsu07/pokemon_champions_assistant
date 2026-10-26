@@ -217,7 +217,8 @@ class MatchupLearningStore:
         }
 
     def record_finished(self, *, match_id: str, team_id: str | None,
-                        state: dict, source: str = "AI_VISUAL_UNVERIFIED") -> bool:
+                        state: dict, team_signature: str = "",
+                        source: str = "AI_VISUAL_UNVERIFIED") -> bool:
         """Append confirmed result flag and bounded *observed* state once.
 
         Visual AI assertions are candidates, never independently verified
@@ -235,6 +236,7 @@ class MatchupLearningStore:
             "battle_evidence":evidence,
             "observed_hp":state.get("observed_hp") or {},
             "observation_provenance":source,
+            "team_signature":team_signature,
         }
         if len(_json(snapshot))>120000:
             snapshot["history"]=snapshot["history"][-8:]
@@ -306,9 +308,14 @@ class MatchupLearningStore:
                     "AI_HYPOTHESIS_UNVERIFIED"))
             return True
 
-    def recent_review_notes(self, team_id: str, *, limit: int = 10) -> list[dict]:
+    def recent_review_notes(self, team_id: str, *, limit: int = 10,
+                            team_signature: str | None = None) -> list[dict]:
         with self._db() as db:
-            rows=db.execute("""SELECT review_json FROM postmatch_reviews
-                 WHERE team_id=? ORDER BY reviewed_at DESC LIMIT ?""",
-                 (team_id,max(0,min(limit,20)))).fetchall()
-        return [json.loads(x[0]) for x in rows]
+            rows=db.execute("""SELECT r.review_json,m.payload FROM postmatch_reviews r
+                 JOIN match_history m ON r.match_id=m.match_id
+                 WHERE r.team_id=? ORDER BY r.reviewed_at DESC LIMIT ?""",
+                 (team_id,max(0,min(limit,40)))).fetchall()
+        if team_signature is not None:
+            rows=[(review,payload) for review,payload in rows
+                  if json.loads(payload).get("team_signature")==team_signature]
+        return [json.loads(x[0]) for x in rows[:limit]]
