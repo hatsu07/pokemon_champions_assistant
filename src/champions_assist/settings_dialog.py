@@ -440,6 +440,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._storage_tab(), "保存先")
         self.tabs.addTab(self._team_tab(), "自軍構築")
         self.tabs.addTab(self._chatgpt_tab(), "ChatGPT")
+        self.tabs.addTab(self._gpu_tab(), "画面分類GPU")
         self.tabs.addTab(self._diagnostics_tab(), "診断")
         layout.addWidget(self.tabs)
         buttons = QDialogButtonBox()
@@ -638,6 +639,41 @@ class SettingsDialog(QDialog):
         layout.addWidget(scroller)
         return tab
 
+    def _gpu_tab(self) -> QWidget:
+        """Local ONNX inference only, independent from the ChatGPT API."""
+        tab=QWidget()
+        layout=QVBoxLayout(tab)
+        form=QFormLayout()
+        self.screen_device_box=QComboBox()
+        self.screen_device_box.setObjectName("screenClassifierDevice")
+        for label,key in (
+            ("自動（GPU優先・利用不可ならCPU）","auto"),
+            ("DirectML GPU（Windows / AMD・Intel・NVIDIA）","directml"),
+            ("CUDA GPU（対応ランタイムが必要）","cuda"),
+            ("GPU優先（DirectML → CUDA）","gpu"),
+            ("CPUのみ","cpu"),
+        ):
+            self.screen_device_box.addItem(label,key)
+        self.screen_gpu_id=QSpinBox()
+        self.screen_gpu_id.setObjectName("screenClassifierGpuIndex")
+        self.screen_gpu_id.setRange(0,7)
+        self.screen_device_box.currentIndexChanged.connect(
+            lambda:self.screen_gpu_id.setEnabled(
+                self.screen_device_box.currentData()!="cpu"))
+        self.screen_provider_status=QLabel()
+        self.screen_provider_status.setWordWrap(True)
+        form.addRow("ONNX推論デバイス",self.screen_device_box)
+        form.addRow("GPUアダプター番号",self.screen_gpu_id)
+        form.addRow("実行環境",self.screen_provider_status)
+        layout.addLayout(form)
+        layout.addWidget(QLabel(
+            "GPU番号0は通常メイン画面のGPUです。複数搭載時はWindowsの"
+            "タスクマネージャーで番号を確認してください。実際に有効化された"
+            "ONNXプロバイダーは対戦支援画面に表示されます。"
+            "設定変更は次回の自動AI支援開始時に反映されます。"))
+        layout.addStretch(1)
+        return tab
+
     def _show_chatgpt_tab(self) -> None:
         self.tabs.setCurrentWidget(self.chatgpt_tab)
 
@@ -677,6 +713,18 @@ class SettingsDialog(QDialog):
         self.retention_days.setValue(storage.retention_days)
         self._refresh_windows()
         self._refresh_teams()
+        from .vision_preferences import VisionPreferenceStore
+        from .app_config import default_app_root
+        preference=VisionPreferenceStore(default_app_root())
+        index=self.screen_device_box.findData(preference.screen_device())
+        self.screen_device_box.setCurrentIndex(max(0,index))
+        self.screen_gpu_id.setValue(preference.screen_gpu_id())
+        try:
+            import onnxruntime as ort
+            available=", ".join(ort.get_available_providers())
+        except (ImportError,OSError,RuntimeError):
+            available="onnxruntimeが利用できません"
+        self.screen_provider_status.setText("利用可能なプロバイダー: "+available)
         self._refresh_diagnostics()
 
     def _refresh_windows(self) -> None:
@@ -1408,6 +1456,9 @@ class SettingsDialog(QDialog):
         self.adb_path.clear()
         self.adb_serial.clear()
         self._set_roi_from_controls(None)
+        self.screen_device_box.setCurrentIndex(
+            self.screen_device_box.findData("auto"))
+        self.screen_gpu_id.setValue(0)
 
     def _save(self) -> None:
         if self._matchup_ai_worker is not None:
@@ -1434,6 +1485,11 @@ class SettingsDialog(QDialog):
             status = self.service.stage_storage(storage, match_active=self._match_active())
             if self._selected_team_id is not None:
                 self.service.select_team(self._selected_team_id, match_active=self._match_active())
+            from .vision_preferences import VisionPreferenceStore
+            from .app_config import default_app_root
+            VisionPreferenceStore(default_app_root()).save_screen_device(
+                str(self.screen_device_box.currentData()),
+                self.screen_gpu_id.value())
             self.storage_status.setText(f"保存先: {status}")
             self.accept()
         except (ConfigurationError, OSError, ValueError) as exc:
