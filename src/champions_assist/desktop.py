@@ -946,9 +946,25 @@ class DesktopMainWindow(QMainWindow):
             "再取得待機" if panel._auto_running and panel._capture_paused
             else "監視中" if panel._auto_running else "停止")
         self.header_labels["preload"].setText("4/4 読込済み" if panel.assets is not None and state else "未実行")
-        prep_label = str(state.get("prep_status", "未開始"))
-        if state.get("matrix_provisional") and prep_label == "STRUCTURE_COMPLETE":
-            prep_label += "（根拠限定）"
+        prep_raw = str(state.get("prep_status", "NOT_STARTED"))
+        # A complete cached structure is NOT confirmation of the actual
+        # in-game selection, opponent set or safe tactical switches.
+        prep_names = {
+            "NOT_STARTED": "未開始",
+            "PENDING": "実行待機",
+            "RUNNING": "評価中",
+            "CACHE_PREP_BASE_READY": "対面キャッシュ抽出済み・勝ち筋未完成",
+            "CACHE_STRUCTURE_COMPLETE": "18対面＋勝ち筋3点（構造確認）",
+            "CACHE_KNOWN_ONLY": "既知相手のみの暫定PREP",
+            "CACHE_INCOMPLETE": "キャッシュ評価未完成",
+            "INTERRUPTED_BY_NEW_BATTLE_SCREEN": "対戦画面優先により中断",
+            "DEADLINE_EXCEEDED": "期限超過・未完成",
+        }
+        prep_label = prep_names.get(prep_raw,prep_raw)
+        if state.get("selection_assumed"):
+            prep_label += "／ゲーム内選出未確認"
+        if state.get("matrix_provisional"):
+            prep_label += "／戦術根拠は暫定"
         self.header_labels["prep"].setText(prep_label)
         selected = state.get("selected_three") or []
         proposed=panel._proposed_selection
