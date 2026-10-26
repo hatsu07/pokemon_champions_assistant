@@ -514,11 +514,13 @@ class SelectionTestDialog(QDialog):
             self.prep_completed=bool(report.get("pass"))
             if report.get("pass") or (
                     report.get("status")=="PREP_TIMING_PARTIAL"
-                    and report.get("partial_ready")):
+                    and report.get("partial_ready")) or (
+                    report.get("status")=="PREP_TIMING_CACHE_INCOMPLETE"
+                    and report.get("cache_ready")):
                 self.test_state=payload["state"]
             details=(
                 f"選出＋自動PREP90秒 "
-                f"{'合格' if report.get('pass') else '暫定PREP実行' if report.get('partial_ready') else '未達'} "
+                f"{'合格' if report.get('pass') else '暫定PREP実行' if report.get('partial_ready') else 'キャッシュ一部未評価' if report.get('cache_ready') else '未達'} "
                 f"／選出表示 {self.selection_display_elapsed_ms/1000:.3f}秒"
                 f"／PREP表示まで {wall/1000:.3f}秒"
                 f"／合計 {total/1000:.3f}秒"
@@ -526,6 +528,11 @@ class SelectionTestDialog(QDialog):
                 f"／初手 {report.get('lead_evaluated',0)}/6"
                 f"／控え {report.get('bench_evaluated',0)}/12"
                 f"／勝ち筋 {report.get('win_conditions',0)}/3"
+                + (f"／キャッシュ活用 {report.get('cached_matchups',0)}対面"
+                   f"／評価不足 {report.get('missing_matchups',0)}対面"
+                   f"／役割AI {report.get('source_model_elapsed_ms',0) or 0}ms"
+                   if report.get('source_status','').startswith('PREP_CACHE')
+                   else "")
                 + (f"／既知の相手 {report.get('known_opponents',0)}/6"
                    f"／未評価 {report.get('unknown_matchups',0)}対面"
                    if report.get('partial_ready') else "")
