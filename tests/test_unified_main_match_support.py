@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-from PySide6.QtWidgets import QInputDialog
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from champions_assist.app_config import CaptureConfiguration
 from champions_assist.windows_capture import WindowCandidate
@@ -753,7 +753,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(status,"MODEL_READY_CPU")
         self.assertIs(panel._screen_model,model)
         self.assertIn("5分類ONNX利用中",panel.local_classifier_label.text())
-        self.assertTrue((self.root/"screen_classifier_choice.json").is_file())
+        self.assertTrue((panel.store_root/"screen_classifier_choice.json").is_file())
         self.assertEqual(loader.call_count,2)
 
     def test_manual_controls_are_hidden_and_model_picker_exists(self):
