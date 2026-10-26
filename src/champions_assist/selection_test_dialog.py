@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout,
+    QPushButton, QVBoxLayout, QWidget, QTabWidget, QScrollArea,
 )
 
 from .match_debug_log import MatchDebugLog
@@ -111,7 +111,7 @@ class _TimingTestWorker(QObject):
 
     @Slot()
     def run(self):
-        from .live_timing_test import prep_timing_test, turn_timing_test
+        from .live_timing_test import prep_timing_test, turn_timing_test, switch_timing_test
         try:
             # Includes queued thread startup and auth in the strict budget.
             token=ChatGPTSignIn(ProtectedSessionStore(self.app_root)).access_token()
@@ -121,6 +121,37 @@ class _TimingTestWorker(QObject):
             if self.mode=="PREP":
                 updated, report=prep_timing_test(
                     **kwargs,limit_seconds=self.prep_limit_seconds)
+            elif self.mode=="SWITCH":
+                updated, report=switch_timing_test(image=self.image,**kwargs)
+            elif self.mode=="EVENT":
+                from .match_replay import run_replay_batch
+                snapshot=dict(self.state)
+                snapshot["phase"]="BATTLE"
+                updated, raw=run_replay_batch(
+                    [self.image],state=snapshot,assets=self.assets,
+                    access_token=token,model=self.model,
+                    reasoning_effort=self.reasoning_effort,
+                    total_seconds=max(1.0,30.0-(perf_counter()-self.requested_at)))
+                observation=raw.get("observation") or {}
+                observed_event=observation.get("observed_event","NONE")
+                messages=observation.get("messages") or []
+                valid=(raw.get("status") in ("OBSERVED","MATCH_END","RESULT_UNCONFIRMED")
+                       and raw.get("screen") not in ("TEAM_SELECTION","UNKNOWN",None)
+                       and (observed_event!="NONE" or bool(messages)
+                            or raw.get("status")=="MATCH_END"))
+                report={
+                    "status":"EVENT_READ_PASS" if valid else "EVENT_READ_FAIL",
+                    "reason":"OBSERVED" if valid else raw.get("reason") or "NO_EVENT_OBSERVED",
+                    "pass":valid,
+                    "source_status":raw.get("status"),
+                    "screen_observation":raw.get("screen"),
+                    "event":observed_event,
+                    "messages":messages[:8],
+                    "match_result":observation.get("match_result","UNKNOWN"),
+                    "state_phase":updated.get("phase"),
+                }
+                if not valid:
+                    updated=self.state
             else:
                 updated, report=turn_timing_test(image=self.image,**kwargs)
         except Exception as exc:
@@ -139,14 +170,16 @@ class SelectionTestDialog(QDialog):
     def __init__(self, *, assets, model: str, reasoning_effort: str,
                  app_root: str | Path, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("選出画面テスト（試合外・ゲーム操作なし）")
-        self.resize(860,620)
+        self.setWindowTitle("テスト全般（個別画像テスト・実ゲーム統合テスト）")
+        self.resize(1050,760)
         self.assets=assets
         self.model=model
         self.reasoning_effort=reasoning_effort
         self.app_root=Path(app_root)
         self.image=None
         self.turn_image=None
+        self.switch_image=None
+        self.event_image=None
         self.test_state=None
         self.timing_results=[]
         self.timing_requested_at=None
@@ -166,7 +199,12 @@ class SelectionTestDialog(QDialog):
                            model=self.model,phase="MATCHMAKING",preload_count=4)
         except OSError:
             pass
-        layout=QVBoxLayout(self)
+        outer=QVBoxLayout(self)
+        self.tabs=QTabWidget(self)
+        outer.addWidget(self.tabs)
+        self.selection_page=QWidget(self.tabs)
+        self.tabs.addTab(self.selection_page,"選出画面テスト")
+        layout=QVBoxLayout(self.selection_page)
         heading=QLabel(
             "選出を表示した直後、同じ相手6匹・選出3匹でPREPを自動開始します。"
             " 選出表示＋初手6／控え12対面＋勝ち筋3点の完了を合計90秒以内"
