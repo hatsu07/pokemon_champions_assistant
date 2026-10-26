@@ -15,7 +15,8 @@ from champions_assist.prep_cache import (
     cached_pairs, compile_matchup_cache, cached_evidence_count,
     validate_cached_preparation,
 )
-from champions_assist.match_replay import (new_replay, confirm_actual_selection,\n                                    run_replay_prep, advance_observation)
+from champions_assist.match_replay import (new_replay, confirm_actual_selection,
+                                    run_replay_prep, advance_observation)
 from champions_assist.live_timing_test import prep_timing_test
 from tests.test_match_replay import OWN, OPP, frame
 
