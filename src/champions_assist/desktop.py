@@ -640,6 +640,30 @@ class DesktopPreferences:
         return self._settings.value("window/always_on_top", False, type=bool)
 
 
+class _PostmatchReviewWorker(QThread):
+    """Low-priority review after match END, never queued during a turn."""
+    result_ready=Signal(object)
+
+    def __init__(self, data_root, match_id, app_root, model, effort, parent=None):
+        super().__init__(parent)
+        self.data_root,self.match_id=data_root,match_id
+        self.app_root,self.model,self.effort=app_root,model,effort
+
+    def run(self):
+        try:
+            from .postmatch_learning import request_review
+            from .siwc_auth import ChatGPTSignIn,ProtectedSessionStore
+            token=ChatGPTSignIn(ProtectedSessionStore(self.app_root)).access_token()
+            result=request_review(
+                data_root=self.data_root,match_id=self.match_id,
+                model=self.model,access_token=token,reasoning_effort=self.effort)
+            self.result_ready.emit(result)
+        except Exception as exc:
+            from .team_ai_analysis import safe_ai_error
+            self.result_ready.emit({"status":"FAILED_REVIEW_RETAINED",
+                                    "reason":safe_ai_error(exc)})
+
+
 class DesktopMainWindow(QMainWindow):
     """Usable local dashboard.  It recommends only already-validated responses."""
 
@@ -671,6 +695,8 @@ class DesktopMainWindow(QMainWindow):
         self._unified_match_id = None
         self._unified_last_report_key = None
         self._unified_event_number = 0
+        self._unified_team_id = None
+        self._postmatch_worker = None
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
         self._build_ui()
@@ -877,6 +903,7 @@ class DesktopMainWindow(QMainWindow):
         team_path = self.settings_service.teams.path_for_next_match(team_id)
         prepared = self.settings_service.prepare_team_live_assets(
             team_id, match_active=False)
+        self._unified_team_id = team_id
         self._match_panel.matrix_source = str(prepared.matrix_path)
         self._match_panel.lookup_source = str(prepared.lookup_path)
         self._match_panel.live_assets_status = prepared.status
@@ -1003,12 +1030,54 @@ class DesktopMainWindow(QMainWindow):
             try:
                 self.settings_service.environment.record_finished_match(
                     match_id=panel.match_id,state=state)
-            except (OSError, ValueError, RuntimeError):
-                # Optional local stats collection cannot disrupt end-of-match.
+                from .matchup_learning_store import MatchupLearningStore
+                learning=MatchupLearningStore(self.settings_service.settings.storage.data_root)
+                inserted=learning.record_finished(
+                    match_id=panel.match_id,team_id=self._unified_team_id,state=state)
+                if inserted:
+                    # All AI transport is deferred until AFTER END and detached
+                    # from the live state. Failed reviews stay pending in SQLite.
+                    self._start_postmatch_review(panel.match_id)
+            except (OSError,ValueError,RuntimeError):
+                # Logging/review must never disrupt a finished match.
                 pass
         elif status == "RESET":
             self._unified_match_id = None
             self._unified_last_report_key = None
+
+    def _start_postmatch_review(self, match_id: str) -> None:
+        if self._postmatch_worker is not None:
+            return
+        from .app_config import default_app_root
+        from .vision_preferences import VisionPreferenceStore
+        prefs=VisionPreferenceStore(default_app_root())
+        model=prefs.selected_model()
+        if not model:
+            return
+        worker=_PostmatchReviewWorker(
+            self.settings_service.settings.storage.data_root,
+            match_id,default_app_root(),model,prefs.reasoning_effort(),self)
+        self._postmatch_worker=worker
+        worker.result_ready.connect(self._postmatch_review_done)
+        worker.finished.connect(self._postmatch_review_finished)
+        worker.start()
+
+    @Slot(object)
+    def _postmatch_review_done(self, result: dict) -> None:
+        # This is an optional off-match analysis, not a new action decision.
+        status=result.get("status")
+        if status=="STORED_UNVERIFIED_REVIEW":
+            self.header_labels["records"].setText(
+                f"対戦後AI評価を保存（未検証・{result.get('findings',0)}件）。次戦の準備時に反映。")
+        elif status=="FAILED_REVIEW_RETAINED":
+            self.header_labels["records"].setText("対戦後AI評価未完了（対戦ログはSQLiteに保持）")
+
+    @Slot()
+    def _postmatch_review_finished(self) -> None:
+        worker=self._postmatch_worker
+        self._postmatch_worker=None
+        if worker is not None:
+            worker.deleteLater()
 
     def _match_active_for_settings(self) -> bool:
         if self._unified and self._match_panel.state is not None:
@@ -1293,6 +1362,10 @@ class DesktopMainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt callback name
         if self._unified:
+            if self._postmatch_worker is not None and self._postmatch_worker.isRunning():
+                # Keep Qt-owned thread alive through an in-flight review.
+                event.ignore()
+                return
             self._match_panel._stop_auto()
             if self._match_panel._thread is not None:
                 # Do not destroy the API worker until it terminates.
