@@ -705,6 +705,9 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "selected_three order excluding lead, six opponent_six entries "
                 "per bench member. Do NOT repeat Pokémon names inside each entry. "
                 "Every entry must include all its required tags. "
+                "PROC=unknown or ACT=unknown is an incomplete assessment; "
+                "use PROC=unverified for explicitly assessed but uncertified "
+                "processing capability, never as a guaranteed processor. "
                 "Do not invent moves or type facts. SAFE means safe to SWITCH IN, "
                 "which is different from PROC meaning it can finish a matchup. "
                 "Preserve one key member, identify a stopper and closer. "
@@ -764,6 +767,8 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                         "matchups_evaluated":len(result.matchups_18),
                         "message":message}
     except Exception as exc:
+        if stage=="MODEL_RESPONSE":
+            model_elapsed_ms=round((perf_counter()-model_started)*1000)
         updated["prep_status"]="ERROR"
         return updated,{"status":"PREP_ERROR","reason":type(exc).__name__,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
