@@ -953,7 +953,8 @@ class DesktopMainWindow(QMainWindow):
         selected = state.get("selected_three") or []
         proposed=panel._proposed_selection
         if selected:
-            chosen_text="確定："+" / ".join(selected)
+            chosen_text=("提案（ゲーム内選出は未確認）：" if state.get("selection_assumed")
+                         else "登録済み：")+" / ".join(selected)
             if state.get("lead"):
                 chosen_text+=" / 初手："+str(state["lead"])
         elif proposed:
