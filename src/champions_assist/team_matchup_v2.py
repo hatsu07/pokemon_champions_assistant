@@ -188,6 +188,12 @@ def evidence_key(cell: dict, catalog: dict) -> str:
             "registered_moves","registered_build","opponent_priority_candidates",
             "opponent_potential_high_power_moves","missing_source")
     data={k:cell.get(k) for k in fields}
+    from .champions_form_index import form_key
+    if form_key(cell.get("opponent",""))[1] or form_key(cell.get("own",""))[1]:
+        # Never reuse an old form's evidence signature from the v28/v29
+        # name-only indexes, even if its basic types/stats look identical.
+        data["form_lookup_revision"]=catalog.get(
+            "form_lookup_revision","LEGACY_NAME_ONLY_UNSAFE")
     data["regulation"]=catalog.get("regulation")
     data["master_sha256"]=catalog.get("master_sha256")
     return sha256(json.dumps(data,ensure_ascii=False,sort_keys=True).encode("utf-8")).hexdigest()
