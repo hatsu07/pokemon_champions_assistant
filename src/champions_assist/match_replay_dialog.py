@@ -1548,7 +1548,8 @@ class MatchReplayDialog(QDialog):
             return
         report=payload["report"]
         if (self._active_job=="batch" and self._active_turn_epoch is not None
-                and self._active_turn_epoch!=self._turn_epoch):
+                and (self._active_turn_epoch!=self._turn_epoch
+                     or self._turn_event_after_action)):
             report={**report,"status":"SUPERSEDED",
                     "recommendation":"",
                     "warning":"NEW_TURN_DETECTED_BEFORE_RESPONSE"}
@@ -2087,11 +2088,14 @@ class MatchReplayDialog(QDialog):
         if self._active_job=="batch" and self._active_request_started is not None:
             elapsed=monotonic()-self._active_request_started
             current="画面をAI認識・行動判断中"
-            window=55 if phase in ("MATCHMAKING","SELECTION") else 30
-            remaining=max(0,int(window-elapsed))
-            clock=(f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
-                   + ("／ターン45秒中15秒を操作用に確保"
-                      if phase in ("PREP","BATTLE") else ""))
+            if phase in ("PREP","BATTLE") and self._turn_screen_seen_at is not None:
+                remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
+                                     (monotonic()-self._turn_screen_seen_at)))
+                clock=(f"操作画面の初回検知から保守的AI締切まで約{remaining}秒"
+                       "／ゲーム内時計の開始が約10秒早い可能性・操作用15秒確保")
+            else:
+                remaining=max(0,int(55-elapsed))
+                clock=f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
         elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
             current="PREP：既存対面評価と勝ち筋を確認中"
             remaining=max(0,self._prep_timer.remainingTime()//1000)
@@ -2104,10 +2108,16 @@ class MatchReplayDialog(QDialog):
                          "／勝ち筋3点の検討待ち")
             else:
                 current=("選出の画像認識・判断待ち" if phase=="SELECTION"
-                         else "技選択画面の認識待ち" if phase=="BATTLE"
+                         else "次の行動選択画面の検出待ち" if phase=="BATTLE"
                          else "ゲーム画面監視中" if self._auto_running
                          else "監視停止中")
-            clock="AI処理待機／ゲーム内の残り時間は未取得"
+            if (phase=="BATTLE" and self._turn_screen_seen_at is not None
+                    and not self._turn_event_after_action):
+                remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
+                                     (monotonic()-self._turn_screen_seen_at)))
+                clock=f"ローカル保守的AI締切まで約{remaining}秒"
+            else:
+                clock="次の画面の認識待ち／ゲーム内の残り時間は未取得"
         if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
             reserve=max(0,87-(monotonic()-self._selection_screen_started))
             clock+=f"／選出→PREP推定余裕 {reserve:.0f}秒"
@@ -2163,7 +2173,9 @@ class MatchReplayDialog(QDialog):
             self._last_action_text=""
             self._last_selection_text=""
         if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
-                and report.get("status") in ("OBSERVED","MATCH_END","BLOCKED","NO_ACTION")):
+                and report.get("status") in ("OBSERVED","MATCH_END","BLOCKED",
+                                              "NO_ACTION","DEADLINE_EXCEEDED",
+                                              "SUPERSEDED")):
             self._last_action_text=""
         self.selection_banner.setText(
             self._last_selection_text+"（実選出未確認）"
@@ -2171,8 +2183,12 @@ class MatchReplayDialog(QDialog):
             else self._last_selection_text or "選出：未提示")
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
-        elif report.get("status") in ("SUPERSEDED","AI_REQUEST_QUEUED"):
-            action_text="現在の対面から技4つ・選出控え2匹を比較中"
+        elif report.get("status")=="AI_REQUEST_QUEUED":
+            action_text="現在の対面から技4つ・交代候補を比較中"
+        elif report.get("status")=="DEADLINE_EXCEEDED":
+            action_text="保守的AI締切超過：このターンの新しい提案なし"
+        elif report.get("status")=="SUPERSEDED":
+            action_text="前ターンの提案を破棄（新しい画面を確認中）"
         elif report.get("screen")=="COMMAND_MENU" and (
                 report.get("status") not in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
             action_text="技4つ・交代先の判定未成立（AIによる提案なし）"
