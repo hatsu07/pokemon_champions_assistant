@@ -20,11 +20,13 @@ _ALLOWED_TEXT = frozenset({
     "status", "reason", "phase", "screen", "ui", "observed_ui",
     "request_stage", "screen_label", "screen_label_hint", "transport",
     "screen_label_source", "live_reasoning_effort", "warning",
-    "confidence", "kind", "result", "model",
+    "kind", "result", "model", "clock_source", "classifier_source",
+    "next_screen", "ocr_status",
 })
 _ALLOWED_BOOL = frozenset({
     "recommendation_present", "selection_present", "matrix_compatible",
-    "matrix_provisional", "superseded",
+    "matrix_provisional", "superseded", "timer_ocr",
+    "gate_dispatched",
 })
 _ALLOWED_NUMBER = frozenset({
     "elapsed_ms", "capture_and_auth_ms", "at_ms", "ai_request_attempt",
@@ -39,6 +41,18 @@ _ALLOWED_NUMBER = frozenset({
     "visual_total_data_uri_bytes","visual_retry_total_jpeg_bytes",
     "visual_retry_total_data_uri_bytes","visual_retry_image_count",
     "comparison_elapsed_ms","comparison_percent","correct_slots",
+    # Opaque chronology IDs; never hashes, pixels, OCR strings or requests.
+    "frame_seq","turn_epoch","active_turn_epoch",
+    "confidence","margin","ocr_confidence",
+    "classifier_frames","capture_to_enqueue_ms",
+    "pending_count","pending_overflow","accepted","raw_count",
+    "unfinished","overflow","observed_candidates",
+    "ocr_jobs_enqueued","ocr_jobs_completed",
+    "ocr_rois_attempted","ocr_rois_parsed",
+    "ocr_results_dropped","ocr_errors","ocr_skipped",
+    "ocr_candidates_sent","ocr_queue_pending","ocr_results_pending",
+    "ocr_last_latency_ms","ocr_max_latency_ms",
+    "ocr_duplicates","ocr_conflicts",
 })
 _SAFE_CODE = re.compile(r"^[\w .:/+()\-]{1,100}$",re.UNICODE)
 _SAFE_SESSION = re.compile(r"^capture-[0-9a-f]{32}$")
