@@ -111,10 +111,16 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
             state=state,assets=self.assets,model="mock",access_token="dummy",
             client_factory=lambda **_:client)
         self.assertEqual(prep["status"],"PREP_CACHE_INCOMPLETE")
-        self.assertEqual(prep["matchups_evaluated"],0)
-        self.assertEqual(prep["missing_matchups"],18)
         self.assertEqual(len(state["prep"]["matchups_18"]),18)
-        self.assertEqual(state["prep"]["matchups_18"][0]["source"],"MISSING")
+        # Exact registered battle sets may reuse existing reviewed matrix
+        # cells while other members remain UNKNOWN: never discard the former.
+        cached=sum(r["source"]!="MISSING" for r in state["prep"]["matchups_18"])
+        self.assertGreater(cached,0)
+        self.assertLess(cached,18)
+        self.assertEqual(prep["matchups_evaluated"],cached)
+        self.assertEqual(prep["missing_matchups"],18-cached)
+        self.assertTrue(any(r["source"]=="MISSING"
+                            for r in state["prep"]["matchups_18"]))
         self.assertEqual(client.calls[0]["stream"],True)
         self.assertNotIn("OLD TEAM",client.calls[0]["input"][0]["content"][0]["text"])
         self.assertEqual(client.calls[0]["text"]["format"]["name"],
