@@ -1576,7 +1576,7 @@ class MatchReplayDialog(QDialog):
         labels={
             "MATCHMAKING":"マッチング中・選出画面待ち",
             "SELECTION":"選出画面・3匹と初手を決める",
-            "PREP":"選出確定・対戦準備中",
+            "PREP":"選出提案から対戦準備中（実際の選出は画面照合）",
             "BATTLE":"対戦中・ターン判断",
             "ENDED":"対戦終了",
             "NOT_STARTED":"開始待ち",
@@ -1640,10 +1640,12 @@ class MatchReplayDialog(QDialog):
                 report.get("selected_three") and report.get("lead")):
             selection=list(report["selected_three"])
             self._last_selection_text=(
-                "選出："+ " / ".join(selection)+"   初手："+str(report["lead"]))
+                "選出（提案）："+ " / ".join(selection)
+                +"   初手（提案）："+str(report["lead"]))
         elif state.get("selected_three") and state.get("lead"):
+            assumption="（提案）" if state.get("selection_assumed") else "（手動登録）"
             self._last_selection_text=(
-                "選出："+ " / ".join(state["selected_three"])
+                "選出"+assumption+"："+ " / ".join(state["selected_three"])
                 +"   初手："+str(state["lead"]))
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY") and (
                 report.get("screen") in ("MOVE_MENU","PARTY_MENU")
