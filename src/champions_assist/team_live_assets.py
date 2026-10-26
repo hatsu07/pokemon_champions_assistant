@@ -142,7 +142,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     if len(review_bytes) > 2*1024*1024:
         raise ConfigurationError("レビューJSONのサイズ上限超過")
     fingerprint = _jsonhash({
-        "version":GENERATED_VERSION, "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
+        "version":GENERATED_VERSION, "form_evidence_revision":"exact-form-v2",
+        "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
         "master_lookup":sha256(lookup_bytes).hexdigest(),
         "baseline":_jsonhash(baseline), "environment":snapshot_sha,
         "environment_kind":env_kind,"reviews_sha256":sha256(review_bytes).hexdigest(),
