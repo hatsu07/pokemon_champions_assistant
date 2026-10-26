@@ -690,6 +690,29 @@ class UnifiedMainWindowTests(unittest.TestCase):
         capture.assert_not_called()
         self.assertFalse(panel._auto_running)
 
+    def test_battle_event_frames_are_buffered_until_next_action(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        first=np.zeros((100,160,3),dtype=np.uint8)
+        second=np.full_like(first,180)
+        command=np.full_like(first,255)
+        panel._event_frames.clear()
+        with patch.object(panel,"_queue_batch") as send:
+            panel._remember_event_frame(first)
+            panel._remember_event_frame(first.copy())
+            panel._remember_event_frame(second)
+            send.assert_not_called()
+        self.assertEqual(len(panel._event_frames),2)
+        frames=panel._frames_for_action(command)
+        self.assertEqual(len(frames),3)
+        self.assertTrue(np.array_equal(frames[0],first))
+        self.assertTrue(np.array_equal(frames[1],second))
+        self.assertTrue(np.array_equal(frames[2],command))
+        self.assertEqual(panel._event_frames,[])
+        self.assertTrue(any(row.get("event")=="BATTLE_EVENT_FRAMES_INCLUDED"
+                            and row.get("image_count")==3
+                            for row in panel._timing_trace))
+
     def test_loaded_classifier_never_sends_non_action_or_unknown(self):
         from champions_assist.screen_classifier import ScreenPrediction
         panel=self.window._match_panel
