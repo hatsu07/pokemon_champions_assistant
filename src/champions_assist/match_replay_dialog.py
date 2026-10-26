@@ -73,7 +73,12 @@ def _should_replace_inflight(inflight: str | None,
     """
     if incoming is None or incoming==inflight:
         return False
-    return _SCREEN_PRIORITY.get(incoming, 0)>=_SCREEN_PRIORITY.get(inflight, 0)
+    if incoming=="TEAM_SELECTION" and inflight in (
+            "TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"):
+        return False
+    # A different explicit game scene is a stronger freshness signal than
+    # any presumed importance ordering (a battle event can end an old turn).
+    return incoming in _SCREEN_PRIORITY
 
 
 def _supersedes_result(report: dict, incoming: str | None) -> bool:
@@ -255,6 +260,7 @@ class MatchReplayDialog(QDialog):
     """
     state_changed = Signal(object, object)
     ai_status_changed = Signal(str)
+    live_clock_changed = Signal(str)
 
     def __init__(self, *, model: str, master_directory: str, team_path: str,
                  capture_config: CaptureConfiguration | None = None,
@@ -309,6 +315,10 @@ class MatchReplayDialog(QDialog):
         self._poll_timer=QTimer(self)
         self._poll_timer.setInterval(300)
         self._poll_timer.timeout.connect(self._capture_next)
+        self._status_timer=QTimer(self)
+        self._status_timer.setInterval(250)
+        self._status_timer.timeout.connect(self._refresh_live_status)
+        self._status_timer.start()
         self.assets=None
         self.state=None
         self.entries=[]
@@ -344,6 +354,41 @@ class MatchReplayDialog(QDialog):
         )
         intro.setWordWrap(True)
         panel.addWidget(intro)
+        self.phase_banner=QLabel("現在の画面：対戦開始待ち")
+        self.phase_banner.setObjectName("live_phase_banner")
+        self.phase_banner.setStyleSheet(
+            "QLabel#live_phase_banner {font-size: 17px; font-weight: 700;"
+            "padding: 9px; background: #253449; color: white;}")
+        self.phase_banner.setWordWrap(True)
+        panel.addWidget(self.phase_banner)
+        self.activity_banner=QLabel("アプリの作業：事前ロード待ち")
+        self.activity_banner.setObjectName("live_activity_banner")
+        self.activity_banner.setStyleSheet(
+            "QLabel#live_activity_banner {font-size: 14px; font-weight: 600;"
+            "padding: 7px; background: #334155; color: white;}")
+        self.activity_banner.setWordWrap(True)
+        panel.addWidget(self.activity_banner)
+        self.deadline_banner=QLabel("時間：画面検出待ち（ゲーム内時計は取得しません）")
+        self.deadline_banner.setObjectName("live_deadline_banner")
+        self.deadline_banner.setStyleSheet(
+            "QLabel#live_deadline_banner {font-size: 15px; font-weight: 700;"
+            "padding: 8px; background: #164e63; color: white;}")
+        self.deadline_banner.setWordWrap(True)
+        panel.addWidget(self.deadline_banner)
+        self.selection_banner=QLabel("選出：未提示")
+        self.selection_banner.setObjectName("live_selection_banner")
+        self.selection_banner.setStyleSheet(
+            "QLabel#live_selection_banner {font-size: 20px; font-weight: 800;"
+            "padding: 13px; background: #0f766e; color: white;}")
+        self.selection_banner.setWordWrap(True)
+        panel.addWidget(self.selection_banner)
+        self.action_banner=QLabel("次の行動：画面判定待ち")
+        self.action_banner.setObjectName("live_action_banner")
+        self.action_banner.setStyleSheet(
+            "QLabel#live_action_banner {font-size: 22px; font-weight: 800;"
+            "padding: 12px; background: #1d4ed8; color: white;}")
+        self.action_banner.setWordWrap(True)
+        panel.addWidget(self.action_banner)
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         self.ai_status_label=QLabel(self._ai_last_status)
@@ -1339,6 +1384,50 @@ class MatchReplayDialog(QDialog):
               and self._prep_thread is None):
             self._start_prep_auto(provisional=True)
 
+    def _refresh_live_status(self):
+        """GUI-only update. Never captures or sends an AI request."""
+        state=self.state or {}
+        phase=state.get("phase","NOT_STARTED")
+        labels={
+            "MATCHMAKING":"マッチング中・選出画面待ち",
+            "SELECTION":"選出画面・3匹と初手を決める",
+            "PREP":"選出確定・対戦準備中",
+            "BATTLE":"対戦中・ターン判断",
+            "ENDED":"対戦終了",
+            "NOT_STARTED":"開始待ち",
+        }
+        observed=self._latest_recognition_screen
+        indicator=(
+            f"／画像候補：{observed}（AI未確認）"
+            if observed and self._active_job=="batch" else "")
+        self.phase_banner.setText(
+            "現在のフェイズ："+labels.get(phase,phase)+indicator)
+        if self._active_job=="batch" and self._active_request_started is not None:
+            elapsed=monotonic()-self._active_request_started
+            current="画面をAI認識・行動判断中"
+            window=55 if phase in ("MATCHMAKING","SELECTION") else 30
+            remaining=max(0,int(window-elapsed))
+            clock=f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
+        elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
+            current="PREP：既存対面評価と勝ち筋を確認中"
+            remaining=max(0,self._prep_timer.remainingTime()//1000)
+            clock=f"PREP処理期限まで約{remaining}秒"
+        else:
+            current=("実際の選出を確定してください" if phase=="SELECTION"
+                     else "技選択画面の認識待ち" if phase=="BATTLE"
+                     else "ゲーム画面監視中" if self._auto_running
+                     else "監視停止中")
+            clock="AI処理待機／ゲーム内の残り時間は未取得"
+        if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
+            reserve=max(0,87-(monotonic()-self._selection_screen_started))
+            clock+=f"／選出→PREP推定余裕 {reserve:.0f}秒"
+        if self._active_request_started is not None and self._active_job=="batch":
+            if remaining<=5:
+                clock+="【期限間近】"
+        self.activity_banner.setText("アプリの作業："+current)
+        self.deadline_banner.setText("時間："+clock+"（ローカル計測・ゲーム内時計とは別）")
+        self.live_clock_changed.emit(clock)
+
     def _render(self, report):
         state=self.state or {}
         phase=state.get("phase","NOT_STARTED")
@@ -1360,7 +1449,39 @@ class MatchReplayDialog(QDialog):
             display_phase=phase
         self.status.setText(
             f"段階：{display_phase} / {suffix} / {sending} / 記録 {len(self.entries)} 件")
+        if report.get("screen") == "TEAM_SELECTION" and (
+                report.get("selected_three") and report.get("lead")):
+            selection=list(report["selected_three"])
+            self._last_selection_text=(
+                "選出："+ " / ".join(selection)+"   初手："+str(report["lead"]))
+        elif state.get("selected_three") and state.get("lead"):
+            self._last_selection_text=(
+                "選出："+ " / ".join(state["selected_three"])
+                +"   初手："+str(state["lead"]))
+        if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY") and (
+                report.get("screen") in ("MOVE_MENU","PARTY_MENU")
+                and report.get("recommendation")):
+            self._last_action_text=str(report["recommendation"])
+        if report.get("status") in ("MATCH_STARTED","RESET"):
+            self._last_action_text=""
+            self._last_selection_text=""
+        if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
+                and report.get("status") in ("OBSERVED","MATCH_END")):
+            self._last_action_text=""
+        self.selection_banner.setText(self._last_selection_text or "選出：未提示")
+        if state.get("phase")=="ENDED":
+            action_text="対戦終了："+str(state.get("result","UNKNOWN"))
+        elif report.get("screen")=="COMMAND_MENU":
+            action_text="コマンド画面：『たたかう』を開いて技一覧を表示"
+        elif report.get("status") in ("SUPERSEDED","AI_REQUEST_QUEUED"):
+            action_text="新しい画面を確認中／行動提案を生成中"
+        elif self._last_action_text and state.get("phase")=="BATTLE":
+            action_text=self._last_action_text
+        else:
+            action_text="技・交代先の画像判定待ち（まだ行動提案なし）"
+        self.action_banner.setText("次の行動："+action_text)
         report["display_phase"]=display_phase
+        self._refresh_live_status()
         rec=report.get("recommendation","") or report.get("message","")
         if report.get("status")=="TEST_ONLY":
             rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
