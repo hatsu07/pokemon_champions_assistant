@@ -186,6 +186,98 @@ class ChampionsPrimaryData:
                 "expected_files":expected,"changed_files":missing[:10]}
 
     @staticmethod
+    def _materialize_bytes(path: Path, raw: bytes) -> Path:
+        # Derived files only; old team/source files are never overwritten.
+        if path.is_file():
+            if _hash(path.read_bytes()) != _hash(raw):
+                raise ConfigurationError("SQLite生成キャッシュが外部変更されました")
+            return path
+        path.parent.mkdir(parents=True,exist_ok=True)
+        import os
+        import tempfile
+        fd,temporary=tempfile.mkstemp(prefix=".sqlite-live-",dir=str(path.parent))
+        try:
+            with os.fdopen(fd,"wb") as out:
+                out.write(raw)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(temporary,path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return path
+
+    def materialize_for_live(self, *, team_id: str,
+                             master_dir: str | Path,
+                             source_path: str | Path,
+                             environment_snapshot: str | Path | None) -> tuple[Path,Path,Path | None]:
+        """Materialize immutable byte-exact pre-match inputs FROM SQLite.
+
+        All filesystem/SQLite work occurs before the four-file preload.
+        Existing editable CSV and bundled master files remain unmodified.
+        """
+        original=Path(source_path)
+        self.archive_source("team_csv",team_id,original)
+        team_bytes=self.verified_export("team_csv",team_id)
+        if team_bytes is None or team_bytes!=original.read_bytes():
+            raise ConfigurationError("SQLiteと登録構築のSHAが不一致です")
+        base=self.root/".sqlite-live-cache"
+        digest=_hash(team_bytes)
+        staged_team=self._materialize_bytes(
+            base/"teams"/digest/(team_id+".csv"),team_bytes)
+        with closing(self._db()) as db:
+            keys=[x[0] for x in db.execute(
+                """SELECT source_key FROM current_sources
+                   WHERE source_kind='master' ORDER BY source_key""")]
+        required={
+            "Pokemon_Champions_MC_usable_pokemon.csv",
+            "Pokemon_Champions_MC_move_master.csv",
+            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv",
+            "Pokemon_Champions_MC_live_selection_matrix.txt",
+            "Pokemon_Champions_MC_60sec_lookup_master.txt",
+            "Pokemon_Champions_MC_team_2026-10-03.csv",
+        }
+        if not required.issubset(keys):
+            raise ConfigurationError("SQLiteのLIVE固定マスターが不足しています")
+        # The cache fingerprint changes whenever any source master changes.
+        master_digests=[]
+        data={}
+        for key in keys:
+            if not key.startswith("Pokemon_Champions_MC_") or Path(key).name!=key:
+                raise ConfigurationError("不正なマスターキーです")
+            raw=self.verified_export("master",key)
+            if raw is None:
+                raise ConfigurationError("SQLite固定マスターの原本がありません")
+            # Check archived version against the live bundled master before
+            # accepting it; bundled updates must trigger a new archive version.
+            installed=Path(master_dir)/key
+            if installed.exists() and _hash(installed.read_bytes())!=_hash(raw):
+                self.archive_source("master",key,installed)
+                raw=self.verified_export("master",key)
+            master_digests.append(key+":"+_hash(raw))
+            data[key]=raw
+        master_fingerprint=_hash("|".join(master_digests).encode("utf-8"))
+        staged_master=base/"masters"/master_fingerprint
+        for key,raw in data.items():
+            self._materialize_bytes(staged_master/key,raw)
+        env_path=Path(environment_snapshot) if environment_snapshot else None
+        if env_path and env_path.is_file():
+            self.archive_source("usage","singles",env_path)
+            receipt=env_path.with_name("singles-provenance.json")
+            if receipt.is_file():
+                self.archive_source("provenance","singles",receipt)
+            env_bytes=self.verified_export("usage","singles")
+            receipt_bytes=self.verified_export("provenance","singles")
+            if env_bytes is None:
+                raise ConfigurationError("SQLiteの環境統計が不正です")
+            env_dir=base/"environment"/_hash(env_bytes+(receipt_bytes or b""))
+            env_path=self._materialize_bytes(env_dir/"singles-usage.json",env_bytes)
+            if receipt_bytes:
+                self._materialize_bytes(
+                    env_dir/"singles-provenance.json",receipt_bytes)
+        return staged_master,staged_team,env_path
+
+    @staticmethod
     def _row_request(catalog: dict, digest: str, cells: list[dict]) -> dict:
         return MatchupLearningStore._request_for_rows(catalog,digest,cells)
 
