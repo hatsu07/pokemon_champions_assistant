@@ -125,6 +125,58 @@ class UnifiedMainWindowTests(unittest.TestCase):
             "recommendation": "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ"})
         self.assertEqual(len(self.store.events(panel.match_id)), 2)
 
+    def test_matchmaking_does_not_poll_static_image_every_twelve_seconds(self):
+        from champions_assist.turn_capture import AutomaticVisualProbe
+        panel=self.window._match_panel
+        image=np.zeros((80,160,3),dtype=np.uint8)
+        # The first frame is still inspected for an already visible preview,
+        # but a static matchmaking screen must not burn repeated API calls.
+        self.assertTrue(panel._automatic_probe.observe(image,"MATCHMAKING"))
+        self.assertFalse(panel._automatic_probe.observe(image,"MATCHMAKING"))
+        self.assertEqual(panel._automatic_probe.matchmaking_recheck,float("inf"))
+
+    def test_selection_result_survives_pending_battle_command(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        panel=self.window._match_panel
+        preview=chosen_state(assets)
+        preview.update(phase="SELECTION",selected_three=[],lead=None,
+                       prep=None,prep_status="NOT_STARTED")
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._cancel_event.clear()
+        panel._pending_batch=[np.zeros((80,160,3),dtype=np.uint8)]
+        panel._pending_screen_label="TURN_ACTION"
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0]}
+        panel._completed({"state":deepcopy(preview),"report":report})
+        self.assertEqual(panel.state["phase"],"PREP")
+        self.assertTrue(panel.state["selection_assumed"])
+        self.assertIsNotNone(panel._pending_batch)
+        self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
+        self.assertTrue(any(row.get("event")=="SELECTION_PRESERVED_FOR_BATTLE_TRANSITION"
+                            for row in panel._timing_trace))
+
+    def test_turn_clock_starts_from_local_screen_not_model_completion(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        with patch.object(panel,"_send_pending"):
+            panel._queue_batch([np.zeros((80,160,3),dtype=np.uint8)],
+                               screen_label="TURN_ACTION")
+            started=panel._turn_screen_seen_at
+            panel._queue_batch([np.zeros((80,160,3),dtype=np.uint8)],
+                               screen_label="TURN_ACTION")
+        self.assertIsNotNone(started)
+        self.assertEqual(panel._turn_screen_seen_at,started)
+        self.assertTrue(any(row.get("event")=="TURN_SCREEN_OBSERVED"
+                            for row in panel._timing_trace))
+
     def test_live_partial_selection_starts_known_only_prep_after_result(self):
         """Live UI, not just offline selection test, must start partial PREP."""
         from copy import deepcopy
