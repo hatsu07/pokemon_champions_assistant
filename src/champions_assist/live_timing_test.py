@@ -14,7 +14,9 @@ from typing import Callable
 
 from .match_replay import (
     new_replay, confirm_actual_selection, run_replay_prep, run_replay_batch)
-from .prep import LEAD_TAGS, BENCH_TAGS
+from .prep import (
+    build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+)
 
 PREP_LIMIT_SECONDS = 40.0
 TURN_TARGET_SECONDS = 30.0
@@ -96,8 +98,24 @@ def prep_timing_test(
     bench_rows = [r for r in rows if r.get("our_pokemon") in selected and r.get("our_pokemon") != lead]
     required = ("preserve", "stopper", "closer")
     win_roles = sum(bool(prep.get(key) in selected) for key in required)
+    # Independently validate the model's complete 18-pair + required-tag
+    # structure, even when a synthetic/changed replay runner claims COMPLETE.
+    structurally_valid = False
+    if len(six)==6 and len(selected)==3 and lead in selected:
+        try:
+            check=validate_prep_result(
+                build_prep_input(selected,lead,six,tuple(
+                    state.get("matrix_rows_six") or assets.matrix_rows_for(six))),
+                PrepResult("COMPLETE",tuple(PrepMatchup(
+                    str(r["our_pokemon"]),str(r["opponent_pokemon"]),
+                    str(r["eval_code"])) for r in rows),
+                    prep.get("preserve"),prep.get("stopper"),prep.get("closer")))
+            structurally_valid=check.complete
+        except (ValueError,KeyError,TypeError):
+            structurally_valid=False
     complete = (
-        report.get("status") in ("PREP_STRUCTURE_OK", "PREP_PROVISIONAL")
+        structurally_valid
+        and report.get("status") in ("PREP_STRUCTURE_OK", "PREP_PROVISIONAL")
         and updated.get("prep_status") == "STRUCTURE_COMPLETE"
         and len(six) == 6 and len(set(six)) == 6
         and len(rows) == 18 and len(lead_rows) == 6 and len(bench_rows) == 12
@@ -110,7 +128,8 @@ def prep_timing_test(
         "source_status": report.get("status", "UNKNOWN"),
         "reason": "OK" if passed else (
             "DEADLINE_EXCEEDED" if elapsed > 40000 else
-            report.get("reason") or "INCOMPLETE_18_OR_ROLES"),
+            (report.get("reason") if report.get("reason") not in ("OK","") else None)
+            or "INCOMPLETE_18_OR_ROLES"),
         "elapsed_ms": elapsed, "limit_ms": 40000,
         "lead_evaluated": len(lead_rows),
         "bench_evaluated": len(bench_rows),
