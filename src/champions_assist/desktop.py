@@ -771,6 +771,7 @@ class DesktopMainWindow(QMainWindow):
 
     def _build_unified_ui(self) -> None:
         """Real user-facing UI, driven exclusively by MatchReplayDialog.state."""
+        self._close_pending=False
         from .match_replay_dialog import MatchReplayDialog
         from .app_config import default_app_root
 
@@ -817,6 +818,7 @@ class DesktopMainWindow(QMainWindow):
             on_capture_reconnected=self._persist_reconnected_capture,
         )
         self._match_panel.state_changed.connect(self._on_unified_state)
+        self._match_panel.shutdown_finished.connect(self._retry_close_after_workers)
         self._match_panel.ai_status_changed.connect(
             self.header_labels["ai"].setText)
         self._match_panel.live_clock_changed.connect(
@@ -1117,6 +1119,17 @@ class DesktopMainWindow(QMainWindow):
         self._postmatch_worker=None
         if worker is not None:
             worker.deleteLater()
+        self._retry_close_after_workers()
+
+    @Slot()
+    def _retry_close_after_workers(self):
+        if not getattr(self,"_close_pending",False):
+            return
+        panel=self._match_panel
+        if (panel._thread is None and panel._prep_thread is None
+                and (self._postmatch_worker is None
+                     or not self._postmatch_worker.isRunning())):
+            QTimer.singleShot(0,self.close)
 
     def _match_active_for_settings(self) -> bool:
         if self._unified and self._match_panel.state is not None:
@@ -1401,13 +1414,15 @@ class DesktopMainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt callback name
         if self._unified:
-            if self._postmatch_worker is not None and self._postmatch_worker.isRunning():
-                # Keep Qt-owned thread alive through an in-flight review.
-                event.ignore()
-                return
-            self._match_panel._stop_auto()
-            if self._match_panel._thread is not None:
-                # Do not destroy the API worker until it terminates.
+            self._close_pending=True
+            if not self._match_panel._shutdown_ready:
+                self._match_panel.request_shutdown("close")
+            if (self._match_panel._thread is not None or
+                    self._match_panel._prep_thread is not None or
+                    (self._postmatch_worker is not None
+                     and self._postmatch_worker.isRunning())):
+                # Cancel new capture/replies now, close automatically as soon
+                # as QThreads have finished. Never force-destroy live workers.
                 event.ignore()
                 return
         else:
