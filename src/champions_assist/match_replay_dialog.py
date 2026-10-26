@@ -1005,7 +1005,13 @@ class MatchReplayDialog(QDialog):
             # One *current* menu shot is sufficient for immediate turn choice:
             # older animations cost image tokens and risk superseding action.
             frames=[frames[-1]]
-        elif frames and screen_label=="BATTLE_EVENT":
+        elif frames and (
+                screen_label=="BATTLE_EVENT"
+                or (screen_label is None and self.state.get("phase")
+                    in ("PREP","BATTLE"))):
+            # Without a local classifier, one previous transition plus the
+            # current screen carries useful event context at much lower
+            # latency than repeatedly shipping four high-detail images.
             frames=frames[-2:]
         self._pending_batch=None
         self._pending_screen_label=None
