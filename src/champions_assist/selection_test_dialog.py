@@ -426,6 +426,7 @@ class SelectionTestDialog(QDialog):
                               "reason":"INSUFFICIENT_90S_BUDGET","pass":False,
                               "lead_evaluated":0,"bench_evaluated":0,
                               "win_conditions":0}})
+                self._clear_worker()
                 return
         if self.log:
             self.log.write(mode+"_TIMING_TEST_START",phase=mode,
