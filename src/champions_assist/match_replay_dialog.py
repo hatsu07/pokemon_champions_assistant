@@ -297,6 +297,7 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
+        self._event_frames=[]
         self._automatic_probe=AutomaticVisualProbe(
             min_gap=8.0,matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
@@ -649,6 +650,7 @@ class MatchReplayDialog(QDialog):
         self._trace_event("MATCH_RESET")
         self._stop_auto()
         self._turn_buffer.reset_turn()
+        self._event_frames.clear()
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._last_local_class=None
@@ -745,6 +747,7 @@ class MatchReplayDialog(QDialog):
             self._capture_gate.reset()
             # Recalibrate command screens if target/window content changed.
             self._turn_buffer=TurnCaptureBuffer()
+            self._event_frames.clear()
             self._automatic_probe.reset()
             self._screen_gate.reset()
             self._last_local_class=None
@@ -977,6 +980,7 @@ class MatchReplayDialog(QDialog):
         self._cancel_event.clear()
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
+        self._event_frames.clear()
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._last_local_class=None
@@ -1209,11 +1213,14 @@ class MatchReplayDialog(QDialog):
         screen_label=self._pending_screen_label
         # Only the CURRENT screenshot is needed for the opponent-six preview;
         # old transition frames are unhelpful and cost capture/memory time.
-        if frames and (self.state.get("phase") in ("MATCHMAKING","SELECTION")
-                       or screen_label in _URGENT_SCREENS):
-            # One *current* menu shot is sufficient for immediate turn choice:
-            # older animations cost image tokens and risk superseding action.
+        if frames and self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             frames=[frames[-1]]
+        elif frames and screen_label in _URGENT_SCREENS:
+            # Preserve preceding event text without standalone paid event calls.
+            frames=self._event_frames[-2:]+[frames[-1]]
+            self._event_frames.clear()
+            self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",
+                              image_count=len(frames))
         elif frames and (
                 screen_label=="BATTLE_EVENT"
                 or (screen_label is None and self.state.get("phase")
@@ -1358,6 +1365,8 @@ class MatchReplayDialog(QDialog):
                         f"確信度 {prediction.confidence:.2f} / "
                         f"{prediction.latency_ms:.1f}ms / {prediction.source}")
                 classified=self._screen_gate.observe(prediction,phase)
+                if prediction.label=="BATTLE_EVENT" and phase in ("PREP","BATTLE"):
+                    self._remember_event_frame(image)
                 if classified=="BATTLE_EVENT":
                     # Non-interactive event animation: do not pay for an AI
                     # request until the next actionable screen appears.
@@ -1378,6 +1387,18 @@ class MatchReplayDialog(QDialog):
                 return
 
         self._observe_fallback_transition(image,phase)
+
+    def _remember_event_frame(self,image):
+        """Buffer two distinct event images locally, without extra AI requests."""
+        signature=AutomaticVisualProbe._small(image)
+        if self._event_frames:
+            last=AutomaticVisualProbe._small(self._event_frames[-1])
+            if float(np.mean(np.abs(signature-last)))<0.025:
+                return
+        self._event_frames.append(image.copy())
+        self._event_frames=self._event_frames[-2:]
+        self._trace_event("BATTLE_EVENT_FRAME_BUFFERED",
+                          pending_count=len(self._event_frames))
 
     def _observe_fallback_transition(self,image,phase):
         """Model-free fallback is rate-limited; a scene change is NOT a menu."""
