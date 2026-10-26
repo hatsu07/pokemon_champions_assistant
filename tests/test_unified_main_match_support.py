@@ -228,9 +228,12 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._active_job="batch"
         panel._inflight_screen_label="TURN_ACTION"
         panel._active_turn_epoch=1
-        panel._turn_epoch=2
-        panel._turn_action_sent=False
-        panel._turn_event_after_action=False
+        # Next turn has been resolved, but the first menu detection has NOT
+        # yet advanced the epoch. _queue_batch is responsible for doing so.
+        panel._turn_epoch=1
+        panel._turn_screen_seen_at=None
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=True
         frame=np.zeros((80,160,3),dtype=np.uint8)
         try:
             with patch.object(panel,"_send_pending") as send:
