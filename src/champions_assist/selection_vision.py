@@ -204,7 +204,12 @@ def retry_unresolved_opponent_six(
         return observation, 1
     try:
         second = retry_call(reason, observation)
-    except (ValueError, KeyError, TypeError):
+    except Exception as exc:
+        # A SECOND visual request is optional. If it times out or fails,
+        # continue with the original sighting as incomplete evidence rather
+        # than losing all correctly read opponent names. Record only the
+        # exception class; never log API response bodies or credentials.
+        observation["_retry_error_type"]=type(exc).__name__
         return observation, 2
     if not isinstance(second, Mapping) or second.get("visual_ui") != "TEAM_SELECTION":
         return observation, 2
