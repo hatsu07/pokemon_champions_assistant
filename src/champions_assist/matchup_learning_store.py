@@ -18,6 +18,7 @@ from .team_matchup_v2 import SCHEMA_V2, validate_v2_reply
 from .team_ai_analysis import SCHEMA as SCHEMA_V1, validate_reply
 
 _MAX_FILE = 3 * 1024 * 1024
+_MAX_CATALOG = 12 * 1024 * 1024
 _CATALOG_SCHEMA = "champions-matchup-evidence-v1"
 _DB_FILENAME = "matchup-learning.sqlite3"
 
@@ -159,7 +160,7 @@ class MatchupLearningStore:
             for catalog_path in directories[:max_catalogs]:
                 try:
                     raw=catalog_path.read_bytes()
-                    if len(raw)>_MAX_FILE:
+                    if len(raw)>_MAX_CATALOG:
                         skipped+=1
                         continue
                     catalog=json.loads(raw)
