@@ -9,7 +9,7 @@ from typing import Iterable
 
 LEAD_TAGS = ("ACT", "KO", "DPS", "PRI", "S", "OUR", "OPP", "SAFE", "PROC", "LOCK", "MEGA")
 BENCH_TAGS = ("S", "OUR", "OPP", "PRI", "SAFE", "PROC")
-UNKNOWN_EVALUATION = frozenset({"?", "未判定", "SKIPPED"})
+UNKNOWN_EVALUATION = frozenset({"?", "未判定", "SKIPPED", "unknown", "UNKNOWN", "不明"})
 
 
 @dataclass(frozen=True)
