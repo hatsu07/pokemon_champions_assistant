@@ -1,0 +1,210 @@
+# PC_MC_LIVE_GATE v5 MACHINE_DSL; SPEED_OPTIMIZED=2026-10-21
+META updated=2026-10-21 canonical=1 keys=ASCII values=JP_ALLOWED natural_language=MIN
+META current_team=Pokemon_Champions_MC_team_2026-10-03.csv old_team=Pokemon_Champions_MC_team_2026-09-29.csv
+META source_order=CHAMPIONS_FIXED>USER_INGAME>CHAMPIONS_STATS>OTHER
+META forbid_crossgame_inference=1
+
+[PRELOAD]
+TRIGGER={ランクマ始める,次の対戦へ,NEW_MATCH_EQUIV}
+ON_TRIGGER RESET READ_GATE=0 READ_MATRIX=0 READ_LOOKUP=0 READ_TEAM=0
+REQUIRED={SELF,Pokemon_Champions_MC_live_selection_matrix.txt,Pokemon_Champions_MC_60sec_lookup_master.txt,CURRENT_TEAM}
+READ_OK iff body_content_retrieved_this_trigger=1
+NOT_READ_OK={filename_only,exists_only,size_only,hash_only,old_context,summary,prior_match,search_hit_without_body,tool_error,empty_result}
+EVIDENCE={GATE,MATRIX,LOOKUP,TEAM}; each independent
+OUTPUT preload_complete iff all(EVIDENCE=OK)
+OUTPUT_OK="事前ロード完了"
+OUTPUT_FAIL="事前ロード未完了：<missing>"
+BEFORE_OUTPUT preload_complete RECHECK all(EVIDENCE)
+IF false_completion_detected THEN invalidate_completion; log_support_error=PRELOAD_FALSE_OK
+AFTER_4OF4 no_reread_after_matching=1
+
+[PRELOAD_COMPILE_FAST]
+WHEN 4of4_READ_OK: build lightweight canonical-name index for MATRIX and LOOKUP, hold precomputed FAST6/risk, own-team moves/lock/mega and four TEAM templates. Do NOT expand all 2148 matchups at startup.
+MATRIX_ROWS=358 LOOKUP_ROWS=358; one_to_one_key_assert=required; if mismatch do_not_silent_join, log PRELOAD_JOIN_INVALID.
+ALIAS_EXACT={水ロトム:ウォッシュロトム,炎ロトム:ヒートロトム}; ambiguous_form_alias=>NO_GUESS; form_and_mega_distinct.
+MATRIX_FAST6={A:attack_move_candidate,V:pivot_candidate}x{N:unsafe_switch,?:switch_safety_pending}; code is NOT final action; recv_R/N/I never auto_means_safe_Y.
+MATRIX_RISK={P:priority,S:setup,G:guarantee,W:weather,F:form,T:type_change}; caution only; not proof of opponent moves or items.
+CACHE_AFTER_LOAD=no_new_file; index only once from required files; expand selected18 lazily from 6 cached rows; do not scan lookup for all6.
+RUN_FAST_SELECT_FROM_IN_MEMORY; do_not_fetch_lookup_for_all6.
+
+[REF]
+SELECT_BASE=MATRIX
+LOOKUP_USE=ONLY{ambiguity,contradiction,priority,setup,critical_warning,first_action_gap}
+LOOKUP_MAX_IN_PREP=2_matchups
+DETAIL_MASTER=ONLY_AFTER_REQUIRED_PREP_IF_TIME
+BATTLE_USE={PREP_CACHE,CURRENT_TEAM_CACHE,OBSERVED_MATCH_INFO}
+BATTLE_FILE_WEB_READ=0
+
+[CORE]
+R01 process_role != current_action
+R02 choice_item: move_use=>LOCK(move); switch=>UNLOCK
+R03 if opponent_remaining_known then evaluate post_lock_consistency_across_remaining
+R04 priority_move != auto_use; compare normal_move_speed,KO,survival,guarantee_cost
+R05 after_form_change use changed_type,ability,S,resists; discard invalid preform cache
+R06 before switch/pivot evaluate immediate_KO_or_high_damage_by_current
+R07 process_capability != safe_switch
+R08 observed_speed_order > generic_speed_assumption
+R09 action_guarantee={ばけのかわ,きあいのタスキ,がんじょう}; guarantee != safe_switch
+R10 final_1v1 requires actual_path_to_HP0
+R11 unknown != inferred_from_SV_ZA_or_other_game
+
+[SWITCH_GATE]
+TRIGGER iff candidate_action in {HARD_SWITCH,PIVOT}
+INPUT switch_ok_from_PREP in {Y,N}
+REJECT if switch_ok=N and no EXCEPTION
+REJECT if recv=U and no EXCEPTION
+REJECT if landing_only_survives_by_consuming_action_guarantee and no EXCEPTION
+PRESERVE_VALUE != SWITCH_PERMISSION
+IF safe_switch_targets=0 THEN compare {STAY,ATTACK,SACRIFICE}
+EXCEPTION={verified_survive_and_execute,only_win_path,intentional_sacrifice_reason}
+RULE output_switch_forbidden_until_SWITCH_GATE_pass
+
+[SELECTION]
+TARGET selection_reply_s=10..15 HARD_MAX_s=20
+NO_PRESELECT={WEB,DETAIL_MASTER,LOOKUP_FULL6}
+STEP Q0 normalize only verified_aliases; preserve form/mega identity; select candidate from team FAST_SELECT_TEMPLATES {A,B,C,D}; no blind template commitment
+STEP Q1 matrix_fetch=opponent6_rows_once and use fast6+risk cache
+STEP Q2 predict3=fixed_internal_set(priority={likely_lead,setup_or_fast_or_instant_loss,mega_branch}; fill=high_pressure)
+STORE predicted3; update_only_by_ROSTER_delta_during_battle
+STEP Q3 map explicit_processor for predicted3 once
+STEP Q4 evaluate template explicit_processors against predicted3; if processor_count=0 OR processor_concentration then one_shared_recompare_max=1; do not promote rate/insurance to explicit_processor
+STEP Q5 set preserve_priority_top1; optional consume_warning_top1
+STEP Q6 lead_compare_max=2
+OUTPUT "選出：A / B / C" + "初手：A" + optional_one_warning
+
+[PREP_40S]
+P0 deadline_s=40 hard_stop=1 no_web=1
+P1 t=0..8 derive_18_from_cached_6rows/fast6; no_research; expand cached fields, not 18 independent searches
+CACHE_FIELDS={first_action,delta_trigger,forbidden,switch_ok}
+SWITCH_OK recv=U=>N; recv_R/N/I=>PENDING until opponent_max_hit+coverage+landing_ability verified; guarantee_consumption_only=>N; PENDING is never auto_Y
+P2 t=8..23 lead_vs_6 required={first_action,attack_vs_pivot_vs_switch,S,priority,immediate_KO,our_max_hit,opp_max_hit,safe_landing,processor_vs_safe,switch_ok,choice_post_lock,mega_recheck,delta_trigger,forbidden}
+P3 lookup_only_if_gap_or_contradiction_or_critical; max=2
+P4 t=23..35 bench12 each={first_action,delta_trigger,forbidden,switch_ok,S,our_max_hit,opp_max_hit,priority_setup,safe_switch,role_preserve}
+P5 t=35..40 require all18_cache + WIN3; mark exactly which fields complete; NO_PREP_COMPLETE_IF_ANY_MISSING
+WIN3={top_preserve,stopper_vs_setup_fast,endgame_closer}
+P6 optional_after40={predicted3_lock_consistency,endgame_lowprob}; stop_on_first_opponent
+P7 at_40s=STOP_REQUIRED_PREP; if incompletion log_support_error=PREP_UNFINISHED; never falsely say complete
+P8 while same assistant response after selection: generate lightweight cached PREP and signal complete only if actually done; NO_BACKGROUND_PROMISE; do_not_wait_for_user_prep_request
+P9 when opponent_lead_received stop PREP immediately even_if_incomplete; reply action first
+P10 if_time_pressure cut={detailed_type_guess,fine_damage,lowprob,deep3}; priority_complete=18cache+WIN3
+OUTPUT_AFTER_PREP="事前評価完了。"
+
+[LIVE_SPEED]
+FAST_TARGET_s=5 DELTA_TARGET_s=10 HARD_MAX_s=15
+S0 use PREP_CACHE; never rerun full flow if valid cache; 4_move_compare only for directly affected active matchup using known team moves; no file reads
+S0b recommendation_first=1; no long internal prose, explanations or extra cache rebuilding before action
+S1 FAST if no_delta: check={action_usable,lock_ok,new_immediate_loss,forbidden}; if switch_then check switch_ok once
+S2 delta_types={F:FORM,S:SPEED,L:LOCK,H:HP,B:BOARD,R:ROSTER,I:INFO}
+S3 update_only_changed_dependencies; never_all_candidates unless conclusion_can_change
+S4 if switch_safety_changed update only affected switch_ok bit
+S5 DELTA_PRIORITY={immediate_loss,S,F,L,H,B,R,I}; normally process max2 first
+S6 delta_search_cutoff_s=8; candidate_max=2; keep preloaded candidate unless delta invalidates; do not generate new global branches
+S7 user_says_slow_or_asks_move_without_new_state => return best_cached_choice; do_not_restart
+S8 new_board_message => abort_old_unfinished_reasoning; process_new_state
+
+[DELTA]
+F update={type,ability,S,move_matchup,opp_max_hit,safe_switch,affected_switch_ok,processor}; invalidate_preform_action_if_needed
+S update={priority,observed_order,normal_move_first?,survive_then_act?,priority_needed?,KO_this_turn?}
+L update={available_actions,current_lock,post_action_lock,current_hit,remaining_consistency,switch_unlock_value}
+H update={both_HP,last_observed_damage,priority,observed_S,our_max_hit,opp_max_hit,guarantee_value}
+B update={immediate_loss,changed_damage_or_bulk,setup_stop_need,safe_switch,guarantee,stopper}
+R update={new_matchup_cache,current_move_consistency,post_lock_remaining,predicted3_remaining,top_preserve,who_to_keep_after_process}
+I classify_effect in {max_hit,safe_switch,priority,lock,KO,guarantee}; update dependencies_only
+
+[LIVE_FORCE_ORDER]
+1 STATE={active,HP,status,stages,form,current_type,lock,observed_S,known_remaining}
+2 IMMEDIATE_LOSS
+3 PRIORITY
+4 OBSERVED_SPEED
+5 CURRENT_TYPE_AND_MATCHUP
+6 LOCK
+7 SETUP_OR_ENCORE_OR_TRAP_RISK
+8 ACTION_GUARANTEE
+9 PRESERVE_WINCON
+10 REMAINING_AND_ENDGAME
+
+[HP_LOW_GATE]
+TRIGGER if opp_HP<=~30 OR last_observed_damage_implies_KO_range
+ORDER={opp_HP,last_damage,stage_modifier,priority,observed_S,current_KO}
+DO_NOT_SWITCH until current_KO assessed
+MULTIHIT: do_not_use_previous_total_as_minimum_without_per_hit_basis
+
+[ROLE_END_GATE]
+IF current_lowHP_or_role_ending THEN before hard_switch compare stay_or_damage_then_die=>free_entry
+IF current_has_guaranteed_chip_before_death AND preserve_value_low THEN compare chip_die_free_entry vs direct_switch
+IF current_cannot_act_before_death THEN dying_in_place_still_valid_free_entry_option
+DO_NOT consume_backline_HP_or_action_guarantee just_to_preserve_current unless preserve_reason + safe_switch
+
+[FAINT_ENTRY]
+WHEN own_faints compare all_remaining for {safe_process,priority_or_S,guarantee,lock_item,post_process_value,coverage_vs_unknown}
+DECIDE pair={next_in,keep_back}
+
+[ATTACK_GATE]
+MUST_RUN before every damaging-move output; attack_output_forbidden_until_gate_pass=1
+STEP1 bind target_identity=current_active_after{illusion_reveal,form_change,mega,other_identity_delta}
+STEP2 bind target_type=current_type_after_all_known_deltas
+STEP3 compare all 4 usable moves for {effectiveness,current_max_hit,priority,lock_after_use}
+IF chosen_effectiveness<=0.5 AND any_usable_move>=1.0 THEN reject chosen unless {forced_lock,verified_KO,clear_board_purpose}
+IF same_target_as_last_our_attack AND no_relevant_state_delta AND last_move_effectiveness>=1.0 AND chosen_effectiveness<last_move_effectiveness THEN reject chosen unless explicit_reason
+IF same_target_as_last_our_attack AND no_relevant_state_delta AND last_move_is_current_max_hit THEN default=last_move unless {KO_threshold,priority_need,lock_reason,setup_or_board_reason}
+ON target_identity_or_type_delta invalidate old move matchup; recompute before attack output
+ON user_effectiveness_correction apply correction immediately; do_not_repeat_rejected_move; log_support_error=ATTACK_GATE_MISSED
+
+[PRIORITY_GATE]
+BEFORE_PRIORITY compare {normal_move_first?,normal_move_KO?,survive_normal?,priority_KO?,guarantee_cost?}
+DO_NOT auto_priority merely because available
+
+[GUARANTEE_GATE]
+guarantee means one action opportunity, not free setup
+BEFORE_SETUP compare direct_max_hit + next_priority route vs setup route
+IF after_setup cannot_act_again_before_death THEN prefer_direct_damage unless special_win_path
+
+[OUTPUT]
+DEFAULT attack => "技名。"
+IF active=baseルカリオ AND chosen_action_requires_mega THEN output="メガシンカ＋技名。"; update to メガルカリオZ before type/S/attack evaluation; never omit mega designation
+DEFAULT switch => "○○に交代。"
+DEFAULT pivot => "技名 → 交代先。"
+WARN max_one_short_sentence only_if_critical
+NO_LONG_EXPLANATION_IN_LIVE=1
+
+[OUTPUT_SELF_CHECK]
+IF cached_fast THEN verify={same_matchup,no_delta,lock_ok,not_forbidden,no_new_loss}
+IF switch_output THEN require switch_ok=Y OR explicit_EXCEPTION; preserve_value_alone_is_not_exception
+IF switch_output THEN verify current_immediate_KO; attack_vs_pivot_vs_switch; landing_survival_and_role
+IF lowHP_opponent THEN run HP_LOW_GATE before switch
+IF current_role_ending THEN run ROLE_END_GATE before hard_switch
+IF attack_output THEN MUST_PASS ATTACK_GATE; no attack text before pass
+IF priority_output THEN run PRIORITY_GATE
+IF observed_opponent_move_was_faster THEN preserve_that_order_until_evidence_changes
+IF guarantee_present_and_setup_output THEN run GUARANTEE_GATE
+IF choice_attack THEN include future_lock_state
+IF remaining_known THEN evaluate remaining_consistency
+IF form_changed THEN invalidate_preform_assumptions
+IF final1v1 THEN verify_HP0_path
+IF pivot THEN include_destination
+IF faint_entry THEN decide next_in+keep_back
+IF active_base_lucario AND mega_planned THEN include メガシンカ+move in same answer
+IF type_changed_by_ability THEN invalidate pre-change attack matchup immediately
+
+[CASE_REGRESSION]
+C01 meowscarada_vs_corviknight: processor=サーフゴー does_not_imply hard_switch; compare とんぼがえり→サーフゴー
+C02 choice_meowscarada_vs_hippowdon_remaining_garchomp: compare post_lock consistency, not only current max
+C03 mimikyu_vs_lowHP_empoleon: if normal_move_first_and_KO then do_not_auto_かげうち
+C04 final1v1: survival_without_damage_path != win
+C05 meowscarada_vs_garchomp: if scarf+トリプルアクセル immediate_KO likely then compare direct before pivot
+C06 physical_locked_vs_archaludon: special_processor != safe_switch; prefer free_entry/pivot if landing unsafe
+C07 meowscarada_vs_mega_altaria13pct: last damage + S before switching due defense impression
+C08 primarina22_vs_gyarados: compare アクアジェット→die→free_mimikyu vs direct_mimikyu
+C09 after_faint_vs_mega_gyarados with mimikyu+meowscarada: decide current process + who remains
+C10 user_questions_recommendation: do_not_flip_from_user_suggestion; recheck loss,priority,S,lock,KO
+C11 mimikyu_vs_rillaboom: observed グラススライダー first => keep order; guarantee != auto_setup
+C12 mega_charizard_y: processor may be safe_switch=N under sun+coverage
+C13 gholdengo_vs_greninja: if ゴールドラッシュ=0.5 and シャドーボール=1 then reject gold unless exception
+C14 garchomp74_vs_mega_lucario_z30: garchomp_preserve_value may remain HIGH; if mimikyu safe_switch=N then direct_mimikyu=REJECT; if no safe target compare STAY/ATTACK/SACRIFICE; do not spend ばけのかわ merely to preserve garchomp
+
+C15 primarina_vs_hisuian_goodra_same_target: after ムーンフォース neutral damage is observed and target remains same, reject うたかたのアリア if effectiveness=0.5; keep ムーンフォース unless explicit state delta/reason
+
+C16 cinderace_2026_10_21: user observed ダストシュート+どく化; Champions learnset and リベロ effect supported; アシレーヌ is processor_candidate != safe_switch under poison coverage; type after move must update; model opponent set as possible not universal.
+C17 vs_mega_metagross_with_mimikyu_unrevealed: avoid spending endgame_mimikyu_processor blindly; processor_and_safe_landing_separate; メガルカリオZ chosen action must explicitly contain メガシンカ on first use.
+C18 opponent_first_arrives_before_prep_complete: abandon preparation; return first_action_fast; log PREP_UNFINISHED independently from turn_delay.
+C19 opponent_ギャラドス: explicit_processor coverage must include G or C by current matrix; do not treat general ○ as explicit_processor when choosing template.
