@@ -242,7 +242,7 @@ def partial_opponent_preview(raw: Mapping[str, Any],
             marker=f"未判明相手{index}"
             names.append(marker)
             unresolved.append(marker)
-    if len(unresolved)>2 or len(seen)<4:
+    if not unresolved or len(unresolved)>2 or len(seen)<4:
         return None
     return tuple(names),tuple(unresolved)
 
