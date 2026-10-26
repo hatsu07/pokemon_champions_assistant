@@ -385,6 +385,11 @@ def train_model(args):
         confidence=args.confidence, device=str(device),
         pretrained=bool(args.pretrained),
     )
+    # Future training outputs are directly selectable ONNX files with their
+    # own metadata. Keep the JSON for older clients and SHA-256 verification.
+    from scripts.embed_screen_classifier_metadata import embed_manifest
+    embed_manifest(model_path,manifest)
+    manifest["sha256"]=sha256(model_path.read_bytes()).hexdigest()
     manifest_path=args.output_dir/"champions_screen_classifier.json"
     manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     result={
