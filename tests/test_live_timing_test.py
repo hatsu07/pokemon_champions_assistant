@@ -127,7 +127,7 @@ class TimingCoreTest(unittest.TestCase):
             self.assertLessEqual(kwargs["total_seconds"],30)
             self.clock.now=19.4
             return kwargs["state"],{
-                "status":"PROVISIONAL_ADVICE","observed_ui":"MOVE_MENU",
+                "status":"PROVISIONAL_ADVICE","screen":"MOVE_MENU",
                 "action":{"kind":"MOVE","move":"10まんボルト"},
                 "recommendation":"10まんボルト。"}
         _,report=turn_timing_test(
@@ -150,7 +150,7 @@ class TimingCoreTest(unittest.TestCase):
             self.clock.now=0
             def runner(**kwargs):
                 self.clock.now=sec
-                return kwargs["state"],{"status":status,"observed_ui":screen,
+                return kwargs["state"],{"status":status,"screen":screen,
                   "action":action,"recommendation":advice}
             _,report=turn_timing_test(
                 image=None,state=self.state,assets=self.assets,access_token="x",
