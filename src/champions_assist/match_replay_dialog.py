@@ -305,6 +305,9 @@ class MatchReplayDialog(QDialog):
         self._turn_event_after_action=False
         self._turn_epoch=0
         self._active_turn_epoch=None
+        self._capture_seq=0
+        self._last_capture_seq=0
+        self._last_classifier_sample_at=None
         self._last_local_class=None
         self._pending_batch=None
         self._pending_screen_label=None
@@ -1157,6 +1160,8 @@ class MatchReplayDialog(QDialog):
         self._trace_event("TURN_SCREEN_OBSERVED",
                           screen_label=screen_label,
                           clock_source="FIRST_LOCAL_DETECTION",
+                          turn_epoch=self._turn_epoch,
+                          frame_seq=self._last_capture_seq,
                           timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
 
     def _note_battle_event(self):
@@ -1165,7 +1170,10 @@ class MatchReplayDialog(QDialog):
         if self._turn_action_sent and not self._turn_event_after_action:
             self._turn_event_after_action=True
             self._turn_screen_seen_at=None
-            self._trace_event("TURN_RESOLUTION_OBSERVED")
+            self._screen_gate.rearm_after_resolution()
+            self._trace_event("TURN_RESOLUTION_OBSERVED",
+                              frame_seq=self._last_capture_seq,
+                              turn_epoch=self._turn_epoch)
 
     def _queue_batch(self,frames, *, screen_label=None):
         if self._shutdown_intent is not None:
@@ -1289,7 +1297,20 @@ class MatchReplayDialog(QDialog):
             self._trace_event("TURN_AI_REQUEST_STARTED",
                               screen_label=screen_label,
                               timeout_budget_ms=int(battle_remaining*1000),
-                              turn_epoch=self._turn_epoch)
+                              turn_epoch=self._turn_epoch,
+                              frame_seq=self._last_capture_seq,
+                              ai_request_attempt=self._ai_request_attempts)
+        self._trace_event(
+            "AI_REQUEST_DISPATCH",
+            ai_request_attempt=self._ai_request_attempts,
+            frame_seq=self._last_capture_seq,
+            turn_epoch=self._turn_epoch,
+            image_count=len(frames),
+            screen_label=screen_label or "UNCLASSIFIED",
+            capture_to_enqueue_ms=(
+                max(0,int((monotonic()-self._turn_screen_seen_at)*1000))
+                if self._turn_screen_seen_at is not None
+                and screen_label in _URGENT_SCREENS else 0))
         self._set_ai_status(
             f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
         request_report={
@@ -1374,6 +1395,8 @@ class MatchReplayDialog(QDialog):
             self.entries.append(report)
             self._render(report)
         self._latest_image=image
+        self._capture_seq+=1
+        self._last_capture_seq=self._capture_seq
         if self._background_capture is not None:
             self._background_capture.offer(image)
         self._show_capture_preview(image)
@@ -1398,7 +1421,9 @@ class MatchReplayDialog(QDialog):
                 if prediction.label!=self._last_local_class:
                     self._last_local_class=prediction.label
                     self._trace_event("SCREEN_CLASSIFIER_CHANGED",
+                                      frame_seq=self._last_capture_seq,
                                       screen_label=prediction.label,
+                                      classifier_source=prediction.source,
                                       confidence=round(prediction.confidence,3),
                                       margin=round(prediction.margin,3),
                                       latency_ms=round(prediction.latency_ms,2))
@@ -1406,6 +1431,17 @@ class MatchReplayDialog(QDialog):
                         f"ローカル画面判別: {prediction.label} / "
                         f"確信度 {prediction.confidence:.2f} / "
                         f"{prediction.latency_ms:.1f}ms / {prediction.source}")
+                now=monotonic()
+                if (self._last_classifier_sample_at is None
+                        or now-self._last_classifier_sample_at>=3.0):
+                    self._last_classifier_sample_at=now
+                    self._trace_event("SCREEN_CLASSIFIER_SAMPLE",
+                                      frame_seq=self._last_capture_seq,
+                                      screen_label=prediction.label,
+                                      classifier_source=prediction.source,
+                                      confidence=round(prediction.confidence,3),
+                                      margin=round(prediction.margin,3),
+                                      latency_ms=round(prediction.latency_ms,2))
                 if (prediction.label in _URGENT_SCREENS
                         and prediction.confidence>=0.95
                         and prediction.margin>=0.50
@@ -1430,6 +1466,12 @@ class MatchReplayDialog(QDialog):
                                  and self._inflight_screen_label=="TEAM_SELECTION")):
                     classified=None
                 if classified is not None:
+                    self._trace_event("SCREEN_GATE_DISPATCH",
+                                      frame_seq=self._last_capture_seq,
+                                      screen_label=classified,
+                                      confidence=round(prediction.confidence,3),
+                                      margin=round(prediction.margin,3),
+                                      turn_epoch=self._turn_epoch)
                     self._automatic_probe.acknowledge(image,phase)
                     self._queue_batch(self._turn_buffer.batch(image), screen_label=classified)
                 # A loaded, validated ONNX remains authoritative. UNKNOWN
@@ -1462,6 +1504,7 @@ class MatchReplayDialog(QDialog):
         reader=self._local_event_reader
         if reader.offer(image,label="BATTLE_EVENT"):
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
+                              frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
 
     def _drain_event_candidates(self):
@@ -1486,10 +1529,20 @@ class MatchReplayDialog(QDialog):
         records=self._drain_event_candidates()
         if screen_label in _URGENT_SCREENS:
             reader=self._local_event_reader
+            stats=reader.diagnostic_counts() if reader is not None else {}
+            # Once per actionable menu, rather than logging every ROI / frame.
+            self._trace_event("LOCAL_OCR_TURN_SUMMARY",
+                              frame_seq=self._last_capture_seq,
+                              turn_epoch=self._turn_epoch,
+                              ocr_status=(reader.reason if reader else "NOT_RUNNING"),
+                              ocr_candidates_sent=len(records),
+                              ocr_duplicates=self._local_battle_tracker.duplicates,
+                              ocr_conflicts=self._local_battle_tracker.conflicts,
+                              **stats)
             self._stop_local_event_reader()
             if reader is not None:
                 self._trace_event("LOCAL_OCR_INTERRUPTED_FOR_ACTION",
-                                  unfinished=reader._queue.qsize(),
+                                  unfinished=stats.get("ocr_queue_pending",0),
                                   overflow=reader.overflow,
                                   observed_candidates=len(records))
         return records
@@ -1553,7 +1606,10 @@ class MatchReplayDialog(QDialog):
             report={**report,"status":"SUPERSEDED",
                     "recommendation":"",
                     "warning":"NEW_TURN_DETECTED_BEFORE_RESPONSE"}
-            self._trace_event("STALE_TURN_ADVICE_DROPPED")
+            self._trace_event("STALE_TURN_ADVICE_DROPPED",
+                              turn_epoch=self._turn_epoch,
+                              active_turn_epoch=self._active_turn_epoch,
+                              ai_request_attempt=self._ai_request_attempts)
         elif (self._active_job=="batch" and self._active_turn_epoch is not None
               and self._turn_screen_seen_at is not None
               and monotonic()-self._turn_screen_seen_at
@@ -1561,7 +1617,9 @@ class MatchReplayDialog(QDialog):
             report={**report,"status":"DEADLINE_EXCEEDED",
                     "recommendation":"",
                     "warning":"LOCAL_CONSERVATIVE_ADVICE_DEADLINE_PASSED"}
-            self._trace_event("LATE_TURN_ADVICE_DROPPED")
+            self._trace_event("LATE_TURN_ADVICE_DROPPED",
+                              turn_epoch=self._turn_epoch,
+                              ai_request_attempt=self._ai_request_attempts)
         if self._active_request_started is not None:
             report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
             self._active_request_started=None
@@ -1654,6 +1712,10 @@ class MatchReplayDialog(QDialog):
             self._trace_event("AI_RESULT_DISPLAYED",
                               status=report.get("status","UNKNOWN"),
                               ui=report.get("screen","UNKNOWN"),
+                              ai_request_attempt=self._ai_request_attempts,
+                              turn_epoch=self._turn_epoch,
+                              queue_elapsed_ms=report.get("queue_elapsed_ms",0),
+                              reason=report.get("reason","UNKNOWN"),
                               recommendation_present=bool(report.get("recommendation")),
                               selection_present=bool(report.get("selected_three")))
         entry={"step":len(self.entries)+1,**report}
