@@ -1258,7 +1258,7 @@ class MatchReplayDialog(QDialog):
             frames=frames,cancel_event=self._cancel_event,
             screen_label=screen_label,
             field_profile=self._field_profile,
-            local_field_candidates=self._drain_event_candidates(),
+            local_field_candidates=self._freeze_local_events_for_action(screen_label),
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -1394,9 +1394,9 @@ class MatchReplayDialog(QDialog):
             reader.stop()
 
     def _offer_event_for_local_ocr(self,image):
+        if self._local_event_reader is None:
+            self._start_local_event_reader()
         reader=self._local_event_reader
-        if reader is None:
-            return
         if reader.offer(image,label="BATTLE_EVENT"):
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               pending_overflow=reader.overflow)
@@ -1416,6 +1416,20 @@ class MatchReplayDialog(QDialog):
                                           raw_count=len(result.observations))
         snapshot=self._local_battle_tracker.snapshot(limit=12)
         return snapshot["local_observations"]
+
+    def _freeze_local_events_for_action(self,screen_label):
+        # Capture a completed-only snapshot before any tactical AI call.
+        # Inflight OCR is cancelled without join(), preserving the 45s turn.
+        records=self._drain_event_candidates()
+        if screen_label in _URGENT_SCREENS:
+            reader=self._local_event_reader
+            self._stop_local_event_reader()
+            if reader is not None:
+                self._trace_event("LOCAL_OCR_INTERRUPTED_FOR_ACTION",
+                                  unfinished=reader._queue.qsize(),
+                                  overflow=reader.overflow,
+                                  observed_candidates=len(records))
+        return records
 
     def _remember_event_frame(self,image):
         """Buffer two distinct event images locally, without extra AI requests."""
