@@ -52,6 +52,16 @@ def eligible_v2_request(catalog_path: str | Path, *, max_cells: int = 24,
         raise ConfigurationError("構築別根拠カタログの形式が不正です")
     digest = sha256(raw).hexdigest()
     covered = set()
+    # SQLite is the authoritative evaluation ledger when available. A JSON
+    # compatibility mirror may be missing after a crash between the DB commit
+    # and legacy export; never analyze that already-committed matchup twice.
+    if (path.name=="matchup-evidence.json"
+            and path.parent.parent.parent.name=="live-team-assets"):
+        root=path.parents[3]
+        if (root/"matchup-learning.sqlite3").is_file():
+            from .sqlite_primary import ChampionsPrimaryData
+            for row in ChampionsPrimaryData(root).proposal_rows(path,only_v2=True):
+                covered.add((row["opponent"],row["slot"],row["member_signature"]))
     for saved_file in sorted(path.parent.glob("ai-proposal-*.json")):
         try:
             if saved_file.stat().st_size > 2_000_000:
