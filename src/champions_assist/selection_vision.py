@@ -27,6 +27,8 @@ class SelectionDecision:
     elapsed_ms: int = 0
     observed_own_six: tuple[str, ...] = ()
     observed_opponent_six: tuple[str, ...] = ()
+    observed_type_icons: tuple[tuple[str, ...], ...] = ()
+    type_mismatch_slots: tuple[int, ...] = ()
     only_in_image: tuple[str, ...] = ()
     only_in_registered_team: tuple[str, ...] = ()
     uncertain_slots: tuple[str, ...] = ()
@@ -40,6 +42,8 @@ class SelectionDecision:
                     # never trusted match state or proof of image contents.
                     observed_own_six=list(self.observed_own_six),
                     observed_opponent_six=list(self.observed_opponent_six),
+                    observed_type_icons=[list(row) for row in self.observed_type_icons],
+                    type_mismatch_slots=list(self.type_mismatch_slots),
                     only_in_image=list(self.only_in_image),
                     only_in_registered_team=list(self.only_in_registered_team),
                     uncertain_slots=list(self.uncertain_slots),
@@ -59,11 +63,20 @@ def _diagnostics(raw: Mapping[str, Any], assets: FrozenMatchAssets) -> dict:
         return tuple(v for v in value[:12] if isinstance(v, str))
 
     opponents = raw_names("opponent_six")
+    visuals = raw.get("opponent_type_icons")
+    type_icons = (
+        tuple(tuple(v for v in item[:2] if isinstance(v, str))
+              if isinstance(item, list) else () for item in visuals)
+        if isinstance(visuals, list) and len(visuals) == 6 else ()
+    )
     return dict(
         # Own six comes from the preloaded registered team, NOT screenshot AI.
         # Do not expose noisy own_six predictions as if they were verified.
         observed_own_six=(),
         observed_opponent_six=tuple(_display_name(n) for n in opponents),
+        observed_type_icons=type_icons,
+        type_mismatch_slots=tuple(issue["slot"] for issue in
+                                  opponent_type_mismatch_slots(raw, assets)),
         uncertain_slots=tuple(_display_name(n) for n in raw_names("uncertain_slots")),
         only_in_image=(),
         only_in_registered_team=(),
