@@ -84,6 +84,13 @@ class AsyncBattleEventReader:
         self.skipped=0
         self.overflow=0
         self.errors=0
+        self.jobs_enqueued=0
+        self.jobs_completed=0
+        self.rois_attempted=0
+        self.rois_parsed=0
+        self.results_dropped=0
+        self.last_latency_ms=0
+        self.max_latency_ms=0
         self.enabled=profile is not None and ocr_engine is not None
         self.reason="READY" if self.enabled else "OCR_NOT_CONFIGURED"
         self._parser=TextObservationParser(lexicon=lexicon or ScreenLexicon())
@@ -154,6 +161,7 @@ class AsyncBattleEventReader:
         # Commit dedup state only after a successful enqueue; lost events can
         # be retried on the next 300ms frame.
         self._signatures.update(updated)
+        self.jobs_enqueued+=1
         return True
 
     def _run(self) -> None:
@@ -165,6 +173,7 @@ class AsyncBattleEventReader:
             if job is None:
                 break
             records=[]
+            started=monotonic()
             try:
                 for name,kind,crop in job.crops:
                     if self._stop.is_set():
@@ -173,11 +182,13 @@ class AsyncBattleEventReader:
                                  if r.name==name),None)
                     if region is None:
                         continue
+                    self.rois_attempted+=1
                     reading=self._ocr.read(crop,roi_name=name)
                     observed=parse_field_text(region,reading.text,
                                               frame_id=job.frame_id)
                     if observed is None:
                         continue
+                    self.rois_parsed+=1
                     parsed=self._parser.parse(
                         reading,roi_name=name,
                         raw_observation_id=job.frame_id,episode_id=0)
@@ -192,10 +203,15 @@ class AsyncBattleEventReader:
             except Exception as exc:
                 result=_Result(job.frame_id,job.timestamp,(),
                                error=type(exc).__name__)
+            latency=max(0,int((monotonic()-started)*1000))
+            self.last_latency_ms=latency
+            self.max_latency_ms=max(self.max_latency_ms,latency)
+            self.jobs_completed+=1
             if not self._stop.is_set():
                 try:
                     self._out.put_nowait(result)
                 except Full:
+                    self.results_dropped+=1
                     # Leave the latest information receivable by evicting the
                     # oldest completed result, never block the OCR worker.
                     try:
@@ -203,6 +219,23 @@ class AsyncBattleEventReader:
                     except Empty:
                         pass
                     self._out.put_nowait(result)
+
+    def diagnostic_counts(self) -> dict[str,int]:
+        """Cheap bounded, non-blocking aggregate metrics; no OCR text or ROI."""
+        return {
+            "ocr_jobs_enqueued":self.jobs_enqueued,
+            "ocr_jobs_completed":self.jobs_completed,
+            "ocr_rois_attempted":self.rois_attempted,
+            "ocr_rois_parsed":self.rois_parsed,
+            "ocr_results_dropped":self.results_dropped,
+            "ocr_errors":self.errors,
+            "ocr_skipped":self.skipped,
+            "ocr_queue_pending":self._queue.qsize(),
+            "ocr_results_pending":self._out.qsize(),
+            "overflow":self.overflow,
+            "ocr_last_latency_ms":self.last_latency_ms,
+            "ocr_max_latency_ms":self.max_latency_ms,
+        }
 
     def drain(self) -> tuple[_Result, ...]:
         """Collect completed results immediately; do not await active OCR."""

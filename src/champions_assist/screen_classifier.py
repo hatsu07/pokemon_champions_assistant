@@ -274,6 +274,17 @@ class ClassifiedMenuGate:
         self.armed=False
         self.last_emitted=kind
 
+    def rearm_after_resolution(self) -> None:
+        """Permit one next-turn command after a confirmed resolution screen.
+
+        Action menus are still deduplicated by the panel until BATTLE_EVENT
+        has been observed. OTHER animation alone never rearms a new turn.
+        """
+        self.armed=True
+        self.last_emitted=None
+        self.candidate=None
+        self.streak=0
+
     def observe(self, prediction: ScreenPrediction, phase: str) -> str | None:
         if phase!=self.phase:
             self.reset()
@@ -302,7 +313,14 @@ class ClassifiedMenuGate:
         # Event and action categories can follow one another directly.
         # Deduplicate steady frames of one category until the kind changes
         # or two unrelated frames permit the same category again.
-        if self.streak>=self.stable_frames and (self.armed or kind!=self.last_emitted):
+        # Time-critical menus are dispatched on their FIRST high-confidence
+        # classifier frame. Selection and uncertain predictions retain the
+        # normal debounce. The local classifier never chooses a move.
+        strong_action=(kind in ("TURN_ACTION","SWITCH_SELECTION")
+                       and prediction.confidence>=0.95
+                       and prediction.margin>=0.50)
+        required=1 if strong_action else self.stable_frames
+        if self.streak>=required and (self.armed or kind!=self.last_emitted):
             self.armed=False
             self.last_emitted=kind
             return kind

@@ -103,6 +103,25 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
             release.set()
             reader.stop()
 
+    def test_diagnostic_stats_include_duration_and_queue_health_without_text(self):
+        profile,image,engine=fixture()
+        reader=AsyncBattleEventReader(profile,ocr_engine=engine)
+        try:
+            self.assertTrue(reader.offer(image,label="BATTLE_EVENT"))
+            self.assertEqual(len(completed(reader)),1)
+            counters=reader.diagnostic_counts()
+            self.assertEqual(counters["ocr_jobs_enqueued"],1)
+            self.assertEqual(counters["ocr_jobs_completed"],1)
+            self.assertEqual(counters["ocr_rois_attempted"],2)
+            self.assertEqual(counters["ocr_rois_parsed"],2)
+            self.assertGreaterEqual(counters["ocr_last_latency_ms"],0)
+            self.assertEqual(counters["ocr_queue_pending"],0)
+            self.assertEqual(counters["ocr_results_pending"],0)
+            self.assertNotIn("ピカチュウ",str(counters))
+            self.assertNotIn("raw_text",str(counters))
+        finally:
+            reader.stop()
+
     def test_wrong_roi_geometry_abstains_and_does_not_ocr(self):
         profile,image,engine=fixture()
         reader=AsyncBattleEventReader(profile,ocr_engine=engine)

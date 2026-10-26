@@ -178,6 +178,134 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(any(row.get("event")=="TURN_SCREEN_OBSERVED"
                             for row in panel._timing_trace))
 
+    def test_new_turn_requires_event_then_immediately_restarts_local_clock(self):
+        from champions_assist.screen_classifier import ScreenPrediction
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel._turn_screen_seen_at=None
+        panel._turn_action_sent=False
+        panel._turn_event_after_action=False
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        # First command starts immediately, not on the second classifier frame.
+        def prediction(label):
+            return ScreenPrediction(label,0.99,0.95,2.0)
+        sequence=iter([prediction(x) for x in (
+            "TURN_ACTION","TURN_ACTION","OTHER","BATTLE_EVENT",
+            "OTHER","BATTLE_EVENT","TURN_ACTION")])
+        class FakeModel:
+            def predict(self,image):
+                return next(sequence)
+        panel._screen_model=FakeModel()
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame), \
+             patch.object(panel,"_send_pending"):
+            panel._capture_next()
+            first=panel._turn_screen_seen_at
+            self.assertIsNotNone(first)
+            panel._turn_action_sent=True
+            panel._capture_next()
+            self.assertEqual(panel._turn_screen_seen_at,first)
+            panel._capture_next()  # OTHER is normal animation, not a new turn
+            self.assertEqual(panel._turn_screen_seen_at,first)
+            panel._capture_next()  # First event releases turn after sent action
+            self.assertTrue(panel._turn_event_after_action)
+            self.assertIsNone(panel._turn_screen_seen_at)
+            panel._capture_next()
+            panel._capture_next()
+            self.assertIsNone(panel._turn_screen_seen_at)
+            panel._capture_next()  # Next first TURN_ACTION frame is a new turn
+            self.assertIsNotNone(panel._turn_screen_seen_at)
+            self.assertEqual(panel._turn_epoch,2)
+            self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
+        panel._stop_auto()
+
+    def test_later_turn_same_menu_is_queued_behind_old_inflight(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel._thread=object()
+        panel._active_job="batch"
+        panel._inflight_screen_label="TURN_ACTION"
+        panel._active_turn_epoch=1
+        # Next turn has been resolved, but the first menu detection has NOT
+        # yet advanced the epoch. _queue_batch is responsible for doing so.
+        panel._turn_epoch=1
+        panel._turn_screen_seen_at=None
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=True
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        try:
+            with patch.object(panel,"_send_pending") as send:
+                panel._queue_batch([frame],screen_label="TURN_ACTION")
+                send.assert_called_once()
+            self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
+            self.assertEqual(panel._turn_epoch,2)
+            self.assertTrue(any(x["event"]=="NEW_TURN_QUEUED_BEHIND_INFLIGHT"
+                                and x["turn_epoch"]==2
+                                for x in panel._timing_trace))
+        finally:
+            panel._thread=None
+            panel._active_job=None
+            panel._inflight_screen_label=None
+            panel._pending_batch=None
+            panel._stop_auto()
+
+    def test_same_turn_direct_queue_is_suppressed(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        with patch.object(panel,"_send_pending") as send:
+            panel._queue_batch([frame],screen_label="TURN_ACTION")
+            first=panel._turn_screen_seen_at
+            self.assertIsNotNone(first)
+            panel._turn_action_sent=True
+            panel._queue_batch([frame],screen_label="TURN_ACTION")
+            self.assertEqual(panel._turn_screen_seen_at,first)
+            self.assertEqual(send.call_count,1)
+            self.assertTrue(any(x["event"]=="SAME_TURN_AI_REQUEST_SUPPRESSED"
+                                for x in panel._timing_trace))
+
+    def test_expired_conservative_turn_blocks_ai_dispatch_and_clears_advice(self):
+        from time import monotonic
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel._last_action_text="じしん。"
+        frame=np.zeros((80,160,3),dtype=np.uint8)
+        with patch.object(panel,"_send_pending"):
+            panel._queue_batch([frame],screen_label="TURN_ACTION")
+        panel._turn_screen_seen_at=monotonic()-22.0
+        panel._send_pending()
+        self.assertEqual(panel._last_action_text,"")
+        self.assertIn("保守的AI締切超過",panel.action_banner.text())
+        self.assertTrue(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
+                            and x.get("timeout_budget_ms")==20000
+                            for x in panel._timing_trace))
+        self.assertIsNone(panel._thread)
+
+    def test_event_observed_before_ai_finishes_discards_stale_first_turn(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._turn_epoch=1
+        panel._active_turn_epoch=1
+        panel._turn_action_sent=True
+        panel._turn_screen_seen_at=None
+        panel._turn_event_after_action=True
+        panel._last_action_text="じしん。"
+        with patch.object(panel,"_render") as render:
+            panel._completed({"state":{"phase":"BATTLE"},
+                             "report":{"status":"PROVISIONAL_ADVICE",
+                                       "screen":"COMMAND_MENU",
+                                       "recommendation":"じしん。"}})
+        self.assertEqual(render.call_args.args[0]["status"],"SUPERSEDED")
+        self.assertEqual(render.call_args.args[0]["recommendation"],"")
+        self.assertTrue(any(x["event"]=="STALE_TURN_ADVICE_DROPPED"
+                            for x in panel._timing_trace))
+
     def test_live_partial_selection_starts_known_only_prep_after_result(self):
         """Live UI, not just offline selection test, must start partial PREP."""
         from copy import deepcopy
@@ -704,12 +832,20 @@ class UnifiedMainWindowTests(unittest.TestCase):
         reader=SimpleNamespace(
             drain=lambda:(SimpleNamespace(error=None,observations=(record,)),),
             stop=lambda:stopped.append(True),
+            reason="READY",diagnostic_counts=lambda:{
+                "ocr_jobs_enqueued":1,"ocr_jobs_completed":1,
+                "ocr_queue_pending":0,"ocr_results_pending":0},
             overflow=0,_queue=SimpleNamespace(qsize=lambda:0))
         panel._local_event_reader=reader
         result=panel._freeze_local_events_for_action("TURN_ACTION")
         self.assertEqual(len(result),1)
         self.assertEqual(result[0]["raw_text"],"まひになった")
         self.assertEqual(result[0]["certainty"],"CANDIDATE")
+        summary=[x for x in panel._timing_trace
+                 if x["event"]=="LOCAL_OCR_TURN_SUMMARY"][-1]
+        self.assertEqual(summary["ocr_jobs_enqueued"],1)
+        self.assertEqual(summary["ocr_candidates_sent"],1)
+        self.assertEqual(summary["ocr_status"],"READY")
         self.assertEqual(stopped,[True])
         self.assertIsNone(panel._local_event_reader)
         self.assertEqual(panel._drain_event_candidates()[0]["raw_text"],
@@ -757,10 +893,13 @@ class UnifiedMainWindowTests(unittest.TestCase):
                 panel._capture_next()
             send.assert_not_called()
             panel._capture_next()
-            send.assert_not_called()
-            panel._capture_next()
             send.assert_called_once()
             self.assertEqual(send.call_args.kwargs["screen_label"],"TURN_ACTION")
+            first_clock=panel._turn_screen_seen_at
+            self.assertIsNotNone(first_clock)
+            panel._capture_next()
+            send.assert_called_once()
+            self.assertEqual(panel._turn_screen_seen_at,first_clock)
         panel._stop_auto()
 
     def test_model_free_fallback_does_not_spam_scene_changes(self):
