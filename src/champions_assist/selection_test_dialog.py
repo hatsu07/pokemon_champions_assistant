@@ -168,7 +168,9 @@ class SelectionTestDialog(QDialog):
     """Local reproducible opponent six → team-three+lead diagnostic UI."""
 
     def __init__(self, *, assets, model: str, reasoning_effort: str,
-                 app_root: str | Path, parent=None):
+                 app_root: str | Path, parent=None, master_directory=None,
+                 team_path=None, capture_config=None,
+                 matrix_source=None, lookup_source=None):
         super().__init__(parent)
         self.setWindowTitle("テスト全般（個別画像テスト・実ゲーム統合テスト）")
         self.resize(1050,760)
@@ -176,6 +178,12 @@ class SelectionTestDialog(QDialog):
         self.model=model
         self.reasoning_effort=reasoning_effort
         self.app_root=Path(app_root)
+        self.master_directory=master_directory
+        self.team_path=team_path
+        self.capture_config=capture_config
+        self.matrix_source=matrix_source
+        self.lookup_source=lookup_source
+        self.live_panel=None
         self.image=None
         self.turn_image=None
         self.switch_image=None
@@ -233,7 +241,7 @@ class SelectionTestDialog(QDialog):
         self.turn_run_button.setEnabled(False)
         self.turn_run_button.clicked.connect(self.run_turn_test)
         timing.addWidget(self.turn_run_button)
-        layout.addLayout(timing)
+        self._timing_row=timing
         self.timing_status=QLabel(
             "選出後のPREPは自動で始まります（選出＋PREP計90秒）。"
             "ターン30秒テストには『技選択／交代選択』画面の画像が必要です。"
@@ -273,6 +281,113 @@ class SelectionTestDialog(QDialog):
         self.log_label.setWordWrap(True)
         self.log_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.log_label)
+
+        self.turn_page=QWidget(self.tabs)
+        self.tabs.addTab(self.turn_page,"ターン画面テスト")
+        turn_layout=QVBoxLayout(self.turn_page)
+        turn_layout.addWidget(QLabel(
+            "選出タブで選出＋PREPを実行後、技選択画面のPNG/JPEGを読み取り、"
+            "画像認識・合法手・30秒目標を検証します。"))
+        turn_layout.addLayout(self._timing_row)
+        self.turn_status=QLabel("選出＋PREP後にターン画像を指定してください。")
+        self.turn_status.setWordWrap(True)
+        self.turn_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        turn_layout.addWidget(self.turn_status)
+        turn_layout.addStretch(1)
+
+        self.switch_page=QWidget(self.tabs)
+        self.tabs.addTab(self.switch_page,"交代先選択画面テスト")
+        switch_layout=QVBoxLayout(self.switch_page)
+        switch_layout.addWidget(QLabel(
+            "交代先選択画面（PARTY_MENU）と、選出済み3匹から合法な交代先を"
+            "返せるかを独立検証します。候補が画面に無ければ合格しません。"))
+        row=QHBoxLayout()
+        self.switch_choose_button=QPushButton("交代先選択画面PNG/JPEGを選択")
+        self.switch_choose_button.clicked.connect(self.choose_switch_image)
+        self.switch_run_button=QPushButton("交代先選択テスト")
+        self.switch_run_button.clicked.connect(self.run_switch_test)
+        self.switch_run_button.setEnabled(False)
+        row.addWidget(self.switch_choose_button)
+        row.addWidget(self.switch_run_button)
+        switch_layout.addLayout(row)
+        self.switch_status=QLabel("選出＋PREP後、交代先選択画面を指定してください。")
+        self.switch_status.setWordWrap(True)
+        self.switch_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        switch_layout.addWidget(self.switch_status)
+        switch_layout.addStretch(1)
+
+        self.event_page=QWidget(self.tabs)
+        self.tabs.addTab(self.event_page,"バトルイベント読み取りテスト")
+        event_layout=QVBoxLayout(self.event_page)
+        event_layout.addWidget(QLabel(
+            "対戦中のイベント・HP変化・判明技・結果画面のPNG/JPEGを"
+            "認識し、既存バトル状態へ観測情報だけを反映します。"
+            "勝敗や行動の実行を推測しません。"))
+        row=QHBoxLayout()
+        self.event_choose_button=QPushButton("バトルイベント画面PNG/JPEGを選択")
+        self.event_choose_button.clicked.connect(self.choose_event_image)
+        self.event_run_button=QPushButton("イベント読み取りテスト")
+        self.event_run_button.clicked.connect(self.run_event_test)
+        self.event_run_button.setEnabled(False)
+        row.addWidget(self.event_choose_button)
+        row.addWidget(self.event_run_button)
+        event_layout.addLayout(row)
+        self.event_status=QLabel("選出＋PREP後、イベント画面を指定してください。")
+        self.event_status.setWordWrap(True)
+        self.event_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        event_layout.addWidget(self.event_status)
+        event_layout.addStretch(1)
+
+        self.integration_page=QWidget(self.tabs)
+        self.tabs.addTab(self.integration_page,"1対戦統合テスト（実ゲーム画面）")
+        self.integration_layout=QVBoxLayout(self.integration_page)
+        self.integration_intro=QLabel(
+            "保存画像ではなく設定済みの実ゲームウィンドウ／ADB画面を"
+            "読み取る統合テストです。対戦開始を押して4ファイルをロードし、"
+            "キャプチャを開始してください。選出→PREP→ターン→交代→"
+            "イベント→決着まで状態を継続して検証します。"
+            "ゲーム操作・自動キー入力はしません。"
+            "選出確定はプレイヤーが確認します。")
+        self.integration_intro.setWordWrap(True)
+        self.integration_layout.addWidget(self.integration_intro)
+        self.integration_status=QLabel("ライブテストは未開始")
+        self.integration_status.setWordWrap(True)
+        self.integration_layout.addWidget(self.integration_status)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self,index):
+        if self.tabs.widget(index) is self.integration_page:
+            self._ensure_live_test()
+
+    def _ensure_live_test(self):
+        if self.live_panel is not None:
+            return
+        if (self.master_directory is None or self.team_path is None
+                or self.capture_config is None):
+            self.integration_status.setText(
+                "実ゲーム画面の検証には設定済みのウィンドウまたはADB、"
+                "ゲーム領域、登録済みチームが必要です。設定画面を確認してください。")
+            return
+        # The exact same live read-only support FSM/vision/capture panel is
+        # embedded here, not simulated from saved screenshots.
+        from .match_replay_dialog import MatchReplayDialog
+        panel=MatchReplayDialog(
+            model=self.model, master_directory=str(self.master_directory),
+            team_path=str(self.team_path), capture_config=self.capture_config,
+            store_root=self.app_root, reasoning_effort=self.reasoning_effort,
+            parent=self.integration_page, embedded=True)
+        panel.matrix_source=(str(self.matrix_source)
+                             if self.matrix_source is not None else None)
+        panel.lookup_source=(str(self.lookup_source)
+                             if self.lookup_source is not None else None)
+        self.live_panel=panel
+        self.integration_status.setText(
+            "実ゲームキャプチャの支援エンジンを接続しました。"
+            "4ファイル事前ロード→監視開始で統合テストします。")
+        scroll=QScrollArea(self.integration_page)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(panel)
+        self.integration_layout.addWidget(scroll)
 
     def choose_image(self):
         if self.thread is not None:
