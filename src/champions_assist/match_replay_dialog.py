@@ -334,6 +334,7 @@ class MatchReplayDialog(QDialog):
         self._timing_trace=[]
         self._debug_log=None
         self._active_request_started=None
+        self._active_request_frame=None
         self._latest_recognition_screen=None
         self._last_action_text=""
         self._last_selection_text=""
@@ -541,6 +542,7 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self.match_id=new_id
             self._selection_screen_started=None
+            self._active_request_frame=None
             self._latest_recognition_screen=None
             self._last_action_text=""
             self._last_selection_text=""
@@ -1029,6 +1031,7 @@ class MatchReplayDialog(QDialog):
         self._turn_buffer.reset_turn()
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
+        self._active_request_frame=frames[-1] if frames else None
         if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             elapsed_preview=(self._active_request_started-self._selection_screen_started
                              if self._selection_screen_started is not None else 0.0)
@@ -1267,6 +1270,13 @@ class MatchReplayDialog(QDialog):
                 self._trace_event("AUTO_SELECTION_ASSUMED",
                                   selected_three_count=3,
                                   selection_assumed=True)
+                # Seed the new PREP frame gate with the image which ACTUALLY
+                # elicited selection (not the latest buffered animation).
+                # Same selection screen cannot trigger a wasteful 30s repeat;
+                # a genuine visual battle transition still triggers AI.
+                if self._active_request_frame is not None:
+                    self._automatic_probe.acknowledge(
+                        self._active_request_frame,"PREP")
                 self._prefill_cached_prep()
         self._render(entry)
         if self.state is not None and self.state.get("phase")=="ENDED":
@@ -1531,6 +1541,7 @@ class MatchReplayDialog(QDialog):
     @Slot()
     def _cleanup(self):
         self._active_request_started=None
+        self._active_request_frame=None
         self._thread=None
         self._worker=None
         self._active_job=None
