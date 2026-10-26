@@ -92,6 +92,45 @@ class _SelectionTestWorker(QObject):
         self.finished.emit(report)
 
 
+class _TimingTestWorker(QObject):
+    """Off-match diagnostic only; no actual game observations are confirmed."""
+    finished=Signal(object)
+
+    def __init__(self, *, mode, image, assets, state, app_root, model,
+                 reasoning_effort, requested_at):
+        super().__init__()
+        self.mode=mode
+        self.image=image
+        self.assets=assets
+        self.state=state
+        self.app_root=Path(app_root)
+        self.model=model
+        self.reasoning_effort=reasoning_effort
+        self.requested_at=requested_at
+
+    @Slot()
+    def run(self):
+        from .live_timing_test import prep_timing_test, turn_timing_test
+        try:
+            # Includes queued thread startup and auth in the strict budget.
+            token=ChatGPTSignIn(ProtectedSessionStore(self.app_root)).access_token()
+            kwargs=dict(state=self.state,assets=self.assets,access_token=token,
+                        model=self.model,reasoning_effort=self.reasoning_effort,
+                        started_at=self.requested_at)
+            if self.mode=="PREP":
+                updated, report=prep_timing_test(**kwargs)
+            else:
+                updated, report=turn_timing_test(image=self.image,**kwargs)
+        except Exception as exc:
+            limit=40000 if self.mode=="PREP" else 30000
+            report={"status":self.mode+"_TIMING_FAIL",
+                    "reason":type(exc).__name__,"pass":False,
+                    "elapsed_ms":round((perf_counter()-self.requested_at)*1000),
+                    "limit_ms":limit}
+            updated=self.state
+        self.finished.emit({"mode":self.mode,"state":updated,"report":report})
+
+
 class SelectionTestDialog(QDialog):
     """Local reproducible opponent six → team-three+lead diagnostic UI."""
 
@@ -105,6 +144,10 @@ class SelectionTestDialog(QDialog):
         self.reasoning_effort=reasoning_effort
         self.app_root=Path(app_root)
         self.image=None
+        self.turn_image=None
+        self.test_state=None
+        self.timing_results=[]
+        self.timing_requested_at=None
         self.thread=None
         self.worker=None
         self.log=None
@@ -132,6 +175,28 @@ class SelectionTestDialog(QDialog):
         self.run_button.clicked.connect(self.run_test)
         actions.addWidget(self.run_button)
         layout.addLayout(actions)
+        timing=QHBoxLayout()
+        self.prep_test_button=QPushButton("PREP 40秒・18対面検証")
+        self.prep_test_button.setEnabled(False)
+        self.prep_test_button.clicked.connect(self.run_prep_test)
+        timing.addWidget(self.prep_test_button)
+        self.turn_choose_button=QPushButton("ターン画面PNG/JPEGを選択")
+        self.turn_choose_button.setEnabled(False)
+        self.turn_choose_button.clicked.connect(self.choose_turn_image)
+        timing.addWidget(self.turn_choose_button)
+        self.turn_run_button=QPushButton("ターン30秒テスト")
+        self.turn_run_button.setEnabled(False)
+        self.turn_run_button.clicked.connect(self.run_turn_test)
+        timing.addWidget(self.turn_run_button)
+        layout.addLayout(timing)
+        self.timing_status=QLabel(
+            "選出テスト成功後、PREP 40秒とターン30秒を個別検証できます。"
+            "ターンは実際の『技選択／交代選択』画面の画像が必要です。"
+            " AI案の実行・実戦結果は推測しません。")
+        self.timing_status.setWordWrap(True)
+        self.timing_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.timing_status)
         extra=QHBoxLayout()
         from PySide6.QtWidgets import QComboBox
         self.preview_percent=QComboBox()
@@ -183,6 +248,12 @@ class SelectionTestDialog(QDialog):
         if self.thread is not None:
             return
         self.image=image.copy()
+        # An old selection must never silently drive a new preview's PREP/turn.
+        self.test_state=None
+        self.turn_image=None
+        self.prep_test_button.setEnabled(False)
+        self.turn_choose_button.setEnabled(False)
+        self.turn_run_button.setEnabled(False)
         h,w=self.image.shape[:2]
         frame=QImage(self.image.data,w,h,self.image.strides[0],QImage.Format.Format_RGB888)
         self.image_label.setPixmap(
@@ -265,11 +336,135 @@ class SelectionTestDialog(QDialog):
                    if report["matrix_ai_missing_opponents"] else "")
             )
         self.details.setText(result)
+        self.test_state=None
+        if status in ("OK","PROVISIONAL_ADVICE"):
+            try:
+                from .live_timing_test import selection_test_prep_state
+                self.test_state=selection_test_prep_state(self.assets,report)
+            except (KeyError,ValueError,TypeError):
+                pass
+        if self.test_state is not None:
+            self.timing_status.setText(
+                "AIが選んだ3匹を仮選出として保存（実ゲームの確定操作なし）。"
+                "PREP40秒とターン30秒を別々にテストできます。")
+        self.prep_test_button.setEnabled(self.test_state is not None)
+        self.turn_choose_button.setEnabled(self.test_state is not None)
+        self.turn_run_button.setEnabled(
+            self.test_state is not None and self.turn_image is not None)
         if self.log:
             self.log.report(report,event="SELECTION_TEST_RESULT")
             self.log.write("SELECTION_TEST_DONE",status=status,
                            elapsed_ms=elapsed if type(elapsed) is int else -1,
                            selection_present=len(chosen)==3 and bool(report.get("lead")))
+
+    def choose_turn_image(self):
+        if self.thread is not None or self.test_state is None:
+            return
+        source,_=QFileDialog.getOpenFileName(
+            self,"ターンの技選択または交代選択画面","","画像 (*.png *.jpg *.jpeg)")
+        if not source:
+            return
+        try:
+            self.turn_image=load_test_image(source)
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,"ターン画面を読み込めません",str(exc))
+            return
+        self.turn_run_button.setEnabled(True)
+        self.timing_status.setText(
+            "ターン画像を読み込みました。30秒テストは画像認識から合法手検査まで"
+            "実際の対戦処理を使用します。再テストは何回でも可能です。")
+
+    def run_prep_test(self):
+        self._start_timing_test("PREP")
+
+    def run_turn_test(self):
+        self._start_timing_test("TURN")
+
+    def _start_timing_test(self, mode):
+        if self.thread is not None or self.test_state is None:
+            return
+        if mode=="TURN" and self.turn_image is None:
+            return
+        self.select_button.setEnabled(False)
+        self.run_button.setEnabled(False)
+        self.preview_button.setEnabled(False)
+        self.compare_button.setEnabled(False)
+        self.prep_test_button.setEnabled(False)
+        self.turn_choose_button.setEnabled(False)
+        self.turn_run_button.setEnabled(False)
+        self.timing_status.setText(
+            "PREP 40秒：初手6＋控え12＋勝ち筋3点を検査中…"
+            if mode=="PREP" else
+            "ターン30秒：画像認識＋AI判断＋合法手検査中…")
+        self.timing_requested_at=perf_counter()
+        if self.log:
+            self.log.write(mode+"_TIMING_TEST_START",phase=mode,
+                           time_limit_ms=40000 if mode=="PREP" else 30000,
+                           model=self.model)
+        self.thread=QThread(self)
+        self.worker=_TimingTestWorker(
+            mode=mode,image=self.turn_image if mode=="TURN" else None,
+            assets=self.assets,state=self.test_state,app_root=self.app_root,
+            model=self.model,reasoning_effort=self.reasoning_effort,
+            requested_at=self.timing_requested_at)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self._timing_complete)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+        self.thread.finished.connect(self._clear_worker)
+        self.thread.start()
+
+    @Slot(object)
+    def _timing_complete(self,payload):
+        mode=payload["mode"]
+        report=dict(payload["report"])
+        # The displayed answer, not merely the model response, must arrive
+        # within the hard time budget. Qt event dispatch delay counts too.
+        wall=round((perf_counter()-self.timing_requested_at)*1000)
+        limit=40000 if mode=="PREP" else 30000
+        report["ui_delivery_elapsed_ms"]=wall
+        if wall>limit:
+            report["status"]=mode+"_TIMING_FAIL"
+            report["reason"]="UI_DELIVERY_DEADLINE_EXCEEDED"
+            report["pass"]=False
+            report["recommendation"]=""
+        if mode=="PREP":
+            if report.get("pass"):
+                self.test_state=payload["state"]
+            details=(
+                f"PREP40秒 {'合格' if report.get('pass') else '未達'} "
+                f"／画面表示まで {wall/1000:.3f}秒"
+                f"／初手 {report.get('lead_evaluated',0)}/6"
+                f"／控え {report.get('bench_evaluated',0)}/12"
+                f"／勝ち筋 {report.get('win_conditions',0)}/3"
+                f"／理由: {report.get('reason','UNKNOWN')}"
+                "。構造と時間の検証であり、戦術的正確性は未検証。")
+        else:
+            self.timing_results.append({
+                "pass":bool(report.get("pass")), "elapsed_ms":wall,
+                "status":report.get("status")})
+            count=len(self.timing_results)
+            passes=sum(row["pass"] for row in self.timing_results)
+            values=sorted(r["elapsed_ms"] for r in self.timing_results)
+            # Inclusive nearest-rank p95; no network or clock inference.
+            from math import ceil
+            p95=values[max(0,ceil(count*0.95)-1)]
+            details=(
+                f"ターン30秒 {'合格' if report.get('pass') else '未達'} "
+                f"／画面表示まで {wall/1000:.3f}秒"
+                f"／推奨: {report.get('recommendation') or 'なし'}"
+                f"／理由: {report.get('reason','UNKNOWN')}"
+                f"。累計 {passes}/{count}件合格"
+                f"、最大 {max(values)/1000:.3f}秒"
+                f"、p95 {p95/1000:.3f}秒"
+                f"（全件30秒以下が目標）。")
+        self.timing_status.setText(details)
+        if self.log:
+            safe={k:v for k,v in report.items()
+                  if k not in ("state","observation","screen_image")}
+            self.log.report(safe,event=mode+"_TIMING_TEST_RESULT")
 
     @Slot()
     def _clear_worker(self):
@@ -279,6 +474,10 @@ class SelectionTestDialog(QDialog):
         self.run_button.setEnabled(self.image is not None)
         self.preview_button.setEnabled(self.image is not None)
         self.compare_button.setEnabled(self.image is not None)
+        self.prep_test_button.setEnabled(self.test_state is not None)
+        self.turn_choose_button.setEnabled(self.test_state is not None)
+        self.turn_run_button.setEnabled(
+            self.test_state is not None and self.turn_image is not None)
 
     def closeEvent(self,event):
         if self.thread is not None:
