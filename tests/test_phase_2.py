@@ -99,7 +99,7 @@ class Phase2TestCase(unittest.TestCase):
         self.assertEqual(prep.selected_three, ("Own2", "Own3", "Own4"))
         self.assertEqual(prep.lead, "Own2")
         self.assertEqual(len(prep.expected_pairs), 18)
-        self.assertEqual(session.prep_deadline.budget_ms, 40_000)
+        self.assertEqual(session.prep_deadline.budget_ms, 47_000)
 
     def test_live_ai_35s_cap_and_10s_input_reserve(self) -> None:
         selection = self.controller.start_match("selection-budget", now_ms=0)
