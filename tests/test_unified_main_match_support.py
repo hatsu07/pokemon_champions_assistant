@@ -167,6 +167,29 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._active_job=None
             panel._auto_running=False
 
+    def test_busy_worker_does_not_consume_fallback_scene_transition(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP","matrix_compatible":False,
+                     "matrix_provisional":True}
+        panel._auto_running=True
+        panel._thread=object()  # worker without launching network
+        panel._active_job="batch"
+        panel._screen_model=None
+        image=np.zeros((100,160,3),dtype=np.uint8)
+        try:
+            with (patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                        return_value=image),
+                  patch.object(panel._turn_buffer,"observe",return_value=None),
+                  patch.object(panel._automatic_probe,"observe") as probe,
+                  patch.object(panel,"_queue_batch") as queued):
+                panel._capture_next()
+                probe.assert_not_called()
+                queued.assert_not_called()
+        finally:
+            panel._thread=None
+            panel._active_job=None
+            panel._auto_running=False
+
     def test_prominent_selection_and_explicit_battle_work_clock(self):
         panel=self.window._match_panel
         panel.state={"phase":"SELECTION","matrix_compatible":False,
