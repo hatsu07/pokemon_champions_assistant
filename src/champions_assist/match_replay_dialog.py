@@ -1277,7 +1277,9 @@ class MatchReplayDialog(QDialog):
                 if self._active_request_frame is not None:
                     self._automatic_probe.acknowledge(
                         self._active_request_frame,"PREP")
-                self._prefill_cached_prep()
+                self._prefill_cached_prep(
+                    roles={key:report.get(key) for key in (
+                        "preserve","stopper","closer")})
         self._render(entry)
         if self.state is not None and self.state.get("phase")=="ENDED":
             self._stop_auto()
@@ -1351,11 +1353,12 @@ class MatchReplayDialog(QDialog):
         )!=QMessageBox.StandardButton.Yes:return
         self._start_prep_auto()
 
-    def _prefill_cached_prep(self):
-        """Expose frozen 3x6 evidence immediately; no API or disk access.
+    def _prefill_cached_prep(self, *, roles=None):
+        """Immediate 18-pair cache + win roles from the SELECTION model call.
 
-        Win roles are deliberately UNSET until their focused GPT response is
-        received. Initial cache is not misreported as complete 18+3 PREP.
+        A role is accepted only if it is one of the selected three. No second
+        GPT request is needed when all roles and pre-evaluated matchups exist.
+        Missing ratings/roles remain explicitly incomplete.
         """
         if (self.state is None or self.assets is None
                 or self.state.get("phase")!="PREP"):
@@ -1372,22 +1375,58 @@ class MatchReplayDialog(QDialog):
             return
         partial = len(known)!=6
         evaluated=cached_evidence_count(pairs)
+        roles = roles or {}
+        role_values = tuple(roles.get(k) for k in ("preserve","stopper","closer"))
+        role_ready=all(isinstance(value,str) and value in selected
+                       for value in role_values)
+        role_count=3 if role_ready else sum(
+            isinstance(value,str) and value in selected for value in role_values)
+        all_cached=evaluated==len(pairs)
+        ready=role_ready and all_cached
+        status=("PREP_CACHE_KNOWN_ONLY" if partial and ready else
+                "PREP_CACHE_REUSED" if ready else
+                "PREP_CACHE_INCOMPLETE" if role_ready else
+                "PREP_CACHE_BASE_READY")
+        state_status=("CACHE_KNOWN_ONLY" if partial and ready else
+                      "CACHE_STRUCTURE_COMPLETE" if ready else
+                      "CACHE_INCOMPLETE" if role_ready else
+                      "CACHE_PREP_BASE_READY")
         self.state["prep"] = {
             ("matchups_known" if partial else "matchups_18"):pairs,
             "source":"FROZEN_CACHE",
-            "preserve":None,"stopper":None,"closer":None,
-            "win_roles_status":"PENDING",
+            "preserve":role_values[0] if role_ready else None,
+            "stopper":role_values[1] if role_ready else None,
+            "closer":role_values[2] if role_ready else None,
+            "win_roles_status":"SELECTION_REUSED" if role_ready else "PENDING",
             "cached_matchups":evaluated,"missing_matchups":len(pairs)-evaluated,
             "unknown_opponent_slots":list(self.state.get("visual_unknown_opponents") or []),
-            "note":"凍結済み評価のみ即時抽出。勝ち筋3点は未完成。"
+            "note":("既存の対面評価と選出時に決めた勝ち筋3点を再利用。"
+                    if role_ready else
+                    "凍結済み評価のみ即時抽出。勝ち筋3点は未完成。")
         }
-        self.state["prep_status"]="CACHE_PREP_BASE_READY"
+        self.state["prep_status"]=state_status
         self._trace_event("PREP_CACHE_BASE_READY",
                           matchups_evaluated=evaluated,
-                          known_opponents=len(known),missing_matchups=len(pairs)-evaluated)
-        self._render({"status":"PREP_CACHE_BASE_READY",
-                      "message":f"既存{evaluated}/{len(pairs)}対面を即時保持。"
-                      "勝ち筋3点の検討は未完了。"})
+                          known_opponents=len(known),missing_matchups=len(pairs)-evaluated,
+                          win_conditions=role_count)
+        if role_ready:
+            # A full PREP is now complete without a separate API call. Emit
+            # the normal PREP lifecycle markers so live test logs stay useful.
+            self._trace_event("PREP_START",status="CACHED_FROM_SELECTION",
+                              known_opponents=len(known),timeout_budget_ms=0)
+            self._trace_event("PREP_RESULT",status=status,
+                              matchups_evaluated=evaluated,win_conditions=3)
+        self._render({"status":status,
+                      "matchups_evaluated":evaluated,
+                      "win_conditions":role_count,
+                      "message":(
+                          f"事前対面{evaluated}/{len(pairs)}と勝ち筋3点を"
+                          "選出AIから再利用。追加通信なし。"
+                          if ready else
+                          f"既存{evaluated}/{len(pairs)}対面を即時保持。"
+                          "勝ち筋3点を補完中。" if not role_ready else
+                          f"評価未済{len(pairs)-evaluated}件を残したまま"
+                          "勝ち筋3点を保持。")})
 
     def _start_prep_auto(self, *, provisional=False):
         if (self.state is None or self._prep_thread is not None
