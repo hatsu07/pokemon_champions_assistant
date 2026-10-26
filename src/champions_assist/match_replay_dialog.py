@@ -112,7 +112,7 @@ class _ReplayWorker(QObject):
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
-                 selection_seconds=55.0, prep_seconds=40.0):
+                 selection_seconds=55.0, prep_seconds=40.0,battle_seconds=30.0):
         super().__init__()
         self.job=job
         self.frames=frames
@@ -123,6 +123,7 @@ class _ReplayWorker(QObject):
         self.reasoning_effort=reasoning_effort
         self.selection_seconds=float(selection_seconds)
         self.prep_seconds=float(prep_seconds)
+        self.battle_seconds=float(battle_seconds)
         self.capture_config=capture_config
         self.capture_gate=capture_gate
         self.capture_function=capture_function
@@ -199,7 +200,7 @@ class _ReplayWorker(QObject):
                     # Leave at least 15 seconds from the game's nominal 45s
                     # input window for the human player. Tests use the same
                     # one-call replay path and strict 30s target.
-                    remaining=30.0-(perf_counter()-batch_started)
+                    remaining=self.battle_seconds-(perf_counter()-batch_started)
                     if remaining<=1.0:
                         next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"OCR_OR_AUTH_BUDGET"}
                     else:
@@ -996,8 +997,14 @@ class MatchReplayDialog(QDialog):
                 self._trace_event("PENDING_PRIORITY_PROTECTED",
                                   screen_label=screen_label or "UNCLASSIFIED")
                 return
+        if screen_label in ("TURN_ACTION","SWITCH_SELECTION"):
+            if self._turn_screen_seen_at is None:
+                self._turn_screen_seen_at=monotonic()
+                self._trace_event("TURN_SCREEN_OBSERVED",screen_label=screen_label,
+                                  clock_source="LOCAL_CANDIDATE")
+        elif screen_label=="BATTLE_EVENT":
+            self._turn_screen_seen_at=None
         # A newly observed turn/party/event candidate outranks PREP.
-        # Never wait for a 40-second PREP API call before requesting action.
         if (self.state is not None and self.state.get("phase")=="PREP"
                 and screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT")):
             self._interrupt_prep()
@@ -1057,6 +1064,14 @@ class MatchReplayDialog(QDialog):
             selection_remaining=max(0.0,55.0-elapsed_preview)
         else:
             selection_remaining=35.0
+        battle_remaining=30.0
+        if self.state.get("phase") in ("PREP","BATTLE") and self._turn_screen_seen_at is not None:
+            battle_remaining=min(30.0,max(0.0,40.0-(
+                monotonic()-self._turn_screen_seen_at)))
+        if battle_remaining<=1.0:
+            self._trace_event("TURN_BUDGET_EXHAUSTED",
+                              screen_label=screen_label or "UNKNOWN")
+            return
         self._set_ai_status(
             f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
         request_report={
@@ -1079,6 +1094,7 @@ class MatchReplayDialog(QDialog):
             screen_label=screen_label,
             field_profile=self._field_profile,
             selection_seconds=selection_remaining,
+            battle_seconds=battle_remaining,
         )
         self._worker.moveToThread(self._thread)
         self._worker.progress.connect(self._on_ai_progress)
