@@ -877,9 +877,14 @@ class SettingsDialog(QDialog):
     def _show_team_validation(self, record: RegisteredTeam) -> None:
         reasons = record.validation.reasons
         if reasons:
+            only_master_limit=all(
+                "性格/AP配分のChampions検証根拠は未収録" in reason for reason in reasons)
             self.team_status.setText(
-                f"{record.validation.status}: {len(reasons)}件の確認事項があります。"
-                " 下の欄をスクロールして確認してください。"
+                (f"構築の手動修正は不要：固定マスターの性格/AP検証機能が"
+                 f"{len(reasons)}匹分未収録（AI対面解析は利用可）。"
+                 if only_master_limit else
+                 f"{record.validation.status}: {len(reasons)}件の確認事項。"
+                 " 詳細を下に表示します。")
             )
             self.team_validation_details.setPlainText(
                 "\n".join(f"{index}. {reason}" for index, reason in enumerate(reasons, 1))
