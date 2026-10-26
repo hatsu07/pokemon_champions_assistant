@@ -97,7 +97,7 @@ class _TimingTestWorker(QObject):
     finished=Signal(object)
 
     def __init__(self, *, mode, image, assets, state, app_root, model,
-                 reasoning_effort, requested_at):
+                 reasoning_effort, requested_at, prep_limit_seconds=40.0):
         super().__init__()
         self.mode=mode
         self.image=image
@@ -107,6 +107,7 @@ class _TimingTestWorker(QObject):
         self.model=model
         self.reasoning_effort=reasoning_effort
         self.requested_at=requested_at
+        self.prep_limit_seconds=prep_limit_seconds
 
     @Slot()
     def run(self):
@@ -118,7 +119,8 @@ class _TimingTestWorker(QObject):
                         model=self.model,reasoning_effort=self.reasoning_effort,
                         started_at=self.requested_at)
             if self.mode=="PREP":
-                updated, report=prep_timing_test(**kwargs)
+                updated, report=prep_timing_test(
+                    **kwargs,limit_seconds=self.prep_limit_seconds)
             else:
                 updated, report=turn_timing_test(image=self.image,**kwargs)
         except Exception as exc:
@@ -138,7 +140,7 @@ class SelectionTestDialog(QDialog):
                  app_root: str | Path, parent=None):
         super().__init__(parent)
         self.setWindowTitle("選出画面テスト（試合外・ゲーム操作なし）")
-        self.resize(750,575)
+        self.resize(860,620)
         self.assets=assets
         self.model=model
         self.reasoning_effort=reasoning_effort
@@ -148,6 +150,10 @@ class SelectionTestDialog(QDialog):
         self.test_state=None
         self.timing_results=[]
         self.timing_requested_at=None
+        self.selection_started_at=None
+        self.selection_display_elapsed_ms=None
+        self.auto_prep_pending=False
+        self.prep_completed=False
         self.thread=None
         self.worker=None
         self.log=None
@@ -160,9 +166,10 @@ class SelectionTestDialog(QDialog):
             pass
         layout=QVBoxLayout(self)
         heading=QLabel(
-            "登録済み自軍6匹を使用します。画像からは相手6匹をChatGPTで認識し、"
-            "選出90秒のうち約55秒を上限に選出結果を返す処理を1回実行します。"
-            "試合中の使用・自動操作はしません。"
+            "選出を表示した直後、同じ相手6匹・選出3匹でPREPを自動開始します。"
+            " 選出表示＋初手6／控え12対面＋勝ち筋3点の完了を合計90秒以内"
+            " （うちPREP最大40秒・ゲーム操作余裕3秒）で検証します。"
+            "ターン30秒は別画像で検証します。実ゲームの操作はしません。"
         )
         heading.setWordWrap(True)
         layout.addWidget(heading)
@@ -176,10 +183,8 @@ class SelectionTestDialog(QDialog):
         actions.addWidget(self.run_button)
         layout.addLayout(actions)
         timing=QHBoxLayout()
-        self.prep_test_button=QPushButton("PREP 40秒・18対面検証")
-        self.prep_test_button.setEnabled(False)
-        self.prep_test_button.clicked.connect(self.run_prep_test)
-        timing.addWidget(self.prep_test_button)
+        # PREP is mandatory and automatic immediately after the selection
+        # recommendation is displayed; no separate manual test button.
         self.turn_choose_button=QPushButton("ターン画面PNG/JPEGを選択")
         self.turn_choose_button.setEnabled(False)
         self.turn_choose_button.clicked.connect(self.choose_turn_image)
@@ -190,8 +195,8 @@ class SelectionTestDialog(QDialog):
         timing.addWidget(self.turn_run_button)
         layout.addLayout(timing)
         self.timing_status=QLabel(
-            "選出テスト成功後、PREP 40秒とターン30秒を個別検証できます。"
-            "ターンは実際の『技選択／交代選択』画面の画像が必要です。"
+            "選出後のPREPは自動で始まります（選出＋PREP計90秒）。"
+            "ターン30秒テストには『技選択／交代選択』画面の画像が必要です。"
             " AI案の実行・実戦結果は推測しません。")
         self.timing_status.setWordWrap(True)
         self.timing_status.setTextInteractionFlags(
@@ -250,8 +255,11 @@ class SelectionTestDialog(QDialog):
         self.image=image.copy()
         # An old selection must never silently drive a new preview's PREP/turn.
         self.test_state=None
+        self.auto_prep_pending=False
+        self.prep_completed=False
+        self.selection_started_at=None
+        self.selection_display_elapsed_ms=None
         self.turn_image=None
-        self.prep_test_button.setEnabled(False)
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
         h,w=self.image.shape[:2]
@@ -291,7 +299,14 @@ class SelectionTestDialog(QDialog):
         self.select_button.setEnabled(False)
         self.preview_button.setEnabled(False)
         self.compare_button.setEnabled(False)
-        self.status.setText("ChatGPT画像認識・相手6匹確認・選出判断を実行中（選出約55秒上限）")
+        self.turn_choose_button.setEnabled(False)
+        self.turn_run_button.setEnabled(False)
+        self.auto_prep_pending=False
+        self.prep_completed=False
+        self.test_state=None
+        self.selection_started_at=perf_counter()
+        self.selection_display_elapsed_ms=None
+        self.status.setText("選出画像認識・選出3匹＋初手を解析中。表示後すぐ自動PREPへ進みます（合計90秒）")
         self.details.setText("")
         if self.log:
             self.log.write("TEST_API_QUEUED",phase="MATCHMAKING",image_count=1,
@@ -336,6 +351,8 @@ class SelectionTestDialog(QDialog):
                    if report["matrix_ai_missing_opponents"] else "")
             )
         self.details.setText(result)
+        self.selection_display_elapsed_ms=round(
+            (perf_counter()-self.selection_started_at)*1000)
         self.test_state=None
         if status in ("OK","PROVISIONAL_ADVICE"):
             try:
@@ -343,14 +360,13 @@ class SelectionTestDialog(QDialog):
                 self.test_state=selection_test_prep_state(self.assets,report)
             except (KeyError,ValueError,TypeError):
                 pass
-        if self.test_state is not None:
+        self.auto_prep_pending=self.test_state is not None
+        if self.auto_prep_pending:
             self.timing_status.setText(
-                "AIが選んだ3匹を仮選出として保存（実ゲームの確定操作なし）。"
-                "PREP40秒とターン30秒を別々にテストできます。")
-        self.prep_test_button.setEnabled(self.test_state is not None)
-        self.turn_choose_button.setEnabled(self.test_state is not None)
-        self.turn_run_button.setEnabled(
-            self.test_state is not None and self.turn_image is not None)
+                f"選出を{self.selection_display_elapsed_ms/1000:.3f}秒で表示しました。"
+                " 同じ6匹と選出3匹でPREP18対面を自動実行します…")
+        else:
+            self.timing_status.setText("選出が確定できず、自動PREPは実行しません。")
         if self.log:
             self.log.report(report,event="SELECTION_TEST_RESULT")
             self.log.write("SELECTION_TEST_DONE",status=status,
@@ -374,14 +390,15 @@ class SelectionTestDialog(QDialog):
             "ターン画像を読み込みました。30秒テストは画像認識から合法手検査まで"
             "実際の対戦処理を使用します。再テストは何回でも可能です。")
 
-    def run_prep_test(self):
-        self._start_timing_test("PREP")
-
     def run_turn_test(self):
         self._start_timing_test("TURN")
 
     def _start_timing_test(self, mode):
         if self.thread is not None or self.test_state is None:
+            return
+        if mode=="PREP" and self.selection_started_at is None:
+            return
+        if mode=="TURN" and not self.prep_completed:
             return
         if mode=="TURN" and self.turn_image is None:
             return
@@ -389,7 +406,6 @@ class SelectionTestDialog(QDialog):
         self.run_button.setEnabled(False)
         self.preview_button.setEnabled(False)
         self.compare_button.setEnabled(False)
-        self.prep_test_button.setEnabled(False)
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
         self.timing_status.setText(
@@ -397,16 +413,33 @@ class SelectionTestDialog(QDialog):
             if mode=="PREP" else
             "ターン30秒：画像認識＋AI判断＋合法手検査中…")
         self.timing_requested_at=perf_counter()
+        prep_limit=40.0
+        if mode=="PREP":
+            # The test begins at the selection button click (not after AI
+            # recognition). Reserve three seconds for human game input.
+            prep_limit=max(0.0,min(
+                40.0,87.0-(self.timing_requested_at-self.selection_started_at)))
+            if prep_limit<=1.0:
+                self._timing_complete({
+                    "mode":"PREP","state":self.test_state,
+                    "report":{"status":"PREP_TIMING_FAIL",
+                              "reason":"INSUFFICIENT_90S_BUDGET","pass":False,
+                              "lead_evaluated":0,"bench_evaluated":0,
+                              "win_conditions":0}})
+                return
         if self.log:
             self.log.write(mode+"_TIMING_TEST_START",phase=mode,
-                           time_limit_ms=40000 if mode=="PREP" else 30000,
+                           time_limit_ms=round(prep_limit*1000) if mode=="PREP" else 30000,
+                           combined_limit_ms=90000 if mode=="PREP" else 0,
+                           selection_ui_elapsed_ms=self.selection_display_elapsed_ms if mode=="PREP" else None,
                            model=self.model)
         self.thread=QThread(self)
         self.worker=_TimingTestWorker(
             mode=mode,image=self.turn_image if mode=="TURN" else None,
             assets=self.assets,state=self.test_state,app_root=self.app_root,
             model=self.model,reasoning_effort=self.reasoning_effort,
-            requested_at=self.timing_requested_at)
+            requested_at=self.timing_requested_at,
+            prep_limit_seconds=prep_limit)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._timing_complete)
@@ -425,17 +458,31 @@ class SelectionTestDialog(QDialog):
         wall=round((perf_counter()-self.timing_requested_at)*1000)
         limit=40000 if mode=="PREP" else 30000
         report["ui_delivery_elapsed_ms"]=wall
-        if wall>limit:
+        total=round((perf_counter()-self.selection_started_at)*1000) if (
+            mode=="PREP" and self.selection_started_at is not None) else 0
+        if mode=="PREP":
+            report["selection_ui_elapsed_ms"]=self.selection_display_elapsed_ms
+            report["selection_prep_total_ms"]=total
+            report["combined_limit_ms"]=90000
+            report["human_input_reserve_ms"]=3000
+        if wall>limit or (mode=="PREP" and total>87000):
             report["status"]=mode+"_TIMING_FAIL"
-            report["reason"]="UI_DELIVERY_DEADLINE_EXCEEDED"
+            report["reason"]=(
+                "COMBINED_90S_BUDGET_EXCEEDED"
+                if mode=="PREP" and total>87000
+                else "UI_DELIVERY_DEADLINE_EXCEEDED")
             report["pass"]=False
             report["recommendation"]=""
         if mode=="PREP":
+            self.prep_completed=True
             if report.get("pass"):
                 self.test_state=payload["state"]
             details=(
-                f"PREP40秒 {'合格' if report.get('pass') else '未達'} "
-                f"／画面表示まで {wall/1000:.3f}秒"
+                f"選出＋自動PREP90秒 {'合格' if report.get('pass') else '未達'} "
+                f"／選出表示 {self.selection_display_elapsed_ms/1000:.3f}秒"
+                f"／PREP表示まで {wall/1000:.3f}秒"
+                f"／合計 {total/1000:.3f}秒"
+                f"（ゲーム入力用3秒確保）"
                 f"／初手 {report.get('lead_evaluated',0)}/6"
                 f"／控え {report.get('bench_evaluated',0)}/12"
                 f"／勝ち筋 {report.get('win_conditions',0)}/3"
@@ -474,10 +521,17 @@ class SelectionTestDialog(QDialog):
         self.run_button.setEnabled(self.image is not None)
         self.preview_button.setEnabled(self.image is not None)
         self.compare_button.setEnabled(self.image is not None)
-        self.prep_test_button.setEnabled(self.test_state is not None)
-        self.turn_choose_button.setEnabled(self.test_state is not None)
+        if self.auto_prep_pending:
+            self.auto_prep_pending=False
+            # Qt's previous worker thread has fully ended. Immediately start
+            # PREP using the frozen selection and the ORIGINAL 90s clock.
+            self._start_timing_test("PREP")
+            return
+        self.turn_choose_button.setEnabled(
+            self.prep_completed and self.test_state is not None)
         self.turn_run_button.setEnabled(
-            self.test_state is not None and self.turn_image is not None)
+            self.prep_completed and self.test_state is not None
+            and self.turn_image is not None)
 
     def closeEvent(self,event):
         if self.thread is not None:
