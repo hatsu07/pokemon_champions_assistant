@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from types import MappingProxyType
 from champions_assist.preload import FrozenMatchAssets
-from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked, selection_summary_ja
+from champions_assist.selection_vision import (
+    SelectionPlanner, verify_selection_observation, SelectionBlocked,
+    selection_summary_ja, unmatched_opponent_slots,
+    roster_constrained_retry_guidance, retry_unresolved_opponent_six,
+)
 
 OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
 OPP=("ピカチュウ","ドドゲザン","ゲンガー","マリルリ","ギャラドス","カイリュー")
@@ -58,6 +62,75 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.as_dict()["only_in_registered_team"],[])
         self.assertEqual(len(calls),1)
         self.assertEqual(calls[0]["own_roster_source"],"PRELOADED_USER_SELECTED_TEAM_NOT_VISION")
+
+    def test_out_of_roster_vision_hallucination_is_not_missing_ai_evidence(self):
+        # Captured on 2026-10-26: five correct English names, slot 3 was
+        # hallucinated as Gouging Fire instead of a valid Champions entry.
+        valid=(
+            "ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
+            "キラフロル","ウルガモス","カバルドン",
+        )
+        local=assets()
+        frozen=FrozenMatchAssets(
+            contents=local.contents,sha256=local.sha256,
+            matrix_index=MappingProxyType({p:p+"|matrix" for p in valid}),
+            lookup_index=local.lookup_index,own_team=local.own_team,
+            frozen_at=local.frozen_at,
+        )
+        first={
+            "visual_ui":"TEAM_SELECTION","our_six":[],
+            "opponent_six":["Rotom-Wash","Scizor","Gouging Fire",
+                            "Glimmora","Volcarona","Hippowdon"],
+            "uncertain_slots":[],
+        }
+        self.assertEqual(unmatched_opponent_slots(first,frozen),[
+            {"slot":3,"label":"Gouging Fire"}])
+        with self.assertRaisesRegex(SelectionBlocked,"OPPONENT_MATRIX_MISSING"):
+            verify_selection_observation(first,frozen)
+        guidance=roster_constrained_retry_guidance(
+            reason="OPPONENT_MATRIX_MISSING",previous=first,assets=frozen)
+        self.assertIn("3:Gouging Fire",guidance)
+        self.assertIn("クエスパトラ",guidance)
+        self.assertNotIn("MATRIX_CANONICAL_NAMES: Gouging Fire",guidance)
+        calls=[]
+        def model_retry(reason,previous):
+            calls.append((reason,tuple(previous["opponent_six"])))
+            return {**previous,"opponent_six":[
+                "Rotom-Wash","Scizor","Espathra","Glimmora",
+                "Volcarona","Hippowdon"]}
+        second,attempts=retry_unresolved_opponent_six(
+            first,frozen,model_retry,remaining_seconds=lambda:40.0)
+        self.assertEqual(attempts,2)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(verify_selection_observation(second,frozen),valid)
+        # No silent code-side substitution on a second wrong observation.
+        second_bad,again=retry_unresolved_opponent_six(
+            first,frozen,lambda reason,previous:dict(previous),
+            remaining_seconds=lambda:40.0)
+        self.assertEqual(again,2)
+        with self.assertRaises(SelectionBlocked):
+            verify_selection_observation(second_bad,frozen)
+
+    def test_retry_never_runs_after_time_budget_exhausted(self):
+        valid=("ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
+               "キラフロル","ウルガモス","カバルドン")
+        local=assets()
+        frozen=FrozenMatchAssets(
+            contents=local.contents,sha256=local.sha256,
+            matrix_index=MappingProxyType({p:p+"|matrix" for p in valid}),
+            lookup_index=local.lookup_index,own_team=local.own_team,
+            frozen_at=local.frozen_at,
+        )
+        first={"visual_ui":"TEAM_SELECTION","opponent_six":[
+            "Rotom-Wash","Scizor","Gouging Fire","Glimmora",
+            "Volcarona","Hippowdon"],"uncertain_slots":[]}
+        called=[]
+        data,count=retry_unresolved_opponent_six(
+            first,frozen,lambda *args:called.append(args),
+            remaining_seconds=lambda:9.0,reserve_seconds=21.0)
+        self.assertEqual(count,1)
+        self.assertFalse(called)
+        self.assertEqual(data["opponent_six"][2],"Gouging Fire")
 
     def test_mismatched_matrix_blocks_ordinary_selection_but_allows_labeled_function_test(self):
         original=assets()
