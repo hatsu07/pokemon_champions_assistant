@@ -156,6 +156,24 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertLess(sent[1][1],img.shape[1])
         self.assertGreater(sent[1][0],100)
 
+    def test_optional_second_request_timeout_preserves_first_five_names(self):
+        frozen=assets()
+        obs=observation()
+        obs["opponent_six"][2]="Gouging Fire"
+        def timeout(*args):
+            raise TimeoutError("a second-model read timeout")
+        second,attempts=retry_unresolved_opponent_six(
+            obs,frozen,timeout,remaining_seconds=lambda:40.0)
+        self.assertEqual(attempts,2)
+        self.assertEqual(second["_retry_error_type"],"TimeoutError")
+        self.assertEqual(second["opponent_six"][:2],list(OPP[:2]))
+        planner=SelectionPlanner(clock=lambda:8.0)
+        result=planner.choose(second,frozen,
+            lambda context,_:{"selected_three":list(OWN[:3]),"lead":OWN[0]},
+            started_at=0,allow_partial=True)
+        self.assertEqual(result.status,"PARTIAL_ADVICE")
+        self.assertEqual(result.opponent_six[2],"未判明相手3")
+
     def test_retry_never_runs_after_time_budget_exhausted(self):
         valid=("ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
                "キラフロル","ウルガモス","カバルドン")
