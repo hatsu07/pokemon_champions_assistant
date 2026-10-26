@@ -223,6 +223,31 @@ def prep_timing_test(
     }
 
 
+
+def switch_timing_test(*, image, state: dict, assets, access_token: str,
+                       model: str, **kwargs) -> tuple[dict, dict]:
+    """Replay one actual party screenshot and require a legal chosen switch.
+
+    Does not infer that the switch has taken place. The visible option must
+    match a member of the confirmed selected three, excluding the active one.
+    """
+    updated, report = turn_timing_test(
+        image=image, state=state, assets=assets, access_token=access_token,
+        model=model, **kwargs)
+    report = dict(report)
+    passed = (report.get("pass") is True
+              and report.get("screen_observation") == "PARTY_MENU"
+              and report.get("action_kind") == "SWITCH")
+    report["status"] = "SWITCH_TIMING_PASS" if passed else "SWITCH_TIMING_FAIL"
+    report["reason"] = "OK" if passed else (
+        "PARTY_MENU_AND_LEGAL_SWITCH_REQUIRED"
+        if report.get("pass") else report.get("reason", "NO_SWITCH"))
+    report["pass"] = passed
+    report["recommendation"] = report.get("recommendation", "") if passed else ""
+    return (updated if passed else deepcopy(state)), report
+
+
+
 def turn_timing_test(
     *, image, state: dict, assets, access_token: str, model: str,
     reasoning_effort: str = "auto",

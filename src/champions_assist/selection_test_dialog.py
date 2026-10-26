@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout,
+    QPushButton, QVBoxLayout, QWidget, QTabWidget, QScrollArea,
 )
 
 from .match_debug_log import MatchDebugLog
@@ -111,7 +111,7 @@ class _TimingTestWorker(QObject):
 
     @Slot()
     def run(self):
-        from .live_timing_test import prep_timing_test, turn_timing_test
+        from .live_timing_test import prep_timing_test, turn_timing_test, switch_timing_test
         try:
             # Includes queued thread startup and auth in the strict budget.
             token=ChatGPTSignIn(ProtectedSessionStore(self.app_root)).access_token()
@@ -121,6 +121,37 @@ class _TimingTestWorker(QObject):
             if self.mode=="PREP":
                 updated, report=prep_timing_test(
                     **kwargs,limit_seconds=self.prep_limit_seconds)
+            elif self.mode=="SWITCH":
+                updated, report=switch_timing_test(image=self.image,**kwargs)
+            elif self.mode=="EVENT":
+                from .match_replay import run_replay_batch
+                snapshot=dict(self.state)
+                snapshot["phase"]="BATTLE"
+                updated, raw=run_replay_batch(
+                    [self.image],state=snapshot,assets=self.assets,
+                    access_token=token,model=self.model,
+                    reasoning_effort=self.reasoning_effort,
+                    total_seconds=max(1.0,30.0-(perf_counter()-self.requested_at)))
+                observation=raw.get("observation") or {}
+                observed_event=observation.get("observed_event","NONE")
+                messages=observation.get("messages") or []
+                valid=(raw.get("status") in ("OBSERVED","MATCH_END","RESULT_UNCONFIRMED")
+                       and raw.get("screen") not in ("TEAM_SELECTION","UNKNOWN",None)
+                       and (observed_event!="NONE" or bool(messages)
+                            or raw.get("status")=="MATCH_END"))
+                report={
+                    "status":"EVENT_READ_PASS" if valid else "EVENT_READ_FAIL",
+                    "reason":"OBSERVED" if valid else raw.get("reason") or "NO_EVENT_OBSERVED",
+                    "pass":valid,
+                    "source_status":raw.get("status"),
+                    "screen_observation":raw.get("screen"),
+                    "event":observed_event,
+                    "messages":messages[:8],
+                    "match_result":observation.get("match_result","UNKNOWN"),
+                    "state_phase":updated.get("phase"),
+                }
+                if not valid:
+                    updated=self.state
             else:
                 updated, report=turn_timing_test(image=self.image,**kwargs)
         except Exception as exc:
@@ -137,16 +168,29 @@ class SelectionTestDialog(QDialog):
     """Local reproducible opponent six → team-three+lead diagnostic UI."""
 
     def __init__(self, *, assets, model: str, reasoning_effort: str,
-                 app_root: str | Path, parent=None):
+                 app_root: str | Path, parent=None, master_directory=None,
+                 team_path=None, capture_config=None,
+                 matrix_source=None, lookup_source=None):
         super().__init__(parent)
-        self.setWindowTitle("選出画面テスト（試合外・ゲーム操作なし）")
-        self.resize(860,620)
+        self.setWindowTitle("テスト全般（個別画像テスト・実ゲーム統合テスト）")
+        self.resize(1050,760)
         self.assets=assets
         self.model=model
         self.reasoning_effort=reasoning_effort
         self.app_root=Path(app_root)
+        self.master_directory=master_directory
+        self.team_path=team_path
+        self.capture_config=capture_config
+        self.matrix_source=matrix_source
+        self.lookup_source=lookup_source
+        self.live_panel=None
+        self.live_test_counts={"selection":0,"prep":0,"turns":0,"switches":0,
+                               "events":0,"result":0}
+        self.live_last_phase=""
         self.image=None
         self.turn_image=None
+        self.switch_image=None
+        self.event_image=None
         self.test_state=None
         self.timing_results=[]
         self.timing_requested_at=None
@@ -166,7 +210,15 @@ class SelectionTestDialog(QDialog):
                            model=self.model,phase="MATCHMAKING",preload_count=4)
         except OSError:
             pass
-        layout=QVBoxLayout(self)
+        outer=QVBoxLayout(self)
+        self.tabs=QTabWidget(self)
+        outer.addWidget(self.tabs)
+        self.selection_page=QWidget(self.tabs)
+        self.selection_scroll=QScrollArea(self.tabs)
+        self.selection_scroll.setWidgetResizable(True)
+        self.selection_scroll.setWidget(self.selection_page)
+        self.tabs.addTab(self.selection_scroll,"選出画面テスト")
+        layout=QVBoxLayout(self.selection_page)
         heading=QLabel(
             "選出を表示した直後、同じ相手6匹・選出3匹でPREPを自動開始します。"
             " 選出表示＋初手6／控え12対面＋勝ち筋3点の完了を合計90秒以内"
@@ -195,7 +247,7 @@ class SelectionTestDialog(QDialog):
         self.turn_run_button.setEnabled(False)
         self.turn_run_button.clicked.connect(self.run_turn_test)
         timing.addWidget(self.turn_run_button)
-        layout.addLayout(timing)
+        self._timing_row=timing
         self.timing_status=QLabel(
             "選出後のPREPは自動で始まります（選出＋PREP計90秒）。"
             "ターン30秒テストには『技選択／交代選択』画面の画像が必要です。"
@@ -236,6 +288,156 @@ class SelectionTestDialog(QDialog):
         self.log_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.log_label)
 
+        self.turn_page=QWidget(self.tabs)
+        self.tabs.addTab(self.turn_page,"ターン画面テスト")
+        turn_layout=QVBoxLayout(self.turn_page)
+        turn_layout.addWidget(QLabel(
+            "選出タブで選出＋PREPを実行後、技選択画面のPNG/JPEGを読み取り、"
+            "画像認識・合法手・30秒目標を検証します。"))
+        turn_layout.addLayout(self._timing_row)
+        self.turn_status=QLabel("選出＋PREP後にターン画像を指定してください。")
+        self.turn_status.setWordWrap(True)
+        self.turn_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        turn_layout.addWidget(self.turn_status)
+        turn_layout.addStretch(1)
+
+        self.switch_page=QWidget(self.tabs)
+        self.tabs.addTab(self.switch_page,"交代先選択画面テスト")
+        switch_layout=QVBoxLayout(self.switch_page)
+        switch_layout.addWidget(QLabel(
+            "交代先選択画面（PARTY_MENU）と、選出済み3匹から合法な交代先を"
+            "返せるかを独立検証します。候補が画面に無ければ合格しません。"))
+        row=QHBoxLayout()
+        self.switch_choose_button=QPushButton("交代先選択画面PNG/JPEGを選択")
+        self.switch_choose_button.clicked.connect(self.choose_switch_image)
+        self.switch_run_button=QPushButton("交代先選択テスト")
+        self.switch_run_button.clicked.connect(self.run_switch_test)
+        self.switch_run_button.setEnabled(False)
+        row.addWidget(self.switch_choose_button)
+        row.addWidget(self.switch_run_button)
+        switch_layout.addLayout(row)
+        self.switch_status=QLabel("選出＋PREP後、交代先選択画面を指定してください。")
+        self.switch_status.setWordWrap(True)
+        self.switch_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        switch_layout.addWidget(self.switch_status)
+        switch_layout.addStretch(1)
+
+        self.event_page=QWidget(self.tabs)
+        self.tabs.addTab(self.event_page,"バトルイベント読み取りテスト")
+        event_layout=QVBoxLayout(self.event_page)
+        event_layout.addWidget(QLabel(
+            "対戦中のイベント・HP変化・判明技・結果画面のPNG/JPEGを"
+            "認識し、既存バトル状態へ観測情報だけを反映します。"
+            "勝敗や行動の実行を推測しません。"))
+        row=QHBoxLayout()
+        self.event_choose_button=QPushButton("バトルイベント画面PNG/JPEGを選択")
+        self.event_choose_button.clicked.connect(self.choose_event_image)
+        self.event_run_button=QPushButton("イベント読み取りテスト")
+        self.event_run_button.clicked.connect(self.run_event_test)
+        self.event_run_button.setEnabled(False)
+        row.addWidget(self.event_choose_button)
+        row.addWidget(self.event_run_button)
+        event_layout.addLayout(row)
+        self.event_status=QLabel("選出＋PREP後、イベント画面を指定してください。")
+        self.event_status.setWordWrap(True)
+        self.event_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        event_layout.addWidget(self.event_status)
+        event_layout.addStretch(1)
+
+        self.integration_page=QWidget(self.tabs)
+        self.tabs.addTab(self.integration_page,"1対戦統合テスト（実ゲーム画面）")
+        self.integration_layout=QVBoxLayout(self.integration_page)
+        self.integration_intro=QLabel(
+            "保存画像ではなく設定済みの実ゲームウィンドウ／ADB画面を"
+            "読み取る統合テストです。対戦開始を押して4ファイルをロードし、"
+            "キャプチャを開始してください。選出→PREP→ターン→交代→"
+            "イベント→決着まで状態を継続して検証します。"
+            "ゲーム操作・自動キー入力はしません。"
+            "選出確定はプレイヤーが確認します。")
+        self.integration_intro.setWordWrap(True)
+        self.integration_layout.addWidget(self.integration_intro)
+        self.integration_status=QLabel("ライブテストは未開始")
+        self.integration_status.setWordWrap(True)
+        self.integration_layout.addWidget(self.integration_status)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self,index):
+        if self.tabs.widget(index) is self.integration_page:
+            self._ensure_live_test()
+
+    def _ensure_live_test(self):
+        if self.live_panel is not None:
+            return
+        if (self.master_directory is None or self.team_path is None
+                or self.capture_config is None):
+            self.integration_status.setText(
+                "実ゲーム画面の検証には設定済みのウィンドウまたはADB、"
+                "ゲーム領域、登録済みチームが必要です。設定画面を確認してください。")
+            return
+        # The exact same live read-only support FSM/vision/capture panel is
+        # embedded here, not simulated from saved screenshots.
+        from .match_replay_dialog import MatchReplayDialog
+        panel=MatchReplayDialog(
+            model=self.model, master_directory=str(self.master_directory),
+            team_path=str(self.team_path), capture_config=self.capture_config,
+            store_root=self.app_root, reasoning_effort=self.reasoning_effort,
+            parent=self.integration_page, embedded=True)
+        panel.matrix_source=(str(self.matrix_source)
+                             if self.matrix_source is not None else None)
+        panel.lookup_source=(str(self.lookup_source)
+                             if self.lookup_source is not None else None)
+        self.live_panel=panel
+        panel.state_changed.connect(self._on_live_state)
+        self.integration_status.setText(
+            "実ゲームキャプチャの支援エンジンを接続しました。"
+            "4ファイル事前ロード→監視開始で統合テストします。")
+        scroll=QScrollArea(self.integration_page)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(panel)
+        self.integration_layout.addWidget(scroll)
+
+    @Slot(object,object)
+    def _on_live_state(self,state,report):
+        """Live-only integration scoreboard, based on delivered observations.
+
+        A test run never claims a win until a RESULT_SCREEN was actually
+        observed and the underlying replay engine changed to ENDED.
+        """
+        stage=str(state.get("phase","UNKNOWN"))
+        status=str(report.get("status","UNKNOWN"))
+        screen=str(report.get("screen","UNKNOWN"))
+        if status=="NEW_MATCH" or (
+                stage=="MATCHMAKING" and self.live_last_phase=="ENDED"):
+            self.live_test_counts={k:0 for k in self.live_test_counts}
+        if screen=="TEAM_SELECTION" and status in (
+                "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY"):
+            self.live_test_counts["selection"]+=1
+        if status.startswith("PREP_") and (
+                state.get("prep") is not None
+                or status in ("PREP_CACHE_REUSED","PREP_CACHE_KNOWN_ONLY")):
+            self.live_test_counts["prep"]+=1
+        if screen=="MOVE_MENU" and report.get("action",{}).get("kind") in (
+                "MOVE","PIVOT"):
+            self.live_test_counts["turns"]+=1
+        if screen=="PARTY_MENU" and report.get("action",{}).get("kind")=="SWITCH":
+            self.live_test_counts["switches"]+=1
+        if status in ("OBSERVED","MATCH_END") and screen in (
+                "ACTION_RESOLUTION","COMMAND_MENU","RESULT_SCREEN"):
+            self.live_test_counts["events"]+=1
+        if stage=="ENDED" and state.get("result") in ("WIN","LOSS"):
+            self.live_test_counts["result"]=1
+        self.live_last_phase=stage
+        c=self.live_test_counts
+        ended=stage=="ENDED" and bool(c["result"])
+        self.integration_status.setText(
+            f"統合テスト {'決着確認' if ended else '進行中'}"
+            f"／段階 {stage}／直近 {screen}:{status}"
+            f"／選出 {c['selection']}／PREP {c['prep']}"
+            f"／技判断 {c['turns']}／交代 {c['switches']}"
+            f"／イベント {c['events']}"
+            f"／勝敗 {state.get('result','UNKNOWN')}"
+            "。戦術的な正確性とゲーム操作成功を保証しません。")
+
     def choose_image(self):
         if self.thread is not None:
             return
@@ -262,8 +464,12 @@ class SelectionTestDialog(QDialog):
         self.selection_started_at=None
         self.selection_display_elapsed_ms=None
         self.turn_image=None
+        self.switch_image=None
+        self.event_image=None
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
+        self.switch_run_button.setEnabled(False)
+        self.event_run_button.setEnabled(False)
         h,w=self.image.shape[:2]
         frame=QImage(self.image.data,w,h,self.image.strides[0],QImage.Format.Format_RGB888)
         self.image_label.setPixmap(
@@ -425,14 +631,53 @@ class SelectionTestDialog(QDialog):
     def run_turn_test(self):
         self._start_timing_test("TURN")
 
+    def _pick_diagnostic_image(self, title):
+        if self.thread is not None:
+            return None
+        source,_=QFileDialog.getOpenFileName(
+            self,title,"","画像 (*.png *.jpg *.jpeg)")
+        if not source:
+            return None
+        try:
+            return load_test_image(source)
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,"テスト画像を読み込めません",str(exc))
+            return None
+
+    def choose_switch_image(self):
+        image=self._pick_diagnostic_image("交代先選択画面")
+        if image is not None:
+            self.switch_image=image
+            self.switch_status.setText("交代画面を読込済み。合法な交代先が表示されているか検証します。")
+            self.switch_run_button.setEnabled(
+                self.test_state is not None and self.prep_attempted)
+
+    def choose_event_image(self):
+        image=self._pick_diagnostic_image("バトルイベント画面")
+        if image is not None:
+            self.event_image=image
+            self.event_status.setText("イベント画像を読込済み。戦闘状態への観測反映を検証します。")
+            self.event_run_button.setEnabled(
+                self.test_state is not None and self.prep_attempted)
+
+    def run_switch_test(self):
+        self._start_timing_test("SWITCH")
+
+    def run_event_test(self):
+        self._start_timing_test("EVENT")
+
     def _start_timing_test(self, mode):
         if self.thread is not None or self.test_state is None:
             return
         if mode=="PREP" and self.selection_started_at is None:
             return
-        if mode=="TURN" and not self.prep_attempted:
+        if mode in ("TURN","SWITCH","EVENT") and not self.prep_attempted:
             return
         if mode=="TURN" and self.turn_image is None:
+            return
+        if mode=="SWITCH" and self.switch_image is None:
+            return
+        if mode=="EVENT" and self.event_image is None:
             return
         self.select_button.setEnabled(False)
         self.run_button.setEnabled(False)
@@ -440,9 +685,15 @@ class SelectionTestDialog(QDialog):
         self.compare_button.setEnabled(False)
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
+        self.switch_choose_button.setEnabled(False)
+        self.switch_run_button.setEnabled(False)
+        self.event_choose_button.setEnabled(False)
+        self.event_run_button.setEnabled(False)
         self.timing_status.setText(
             "PREP：選出開始から87秒以内に初手6＋控え12＋勝ち筋3点を検査中…"
             if mode=="PREP" else
+            "画像認識・判明イベントの反映中…" if mode=="EVENT" else
+            "交代先の画面判別・合法手検査中…" if mode=="SWITCH" else
             "ターン30秒：画像認識＋AI判断＋合法手検査中…")
         self.timing_requested_at=perf_counter()
         prep_limit=87.0
@@ -468,7 +719,10 @@ class SelectionTestDialog(QDialog):
                            model=self.model)
         self.thread=QThread(self)
         self.worker=_TimingTestWorker(
-            mode=mode,image=self.turn_image if mode=="TURN" else None,
+            mode=mode,image=(
+                self.turn_image if mode=="TURN" else
+                self.switch_image if mode=="SWITCH" else
+                self.event_image if mode=="EVENT" else None),
             assets=self.assets,state=self.test_state,app_root=self.app_root,
             model=self.model,reasoning_effort=self.reasoning_effort,
             requested_at=self.timing_requested_at,
@@ -540,6 +794,20 @@ class SelectionTestDialog(QDialog):
                 f"／AI元結果: {report.get('source_status','UNKNOWN')}"
                 f"／AI元理由: {report.get('source_reason','-')}"
                 "。構造と時間の検証であり、戦術的正確性は未検証。")
+        elif mode=="EVENT":
+            valid=bool(report.get("pass"))
+            if valid:
+                self.test_state=payload["state"]
+            details=(
+                f"バトルイベント読取 {'成功' if valid else '失敗'}"
+                f"／画面: {report.get('screen_observation','UNKNOWN')}"
+                f"／イベント: {report.get('event','NONE')}"
+                f"／結果: {report.get('match_result','UNKNOWN')}"
+                f"／状態: {report.get('state_phase','UNKNOWN')}"
+                f"／読み取ったメッセージ: {' / '.join(report.get('messages') or []) or 'なし'}"
+                f"／所要時間: {wall/1000:.3f}秒"
+                f"／理由: {report.get('reason','UNKNOWN')}")
+            self.event_status.setText(details)
         else:
             self.timing_results.append({
                 "pass":bool(report.get("pass")), "elapsed_ms":wall,
@@ -560,6 +828,10 @@ class SelectionTestDialog(QDialog):
                 f"、p95 {p95/1000:.3f}秒"
                 f"（全件30秒以下が目標）。")
         self.timing_status.setText(details)
+        if mode=="TURN":
+            self.turn_status.setText(details)
+        elif mode=="SWITCH":
+            self.switch_status.setText(details)
         if self.log:
             safe={k:v for k,v in report.items()
                   if k not in ("state","observation","screen_image")}
@@ -584,12 +856,28 @@ class SelectionTestDialog(QDialog):
         self.turn_run_button.setEnabled(
             self.prep_attempted and self.test_state is not None
             and self.turn_image is not None)
+        self.switch_choose_button.setEnabled(True)
+        self.event_choose_button.setEnabled(True)
+        self.switch_run_button.setEnabled(
+            self.prep_attempted and self.test_state is not None
+            and self.switch_image is not None)
+        self.event_run_button.setEnabled(
+            self.prep_attempted and self.test_state is not None
+            and self.event_image is not None)
 
     def closeEvent(self,event):
         if self.thread is not None:
             QMessageBox.information(self,"実行中","テスト通信の終了後に閉じてください")
             event.ignore()
             return
+        if self.live_panel is not None:
+            self.live_panel._stop_auto()
+            if (self.live_panel._thread is not None
+                    or self.live_panel._prep_thread is not None):
+                QMessageBox.information(
+                    self,"実行中","ライブ統合テストのAI通信終了後に閉じてください")
+                event.ignore()
+                return
         if self.log:
             self.log.write("SELECTION_TEST_CLOSED")
         super().closeEvent(event)
