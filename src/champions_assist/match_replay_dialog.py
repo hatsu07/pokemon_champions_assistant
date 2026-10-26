@@ -146,7 +146,10 @@ class _ReplayWorker(QObject):
                         )
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
-                    remaining=35.0-(perf_counter()-batch_started)
+                    # Leave at least 15 seconds from the game's nominal 45s
+                    # input window for the human player. Tests use the same
+                    # one-call replay path and strict 30s target.
+                    remaining=30.0-(perf_counter()-batch_started)
                     if remaining<=1.0:
                         next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"OCR_OR_AUTH_BUDGET"}
                     else:

@@ -1,0 +1,228 @@
+"""Off-match timing regression, never real or fabricated Champions battle facts."""
+from __future__ import annotations
+
+import os
+import unittest
+from copy import deepcopy
+from tempfile import TemporaryDirectory
+from pathlib import Path
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
+import numpy as np
+from PySide6.QtWidgets import QApplication
+
+from champions_assist.live_timing_test import (
+    selection_test_prep_state,prep_timing_test,turn_timing_test)
+from champions_assist.selection_test_dialog import SelectionTestDialog
+from champions_assist.prep import LEAD_TAGS,BENCH_TAGS
+from tests.test_match_replay import fixture_assets,OPP,OWN
+
+
+def selection_fixture():
+    return {
+        "status":"PROVISIONAL_ADVICE",
+        "opponent_six":list(OPP),
+        "selected_three":[OWN[0],OWN[3],OWN[4]],
+        "lead":OWN[0],
+    }
+
+
+def prep_payload(state):
+    rows=[]
+    for name in state["selected_three"]:
+        tags = LEAD_TAGS if name==state["lead"] else BENCH_TAGS
+        for opponent in state["opponent_six"]:
+            code="|".join(f"{tag}=" + (
+                "MOVE" if tag=="ACT" else
+                "registered_move" if tag=="DPS" else
+                "UNVERIFIED" if tag=="PROC" else
+                "unknown") for tag in tags)
+            rows.append({"our_pokemon":name,"opponent_pokemon":opponent,
+                         "eval_code":code})
+    return {"matchups_18":rows,"preserve":state["selected_three"][0],
+            "stopper":state["selected_three"][1],
+            "closer":state["selected_three"][2]}
+
+
+class FakeClock:
+    def __init__(self):self.now=0.0
+    def __call__(self):return self.now
+
+
+class TimingCoreTest(unittest.TestCase):
+    def setUp(self):
+        self.assets=fixture_assets()
+        self.state=selection_test_prep_state(self.assets,selection_fixture())
+        self.clock=FakeClock()
+
+    def fake_prep(self, elapsed=25, mutate=None):
+        def runner(**kwargs):
+            self.assertLessEqual(kwargs["limit_seconds"],40)
+            self.clock.now=elapsed
+            state=deepcopy(kwargs["state"])
+            state["prep_status"]="STRUCTURE_COMPLETE"
+            state["prep"]=prep_payload(state)
+            if mutate:mutate(state)
+            return state,{"status":"PREP_PROVISIONAL","reason":"OK"}
+        return runner
+
+    def test_selection_is_simulated_never_game_confirmed(self):
+        self.assertEqual(self.state["phase"],"PREP")
+        self.assertEqual(self.state["selected_three"],
+                         selection_fixture()["selected_three"])
+        with self.assertRaises(ValueError):
+            selection_test_prep_state(self.assets,{"status":"BLOCKED"})
+
+    def test_prep_all_18_and_three_roles_under_budget(self):
+        updated,report=prep_timing_test(
+            state=self.state,assets=self.assets,access_token="dummy",
+            model="mock",clock=self.clock,started_at=0,
+            prep_runner=self.fake_prep(elapsed=27))
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["lead_evaluated"],6)
+        self.assertEqual(report["bench_evaluated"],12)
+        self.assertEqual(report["win_conditions"],3)
+        self.assertEqual(len(updated["prep"]["matchups_18"]),18)
+
+    def test_prep_budget_shortens_after_slow_selection(self):
+        updated,report=prep_timing_test(
+            state=self.state,assets=self.assets,access_token="dummy",
+            model="mock",clock=self.clock,started_at=0,limit_seconds=12,
+            prep_runner=self.fake_prep(elapsed=13))
+        self.assertFalse(report["pass"])
+        self.assertEqual(report["limit_ms"],12000)
+        self.assertEqual(report["reason"],"DEADLINE_EXCEEDED")
+        self.assertIsNone(updated["prep"])
+
+    def test_prep_rejects_missing_bench_or_lead_tags(self):
+        for index in (6,0):
+            def bad(state):
+                state["prep"]["matchups_18"][index]["eval_code"]="PROC=unknown"
+            self.clock.now=0.0
+            updated,report=prep_timing_test(
+                state=self.state,assets=self.assets,access_token="dummy",
+                model="mock",clock=self.clock,started_at=0,
+                prep_runner=self.fake_prep(elapsed=5,mutate=bad))
+            self.assertFalse(report["pass"])
+            self.assertIsNone(updated["prep"])
+
+    def test_prep_rejects_unknown_roles_and_duplicate_pair(self):
+        def bad_role(state):
+            state["prep"]["stopper"]="NOT_SELECTED"
+        def bad_pair(state):
+            state["prep"]["matchups_18"][6]=dict(
+                state["prep"]["matchups_18"][0])
+        for damage in (bad_role,bad_pair):
+            self.clock.now=0.0
+            _,report=prep_timing_test(
+                state=self.state,assets=self.assets,access_token="dummy",
+                model="mock",clock=self.clock,started_at=0,
+                prep_runner=self.fake_prep(elapsed=7,mutate=damage))
+            self.assertFalse(report["pass"])
+
+    def test_turn_requires_input_ready_action_before_30(self):
+        self.clock.now=0
+        def runner(**kwargs):
+            self.assertLessEqual(kwargs["total_seconds"],30)
+            self.clock.now=19.4
+            return kwargs["state"],{
+                "status":"PROVISIONAL_ADVICE","screen":"MOVE_MENU",
+                "action":{"kind":"MOVE","move":"10まんボルト"},
+                "recommendation":"10まんボルト。"}
+        _,report=turn_timing_test(
+            image=np.zeros((240,480,3),dtype=np.uint8),
+            state=self.state,assets=self.assets,model="mock",access_token="x",
+            clock=self.clock,started_at=0,turn_runner=runner)
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["target_ms"],30000)
+        self.assertEqual(report["input_margin_ms"],25600)
+        self.assertEqual(report["recommendation"],"10まんボルト。")
+
+    def test_turn_timeout_noaction_and_illegal_status_fail(self):
+        variants=[
+            (31.0,"PROVISIONAL_ADVICE","MOVE_MENU",{"kind":"MOVE"}, "10まんボルト。"),
+            (3.0,"NO_ACTION","MOVE_MENU",{"kind":"NO_ACTION"}, ""),
+            (3.0,"BLOCKED","MOVE_MENU",{"kind":"MOVE"}, ""),
+            (3.0,"PROVISIONAL_ADVICE","COMMAND_MENU",{"kind":"MOVE"}, "10まんボルト。"),
+        ]
+        for sec,status,screen,action,advice in variants:
+            self.clock.now=0
+            def runner(**kwargs):
+                self.clock.now=sec
+                return kwargs["state"],{"status":status,"screen":screen,
+                  "action":action,"recommendation":advice}
+            _,report=turn_timing_test(
+                image=None,state=self.state,assets=self.assets,access_token="x",
+                model="mock",clock=self.clock,started_at=0,turn_runner=runner)
+            self.assertFalse(report["pass"])
+            self.assertEqual(report["recommendation"],"")
+
+    def test_no_prep_after_invalid_selection(self):
+        for invalid in ({"status":"ERROR"},{
+            **selection_fixture(),"opponent_six":list(OPP[:5])}):
+            with self.assertRaises(ValueError):
+                selection_test_prep_state(self.assets,invalid)
+
+
+class TimingQtFlowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app=QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.temp=TemporaryDirectory()
+        self.assets=fixture_assets()
+        self.dialog=SelectionTestDialog(
+            assets=self.assets,model="mock",reasoning_effort="auto",
+            app_root=Path(self.temp.name))
+        self.dialog.set_image(np.zeros((250,500,3),dtype=np.uint8))
+
+    def tearDown(self):
+        self.dialog.close()
+        self.temp.cleanup()
+
+    def test_selection_display_automatically_schedules_prep(self):
+        import time
+        self.dialog.selection_started_at=time.perf_counter()-4.0
+        report=selection_fixture()
+        report["test_total_elapsed_ms"]=3800
+        with patch.object(self.dialog,"_start_timing_test") as start:
+            self.dialog._complete(report)
+            self.assertTrue(self.dialog.auto_prep_pending)
+            self.assertFalse(self.dialog.prep_completed)
+            self.assertEqual(self.dialog.details.text().count("初手:"),1)
+            self.dialog._clear_worker()  # previously active thread has exited
+            start.assert_called_once_with("PREP")
+            self.assertFalse(self.dialog.auto_prep_pending)
+
+    def test_prep_combined_90s_deadline_prevents_second_request(self):
+        import time
+        self.dialog.selection_started_at=time.perf_counter()-89.0
+        self.dialog.selection_display_elapsed_ms=89000
+        self.dialog.test_state=selection_test_prep_state(self.assets,selection_fixture())
+        self.dialog._start_timing_test("PREP")
+        self.assertIsNone(self.dialog.thread)
+        self.assertTrue(self.dialog.prep_completed)
+        self.assertIn("未達",self.dialog.timing_status.text())
+        self.assertIn("90秒",self.dialog.timing_status.text())
+        self.assertTrue(self.dialog.run_button.isEnabled())
+
+    def test_combined_ui_deadline_cannot_pass_even_if_prep_worker_says_pass(self):
+        import time
+        self.dialog.selection_started_at=time.perf_counter()-89.0
+        self.dialog.selection_display_elapsed_ms=20000
+        self.dialog.test_state=selection_test_prep_state(self.assets,selection_fixture())
+        self.dialog.timing_requested_at=time.perf_counter()-2.0
+        self.dialog._timing_complete({
+            "mode":"PREP","state":self.dialog.test_state,
+            "report":{"pass":True,"status":"PREP_TIMING_PASS","reason":"OK",
+                      "lead_evaluated":6,"bench_evaluated":12,
+                      "win_conditions":3}})
+        self.assertIn("未達",self.dialog.timing_status.text())
+        self.assertIn("COMBINED_90S_BUDGET_EXCEEDED",
+                      self.dialog.timing_status.text())
+
+
+if __name__=="__main__":
+    unittest.main()
