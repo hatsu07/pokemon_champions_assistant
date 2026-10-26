@@ -414,7 +414,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._active_job=None
             panel._auto_running=False
 
-    def test_busy_worker_does_not_consume_fallback_scene_transition(self):
+    def test_busy_worker_defers_fallback_scene_transition_without_ai_queue(self):
         panel=self.window._match_panel
         panel.state={"phase":"PREP","matrix_compatible":False,
                      "matrix_provisional":True}
@@ -427,11 +427,24 @@ class UnifiedMainWindowTests(unittest.TestCase):
             with (patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
                         return_value=image),
                   patch.object(panel._turn_buffer,"observe",return_value=None),
-                  patch.object(panel._automatic_probe,"observe") as probe,
+                  patch.object(panel._automatic_probe,"observe",return_value=True) as probe,
                   patch.object(panel,"_queue_batch") as queued):
                 panel._capture_next()
-                probe.assert_not_called()
+                probe.assert_called_once()
                 queued.assert_not_called()
+                # A new frame during an in-flight request must survive until
+                # _cleanup dispatches it, instead of being consumed and lost.
+                self.assertIsNotNone(panel._deferred_fallback_batch)
+                self.assertTrue(np.array_equal(
+                    panel._deferred_fallback_batch[-1],image))
+                self.assertTrue(any(
+                    row.get("event")=="FALLBACK_TRANSITION_DEFERRED"
+                    for row in panel._timing_trace))
+                with patch.object(panel,"_queue_batch") as dispatch:
+                    panel._thread=None
+                    panel._cleanup()
+                    dispatch.assert_called_once()
+                    self.assertIsNone(panel._deferred_fallback_batch)
         finally:
             panel._thread=None
             panel._active_job=None
