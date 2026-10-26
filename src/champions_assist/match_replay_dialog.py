@@ -82,9 +82,14 @@ def _should_replace_inflight(inflight: str | None,
 
 
 def _supersedes_result(report: dict, incoming: str | None) -> bool:
-    """A newer explicit command category, not animation, can preempt a reply."""
+    """Never cache stale recommendations that lack a validated screen.
+
+    Genuine MOVE_MENU/PARTY_MENU decisions survive mere unclassified
+    animations, but a model reply with no screen evidence must not overwrite
+    battle state when a newer frame is already pending.
+    """
     if not incoming:
-        return False
+        return report.get("screen") in (None, "", "UNKNOWN")
     screen=report.get("screen")
     if screen=="MOVE_MENU":
         kind="TURN_ACTION"
