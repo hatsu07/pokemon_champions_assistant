@@ -128,11 +128,14 @@ class DesktopSettingsService:
             self._sqlite_primary_migrated=True
         else:
             primary.archive_source("team_csv",team_id,source)
+        sqlite_master,sqlite_team,sqlite_environment=primary.materialize_for_live(
+            team_id=team_id,master_dir=self.master_directory,
+            source_path=source,environment_snapshot=self.environment.snapshot)
         prepared = prepare_team_assets(
-            master_dir=self.master_directory,
+            master_dir=sqlite_master,
             data_root=self.settings.storage.data_root,
-            team_id=team_id,team_path=source,
-            environment_snapshot=self.environment.snapshot,
+            team_id=team_id,team_path=sqlite_team,
+            environment_snapshot=sqlite_environment,
         )
         # Use exact-evidence v2 rows already stored in SQLite, even when a
         # fixed-master form correction changes the derived cache fingerprint.
@@ -300,6 +303,8 @@ class DesktopSettingsService:
         changed = previous != storage
         if changed:
             migrate_data_directory(previous.data_root, storage.data_root)
+            self._sqlite_primary_migrated = False
+            self.sqlite_migration_report = None
             migrate_data_directory(previous.captures_root, storage.captures_root)
             self.teams = TeamRepository(Path(storage.data_root) / "teams", catalog=self.catalog)
             self.environment = SinglesEnvironmentStore(storage.data_root)
