@@ -22,6 +22,11 @@ class SelectionDecision:
     status: str
     selected_three: tuple[str, ...] = ()
     lead: str | None = None
+    # Tactical selection call already covers the win route. Return these
+    # three roles *in the same answer*, no second GPT PREP required.
+    preserve: str | None = None
+    stopper: str | None = None
+    closer: str | None = None
     opponent_six: tuple[str, ...] = ()
     reason: str = ""
     elapsed_ms: int = 0
@@ -36,7 +41,9 @@ class SelectionDecision:
 
     def as_dict(self) -> dict:
         return dict(status=self.status, selected_three=list(self.selected_three),
-                    lead=self.lead, opponent_six=list(self.opponent_six),
+                    lead=self.lead, preserve=self.preserve,
+                    stopper=self.stopper, closer=self.closer,
+                    opponent_six=list(self.opponent_six),
                     reason=self.reason, elapsed_ms=self.elapsed_ms,
                     # All observed fields are unverified model readings,
                     # never trusted match state or proof of image contents.
@@ -521,6 +528,18 @@ class SelectionPlanner:
                 context["frozen_gate"] = ""  # gate also references the older own six
             answer = tactical_call(context, available-1.0)
             chosen, lead = selection_response(answer, own_names=assets.own_team_names)
+            roles = []
+            for field in ("preserve", "stopper", "closer"):
+                raw_role = answer.get(field)
+                if not isinstance(raw_role,str):
+                    roles.append(None)
+                    continue
+                # The same strict registered-team alias map as selection;
+                # invalid names cannot masquerade as completed win roles.
+                normalized = next(
+                    (name for name in chosen if raw_role==name
+                     or _display_name(raw_role)==_display_name(name)),None)
+                roles.append(normalized)
             elapsed = round((self.clock()-started_at)*1000)
             if elapsed > max_total_seconds*1000:
                 return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
@@ -529,7 +548,9 @@ class SelectionPlanner:
                       "OK" if compatible else
                       "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY")
             return SelectionDecision(status,
-                                     chosen, lead, opponents, elapsed_ms=elapsed,
+                                     chosen, lead, preserve=roles[0],
+                                     stopper=roles[1], closer=roles[2],
+                                     opponent_six=opponents, elapsed_ms=elapsed,
                                      reason=("VISUAL_SLOT_UNCONFIRMED" if partial else
                                              "" if compatible else
                                              "TACTICAL_CELLS_UNKNOWN" if provisional else
@@ -609,8 +630,11 @@ CHOICE_SCHEMA = {
     "properties": {
         "selected_three": {"type": "array", "items": {"type": "string"}},
         "lead": {"type": "string"},
+        "preserve": {"type": "string"},
+        "stopper": {"type": "string"},
+        "closer": {"type": "string"},
     },
-    "required": ["selected_three", "lead"],
+    "required": ["selected_three", "lead", "preserve", "stopper", "closer"],
 }
 
 def _stream_json(client, *, model: str, instructions: str, content: list,

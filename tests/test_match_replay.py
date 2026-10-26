@@ -6,8 +6,8 @@ import unittest
 import json
 
 from champions_assist.match_replay import (
-    new_replay, advance_observation, confirm_actual_selection, validate_battle_choice,
-    run_replay_prep,
+    new_replay, advance_observation, confirm_actual_selection,
+    assume_advised_selection, validate_battle_choice, run_replay_prep,
 )
 from champions_assist.preload import FrozenMatchAssets
 
@@ -114,6 +114,81 @@ class FullReplayTest(unittest.TestCase):
         out=self.advance(frame("MOVE_MENU"))
         self.assertEqual(out["status"],"BLOCKED")
         self.assertEqual(out["reason"],"MATCH_ALREADY_ENDED")
+
+    def test_selection_planner_returns_roles_from_the_same_tactical_call(self):
+        def with_roles(_ctx,_remaining,_mode):
+            return {
+                "selected_three":["Pikachu","Azumarill","Gyarados"],
+                "lead":"Pikachu",
+                "preserve":"Pikachu",
+                "stopper":"Azumarill",
+                "closer":"Gyarados",
+            }
+        out=self.advance(frame(
+            "TEAM_SELECTION",opponent_six=[
+                "Meowscarada","Primarina","Garchomp",
+                "Lucario","Gholdengo","Mimikyu"],
+        ),callback=with_roles)
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertEqual(out["preserve"],"ピカチュウ")
+        self.assertEqual(out["stopper"],"マリルリ")
+        self.assertEqual(out["closer"],"ギャラドス")
+        self.assertEqual(self.state["phase"],"SELECTION")  # Pure reducer waits for live adapter
+
+    def test_invalid_role_is_not_accepted_as_a_win_condition(self):
+        def bad_role(_ctx,_remaining,_mode):
+            return {
+                "selected_three":["Pikachu","Azumarill","Gyarados"],
+                "lead":"Pikachu",
+                "preserve":"Pikachu",
+                "stopper":"NotOnOurTeam",
+                "closer":"Gyarados",
+            }
+        out=self.advance(frame("TEAM_SELECTION",opponent_six=list(OPP)),
+                         callback=bad_role)
+        self.assertEqual(out["status"],"TEST_ONLY")
+        self.assertIsNone(out["stopper"])
+
+    def test_live_auto_accept_selection_and_observed_different_lead(self):
+        selected=list(OWN[:3])
+        state=new_replay(self.assets)
+        state["phase"]="SELECTION"
+        state["opponent_six"]=list(OPP)
+        state=assume_advised_selection(state,self.assets,selected,selected[0])
+        self.assertEqual(state["phase"],"PREP")
+        self.assertTrue(state["selection_assumed"])
+        state["prep"]={"source":"FROZEN_CACHE","cached_matchups":18}
+        updated,report=advance_observation(
+            state,self.assets,
+            frame("COMMAND_MENU",our_active="Gyarados",
+                  opponent_active="Meowscarada"),
+            choose,elapsed_seconds=lambda:1.0)
+        self.assertEqual(report["status"],"OBSERVED")
+        self.assertEqual(updated["phase"],"BATTLE")
+        self.assertEqual(updated["observed_lead"],"ギャラドス")
+        self.assertEqual(updated["lead"],"ギャラドス")
+        self.assertEqual(len(updated["selected_three"]),3)
+        self.assertIn("ギャラドス",updated["selected_three"])
+        self.assertEqual(updated["prep_status"],"LEAD_DIFFERS_FROM_PROPOSAL")
+        self.assertIsNone(updated["prep"])
+        self.assertTrue(updated["selection_assumed"])
+
+    def test_live_auto_accept_keeps_cache_when_lead_observed_matches(self):
+        selected=list(OWN[:3])
+        state=new_replay(self.assets)
+        state["phase"]="SELECTION"
+        state["opponent_six"]=list(OPP)
+        state=assume_advised_selection(state,self.assets,selected,selected[0])
+        state["prep"]={"source":"FROZEN_CACHE","cached_matchups":18}
+        updated,report=advance_observation(
+            state,self.assets,
+            frame("COMMAND_MENU",our_active="Pikachu",
+                  opponent_active="Meowscarada"),
+            choose,elapsed_seconds=lambda:1.0)
+        self.assertEqual(report["status"],"OBSERVED")
+        self.assertEqual(updated["observed_lead"],"ピカチュウ")
+        self.assertEqual(updated["selected_three"],selected)
+        self.assertIsNotNone(updated["prep"])
 
     def test_no_battle_decision_without_confirming_selection(self):
         self.advance(frame("TEAM_SELECTION",our_six=list(OWN),opponent_six=list(OPP)))
