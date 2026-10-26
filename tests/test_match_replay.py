@@ -159,11 +159,17 @@ class FullReplayTest(unittest.TestCase):
         self.assertEqual(state["phase"],"PREP")
         self.assertTrue(state["selection_assumed"])
         state["prep"]={"source":"FROZEN_CACHE","cached_matchups":18}
+        # The observed lead differs from the proposed lead. The AI must
+        # choose from Gyarados's registered four moves, not Pikachu's.
+        def different_lead_choice(ctx, remaining, mode):
+            self.assertEqual(ctx["own_team_member"]["name"],"ギャラドス")
+            return {"action_kind":"MOVE","move":"じしん",
+                    "switch_target":"","warning":""}
         updated,report=advance_observation(
             state,self.assets,
             frame("COMMAND_MENU",our_active="Gyarados",
                   opponent_active="Meowscarada"),
-            choose,elapsed_seconds=lambda:1.0)
+            different_lead_choice,elapsed_seconds=lambda:1.0)
         self.assertEqual(report["status"],"TEST_ONLY")
         self.assertEqual(report["recommendation"],"じしん。")
         self.assertEqual(updated["phase"],"BATTLE")
@@ -187,7 +193,8 @@ class FullReplayTest(unittest.TestCase):
             frame("COMMAND_MENU",our_active="Pikachu",
                   opponent_active="Meowscarada"),
             choose,elapsed_seconds=lambda:1.0)
-        self.assertEqual(report["status"],"OBSERVED")
+        self.assertEqual(report["status"],"TEST_ONLY")
+        self.assertEqual(report["recommendation"],"10まんボルト。")
         self.assertEqual(updated["observed_lead"],"ピカチュウ")
         self.assertEqual(updated["selected_three"],selected)
         self.assertIsNotNone(updated["prep"])
