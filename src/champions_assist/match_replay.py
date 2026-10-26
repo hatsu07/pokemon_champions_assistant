@@ -723,9 +723,15 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 else "CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY" if provisional
                 else "EXACT_VERIFIED_BASELINE"),
             "response_order":{
-                "lead_six":f"{len(known)} strings in known_opponents order for the lead",
-                "bench_twelve":f"{len(known)} strings per bench member, "
-                               "in selected_three order excluding lead",
+                "lead_six":(
+                    f"{len(known)} strings in known_opponents order for the lead"
+                    if partial else
+                    "six strings in opponent_six order for the lead"),
+                "bench_twelve":(
+                    f"{len(known)} strings per bench member in known_opponents order, "
+                    "in selected_three order excluding lead" if partial else
+                    "six strings per selected_three member except lead, "
+                    "in selected_three order, each in opponent_six order"),
                 "lead_tags":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
                 "bench_tags":"S|OUR|OPP|PRI|SAFE|PROC",
                 "format":"Every string has TAG=value components separated by |; "
