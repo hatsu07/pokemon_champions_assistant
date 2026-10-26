@@ -28,8 +28,10 @@ from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
-from .calibrated_screen_fields import ScreenFieldProfile, observe_screen_fields, candidates_for_prompt
-from .ocr import TesseractJapaneseOcr, image_digest
+from .calibrated_screen_fields import ScreenFieldProfile
+from .local_event_worker import AsyncBattleEventReader
+from .battle_state_tracker import LocalBattleStateTracker
+from .observation_events import ScreenLexicon
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .match_debug_log import MatchDebugLog
 from .capture_settings import CapturePreviewService
@@ -112,12 +114,14 @@ class _ReplayWorker(QObject):
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
+                 local_field_candidates=None,
                  selection_seconds=55.0, prep_seconds=40.0,battle_seconds=30.0):
         super().__init__()
         self.job=job
         self.frames=frames
         self.screen_label=screen_label
         self.field_profile=field_profile
+        self.local_field_candidates=list(local_field_candidates or [])[:12]
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -149,9 +153,9 @@ class _ReplayWorker(QObject):
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
             elif self.job=="batch":
-                # Optional OCR happens in the worker, never on the 300ms Qt
-                # capture-polling thread. One battle decision remains one AI
-                # call; no extra OCR-triggered tactic request.
+                # OCR was performed asynchronously DURING event screens. The
+                # 45-second command window never runs Tesseract or waits for
+                # a late event recognition result.
                 from time import perf_counter
                 batch_started=perf_counter()
                 if self.cancel_event is not None and self.cancel_event.is_set():
@@ -160,27 +164,7 @@ class _ReplayWorker(QObject):
                 self.progress.emit("ChatGPT認証確認中")
                 token=auth.access_token()
                 self.progress.emit("AI画像送信処理中（結果待ち）")
-                local_candidates=[]
-                field_label = self.screen_label
-                if field_label is None and self.state.get("phase") in ("PREP", "BATTLE"):
-                    field_label = "HUD_UNCLASSIFIED"
-                if self.field_profile is not None and field_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","HUD_UNCLASSIFIED"):
-                    try:
-                        frame=self.frames[-1]
-                        profile=self.field_profile
-                        if profile.compatible(frame):
-                            self.progress.emit("ローカル文字認識中（未確認の観測候補）")
-                            reads=observe_screen_fields(
-                                frame, label=field_label,
-                                frame_id=image_digest(frame),
-                                ocr_engine=TesseractJapaneseOcr(),
-                                profile=profile,
-                            )
-                            local_candidates=candidates_for_prompt(reads)
-                    except Exception:
-                        # The unvalidated optional OCR cannot disable the
-                        # existing image-to-AI fallback or invent a fact.
-                        local_candidates=[]
+                local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
                     # Selection: shared 55s including auth and all model calls.
                     remaining=self.selection_seconds-(perf_counter()-batch_started)
@@ -202,7 +186,7 @@ class _ReplayWorker(QObject):
                     # one-call replay path and strict 30s target.
                     remaining=self.battle_seconds-(perf_counter()-batch_started)
                     if remaining<=1.0:
-                        next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"OCR_OR_AUTH_BUDGET"}
+                        next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"AUTH_OR_AI_BUDGET"}
                     else:
                         next_state,report=run_replay_batch(
                             self.frames, state=self.state, assets=self.assets,
@@ -214,8 +198,7 @@ class _ReplayWorker(QObject):
                 report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
                     "FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label
-                    else "HUD_NUMBERS_ONLY_UNCLASSIFIED"
-                    if field_label == "HUD_UNCLASSIFIED" else "UNKNOWN"
+                    else "UNKNOWN"
                 )
                 self.finished.emit({"state":next_state,"report":report})
             elif self.job=="auto_frame":
@@ -298,6 +281,8 @@ class MatchReplayDialog(QDialog):
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
         self._event_frames=[]
+        self._local_event_reader=None
+        self._local_battle_tracker=LocalBattleStateTracker()
         self._automatic_probe=AutomaticVisualProbe(
             min_gap=8.0,matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
@@ -553,6 +538,8 @@ class MatchReplayDialog(QDialog):
             except (OSError, ValueError, TypeError, KeyError):
                 # A broken optional profile cannot alter tactical facts.
                 self._field_profile=None
+            self._stop_local_event_reader()
+            self._local_battle_tracker.clear()
             self.match_id=new_id
             self._selection_screen_started=None
             self._selection_clock_source=None
@@ -657,6 +644,8 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._field_profile=None
+        self._stop_local_event_reader()
+        self._local_battle_tracker.clear()
         self.assets=None
         self.state=None
         self.entries=[]
@@ -974,6 +963,7 @@ class MatchReplayDialog(QDialog):
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         self._auto_running=True
+        self._start_local_event_reader()
         self._capture_error_count=0
         self._capture_paused=False
         self._poll_timer.setInterval(300)
@@ -1011,6 +1001,7 @@ class MatchReplayDialog(QDialog):
         self._capture_next()
 
     def _stop_auto(self):
+        self._stop_local_event_reader()
         self._interrupt_prep()
         self._end_background_collection()
         self._cancel_event.set()
@@ -1267,6 +1258,7 @@ class MatchReplayDialog(QDialog):
             frames=frames,cancel_event=self._cancel_event,
             screen_label=screen_label,
             field_profile=self._field_profile,
+            local_field_candidates=self._freeze_local_events_for_action(screen_label),
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -1364,6 +1356,7 @@ class MatchReplayDialog(QDialog):
                 classified=self._screen_gate.observe(prediction,phase)
                 if prediction.label=="BATTLE_EVENT" and phase in ("PREP","BATTLE"):
                     self._remember_event_frame(image)
+                    self._offer_event_for_local_ocr(image)
                 if classified=="BATTLE_EVENT":
                     # Non-interactive event animation: do not pay for an AI
                     # request until the next actionable screen appears.
@@ -1384,6 +1377,59 @@ class MatchReplayDialog(QDialog):
                 return
 
         self._observe_fallback_transition(image,phase)
+
+    def _start_local_event_reader(self):
+        self._stop_local_event_reader()
+        lexicon=ScreenLexicon.from_frozen_assets(self.assets)
+        self._local_event_reader=AsyncBattleEventReader.with_local_tesseract(
+            self._field_profile,lexicon=lexicon)
+        self._trace_event("LOCAL_OCR_STARTED",
+                          status=self._local_event_reader.reason,
+                          timer_ocr=False)
+
+    def _stop_local_event_reader(self):
+        reader=getattr(self,"_local_event_reader",None)
+        self._local_event_reader=None
+        if reader is not None:
+            reader.stop()
+
+    def _offer_event_for_local_ocr(self,image):
+        if self._local_event_reader is None:
+            self._start_local_event_reader()
+        reader=self._local_event_reader
+        if reader.offer(image,label="BATTLE_EVENT"):
+            self._trace_event("LOCAL_OCR_EVENT_QUEUED",
+                              pending_overflow=reader.overflow)
+
+    def _drain_event_candidates(self):
+        """Read completed OCR only; never wait in the command-menu path."""
+        reader=self._local_event_reader
+        if reader is not None:
+            for result in reader.drain():
+                if result.error:
+                    self._trace_event("LOCAL_OCR_ERROR",reason=result.error)
+                else:
+                    count=self._local_battle_tracker.ingest(result.observations)
+                    if count:
+                        self._trace_event("LOCAL_OCR_CANDIDATES",
+                                          accepted=count,
+                                          raw_count=len(result.observations))
+        snapshot=self._local_battle_tracker.snapshot(limit=12)
+        return snapshot["local_observations"]
+
+    def _freeze_local_events_for_action(self,screen_label):
+        # Capture a completed-only snapshot before any tactical AI call.
+        # Inflight OCR is cancelled without join(), preserving the 45s turn.
+        records=self._drain_event_candidates()
+        if screen_label in _URGENT_SCREENS:
+            reader=self._local_event_reader
+            self._stop_local_event_reader()
+            if reader is not None:
+                self._trace_event("LOCAL_OCR_INTERRUPTED_FOR_ACTION",
+                                  unfinished=reader._queue.qsize(),
+                                  overflow=reader.overflow,
+                                  observed_candidates=len(records))
+        return records
 
     def _remember_event_frame(self,image):
         """Buffer two distinct event images locally, without extra AI requests."""

@@ -690,6 +690,31 @@ class UnifiedMainWindowTests(unittest.TestCase):
         capture.assert_not_called()
         self.assertFalse(panel._auto_running)
 
+    def test_local_ocr_snapshot_is_frozen_before_urgent_action_without_wait(self):
+        from types import SimpleNamespace
+        from champions_assist.local_event_worker import LocalFieldRead
+        panel=self.window._match_panel
+        panel._local_battle_tracker.clear()
+        record=LocalFieldRead(
+            field="screen_text.battle_message",value="まひになった",
+            frame_id="event-1",timestamp=1.0,confidence=0.80,
+            roi="battle_message",source="ROI_OCR_UNVERIFIED",
+            text="まひになった")
+        stopped=[]
+        reader=SimpleNamespace(
+            drain=lambda:(SimpleNamespace(error=None,observations=(record,)),),
+            stop=lambda:stopped.append(True),
+            overflow=0,_queue=SimpleNamespace(qsize=lambda:0))
+        panel._local_event_reader=reader
+        result=panel._freeze_local_events_for_action("TURN_ACTION")
+        self.assertEqual(len(result),1)
+        self.assertEqual(result[0]["raw_text"],"まひになった")
+        self.assertEqual(result[0]["certainty"],"CANDIDATE")
+        self.assertEqual(stopped,[True])
+        self.assertIsNone(panel._local_event_reader)
+        self.assertEqual(panel._drain_event_candidates()[0]["raw_text"],
+                         "まひになった")
+
     def test_battle_event_frames_are_buffered_until_next_action(self):
         panel=self.window._match_panel
         panel.state={"phase":"BATTLE"}
