@@ -19,7 +19,8 @@ from .preload import FrozenMatchAssets
 from .selection_vision import (
     SelectionPlanner, selection_response, selection_summary_ja, verify_selection_observation,
     SelectionBlocked, _stream_json, CHOICE_SCHEMA, VISION_SCHEMA, selection_image_content,
-    retry_unresolved_opponent_six,
+    retry_unresolved_opponent_six, roster_constrained_retry_guidance,
+    unmatched_opponent_slots,
 )
 from .terminology import japanese_name
 
@@ -484,7 +485,9 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "When unreadable leave that entry out, record its opponent "
                     "slot in uncertain_slots and never guess. The LEFT own team "
                     "is registered and must not be recognized. Set our_six=[]; "
-                    "keep all other observation fields tied to the actual image."
+                    "keep all other observation fields tied to the actual image. "
+                    + roster_constrained_retry_guidance(
+                        reason=reason,previous=previous,assets=assets)
                 )
                 return selection_call(
                     phase_limit=10.0, model=model, schema=VISION_SCHEMA,
@@ -523,6 +526,9 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
                     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
                     "OPPONENT_MATRIX_MISSING")):
+            if result.get("reason") == "OPPONENT_MATRIX_MISSING":
+                result["unmatched_opponent_slots"] = unmatched_opponent_slots(
+                    observation,assets)
             result["recommendation"] = (
                 "相手6匹を確定できません。ChatGPT画像認識 " +
                 str(opponent_recognition_attempts) +
