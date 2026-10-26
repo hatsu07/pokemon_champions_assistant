@@ -807,11 +807,25 @@ class MatchReplayDialog(QDialog):
         model,status=load_bundled_classifier(
             model_path=path,device="cpu",allow_unvalidated_for_trial=True)
         if model is None:
+            reasons={
+                "MODEL_LOAD_FAILED_SCREEN_MODEL_NOT_VALIDATED":
+                    "未検証モデルは試験モードでのみ使えます。",
+                "MODEL_LOAD_FAILED_SCREEN_MODEL_CHECKSUM_MISMATCH":
+                    "ONNXとJSONのSHA-256が一致しません。正しいペアを選んでください。",
+                "MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_LABELS":
+                    "5分類のラベルと順序が現行仕様に対応していません。",
+                "MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_MANIFEST":
+                    "JSONまたは内蔵メタデータのschema_versionが2ではありません。",
+                "MODEL_LOAD_FAILED_SCREEN_MODEL_METADATA_MISSING":
+                    "対応するJSONもONNX内部の5分類メタデータもありません。",
+                "MODEL_NOT_BUNDLED":"ONNXファイルが見つかりません。",
+                "MODEL_PATH_NOT_ONNX":"ONNXファイル（.onnx）を選択してください。",
+            }
             QMessageBox.warning(self,"画面分類モデルを読み込めません",
-                "理由："+status+
-                "\n5分類のONNXと対応するメタデータが必要です。"
-                "\n同じ名前のJSONがあれば自動照合します。"
-                "無ければONNX内部のメタデータを確認します。")
+                "理由："+status+"\n"+
+                reasons.get(status,"ONNX形式・設定情報・実行環境を確認してください。")+
+                "\n対応するJSONがあれば自動照合し、無ければ"
+                "ONNX内部のメタデータを使用します。")
             return
         trial=bool(getattr(model,"experimental",False))
         if trial:
