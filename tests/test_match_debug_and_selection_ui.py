@@ -131,6 +131,23 @@ class OfflineSelectionTestWindowTests(unittest.TestCase):
         self.assertEqual(kwargs["state"]["phase"],"MATCHMAKING")
         self.assertLessEqual(kwargs["total_seconds"],55)
 
+    def test_invalid_slot_is_shown_without_falsely_claiming_matrix_loss(self):
+        self.dialog.set_image(np.zeros((624,1048,3),dtype=np.uint8))
+        self.dialog._complete({
+            "status":"BLOCKED","reason":"OPPONENT_MATRIX_MISSING",
+            "observation":{"opponent_six":[
+                "Rotom-Wash","Scizor","Gouging Fire",
+                "Glimmora","Volcarona","Hippowdon"]},
+            "unmatched_opponent_slots":[{"slot":3,"label":"Gouging Fire"}],
+            "test_total_elapsed_ms":12158,
+            "opponent_recognition_attempts":2,
+        })
+        output=self.dialog.details.text()
+        self.assertIn("3番目: Gouging Fire",output)
+        self.assertIn("元の対面AI評価データは削除されていません",output)
+        self.assertIn("選出3匹: なし",output)
+        self.assertFalse(self.dialog.auto_prep_pending)
+
     def test_result_ui_includes_timing_roster_and_persistent_debug(self):
         self.dialog.set_image(np.zeros((624,1048,3),dtype=np.uint8))
         self.dialog._complete({
