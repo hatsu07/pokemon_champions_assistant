@@ -111,6 +111,67 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         raise SelectionBlocked("OPPONENT_MATRIX_MISSING") from exc
     return tuple(resolved)
 
+def unmatched_opponent_slots(raw: Mapping[str, Any],
+                             assets: FrozenMatchAssets) -> list[dict[str, Any]]:
+    """Report invalid opponent slots; NEVER guess a replacement species.
+
+    A one-to-one form expansion is accepted by the existing validator. Unknown
+    labels, e.g. an out-of-roster hallucination, are independently diagnosed.
+    """
+    names = raw.get("opponent_six")
+    if not isinstance(names,list):
+        return []
+    missing = []
+    for index,name in enumerate(names[:6],start=1):
+        if not isinstance(name,str):
+            continue
+        canonical = _display_name(name)
+        if canonical in assets.matrix_index:
+            continue
+        if any(key.startswith(canonical + "（")
+               for key in assets.matrix_index):
+            continue
+        missing.append({"slot":index,"label":name[:70]})
+    return missing
+
+
+def roster_constrained_retry_guidance(
+    *, reason: str, previous: Mapping[str, Any],
+    assets: FrozenMatchAssets,
+) -> str:
+    """Constrain the SECOND visual reading to the already preloaded matrix.
+
+    Names listed here are only a vocabulary, not observations. No external
+    game database/web request is performed; this is safe inside LIVE timing.
+    """
+    if reason != "OPPONENT_MATRIX_MISSING":
+        return ""
+    invalid = unmatched_opponent_slots(previous,assets)
+    focus = ",".join(
+        f"{item['slot']}:{item['label']}" for item in invalid) or "unresolved"
+    # A freeze of 358 canonical row labels is small and bounded. Do not let a
+    # corrupted/unbounded index turn a retry into a huge model prompt.
+    choices = list(assets.matrix_index)
+    if len(choices)>500:
+        return ("Earlier guessed species failed matrix validation. Re-examine "
+                "all six right sprites; do not repeat an invalid guess.")
+    return (
+        "CRITICAL: one or more previously proposed opponent names were NOT "
+        "present in the frozen Pokémon Champions matrix. "
+        f"Invalid opponent slots/guesses: {focus}. "
+        "Those labels are not verified. Specifically inspect these slots "
+        "again based on the IMAGE, not the previous guess or game meta. "
+        "The following are ONLY an allowed naming vocabulary, NOT evidence "
+        "that any candidate is on screen. Choose a candidate ONLY when "
+        "visually supported; if not identifiable leave its slot uncertain. "
+        "Respond with the exact Japanese species/form label from this frozen "
+        "matrix where possible. Do NOT choose the first or nearest entry, "
+        "do NOT invent a species outside these keys, and do NOT automatically "
+        "substitute a guessed invalid species. "
+        "MATRIX_CANONICAL_NAMES: " + " / ".join(choices)
+    )
+
+
 _RETRYABLE_OPPONENT_REASONS = frozenset({
     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
@@ -143,7 +204,12 @@ def retry_unresolved_opponent_six(
         return observation, 1
     try:
         second = retry_call(reason, observation)
-    except (ValueError, KeyError, TypeError):
+    except Exception as exc:
+        # A SECOND visual request is optional. If it times out or fails,
+        # continue with the original sighting as incomplete evidence rather
+        # than losing all correctly read opponent names. Record only the
+        # exception class; never log API response bodies or credentials.
+        observation["_retry_error_type"]=type(exc).__name__
         return observation, 2
     if not isinstance(second, Mapping) or second.get("visual_ui") != "TEAM_SELECTION":
         return observation, 2
@@ -151,6 +217,39 @@ def retry_unresolved_opponent_six(
     # Even a confident second guess must survive full six+forms+matrix check.
     # Unrecognized returns to the normal BLOCKED path, not an AI selection.
     return result, 2
+
+
+def partial_opponent_preview(raw: Mapping[str, Any],
+                             assets: FrozenMatchAssets) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """Conservative known-4+/6 fallback when two image reads disagree.
+
+    Unknown markers are NOT Pokémon. Return no fabricated matchup rows. This
+    allows a labelled emergency choice while acknowledging that full 18-pair
+    PREP cannot be certified until all six identities are known.
+    """
+    raw_names=raw.get("opponent_six")
+    if raw.get("visual_ui")!="TEAM_SELECTION" or not isinstance(raw_names,list):
+        return None
+    if len(raw_names)!=6 or any(not isinstance(n,str) for n in raw_names):
+        return None
+    names=[]
+    unresolved=[]
+    seen=set()
+    for index,name in enumerate(raw_names,1):
+        canonical=_display_name(name)
+        choices=[canonical] if canonical in assets.matrix_index else [
+            key for key in assets.matrix_index if key.startswith(canonical+"（")]
+        resolved=choices[0] if len(choices)==1 and choices[0] not in seen else None
+        if resolved:
+            names.append(resolved)
+            seen.add(resolved)
+        else:
+            marker=f"未判明相手{index}"
+            names.append(marker)
+            unresolved.append(marker)
+    if not unresolved or len(unresolved)>2 or len(seen)<4:
+        return None
+    return tuple(names),tuple(unresolved)
 
 
 def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
@@ -206,14 +305,24 @@ class SelectionPlanner:
     def choose(self, observation: Mapping[str, Any], assets: FrozenMatchAssets,
                tactical_call: Callable[[dict, float], Mapping[str, Any]],
                *, started_at: float, max_total_seconds: float = 35.0,
-               allow_test_without_matrix: bool = False) -> SelectionDecision:
+               allow_test_without_matrix: bool = False,
+               allow_partial: bool = False) -> SelectionDecision:
         details = _diagnostics(observation, assets)
+        partial=False
+        uncertain_names=()
         try:
             opponents = verify_selection_observation(observation, assets)
         except SelectionBlocked as exc:
-            return SelectionDecision("BLOCKED", reason=str(exc),
-                                     elapsed_ms=round((self.clock()-started_at)*1000),
-                                     **details)
+            candidate=(
+                partial_opponent_preview(observation,assets)
+                if allow_partial and str(exc) in _RETRYABLE_OPPONENT_REASONS
+                else None)
+            if candidate is None:
+                return SelectionDecision("BLOCKED", reason=str(exc),
+                                         elapsed_ms=round((self.clock()-started_at)*1000),
+                                         **details)
+            opponents,uncertain_names=candidate
+            partial=True
         compatible = matrix_matches_registered_team(assets)
         provisional = provisional_matrix_matches_registered_team(assets)
         if not compatible and not provisional and not allow_test_without_matrix:
@@ -226,8 +335,37 @@ class SelectionPlanner:
                                      elapsed_ms=round((self.clock()-started_at)*1000),
                                      **details)
         try:
-            context = decision_context(assets, opponents)
-            if provisional:
+            if partial:
+                known=tuple(n for n in opponents if n not in uncertain_names)
+                from .live_context import SELECTION_CHECKLIST
+                context={
+                    "selection_checklist": SELECTION_CHECKLIST,
+                    "lookup_rows_critical": [],
+                    "own_team": [dict(item) for item in assets.own_team],
+                    "own_roster_source": "PRELOADED_USER_SELECTED_TEAM_NOT_VISION",
+                    "opponent_six": list(opponents),
+                    "known_opponents": list(known),
+                    "unknown_opponent_slots": list(uncertain_names),
+                    "matrix_rows_six": list(assets.matrix_index[n] for n in known),
+                    "matrix_compatible": False,
+                    "matrix_provisional": True,
+                    "evidence_scope": "PARTIAL_VISUAL_HYPOTHESIS_ONLY",
+                    "frozen_gate": "",
+                    "instructions": (
+                        "Only four/five of the opponent's six were read reliably. "
+                        "Produce an EMERGENCY, UNCERTIFIED choice of three registered "
+                        "own Pokémon and lead by covering the KNOWN opponent matrix "
+                        "rows. Unknown placeholder names are NOT Pokémon; do not "
+                        "invent moves, counters, speed or safety for their slots. "
+                        "Favor broad defensive/priority coverage and preserve a "
+                        "stopper for unobserved threats. Full PREP is unavailable "
+                        "until the missing identity is confirmed. "
+                        "Do not claim this is validated or 6/6 coverage."
+                    ),
+                }
+            else:
+                context = decision_context(assets, opponents)
+            if provisional and not partial:
                 # The frozen base gate references a different battle team, so
                 # its old team-specific tactical conclusions cannot be reused.
                 context["frozen_gate"] = ""
@@ -244,7 +382,7 @@ class SelectionPlanner:
                     "opponent set or speed order without evidence. Usage is not proof. "
                     "Do not extrapolate SV/ZA move mechanics. This is advisory, NOT LIVE_READY."
                 )
-            elif not compatible:
+            elif not compatible and not partial:
                 context["instructions"] = (
                     "OFFLINE FUNCTION TEST ONLY: LIVE matrix belongs to another team; "
                     "do not use it for matchup evaluation. Select 3 and a lead from the "
@@ -259,11 +397,15 @@ class SelectionPlanner:
             if elapsed > max_total_seconds*1000:
                 return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
                                          **details)
-            status = "OK" if compatible else "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY"
+            status = ("PARTIAL_ADVICE" if partial else
+                      "OK" if compatible else
+                      "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY")
             return SelectionDecision(status,
                                      chosen, lead, opponents, elapsed_ms=elapsed,
-                                     reason="" if compatible else
-                                            "TACTICAL_CELLS_UNKNOWN" if provisional else "OWN_MATRIX_MISMATCH",
+                                     reason=("VISUAL_SLOT_UNCONFIRMED" if partial else
+                                             "" if compatible else
+                                             "TACTICAL_CELLS_UNKNOWN" if provisional else
+                                             "OWN_MATRIX_MISMATCH"),
                                      **details)
         except SelectionBlocked as exc:
             return SelectionDecision("BLOCKED", opponent_six=opponents, reason=str(exc),
@@ -300,14 +442,17 @@ def _japanese_selection_label(name: str) -> str:
 
 def selection_summary_ja(result: Mapping[str, Any]) -> str:
     """Player-facing concise Japanese summary; raw result stays diagnostic."""
-    if result.get("status") in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE"):
+    if result.get("status") in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE",
+                                "PARTIAL_ADVICE"):
         picked = result.get("selected_three") or ()
         lead = result.get("lead")
         if len(picked) == 3 and isinstance(lead, str):
             prefix = ("【構築別マトリクスなし・機能試験のみ】"
                       if result.get("status") == "TEST_ONLY" else
                       "【暫定AI推奨・処理役/安全受け未検証】"
-                      if result.get("status") == "PROVISIONAL_ADVICE" else "")
+                      if result.get("status") == "PROVISIONAL_ADVICE" else
+                      "【画像認識が一部未確定・既知の相手から暫定選出／PREP未完成】"
+                      if result.get("status") == "PARTIAL_ADVICE" else "")
             return prefix + "選出：" + " / ".join(_japanese_selection_label(n) for n in picked) + (
                 "　初手：" + _japanese_selection_label(lead))
     reason = str(result.get("reason", ""))
@@ -402,6 +547,52 @@ def selection_image_content(image, *, introduction: str,
     return content
 
 
+def selection_retry_image_content(image, *, introduction: str,
+                                  focus_slot: int | None = None) -> list[dict]:
+    """Changed evidence on retry: full screen + independent zoomed target.
+
+    First image sent by the LIVE call is a right-column crop. A second retry
+    must not send those same pixels/scales again. The focus region is an
+    unverified opponent slot, not a fabricated Pokémon identity.
+    """
+    from .vision_api_benchmark import jpeg_data_uri
+    import cv2
+    content=[{"type":"input_text","text":introduction}]
+    if not hasattr(image,"shape") or len(image.shape)!=3:
+        return selection_image_content(image,introduction=introduction,include_full=True)
+    height,width=image.shape[:2]
+    if width<480 or height<240 or not 1.15<=width/height<=3.0:
+        return selection_image_content(image,introduction=introduction,include_full=True)
+    content.append({"type":"input_image","image_url":jpeg_data_uri(image),
+                    "detail":"high"})
+    # A central portion of the opponent column is zoomed independently from
+    # the first 45%-width right-crop. Avoid enhancement that invents details.
+    x0=int(width*0.78)
+    x1=min(width,int(width*0.985))
+    slot=focus_slot if type(focus_slot) is int and 1<=focus_slot<=6 else None
+    if slot is not None:
+        # Team screen right side: six evenly spaced rows from approx 8%-83%.
+        center=(0.08+(slot-0.5)*0.125)*height
+        y0=max(0,int(center-0.11*height))
+        y1=min(height,int(center+0.11*height))
+    else:
+        y0=int(height*0.05)
+        y1=int(height*0.86)
+    crop=image[y0:y1,x0:x1,:].copy()
+    if crop.size:
+        factor=min(2.0,1200/max(crop.shape[:2]))
+        if factor>1.0:
+            crop=cv2.resize(crop,None,fx=factor,fy=factor,
+                            interpolation=cv2.INTER_NEAREST)
+        content.append({"type":"input_text","text":(
+            f"Extra enlarged RIGHT opponent slot {slot} only. "
+            "Compare sprite silhouette, types/icons and displayed name against "
+            "the full screen. If still unreadable, do not infer identity.")})
+        content.append({"type":"input_image","image_url":jpeg_data_uri(crop),
+                        "detail":"high"})
+    return content
+
+
 def run_selection_image(image, *, access_token: str, model: str,
                         assets: FrozenMatchAssets, total_seconds: float = 35.0,
                         client_factory=None, allow_test_without_matrix: bool = False,
@@ -449,14 +640,20 @@ def run_selection_image(image, *, access_token: str, model: str,
                 "identify distinct Pokémon/forms only when actually visible. "
                 "If any remains unreadable, omit it and mark the uncertain "
                 "opponent slot; do NOT infer from meta or the known player team. "
-                "Set our_six to []."
+                "Set our_six to []. " +
+                roster_constrained_retry_guidance(
+                    reason=reason,previous=previous,assets=assets)
             )
             return _stream_json(
                 client, model=model, schema=VISION_SCHEMA,
                 name="champions_opponent_six_retry",
-                reasoning_effort=reasoning_effort,
+                reasoning_effort="medium" if reasoning_effort in ("auto","low") else reasoning_effort,
                 instructions=correction,
-                content=selection_image_content(image,introduction=correction),
+                content=selection_retry_image_content(
+                    image,introduction="Use the FULL frame plus enlarged suspicious "
+                    "right slot; do not repeat the first read.",
+                    focus_slot=(unmatched_opponent_slots(previous,assets)[0]["slot"]
+                                if unmatched_opponent_slots(previous,assets) else None)),
             )
         visible, attempts = retry_unresolved_opponent_six(
             visible, assets, retry_view,

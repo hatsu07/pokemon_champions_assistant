@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 from types import MappingProxyType
 from champions_assist.preload import FrozenMatchAssets
-from champions_assist.selection_vision import SelectionPlanner, verify_selection_observation, SelectionBlocked, selection_summary_ja
+from champions_assist.selection_vision import (
+    SelectionPlanner, verify_selection_observation, SelectionBlocked,
+    selection_summary_ja, unmatched_opponent_slots,
+    roster_constrained_retry_guidance, retry_unresolved_opponent_six,
+    selection_retry_image_content,
+)
 
 OWN=("マスカーニャ","アシレーヌ","ガブリアス","ルカリオ → メガルカリオZ","サーフゴー","ミミッキュ")
 OPP=("ピカチュウ","ドドゲザン","ゲンガー","マリルリ","ギャラドス","カイリュー")
@@ -58,6 +63,137 @@ class SelectionVisionTest(unittest.TestCase):
         self.assertEqual(result.as_dict()["only_in_registered_team"],[])
         self.assertEqual(len(calls),1)
         self.assertEqual(calls[0]["own_roster_source"],"PRELOADED_USER_SELECTED_TEAM_NOT_VISION")
+
+    def test_out_of_roster_vision_hallucination_is_not_missing_ai_evidence(self):
+        # Captured on 2026-10-26: five correct English names, slot 3 was
+        # hallucinated as Gouging Fire instead of a valid Champions entry.
+        valid=(
+            "ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
+            "キラフロル","ウルガモス","カバルドン",
+        )
+        local=assets()
+        frozen=FrozenMatchAssets(
+            contents=local.contents,sha256=local.sha256,
+            matrix_index=MappingProxyType({p:p+"|matrix" for p in valid}),
+            lookup_index=local.lookup_index,own_team=local.own_team,
+            frozen_at=local.frozen_at,
+        )
+        first={
+            "visual_ui":"TEAM_SELECTION","our_six":[],
+            "opponent_six":["Rotom-Wash","Scizor","Gouging Fire",
+                            "Glimmora","Volcarona","Hippowdon"],
+            "uncertain_slots":[],
+        }
+        self.assertEqual(unmatched_opponent_slots(first,frozen),[
+            {"slot":3,"label":"Gouging Fire"}])
+        with self.assertRaisesRegex(SelectionBlocked,"OPPONENT_MATRIX_MISSING"):
+            verify_selection_observation(first,frozen)
+        guidance=roster_constrained_retry_guidance(
+            reason="OPPONENT_MATRIX_MISSING",previous=first,assets=frozen)
+        self.assertIn("3:Gouging Fire",guidance)
+        self.assertIn("クエスパトラ",guidance)
+        self.assertNotIn("MATRIX_CANONICAL_NAMES: Gouging Fire",guidance)
+        calls=[]
+        def model_retry(reason,previous):
+            calls.append((reason,tuple(previous["opponent_six"])))
+            return {**previous,"opponent_six":[
+                "Rotom-Wash","Scizor","Espathra","Glimmora",
+                "Volcarona","Hippowdon"]}
+        second,attempts=retry_unresolved_opponent_six(
+            first,frozen,model_retry,remaining_seconds=lambda:40.0)
+        self.assertEqual(attempts,2)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(verify_selection_observation(second,frozen),valid)
+        # No silent code-side substitution on a second wrong observation.
+        second_bad,again=retry_unresolved_opponent_six(
+            first,frozen,lambda reason,previous:dict(previous),
+            remaining_seconds=lambda:40.0)
+        self.assertEqual(again,2)
+        with self.assertRaises(SelectionBlocked):
+            verify_selection_observation(second_bad,frozen)
+
+    def test_after_second_visual_error_still_offers_partial_selection(self):
+        frozen=assets()
+        obs=observation()
+        obs["opponent_six"][2]="Gouging Fire"
+        calls=[]
+        def choose(context,remaining):
+            calls.append(context)
+            return {"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        planner=SelectionPlanner(clock=lambda:8.0)
+        # Default entrypoint stays strict so untrusted image results are
+        # never silently turned into incomplete selections.
+        strict=planner.choose(obs,frozen,choose,started_at=0)
+        self.assertEqual(strict.status,"BLOCKED")
+        self.assertEqual(calls,[])
+        # The live replay opts in only after an attempted revised visual read.
+        advisory=planner.choose(obs,frozen,choose,started_at=0,allow_partial=True)
+        self.assertEqual(advisory.status,"PARTIAL_ADVICE")
+        self.assertEqual(advisory.selected_three,OWN[:3])
+        self.assertEqual(advisory.lead,OWN[0])
+        self.assertEqual(advisory.opponent_six[2],"未判明相手3")
+        self.assertEqual(len(calls),1)
+        self.assertEqual(len(calls[0]["matrix_rows_six"]),5)
+        self.assertEqual(calls[0]["unknown_opponent_slots"],["未判明相手3"])
+        self.assertIn("PREP未完成",selection_summary_ja(advisory.as_dict()))
+
+    def test_retry_changes_image_evidence_not_same_right_crop(self):
+        import numpy as np
+        from unittest.mock import patch
+        img=np.zeros((600,1000,3),dtype=np.uint8)
+        # The 3rd opponent row has a distinctive pattern in the right slots.
+        img[210:275,780:980,:]=[80,155,245]
+        sent=[]
+        def uri(x):
+            sent.append(tuple(x.shape))
+            return "data:image/jpeg;base64,TEST"
+        with patch("champions_assist.vision_api_benchmark.jpeg_data_uri",side_effect=uri):
+            result=selection_retry_image_content(
+                img,introduction="Re-read enlarged slot",focus_slot=3)
+        self.assertEqual(sum(i["type"]=="input_image" for i in result),2)
+        self.assertEqual(sent[0],img.shape)
+        self.assertNotEqual(sent[1],img.shape)
+        self.assertLess(sent[1][1],img.shape[1])
+        self.assertGreater(sent[1][0],100)
+
+    def test_optional_second_request_timeout_preserves_first_five_names(self):
+        frozen=assets()
+        obs=observation()
+        obs["opponent_six"][2]="Gouging Fire"
+        def timeout(*args):
+            raise TimeoutError("a second-model read timeout")
+        second,attempts=retry_unresolved_opponent_six(
+            obs,frozen,timeout,remaining_seconds=lambda:40.0)
+        self.assertEqual(attempts,2)
+        self.assertEqual(second["_retry_error_type"],"TimeoutError")
+        self.assertEqual(second["opponent_six"][:2],list(OPP[:2]))
+        planner=SelectionPlanner(clock=lambda:8.0)
+        result=planner.choose(second,frozen,
+            lambda context,_:{"selected_three":list(OWN[:3]),"lead":OWN[0]},
+            started_at=0,allow_partial=True)
+        self.assertEqual(result.status,"PARTIAL_ADVICE")
+        self.assertEqual(result.opponent_six[2],"未判明相手3")
+
+    def test_retry_never_runs_after_time_budget_exhausted(self):
+        valid=("ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
+               "キラフロル","ウルガモス","カバルドン")
+        local=assets()
+        frozen=FrozenMatchAssets(
+            contents=local.contents,sha256=local.sha256,
+            matrix_index=MappingProxyType({p:p+"|matrix" for p in valid}),
+            lookup_index=local.lookup_index,own_team=local.own_team,
+            frozen_at=local.frozen_at,
+        )
+        first={"visual_ui":"TEAM_SELECTION","opponent_six":[
+            "Rotom-Wash","Scizor","Gouging Fire","Glimmora",
+            "Volcarona","Hippowdon"],"uncertain_slots":[]}
+        called=[]
+        data,count=retry_unresolved_opponent_six(
+            first,frozen,lambda *args:called.append(args),
+            remaining_seconds=lambda:9.0,reserve_seconds=21.0)
+        self.assertEqual(count,1)
+        self.assertFalse(called)
+        self.assertEqual(data["opponent_six"][2],"Gouging Fire")
 
     def test_mismatched_matrix_blocks_ordinary_selection_but_allows_labeled_function_test(self):
         original=assets()

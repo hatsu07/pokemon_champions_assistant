@@ -339,9 +339,19 @@ class SelectionTestDialog(QDialog):
             +"\n初手: "+str(report.get("lead") or "なし")
             +"\n所要時間: "+str(elapsed)+" ms"
             +"\n認識回数: "+str(report.get("opponent_recognition_attempts","不明"))
-            +"\n"+("未検証理由" if status=="PROVISIONAL_ADVICE" else "失敗理由")
+            +"\n"+("未検証理由" if status in ("PROVISIONAL_ADVICE","PARTIAL_ADVICE") else "失敗理由")
             +": "+str(report.get("reason","なし"))
         )
+        unmatched=report.get("unmatched_opponent_slots") or []
+        if unmatched and status in ("BLOCKED","PARTIAL_ADVICE"):
+            formatted=" / ".join(
+                f"{entry.get('slot','?')}番目: {entry.get('label','?')}"
+                for entry in unmatched if isinstance(entry,dict))
+            if formatted:
+                result+=(
+                    "\nLIVEマトリクス照合不可: "+formatted+
+                    "\n※画像認識候補であり、実際のポケモンではない可能性があります。"
+                    " 元の対面AI評価データは削除されていません。")
         if "matrix_ai_hint_rows" in report:
             result += (
                 f"\n構築別マトリクスAI評価: {report['matrix_ai_hint_rows']}/6匹、"
@@ -368,7 +378,11 @@ class SelectionTestDialog(QDialog):
                 f"選出を{self.selection_display_elapsed_ms/1000:.3f}秒で表示しました。"
                 " 同じ6匹と選出3匹でPREP18対面を自動実行します…")
         else:
-            self.timing_status.setText("選出が確定できず、自動PREPは実行しません。")
+            self.timing_status.setText(
+                "未判明の相手があるため、既知の相手から暫定選出しました。"
+                "PREP18対面の完了は未達として扱います。"
+                if status=="PARTIAL_ADVICE" else
+                "選出が確定できず、自動PREPは実行しません。")
         if self.log:
             self.log.report(report,event="SELECTION_TEST_RESULT")
             self.log.write("SELECTION_TEST_DONE",status=status,
