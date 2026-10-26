@@ -1183,7 +1183,8 @@ class MatchReplayDialog(QDialog):
                 and self.state is not None
                 and self.state.get("phase") in ("MATCHMAKING","SELECTION")
                 and self._pending_screen_label in (None,"TEAM_SELECTION")
-                and report.get("status") in ("OK","PROVISIONAL_ADVICE","TEST_ONLY")
+                and report.get("status") in ("OK","PROVISIONAL_ADVICE",
+                                             "PARTIAL_ADVICE","TEST_ONLY")
                 and len(report.get("selected_three") or ())==3
                 and report.get("lead")):
             self._pending_batch=None
@@ -1240,7 +1241,8 @@ class MatchReplayDialog(QDialog):
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
         if (report.get("screen")=="TEAM_SELECTION"
-                and report.get("status") in ("OK","PROVISIONAL_ADVICE","TEST_ONLY")
+                and report.get("status") in (
+                    "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
                 and len(report.get("selected_three") or ())==3 and report.get("lead")
                 and not superseded):
             self._proposed_selection=(tuple(report["selected_three"]),report["lead"])
@@ -1270,7 +1272,9 @@ class MatchReplayDialog(QDialog):
                 if self._proposed_prep_payload is not None:
                     cache=self._proposed_prep_payload
                     if cache.get("report",{}).get("status") in (
-                            "PREP_STRUCTURE_OK","PREP_PROVISIONAL"):
+                            "PREP_STRUCTURE_OK","PREP_PROVISIONAL","PREP_PARTIAL",
+                            "PREP_CACHE_REUSED","PREP_CACHE_KNOWN_ONLY",
+                            "PREP_CACHE_INCOMPLETE"):
                         self.state=cache["state"]
                         self._trace_event("PROVISIONAL_PREP_CONFIRMED")
                     else:
@@ -1356,7 +1360,11 @@ class MatchReplayDialog(QDialog):
         if not provisional:
             self.state["prep_status"]="RUNNING"
         self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000),
-                          status="PROVISIONAL" if provisional else "ACTUAL")
+                          status="PROVISIONAL" if provisional else "ACTUAL",
+                          known_opponents=(
+                              len(prep_state.get("opponent_six",[]))-
+                              len(prep_state.get("visual_unknown_opponents") or [])),
+                          unknown_opponents=len(prep_state.get("visual_unknown_opponents") or []))
         self._prep_thread=QThread(self)
         self._prep_worker=_ReplayWorker(
             app_root=self.store_root, selected_model=self.model,
@@ -1373,10 +1381,16 @@ class MatchReplayDialog(QDialog):
         self._prep_thread.finished.connect(self._prep_thread.deleteLater)
         self._prep_thread.finished.connect(self._prep_cleanup)
         self._prep_timer.start(int(self._prep_budget_seconds*1000))
+        unknown_count=len(prep_state.get("visual_unknown_opponents") or [])
+        known_count=6-unknown_count
         self._render({"status":"PREP_PROVISIONAL_RUNNING" if provisional else "PREP_RUNNING",
-                      "message":("提案選出に基づく暫定PREPを先行計算中。"
-                                 if provisional else "実際の選出でPREPを計算中。")
-                                +f"（残り {self._prep_budget_seconds:.1f}秒上限）"})
+                      "message":(
+                          f"既知{known_count}/6匹・{3*known_count}対面の"
+                          "暫定PREPを実行中（未知の相手は未評価）。"
+                          if unknown_count else
+                          "提案選出に基づく18対面PREPを先行計算中。"
+                          if provisional else "実際の選出で18対面PREPを計算中。")
+                          +f"（残り {self._prep_budget_seconds:.1f}秒上限）"})
         self._prep_thread.start()
 
     def _interrupt_prep(self):
