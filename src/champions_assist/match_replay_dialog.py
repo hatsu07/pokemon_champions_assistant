@@ -261,6 +261,7 @@ class MatchReplayDialog(QDialog):
     state_changed = Signal(object, object)
     ai_status_changed = Signal(str)
     live_clock_changed = Signal(str)
+    shutdown_finished = Signal()
 
     def __init__(self, *, model: str, master_directory: str, team_path: str,
                  capture_config: CaptureConfiguration | None = None,
@@ -306,6 +307,8 @@ class MatchReplayDialog(QDialog):
         self._capture_error_count=0
         self._capture_paused=False
         self._cancel_event=Event()
+        self._shutdown_intent=None
+        self._shutdown_ready=False
         self._auto_running=False
         self._dataset_session_id=None
         self._background_capture=None
@@ -345,6 +348,7 @@ class MatchReplayDialog(QDialog):
         self._prep_timer=QTimer(self)
         self._prep_timer.setSingleShot(True)
         self._prep_timer.timeout.connect(self._prep_deadline)
+        self.shutdown_finished.connect(self._on_shutdown_finished)
         self._ai_request_attempts=0
         self._ai_last_status="AI未送信（撮影・メニュー認識待ち）"
         panel=QVBoxLayout(self)
@@ -490,7 +494,9 @@ class MatchReplayDialog(QDialog):
         self._render({"status":"NOT_STARTED"})
 
     def _new_match(self):
-        if self._thread is not None or self._prep_thread is not None:return
+        if (self._shutdown_intent is not None or self._thread is not None
+                or self._prep_thread is not None):
+            return
         if self._auto_running:
             QMessageBox.warning(self, "停止が必要", "自動送信を停止してから新しい対戦を開始してください。")
             return
@@ -565,7 +571,52 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"テスト開始不可",str(exc))
 
     def _reset(self):
-        if self._thread is not None or self._prep_thread is not None:return
+        self.request_shutdown("reset")
+
+    def request_shutdown(self, intent="close"):
+        """Cancel new work now, complete reset/close after worker threads exit.
+
+        QThread termination/deletion while executing an API request is unsafe.
+        Cancellation is cooperative; the in-flight HTTP request may still need
+        to reach its bounded timeout. Never make the user retry Stop/Reset/Close.
+        """
+        if intent not in ("reset","close"):
+            raise ValueError("UNKNOWN_SHUTDOWN_INTENT")
+        if self._shutdown_intent=="close":
+            return
+        self._shutdown_intent=intent
+        self._shutdown_ready=False
+        self._restart_prep_after_cleanup=False
+        self._stop_auto()
+        self._interrupt_prep()
+        self._pending_batch=None
+        self._pending_screen_label=None
+        self._set_ai_status("停止要求済み／実行中のAI通信を破棄し終了処理へ移行")
+        self.reset_button.setEnabled(False)
+        self._maybe_finish_shutdown()
+
+    def _maybe_finish_shutdown(self):
+        if self._shutdown_intent is None:
+            return
+        if self._thread is not None or self._prep_thread is not None:
+            return
+        intent=self._shutdown_intent
+        self._shutdown_intent=None
+        if intent=="reset":
+            self._perform_reset()
+            self.reset_button.setEnabled(True)
+        else:
+            self._shutdown_ready=True
+            # Queued emission avoids recursively closing the embedded panel
+            # from inside Qt's existing closeEvent/finished slot.
+            QTimer.singleShot(0,self.shutdown_finished.emit)
+
+    @Slot()
+    def _on_shutdown_finished(self):
+        if self._shutdown_ready and not self.embedded:
+            self.close()
+
+    def _perform_reset(self):
         self._trace_event("MATCH_RESET")
         self._stop_auto()
         self._turn_buffer.reset_turn()
@@ -709,7 +760,7 @@ class MatchReplayDialog(QDialog):
         )
 
     def _start_auto(self):
-        if self._thread is not None or self._auto_running:
+        if self._shutdown_intent is not None or self._thread is not None or self._auto_running:
             return
         if self.state is None or self.assets is None:
             QMessageBox.warning(self, "未開始", "先に新しい対戦を開始してください。")
@@ -882,6 +933,8 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"撮影失敗",str(exc))
 
     def _queue_batch(self,frames, *, screen_label=None):
+        if self._shutdown_intent is not None:
+            return
         if not self._auto_running and not self._manual_submission:
             return
         # During selection the first outstanding recognition+tactical request
@@ -937,7 +990,8 @@ class MatchReplayDialog(QDialog):
         self._send_pending()
 
     def _send_pending(self):
-        if self._thread is not None or self._pending_batch is None:
+        if (self._shutdown_intent is not None or self._thread is not None
+                or self._pending_batch is None):
             return
         if self.state is None or self.state.get("phase")=="ENDED":
             self._pending_batch=None
@@ -1093,6 +1147,10 @@ class MatchReplayDialog(QDialog):
 
     @Slot(object)
     def _completed(self, payload):
+        if self._shutdown_intent is not None or self._cancel_event.is_set():
+            # A stopped HTTP request can still return a result. Never apply
+            # its stale action, advance the match, or dispatch more captures.
+            return
         report=payload["report"]
         if self._active_request_started is not None:
             report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
@@ -1364,14 +1422,21 @@ class MatchReplayDialog(QDialog):
     def _prep_cleanup(self):
         self._prep_thread=None
         self._prep_worker=None
+        if self._shutdown_intent is not None:
+            self._maybe_finish_shutdown()
+            return
         if self._restart_prep_after_cleanup:
             self._restart_prep_after_cleanup=False
             if self.state is not None and self.state.get("phase")=="PREP":
                 self._start_prep_auto()
 
     def _set_busy(self,busy):
-        for widget in (self.start_button,self.reset_button,self.confirm_button,self.prep_button,self.auto_button,self.reconnect_button):
+        # Stop and Reset must remain reachable during network requests.
+        for widget in (self.start_button,self.confirm_button,self.prep_button,
+                       self.reconnect_button):
             widget.setEnabled(not busy)
+        self.reset_button.setEnabled(self._shutdown_intent is None and not busy)
+        self.auto_button.setEnabled(True)
 
     @Slot()
     def _cleanup(self):
@@ -1381,6 +1446,13 @@ class MatchReplayDialog(QDialog):
         self._active_job=None
         self._inflight_screen_label=None
         self._set_busy(False)
+        if self._shutdown_intent is not None:
+            self._maybe_finish_shutdown()
+            return
+        if self._cancel_event.is_set():
+            # Stop alone cancels the pending batch. Never restart PREP after
+            # a stopped capture session.
+            return
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
         elif (self.state is not None and self.state.get("phase")=="SELECTION"
@@ -1530,12 +1602,12 @@ class MatchReplayDialog(QDialog):
             QMessageBox.warning(self,"保存不可","指定の場所に書き込めません。")
 
     def closeEvent(self, event):
-        self._stop_auto()
-        if self._thread is not None or self._prep_thread is not None:
-            # Never destroy a QThread while a network request is still
-            # running. Closing will be possible after it completes.
+        if not self._shutdown_ready and (
+                self._thread is not None or self._prep_thread is not None):
+            self.request_shutdown("close")
             event.ignore()
             return
+        self._stop_auto()
         if self._debug_log is not None:
             self._debug_log.write("WINDOW_CLOSED")
         super().closeEvent(event)
