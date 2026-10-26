@@ -6,6 +6,7 @@ The LIVE decision path continues to use frozen 4 files, never SQLite.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -156,7 +157,7 @@ class MatchupLearningStore:
         """
         imported=files=skipped=0
         directories = sorted((self.root/"live-team-assets").glob("*/*/matchup-evidence.json"))
-        with self._db() as db:
+        with closing(self._db()) as db:
             for catalog_path in directories[:max_catalogs]:
                 try:
                     raw=catalog_path.read_bytes()
@@ -194,7 +195,7 @@ class MatchupLearningStore:
         raw=path.read_bytes()
         data=json.loads(raw)
         sha=sha256(raw).hexdigest()
-        with self._db() as db:
+        with closing(self._db()) as db:
             rows=db.execute("""SELECT pc.opponent,pc.slot,pc.proposal_schema
                 FROM proposal_cells pc JOIN proposal_files pf
                 ON pc.file_sha=pf.file_sha WHERE pf.catalog_sha=?""",(sha,)).fetchall()
@@ -243,7 +244,7 @@ class MatchupLearningStore:
         payload=_json(snapshot)
         if len(payload)>150000:
             raise ConfigurationError("実戦観測記録がサイズ上限を超えました")
-        with self._db() as db:
+        with closing(self._db()) as db:
             if db.execute("SELECT 1 FROM match_history WHERE match_id=?",
                           (match_id,)).fetchone():
                 return False
@@ -268,7 +269,7 @@ class MatchupLearningStore:
             return True
 
     def pending_match(self, match_id: str) -> dict | None:
-        with self._db() as db:
+        with closing(self._db()) as db:
             row=db.execute("""SELECT team_id,payload FROM match_history
                 WHERE match_id=? AND NOT EXISTS(
                   SELECT 1 FROM postmatch_reviews WHERE match_id=?)""",
@@ -295,7 +296,7 @@ class MatchupLearningStore:
                     or item["certainty"] not in ("OBSERVED_CANDIDATE","HYPOTHESIS")
                     or any(not isinstance(v,str) or len(v)>180 for v in item.values())):
                 raise ConfigurationError("対戦後評価に未検証の断定か不正データがあります")
-        with self._db() as db:
+        with closing(self._db()) as db:
             with db:
                 row=db.execute("SELECT team_id FROM match_history WHERE match_id=?",
                                (match_id,)).fetchone()
@@ -310,7 +311,7 @@ class MatchupLearningStore:
 
     def recent_review_notes(self, team_id: str, *, limit: int = 10,
                             team_signature: str | None = None) -> list[dict]:
-        with self._db() as db:
+        with closing(self._db()) as db:
             rows=db.execute("""SELECT r.review_json,m.payload FROM postmatch_reviews r
                  JOIN match_history m ON r.match_id=m.match_id
                  WHERE r.team_id=? ORDER BY r.reviewed_at DESC LIMIT ?""",
