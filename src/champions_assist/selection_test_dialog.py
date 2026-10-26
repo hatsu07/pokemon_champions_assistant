@@ -464,8 +464,12 @@ class SelectionTestDialog(QDialog):
         self.selection_started_at=None
         self.selection_display_elapsed_ms=None
         self.turn_image=None
+        self.switch_image=None
+        self.event_image=None
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
+        self.switch_run_button.setEnabled(False)
+        self.event_run_button.setEnabled(False)
         h,w=self.image.shape[:2]
         frame=QImage(self.image.data,w,h,self.image.strides[0],QImage.Format.Format_RGB888)
         self.image_label.setPixmap(
