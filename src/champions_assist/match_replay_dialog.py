@@ -1081,6 +1081,11 @@ class MatchReplayDialog(QDialog):
                 # also fire an unrelated image-change gate for UNKNOWN frames.
                 return
 
+        if self._thread is not None and self._active_job=="batch":
+            # Do not acknowledge/consume a fallback scene transition while
+            # GPT is already working. Otherwise the newer command frame can
+            # disappear from the gate *without ever being submitted*.
+            return
         if self._automatic_probe.observe(image,phase):
             # No bundled trained model: bounded fallback only. ChatGPT must
             # classify the screenshot before generating any tactical choice.
@@ -1407,7 +1412,9 @@ class MatchReplayDialog(QDialog):
             current="画面をAI認識・行動判断中"
             window=55 if phase in ("MATCHMAKING","SELECTION") else 30
             remaining=max(0,int(window-elapsed))
-            clock=f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
+            clock=(f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
+                   + ("／ターン45秒中15秒を操作用に確保"
+                      if phase in ("PREP","BATTLE") else ""))
         elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
             current="PREP：既存対面評価と勝ち筋を確認中"
             remaining=max(0,self._prep_timer.remainingTime()//1000)
