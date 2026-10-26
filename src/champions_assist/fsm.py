@@ -359,7 +359,18 @@ class MatchSession:
         self.actual_selected_three = selected_three
         self.actual_lead = lead
         self.prep_input = build_prep_input(selected_three, lead, self.opponent_preview_six, self.matrix_rows_six)
-        self.prep_deadline = Deadline(now_ms, _deadline_budget(40_000, actual_ui_remaining_ms))
+        # Historical phase identifier S04_PREP_40S remains wire-compatible;
+        # its deadline is now the *shared* 90s selection clock minus 3s
+        # reserved for player input, not an independent 40s window.
+        selection_started_ms = (
+            self.selection_deadline.created_at_ms
+            if self.selection_deadline is not None else now_ms)
+        shared_remaining_ms = max(0, 87_000 - (now_ms - selection_started_ms))
+        self.prep_deadline = Deadline(
+            now_ms,
+            _deadline_budget(shared_remaining_ms, actual_ui_remaining_ms,
+                             reserve_ms=3_000 if actual_ui_remaining_ms is not None else 0),
+        )
         self.phase = MatchPhase.S04_PREP_40S
         differs = self.selection_recommendation is not None and self.selection_recommendation.selected_three != selected_three
         self._audit("ACTUAL_SELECTION_LOCKED", selected_three=list(selected_three), lead=lead, differs_from_model=differs)
