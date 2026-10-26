@@ -120,3 +120,27 @@ def cached_pairs(assets, selected_three: tuple[str, ...],
 def cached_evidence_count(rows: list[dict]) -> int:
     return sum(r.get("source") in ("REVIEWED_CELL", "AI_HINT")
                for r in rows)
+
+
+def validate_cached_preparation(assets, selected_three: tuple[str, ...],
+                                known_opponents: tuple[str, ...], lead: str,
+                                rows: list[dict],
+                                roles: tuple[str, str, str]) -> tuple[bool, int]:
+    """Check every reused byte against frozen cache; no generated content.
+
+    Returns (complete-evidence-and-roles, evidence-count). A missing row stays
+    missing even if other entries seem favorable or have a type advantage.
+    """
+    if (len(selected_three) != 3 or len(set(selected_three)) != 3
+            or lead not in selected_three
+            or len(known_opponents) not in (4, 5, 6)
+            or len(set(known_opponents)) != len(known_opponents)
+            or any(role not in selected_three for role in roles)):
+        return False, 0
+    expected = cached_pairs(assets, selected_three, known_opponents, lead)
+    if (len(expected) != 3 * len(known_opponents)
+            or len(rows) != len(expected)
+            or rows != expected):
+        return False, 0
+    count = cached_evidence_count(rows)
+    return count == len(expected), count
