@@ -31,7 +31,12 @@ def publish_postmatch_notes(*, data_root: str | Path, team_id: str,
     before=matrix_path.read_bytes()
     if sha256(before).hexdigest()!=manifest.get("matrix_sha256"):
         raise ConfigurationError("LIVEマトリクスの監査SHAが不一致です")
-    reviews=MatchupLearningStore(data_root).recent_review_notes(team_id,limit=15)
+    store=MatchupLearningStore(data_root)
+    if not store.db_path.is_file():
+        return {"postmatch_hint_rows":0,"status":"NO_FINISHED_REVIEWS"}
+    reviews=store.recent_review_notes(team_id,limit=15)
+    if not reviews and manifest.get("postmatch_hint_rows",0)==0:
+        return {"postmatch_hint_rows":0,"status":"NO_FINISHED_REVIEWS"}
     matched={}
     for review in reviews:
         for item in review.get("findings",[])[:8]:
@@ -64,10 +69,13 @@ def publish_postmatch_notes(*, data_root: str | Path, team_id: str,
     rendered="\n".join(output)+"\n"
     if rendered!=raw:
         atomic_write_text(matrix_path,rendered)
-    manifest["matrix_sha256"]=sha256(rendered.encode("utf-8")).hexdigest()
-    manifest["postmatch_hint_rows"]=appended
-    manifest["postmatch_hint_source"]="AI_HYPOTHESIS_NOT_OBSERVED_FACT"
-    atomic_write_text(manifest_path,json.dumps(
-        manifest,ensure_ascii=False,sort_keys=True,indent=2))
+    updated_sha=sha256(rendered.encode("utf-8")).hexdigest()
+    if (manifest.get("matrix_sha256")!=updated_sha
+            or manifest.get("postmatch_hint_rows")!=appended):
+        manifest["matrix_sha256"]=updated_sha
+        manifest["postmatch_hint_rows"]=appended
+        manifest["postmatch_hint_source"]="AI_HYPOTHESIS_NOT_OBSERVED_FACT"
+        atomic_write_text(manifest_path,json.dumps(
+            manifest,ensure_ascii=False,sort_keys=True,indent=2))
     return {"postmatch_hint_rows":appended,
             "status":"NEXT_MATCH_ADVISORY_ONLY"}
