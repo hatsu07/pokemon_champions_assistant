@@ -18,7 +18,6 @@ class LocalBattleStateTracker:
             raise ValueError("max_events must be positive")
         self._events: deque[LocalFieldRead]=deque(maxlen=max_events)
         self._latest: dict[str,LocalFieldRead]={}
-        self._seen: set[tuple[str,str,str]] =set()
         self.duplicates=0
         self.conflicts=0
 
@@ -34,13 +33,8 @@ class LocalBattleStateTracker:
                 self.duplicates+=1
                 continue
             status="CANDIDATE"
-            if (previous and previous.value!=row.value
-                    and row.field.startswith("screen_text.")
-                    and row.field not in (
-                        "screen_text.battle_message",
-                        "screen_text.own_item_popup",
-                        "screen_text.opponent_effect_popup",
-                        "screen_text.system_message")):
+            if (previous and previous.frame_id==row.frame_id
+                    and previous.value!=row.value):
                 status="CONFLICT"
                 self.conflicts+=1
             if status!=row.status:
@@ -67,6 +61,5 @@ class LocalBattleStateTracker:
     def clear(self) -> None:
         self._events.clear()
         self._latest.clear()
-        self._seen.clear()
         self.duplicates=0
         self.conflicts=0
