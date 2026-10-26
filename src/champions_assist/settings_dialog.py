@@ -714,8 +714,7 @@ class SettingsDialog(QDialog):
         self._refresh_windows()
         self._refresh_teams()
         from .vision_preferences import VisionPreferenceStore
-        from .app_config import default_app_root
-        preference=VisionPreferenceStore(default_app_root())
+        preference=VisionPreferenceStore(self.service.store.path.parent.parent)
         index=self.screen_device_box.findData(preference.screen_device())
         self.screen_device_box.setCurrentIndex(max(0,index))
         self.screen_gpu_id.setValue(preference.screen_gpu_id())
@@ -1486,8 +1485,7 @@ class SettingsDialog(QDialog):
             if self._selected_team_id is not None:
                 self.service.select_team(self._selected_team_id, match_active=self._match_active())
             from .vision_preferences import VisionPreferenceStore
-            from .app_config import default_app_root
-            VisionPreferenceStore(default_app_root()).save_screen_device(
+            VisionPreferenceStore(self.service.store.path.parent.parent).save_screen_device(
                 str(self.screen_device_box.currentData()),
                 self.screen_gpu_id.value())
             self.storage_status.setText(f"保存先: {status}")
