@@ -131,7 +131,7 @@ class SelectionDetailImageTests(unittest.TestCase):
         self.assertEqual(report["opponent_recognition_attempts"],2)
         self.assertEqual(len(calls.calls),3)
         self.assertIn("OPPONENT_TYPE_MISMATCH",calls.calls[1]["instructions"])
-        self.assertIn("type icons",calls.calls[0]["instructions"])
+        self.assertIn("type GLYPHS",calls.calls[0]["instructions"])
         self.assertIn("opponent_type_icons",
                       calls.calls[0]["text"]["format"]["schema"]["required"])
         self.assertEqual(state["opponent_six"],list(OPP))
