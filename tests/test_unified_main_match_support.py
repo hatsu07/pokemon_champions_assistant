@@ -741,6 +741,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
 
     def test_model_picker_selects_onnx_file_and_restores_path(self):
         panel=self.window._match_panel
+        panel.store_root=self.root/"picker-local-settings"
         model=object()
         model_path=self.root/"five-class-model"/"champions_screen_classifier.onnx"
         model_path.parent.mkdir()
@@ -760,11 +761,12 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(stored["model_path"],str(model_path.resolve()))
         self.assertIs(stored["trial_opt_in"],False)
         self.assertEqual(loader.call_count,2)
-        self.assertEqual(loader.call_args.kwargs["model_path"],model_path)
+        self.assertEqual(loader.call_args.kwargs["model_path"],model_path.resolve())
 
     def test_trial_picker_warning_and_restart_warning(self):
         from types import SimpleNamespace
         panel=self.window._match_panel
+        panel.store_root=self.root/"trial-local-settings"
         model=SimpleNamespace(experimental=True)
         model_path=self.root/"trial.onnx"
         model_path.write_bytes(b"fixture")
@@ -808,6 +810,8 @@ class UnifiedMainWindowTests(unittest.TestCase):
 
     def test_legacy_model_directory_setting_remains_readable(self):
         panel=self.window._match_panel
+        panel.store_root=self.root/"legacy-local-settings"
+        panel.store_root.mkdir(parents=True)
         old=self.root/"old-model"
         old.mkdir()
         (panel.store_root/"screen_classifier_choice.json").write_text(
