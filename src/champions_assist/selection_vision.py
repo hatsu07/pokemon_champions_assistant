@@ -185,6 +185,15 @@ def verify_selection_observation(raw: Mapping[str, Any], assets: FrozenMatchAsse
         raise SelectionBlocked("OPPONENT_SIX_DUPLICATES")
     if raw.get("uncertain_slots"):
         raise SelectionBlocked("UNCERTAIN_TEAM_SLOT")
+    # Legacy/manual observations may have no icon field, but a real GPT
+    # structured response must not silently drop, reorder, or duplicate slots.
+    if "opponent_type_icons" in raw:
+        icons = raw["opponent_type_icons"]
+        if (not isinstance(icons, list) or len(icons) != 6 or
+                any(not isinstance(row, list) or len(row) > 2 or
+                    any(not isinstance(name, str) for name in row)
+                    for row in icons)):
+            raise SelectionBlocked("OPPONENT_TYPE_EVIDENCE_INVALID")
     # Species-only names may be under a fully qualified form key in the
     # matrix. Resolve them ONLY if there is precisely one matching candidate.
     # e.g. Raichu with normal + Alolan forms must remain ambiguous.
@@ -249,6 +258,12 @@ def roster_constrained_retry_guidance(
     Names listed here are only a vocabulary, not observations. No external
     game database/web request is performed; this is safe inside LIVE timing.
     """
+    if reason == "OPPONENT_TYPE_EVIDENCE_INVALID":
+        return (
+            "Read six independently indexed RIGHT type-icon arrays; "
+            "0-2 visually supported types per slot and [] if unreadable. "
+            "Do not drop a slot or infer icons from a candidate species. "
+        )
     if reason == "OPPONENT_TYPE_MISMATCH":
         return (
             "First-read icon glyphs DISAGREE with the candidate's frozen "
@@ -292,6 +307,7 @@ _RETRYABLE_OPPONENT_REASONS = frozenset({
     "OPPONENT_SIX_INCOMPLETE", "OPPONENT_SIX_DUPLICATES",
     "UNCERTAIN_TEAM_SLOT", "OPPONENT_FORM_AMBIGUOUS",
     "OPPONENT_MATRIX_MISSING", "OPPONENT_TYPE_MISMATCH",
+    "OPPONENT_TYPE_EVIDENCE_INVALID",
 })
 
 
@@ -545,6 +561,7 @@ _BLOCK_REASONS_JA = {
     "OPPONENT_MATRIX_MISSING": "相手の一部がLIVEマトリクスにありません。",
     "OPPONENT_FORM_AMBIGUOUS": "相手のフォルムを特定できません。",
     "OPPONENT_TYPE_MISMATCH": "ポケモン候補とタイプアイコンの読み取りが矛盾しています。",
+    "OPPONENT_TYPE_EVIDENCE_INVALID": "相手6枠のタイプアイコンの認識形式が不完全です。",
     "INVALID_SELECTION": "選出候補3匹が正しくありません。",
     "SELECTION_OUTSIDE_REGISTERED_TEAM": "登録構築にいないポケモンが選ばれました。",
     "LEAD_NOT_SELECTED": "初手が選出3匹に含まれていません。",
