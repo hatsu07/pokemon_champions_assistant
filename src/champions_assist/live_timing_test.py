@@ -195,7 +195,7 @@ def turn_timing_test(
     recommendation = report.get("recommendation") or ""
     legal = (
         report.get("status") in ADVICE_STATUSES
-        and report.get("observed_ui") in ("MOVE_MENU", "PARTY_MENU")
+        and report.get("screen") in ("MOVE_MENU", "PARTY_MENU")
         and action.get("kind") in ("MOVE", "SWITCH", "PIVOT")
         and isinstance(recommendation, str) and bool(recommendation.strip())
     )
@@ -212,6 +212,6 @@ def turn_timing_test(
         "action_kind": action.get("kind", ""),
         "recommendation": recommendation if passed else "",
         "pass": passed,
-        "screen_observation": report.get("observed_ui", "UNKNOWN"),
+        "screen_observation": report.get("screen", "UNKNOWN"),
         "scope": "OFFMATCH_SAVED_SCREENSHOT_NOT_LIVE_GAME_CERTIFICATION",
     }
