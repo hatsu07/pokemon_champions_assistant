@@ -18,3 +18,11 @@
 - ローカル認識から20秒を超過したリクエストを送らない。進行中の期限切れ応答／前ターンの古い応答を表示しない。
 - Issue #78の非同期OCR・タイマー非依存・イベントメッセージの蓄積と共存する。
 - Windows CI／GUIスモークはロジックと起動確認のみ。ゲーム内45秒・実機正確性はBlueStacksで別途確認する。
+
+## デバッグログ（通常モード、個人ローカル）
+- ユーザーデータ領域 `debug-logs/capture-<id>.jsonl` へ**画面画像・OCR生テキスト・チーム情報・APIキー・リクエスト本文を含めず**イベントとメタデータのみ出す（上限3MiB・直近20件）。
+- `SCREEN_CLASSIFIER_CHANGED` と3秒ごとの `SCREEN_CLASSIFIER_SAMPLE` は、画面ラベル、実行プロバイダー、確信度、2位との差、分類推論時間、連番 `frame_seq` を記録。`SCREEN_GATE_DISPATCH` でAI送信の起点になった判定を記録する。**ゲーム画像そのものは残さないので分類の正解率をこれだけで検証したとは言えない。**
+- `LOCAL_OCR_STARTED` / `LOCAL_OCR_EVENT_QUEUED` / `LOCAL_OCR_CANDIDATES` / `LOCAL_OCR_ERROR` と、行動選択時の `LOCAL_OCR_TURN_SUMMARY` で投入数・処理完了数・領域読取数・解析成功数・キューあふれ・結果廃棄・OCR時間・AIへ渡す候補数を集計する。**OCR内容はログに書かない。** タイマーOCRも行動画面でのOCRも追加しない。
+- `TURN_SCREEN_OBSERVED` → `AI_REQUEST_DISPATCH` → `AUTH_CHECK` → `IMAGE_REQUEST_WAIT` → `AI_RESULT_DISPLAYED` と、期限切れ・古い応答破棄のイベントで、`turn_epoch` / `frame_seq` / `ai_request_attempt` と経過時間を突き合わせる。
+- `BATTLE_EVENT` と `OTHER` の短い交互出現は正常なゲーム演出。切替頻度だけではモデルの誤分類とは判定しない。画像と分類の実画面対応が必要なら、ユーザーの明示操作による既存の**ローカル学習画像収集**と別途実機レビューを使う。デバッグJSONLが勝手にスクリーンショットを保存することはない。
+- 分類器に最初に検知される時刻は**ゲーム内45秒の開始を保証しない**。ログにある残り時間はローカルの保守的上限のみ。
