@@ -761,8 +761,15 @@ class MatchReplayDialog(QDialog):
         except (AutoCaptureUnavailable,OSError,ValueError) as exc:
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
 
+    def _screen_gpu_settings(self):
+        from .vision_preferences import VisionPreferenceStore
+        prefs=VisionPreferenceStore(self.store_root)
+        return prefs.screen_device(),prefs.screen_gpu_id()
+
     def _load_selected_screen_classifier(self):
-        """Restore an explicitly chosen ONNX; support older directory settings."""
+        """Restore ONNX with the configured GPU preference; CPU fallback in auto."""
+        device,gpu_id=self._screen_gpu_settings()
+        self._loaded_screen_gpu_settings=(device,gpu_id)
         choice=self.store_root/"screen_classifier_choice.json"
         model_path=None
         allow_trial=False
@@ -785,9 +792,9 @@ class MatchReplayDialog(QDialog):
         self._screen_model_path=model_path
         self._screen_model_directory=model_path.parent if model_path is not None else None
         if model_path is None:
-            return load_bundled_classifier(device="cpu")
+            return load_bundled_classifier(device=device,gpu_id=gpu_id)
         return load_bundled_classifier(
-            model_path=model_path,device="cpu",
+            model_path=model_path,device=device,gpu_id=gpu_id,
             allow_unvalidated_for_trial=allow_trial)
 
     def _choose_screen_classifier(self):
@@ -804,8 +811,10 @@ class MatchReplayDialog(QDialog):
             return
         path=Path(selected)
         # Trial is explicit. No spoofed validated=true or checksum bypass.
+        device,gpu_id=self._screen_gpu_settings()
         model,status=load_bundled_classifier(
-            model_path=path,device="cpu",allow_unvalidated_for_trial=True)
+            model_path=path,device=device,gpu_id=gpu_id,
+            allow_unvalidated_for_trial=True)
         if model is None:
             reasons={
                 "MODEL_LOAD_FAILED_SCREEN_MODEL_NOT_VALIDATED":
@@ -851,6 +860,7 @@ class MatchReplayDialog(QDialog):
                                 "ローカル設定フォルダーに書き込めません。")
             return
         self._screen_model_path=path
+        self._loaded_screen_gpu_settings=(device,gpu_id)
         self._screen_model_directory=path.parent
         self._screen_model=model
         self._screen_model_status=status
@@ -912,6 +922,15 @@ class MatchReplayDialog(QDialog):
         if not self.capture_config.game_viewport_normalized:
             QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
             return
+        # Settings can change while the panel stays open. Reload before the
+        # NEXT capture session, never mutate an in-flight inference session.
+        if self._screen_gpu_settings()!=getattr(
+                self,"_loaded_screen_gpu_settings",None):
+            self._screen_model,self._screen_model_status=(
+                self._load_selected_screen_classifier())
+            self._screen_gate.reset()
+            self.local_classifier_label.setText(
+                self._local_classifier_message())
         if (self._screen_model is not None
                 and getattr(self._screen_model,"experimental",False)):
             answer=QMessageBox.warning(
