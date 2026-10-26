@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
-from .match_replay import new_replay, confirm_actual_selection, run_replay_image, run_replay_prep, run_replay_batch
+from .match_replay import new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile, observe_screen_fields, candidates_for_prompt
@@ -462,18 +462,19 @@ class MatchReplayDialog(QDialog):
         self.reconnect_button=QPushButton("撮影対象ウィンドウを再選択（ミラーリング対応）")
         self.reconnect_button.clicked.connect(self._reconnect_capture_window)
         panel.addWidget(self.reconnect_button)
-        panel.addWidget(QLabel("実際に使った3匹と初手（選出提案を確認後、手動で確定）"))
-        row=QHBoxLayout()
+        panel.addWidget(QLabel(
+            "選出3匹＋初手を提案すると、自動的にPREPへ進みます。"
+            "確定ボタンは不要です。実際の初手が異なれば画面から補正し、"
+            "控え2匹は判明するまで提案前提として扱います。"
+        ))
+        # Legacy test/export entrypoints only; not part of the visible UI.
+        # The player never needs to confirm a selection in the app.
         self.actual_three=QLineEdit()
-        self.actual_three.setPlaceholderText("3匹を / で区切る（例：ピカチュウ / マリルリ / ギャラドス）")
         self.actual_lead=QLineEdit()
-        self.actual_lead.setPlaceholderText("実際の初手")
-        self.confirm_button=QPushButton("実際の選出を確定")
-        self.confirm_button.clicked.connect(self._confirm_selection)
-        row.addWidget(self.actual_three,2)
-        row.addWidget(self.actual_lead,1)
-        row.addWidget(self.confirm_button)
-        panel.addLayout(row)
+        self.confirm_button=QPushButton("legacy-hidden-confirm")
+        self.actual_three.hide()
+        self.actual_lead.hide()
+        self.confirm_button.hide()
         calibration=QHBoxLayout()
         for kind,label in (("TEAM_SELECTION","選出画面を登録"),
                            ("TURN_ACTION","技選択画面を登録"),
@@ -1252,6 +1253,21 @@ class MatchReplayDialog(QDialog):
                 self._trace_event("SELECTION_CLOCK_INFERRED_FROM_AI")
             self.actual_three.setText(" / ".join(report["selected_three"]))
             self.actual_lead.setText(report.get("lead") or "")
+            # The output is a recommendation, not proof of the player's
+            # clicks. Adopt it *conditionally* to unlock cached PREP and the
+            # 1st turn without an extra UI confirmation/action.
+            try:
+                self.state=assume_advised_selection(
+                    self.state,self.assets,list(report["selected_three"]),
+                    report["lead"])
+            except (ValueError,KeyError) as exc:
+                self._trace_event("AUTO_SELECTION_REJECTED",
+                                  reason=type(exc).__name__)
+            else:
+                self._trace_event("AUTO_SELECTION_ASSUMED",
+                                  selected_three_count=3,
+                                  selection_assumed=True)
+                self._prefill_cached_prep()
         self._render(entry)
         if self.state is not None and self.state.get("phase")=="ENDED":
             self._stop_auto()
@@ -1324,6 +1340,44 @@ class MatchReplayDialog(QDialog):
             QMessageBox.StandardButton.No,
         )!=QMessageBox.StandardButton.Yes:return
         self._start_prep_auto()
+
+    def _prefill_cached_prep(self):
+        """Expose frozen 3x6 evidence immediately; no API or disk access.
+
+        Win roles are deliberately UNSET until their focused GPT response is
+        received. Initial cache is not misreported as complete 18+3 PREP.
+        """
+        if (self.state is None or self.assets is None
+                or self.state.get("phase")!="PREP"):
+            return
+        from .prep_cache import cached_pairs, cached_evidence_count
+        known = tuple(name for name in self.state.get("opponent_six",[])
+                      if name not in (self.state.get("visual_unknown_opponents") or []))
+        selected = tuple(self.state.get("selected_three") or ())
+        lead = self.state.get("lead")
+        if len(selected)!=3 or not lead or len(known) not in (4,5,6):
+            return
+        pairs = cached_pairs(self.assets,selected,known,lead)
+        if len(pairs)!=len(known)*3:
+            return
+        partial = len(known)!=6
+        evaluated=cached_evidence_count(pairs)
+        self.state["prep"] = {
+            ("matchups_known" if partial else "matchups_18"):pairs,
+            "source":"FROZEN_CACHE",
+            "preserve":None,"stopper":None,"closer":None,
+            "win_roles_status":"PENDING",
+            "cached_matchups":evaluated,"missing_matchups":len(pairs)-evaluated,
+            "unknown_opponent_slots":list(self.state.get("visual_unknown_opponents") or []),
+            "note":"凍結済み評価のみ即時抽出。勝ち筋3点は未完成。"
+        }
+        self.state["prep_status"]="CACHE_PREP_BASE_READY"
+        self._trace_event("PREP_CACHE_BASE_READY",
+                          matchups_evaluated=evaluated,
+                          known_opponents=len(known),missing_matchups=len(pairs)-evaluated)
+        self._render({"status":"PREP_CACHE_BASE_READY",
+                      "message":f"既存{evaluated}/{len(pairs)}対面を即時保持。"
+                      "勝ち筋3点の検討は未完了。"})
 
     def _start_prep_auto(self, *, provisional=False):
         if (self.state is None or self._prep_thread is not None
@@ -1411,8 +1465,11 @@ class MatchReplayDialog(QDialog):
         self._trace_event("PREP_DEADLINE_EXCEEDED")
         if self.state is not None and self.state.get("phase")=="PREP":
             self.state["prep_status"]="DEADLINE_EXCEEDED"
+            # Keep already cached matchup evidence; missing win roles are NOT
+            # marked as complete and remain visible.
             self._render({"status":"PREP_DEADLINE_EXCEEDED",
-                          "message":"残り時間内にPREP完了を確認できませんでした"})
+                          "message":"勝ち筋3点の判定が期限超過。"
+                          "事前に抽出した対面評価は引き続き使用可能。"})
 
     @Slot(object)
     def _on_prep_result(self, payload):
@@ -1488,10 +1545,17 @@ class MatchReplayDialog(QDialog):
             return
         if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
+        elif (self.state is not None and self.state.get("phase")=="PREP"
+              and self.state.get("prep_status") in ("PENDING","CACHE_PREP_BASE_READY")
+              and self._prep_thread is None):
+            # An auto-adopted selection immediately starts PREP once its
+            # selection-image QThread has really finished.
+            self._start_prep_auto()
         elif (self.state is not None and self.state.get("phase")=="SELECTION"
               and self._proposed_selection is not None
               and self._proposed_prep_key is None
               and self._prep_thread is None):
+            # Legacy/partial states created without auto adoption.
             self._start_prep_auto(provisional=True)
 
     def _refresh_live_status(self):
