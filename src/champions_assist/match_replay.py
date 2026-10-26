@@ -495,7 +495,11 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                     reasoning_effort=live_effort,
                     instructions=message,
                     content=selection_image_content(
-                        image,introduction=message,include_full=True),
+                        image,
+                        introduction="Re-read only the six RIGHT opponent slots; "
+                                     "pay special attention to the previously "
+                                     "invalid slot. Unknown remains uncertain.",
+                        include_full=True),
                 )
             if opponent_recognition_attempts==1:
                 observation, opponent_recognition_attempts = retry_unresolved_opponent_six(
