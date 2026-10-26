@@ -1217,10 +1217,7 @@ class MatchReplayDialog(QDialog):
             frames=[frames[-1]]
         elif frames and screen_label in _URGENT_SCREENS:
             # Preserve preceding event text without standalone paid event calls.
-            frames=self._event_frames[-2:]+[frames[-1]]
-            self._event_frames.clear()
-            self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",
-                              image_count=len(frames))
+            frames=self._frames_for_action(frames[-1])
         elif frames and (
                 screen_label=="BATTLE_EVENT"
                 or (screen_label is None and self.state.get("phase")
@@ -1399,6 +1396,14 @@ class MatchReplayDialog(QDialog):
         self._event_frames=self._event_frames[-2:]
         self._trace_event("BATTLE_EVENT_FRAME_BUFFERED",
                           pending_count=len(self._event_frames))
+
+    def _frames_for_action(self,command_image):
+        """One current action screen + at most two preceding event screenshots."""
+        frames=self._event_frames[-2:]+[command_image.copy()]
+        self._event_frames.clear()
+        self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",
+                          image_count=len(frames))
+        return frames
 
     def _observe_fallback_transition(self,image,phase):
         """Model-free fallback is rate-limited; a scene change is NOT a menu."""
