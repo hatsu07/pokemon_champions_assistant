@@ -208,6 +208,82 @@ class UnifiedMainWindowTests(unittest.TestCase):
                             for e in getattr(panel,"_timing_trace",[]))
                         or panel.state["selection_assumed"])
 
+    def test_selection_roles_complete_full_prep_without_second_api_call(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN, OPP, frame
+        from champions_assist.match_replay import advance_observation
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        preview=chosen_state(assets)
+        preview["phase"]="SELECTION"
+        preview["selected_three"]=[]
+        preview["lead"]=None
+        preview["prep"]=None
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        payload={
+            "state":deepcopy(preview),
+            "report":{
+                "status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "preserve":OWN[0],"stopper":OWN[1],"closer":OWN[2],
+                "recommendation":"選出： "+" / ".join(OWN[:3])},
+        }
+        panel._completed(payload)
+        self.assertEqual(panel.state["phase"],"PREP")
+        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
+        self.assertEqual(panel.state["prep"]["win_roles_status"],"SELECTION_REUSED")
+        self.assertEqual((panel.state["prep"]["preserve"],
+                          panel.state["prep"]["stopper"],
+                          panel.state["prep"]["closer"]),OWN[:3])
+        with patch.object(panel,"_start_prep_auto") as model_call:
+            panel._cleanup()
+        model_call.assert_not_called()
+        # The first visible turn is handled from that same tentative state:
+        # no manual confirmation and no PREP API are required.
+        updated,out=advance_observation(
+            panel.state,assets,
+            frame("MOVE_MENU",our_active=OWN[0],
+                  opponent_active=OPP[0],
+                  visible_moves=["じしん","まもる"]),
+            lambda *args:{"action_kind":"MOVE","move":"じしん",
+                          "switch_target":"","warning":""},
+            elapsed_seconds=lambda:1.0)
+        self.assertEqual(updated["phase"],"BATTLE")
+        self.assertIn(out["status"],("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"))
+        self.assertEqual(out["recommendation"],"じしん。")
+        self.assertEqual(updated["observed_lead"],OWN[0])
+
+    def test_selection_invalid_win_roles_never_forge_completed_prep(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        preview=chosen_state(assets)
+        preview.update(phase="SELECTION",selected_three=[],lead=None,prep=None)
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "preserve":OWN[0],"stopper":"未登録", "closer":OWN[2]}
+        panel._completed({"state":deepcopy(preview),"report":report})
+        self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
+        self.assertIsNone(panel.state["prep"]["preserve"])
+        with patch.object(panel,"_start_prep_auto") as rescue:
+            panel._cleanup()
+        rescue.assert_called_once_with()
+
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
         from copy import deepcopy
