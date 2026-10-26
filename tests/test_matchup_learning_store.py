@@ -125,7 +125,7 @@ class LearningSQLiteTests(unittest.TestCase):
         self.assertEqual(len(cols),14)
         matrix=self.asset/"matrix.txt"
         text="# TEAM_SCOPED_MATRIX v1; test\n"+"|".join(cols)+"\n"
-        matrix.write_text(text,encoding="utf-8")
+        matrix.write_bytes(text.encode("utf-8"))
         manifest=self.asset/"manifest.json"
         manifest.write_text(json.dumps({"status":"PROVISIONAL_UNVERIFIED",
             "matrix_sha256":sha256(text.encode()).hexdigest()}),encoding="utf-8")
