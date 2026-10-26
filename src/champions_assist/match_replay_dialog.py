@@ -1400,6 +1400,11 @@ class MatchReplayDialog(QDialog):
             "win_roles_status":"SELECTION_REUSED" if role_ready else "PENDING",
             "cached_matchups":evaluated,"missing_matchups":len(pairs)-evaluated,
             "unknown_opponent_slots":list(self.state.get("visual_unknown_opponents") or []),
+            "unknown_pairs":[
+                {"our_pokemon":member,"opponent_pokemon":opponent}
+                for member in selected
+                for opponent in (self.state.get("visual_unknown_opponents") or [])
+            ],
             "note":("既存の対面評価と選出時に決めた勝ち筋3点を再利用。"
                     if role_ready else
                     "凍結済み評価のみ即時抽出。勝ち筋3点は未完成。")
