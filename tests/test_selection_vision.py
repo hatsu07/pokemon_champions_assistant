@@ -133,6 +133,8 @@ class SelectionVisionTest(unittest.TestCase):
         from champions_assist.terminology import japanese_name
         self.assertEqual(japanese_name("pokemon","Rotom (Wash Form)"),
                          "ロトム（ウォッシュロトム）")
+        self.assertEqual(japanese_name("pokemon","Rotom (Wash Forme)"),
+                         "ロトム（ウォッシュロトム）")
         valid=(
             "ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
             "キラフロル","ウルガモス","カバルドン")

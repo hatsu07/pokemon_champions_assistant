@@ -125,6 +125,76 @@ class UnifiedMainWindowTests(unittest.TestCase):
             "recommendation": "選出：ピカチュウ / ドドゲザン / ガブリアス　初手：ピカチュウ"})
         self.assertEqual(len(self.store.events(panel.match_id)), 2)
 
+    def test_live_partial_selection_starts_known_only_prep_after_result(self):
+        """Live UI, not just offline selection test, must start partial PREP."""
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        selected_state=chosen_state(assets,partial=True)
+        preview=deepcopy(selected_state)
+        preview["phase"]="SELECTION"
+        preview["selected_three"]=[]
+        preview["lead"]=None
+        preview["prep_status"]="VISUAL_PARTIAL_5_OF_6"
+        preview["prep"]=None
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=preview
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        incoming={
+            "status":"PARTIAL_ADVICE","screen":"TEAM_SELECTION",
+            "selected_three":list(OWN[:3]),"lead":OWN[0],
+            "recommendation":"選出："+ " / ".join(OWN[:3])+" 初手："+OWN[0],
+        }
+        panel._completed({"state":deepcopy(preview),"report":incoming})
+        self.assertEqual(panel.entries[-1]["status"],"PARTIAL_ADVICE")
+        self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
+        self.assertIn("選出：",self.window.recommendation_label.text())
+        self.assertIn("初手：",panel.selection_banner.text())
+        with patch.object(panel,"_start_prep_auto") as prep:
+            panel._cleanup()
+        prep.assert_called_once_with(provisional=True)
+
+    def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
+        """Match actual selection with cached 5/6 PREP; do not regenerate."""
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state, roles
+        from tests.test_match_replay import OWN
+        from champions_assist.match_replay import run_replay_prep
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        prepared=chosen_state(assets,partial=True)
+        with patch("champions_assist.match_replay._stream_json",return_value=roles()):
+            cached,report=run_replay_prep(
+                state=prepared,assets=assets,access_token="mock",model="mock",
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["status"],"PREP_CACHE_KNOWN_ONLY")
+        self.assertEqual(len(cached["prep"]["matchups_known"]),15)
+        self.assertEqual(len(cached["prep"]["unknown_pairs"]),3)
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=deepcopy(prepared)
+        panel.state["phase"]="SELECTION"
+        panel.state["selected_three"]=[]
+        panel.state["lead"]=None
+        panel.state["prep"]=None
+        panel._proposed_selection=(OWN[:3],OWN[0])
+        panel._proposed_prep_key=(OWN[:3],OWN[0])
+        panel._on_prep_result({"state":cached,"report":report})
+        self.assertEqual(panel.entries[-1]["status"],"PROVISIONAL_PREP_STORED")
+        panel.actual_three.setText(" / ".join(OWN[:3]))
+        panel.actual_lead.setText(OWN[0])
+        with patch.object(panel,"_start_prep_auto") as unnecessary:
+            panel._confirm_selection()
+        unnecessary.assert_not_called()
+        self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
+        self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
+        self.assertEqual(panel.entries[-1]["status"],"CONFIRMED")
+
     def test_live_turn_unclassified_frames_do_not_discard_inflight_advice(self):
         from champions_assist.match_replay_dialog import (
             _should_replace_inflight, _supersedes_result)
