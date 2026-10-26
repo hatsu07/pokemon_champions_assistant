@@ -345,6 +345,16 @@ class SelectionTestDialog(QDialog):
             +"\n"+("未検証理由" if status in ("PROVISIONAL_ADVICE","PARTIAL_ADVICE") else "失敗理由")
             +": "+str(report.get("reason","なし"))
         )
+        icons=(observations.get("opponent_type_icons") if isinstance(observations,dict)
+               else None) or report.get("observed_type_icons")
+        if isinstance(icons,list) and len(icons)==6:
+            result+=("\\n視認タイプ（AI読取・未確定）: "
+                     + " / ".join("+".join(v) if isinstance(v,list) and v
+                                  else "不明" for v in icons))
+        conflict=report.get("type_mismatch_slots") or []
+        if conflict:
+            result+="\\nタイプ矛盾枠（要確認）: "+", ".join(
+                str(n)+"番" for n in conflict)
         unmatched=report.get("unmatched_opponent_slots") or []
         if unmatched and status in ("BLOCKED","PARTIAL_ADVICE"):
             formatted=" / ".join(
@@ -352,7 +362,7 @@ class SelectionTestDialog(QDialog):
                 for entry in unmatched if isinstance(entry,dict))
             if formatted:
                 result+=(
-                    "\nLIVEマトリクス照合不可: "+formatted+
+                    "\n相手の照合・再確認対象: "+formatted+
                     "\n※画像認識候補であり、実際のポケモンではない可能性があります。"
                     " 元の対面AI評価データは削除されていません。")
         if "matrix_ai_hint_rows" in report:
