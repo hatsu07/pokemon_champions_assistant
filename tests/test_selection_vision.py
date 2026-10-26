@@ -100,7 +100,7 @@ class SelectionVisionTest(unittest.TestCase):
         observed["opponent_type_icons"][3]=[]
         self.assertEqual(verify_selection_observation(observed,frozen),OPP)
 
-    def test_type_conflict_is_retried_not_replaced_by_python(self):
+    def test_type_conflict_is_diagnostic_and_does_not_trigger_retry(self):
         frozen=typed_assets()
         observed=observation()
         observed["opponent_type_icons"]=[
@@ -110,35 +110,54 @@ class SelectionVisionTest(unittest.TestCase):
         mismatch=opponent_type_mismatch_slots(observed,frozen)
         self.assertEqual([item["slot"] for item in mismatch],[3])
         self.assertEqual(mismatch[0]["matrix_types"],["ゴースト","どく"])
-        with self.assertRaisesRegex(SelectionBlocked,"OPPONENT_TYPE_MISMATCH"):
-            verify_selection_observation(observed,frozen)
-        self.assertEqual(unmatched_opponent_slots(observed,frozen),[
-            {"slot":3,"label":"ゲンガー"}])
-        self.assertIn("UNTRUSTED",roster_constrained_retry_guidance(
-            reason="OPPONENT_TYPE_MISMATCH",previous=observed,assets=frozen))
-        attempts=[]
-        def retry(reason,previous):
-            attempts.append(reason)
-            return {**previous,"opponent_type_icons":[
-                ["でんき"],["あく","はがね"],["ゴースト","どく"],
-                ["みず","フェアリー"],["みず","ひこう"],["ドラゴン","ひこう"]]}
-        fixed,n=retry_unresolved_opponent_six(
-            observed,frozen,retry,remaining_seconds=lambda:40.0)
-        self.assertEqual((n,attempts),(2,["OPPONENT_TYPE_MISMATCH"]))
-        self.assertEqual(verify_selection_observation(fixed,frozen),OPP)
+        self.assertEqual(verify_selection_observation(observed,frozen),OPP)
+        self.assertEqual(unmatched_opponent_slots(observed,frozen),[])
+        retry=[]
+        original,attempts=retry_unresolved_opponent_six(
+            observed,frozen,lambda *args:retry.append(args),
+            remaining_seconds=lambda:40.0)
+        self.assertEqual(attempts,1)
+        self.assertEqual(retry,[])
+        self.assertEqual(original["opponent_six"],observed["opponent_six"])
 
-    def test_type_conflict_after_retry_keeps_unknown_slot(self):
+    def test_type_conflict_still_keeps_all_species_in_partial_helper(self):
         frozen=typed_assets()
         observed=observation()
         observed["opponent_type_icons"]=[
             [],[],["エスパー"],[],[],[],
         ]
-        partial=partial_opponent_preview(observed,frozen)
-        self.assertIsNotNone(partial)
-        names,unresolved=partial
-        self.assertEqual(names[2],"未判明相手3")
-        self.assertEqual(unresolved,("未判明相手3",))
-        self.assertNotIn("ゲンガー",names)
+        self.assertIsNone(partial_opponent_preview(observed,frozen))
+        self.assertEqual(verify_selection_observation(observed,frozen),OPP)
+
+    def test_observed_rotom_wash_form_and_espathra_full_six(self):
+        from champions_assist.terminology import japanese_name
+        self.assertEqual(japanese_name("pokemon","Rotom (Wash Form)"),
+                         "ロトム（ウォッシュロトム）")
+        valid=(
+            "ロトム（ウォッシュロトム）","ハッサム","クエスパトラ",
+            "キラフロル","ウルガモス","カバルドン")
+        local=assets()
+        frozen=FrozenMatchAssets(
+            contents=local.contents,sha256=local.sha256,
+            matrix_index=MappingProxyType({
+                name:f"{name}|みず/でんき|90" for name in valid}),
+            lookup_index=local.lookup_index,own_team=local.own_team,
+            frozen_at=local.frozen_at)
+        observed={
+            "visual_ui":"TEAM_SELECTION","our_six":[],
+            "opponent_six":["Rotom (Wash Form)","Scizor","Espathra",
+                            "Glimmora","Volcarona","Hippowdon"],
+            "uncertain_slots":[],
+            "opponent_type_icons":[["でんき","みず"],["むし","はがね"],
+                                   ["フェアリー"],["いわ","どく"],
+                                   ["むし","ほのお"],["じめん"]],
+        }
+        self.assertEqual(verify_selection_observation(observed,frozen),valid)
+        self.assertEqual(unmatched_opponent_slots(observed,frozen),[])
+        self.assertIsNone(partial_opponent_preview(observed,frozen))
+        self.assertEqual([x["slot"] for x in
+                          opponent_type_mismatch_slots(observed,frozen)],
+                         [2,3,4,5,6])
 
     def test_incomplete_type_evidence_shape_never_passes(self):
         frozen=typed_assets()
