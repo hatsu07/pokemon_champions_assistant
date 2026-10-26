@@ -159,16 +159,20 @@ class SelectionVisionTest(unittest.TestCase):
                           opponent_type_mismatch_slots(observed,frozen)],
                          [2,3,4,5,6])
 
-    def test_incomplete_type_evidence_shape_never_passes(self):
+    def test_invalid_icon_only_evidence_does_not_veto_valid_names(self):
         frozen=typed_assets()
         for invalid in ([[],[],[],[],[]], [[],[],[],[],[],[],[]],
                         ["でんき",[],[],[],[],[]], [[],[],[],[],[],[1]]):
             observed=observation()
             observed["opponent_type_icons"]=invalid
             with self.subTest(invalid=invalid):
-                with self.assertRaisesRegex(
-                    SelectionBlocked,"OPPONENT_TYPE_EVIDENCE_INVALID"):
-                    verify_selection_observation(observed,frozen)
+                self.assertEqual(verify_selection_observation(observed,frozen),OPP)
+                retry_calls=[]
+                _,attempts=retry_unresolved_opponent_six(
+                    observed,frozen,lambda *args:retry_calls.append(args),
+                    remaining_seconds=lambda:40.0)
+                self.assertEqual(attempts,1)
+                self.assertEqual(retry_calls,[])
 
     def test_type_evidence_absence_and_unverified_mega_preview(self):
         frozen=typed_assets()
