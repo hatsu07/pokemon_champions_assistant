@@ -342,6 +342,16 @@ class SelectionTestDialog(QDialog):
             +"\n"+("未検証理由" if status=="PROVISIONAL_ADVICE" else "失敗理由")
             +": "+str(report.get("reason","なし"))
         )
+        unmatched=report.get("unmatched_opponent_slots") or []
+        if unmatched and status=="BLOCKED":
+            formatted=" / ".join(
+                f"{entry.get('slot','?')}番目: {entry.get('label','?')}"
+                for entry in unmatched if isinstance(entry,dict))
+            if formatted:
+                result+=(
+                    "\nLIVEマトリクス照合不可: "+formatted+
+                    "\n※画像認識候補であり、実際のポケモンではない可能性があります。"
+                    " 元の対面AI評価データは削除されていません。")
         if "matrix_ai_hint_rows" in report:
             result += (
                 f"\n構築別マトリクスAI評価: {report['matrix_ai_hint_rows']}/6匹、"
