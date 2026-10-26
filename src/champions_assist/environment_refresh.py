@@ -104,6 +104,12 @@ class SinglesEnvironmentStore:
         # last-good data whenever refresh errors occur.
         atomic_write_text(self.snapshot,raw)
         atomic_write_text(self.receipt,json.dumps(receipt,ensure_ascii=False,sort_keys=True,indent=2))
+        # Keep the original portable JSON as an export while SQLite archives
+        # the exact dataset and provenance for future training/verification.
+        from .sqlite_primary import ChampionsPrimaryData
+        primary=ChampionsPrimaryData(self.root.parent)
+        primary.archive_source("usage","singles",self.snapshot)
+        primary.archive_source("provenance","singles",self.receipt)
         return receipt
 
     def refresh_public_singles(self, *, fetch=None) -> dict:
