@@ -780,7 +780,10 @@ class MatchReplayDialog(QDialog):
         phase=(self.state or {}).get("phase")
         return (
             kind=="TEAM_SELECTION" and phase in ("MATCHMAKING","SELECTION")
-            or kind in ("TURN_ACTION","SWITCH_SELECTION") and phase in ("PREP","BATTLE")
+            or kind in ("TURN_ACTION","SWITCH_SELECTION") and (
+                phase in ("PREP","BATTLE") or
+                phase=="SELECTION" and self._thread is not None
+                and self._inflight_screen_label=="TEAM_SELECTION")
         )
 
     def _start_auto(self):
@@ -1188,6 +1191,10 @@ class MatchReplayDialog(QDialog):
                         f"確信度 {prediction.confidence:.2f} / "
                         f"{prediction.latency_ms:.1f}ms / {prediction.source}")
                 classified=self._screen_gate.observe(prediction,phase)
+                if (classified is not None and phase=="SELECTION"
+                        and not (self._thread is not None
+                                 and self._inflight_screen_label=="TEAM_SELECTION")):
+                    classified=None
                 if classified is not None:
                     self._automatic_probe.acknowledge(image,phase)
                     self._queue_batch(self._turn_buffer.batch(image), screen_label=classified)
