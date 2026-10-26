@@ -297,11 +297,14 @@ class MatchReplayDialog(QDialog):
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
-        self._automatic_probe=AutomaticVisualProbe(matchmaking_recheck=float('inf'))
+        self._automatic_probe=AutomaticVisualProbe(
+            min_gap=8.0,matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
         # Missing/unvalidated training weights are not silently treated as
         # a working visual model. Default CPU is cheap and deterministic.
-        self._screen_model,self._screen_model_status=load_bundled_classifier(device="cpu")
+        self._screen_model_directory=None
+        self._screen_model,self._screen_model_status=self._load_selected_screen_classifier()
+        self._fallback_last_dispatched_at=None
         self._classifier_unknown_streak=0
         self._deferred_fallback_batch=None
         self._last_observed_ui=None
@@ -421,6 +424,10 @@ class MatchReplayDialog(QDialog):
         self.local_classifier_label=QLabel(self._local_classifier_message())
         self.local_classifier_label.setWordWrap(True)
         panel.addWidget(self.local_classifier_label)
+        self.classifier_choose_button=QPushButton("画面分類モデルを設定（検証済みONNX）")
+        self.classifier_choose_button.setObjectName("chooseScreenClassifier")
+        self.classifier_choose_button.clicked.connect(self._choose_screen_classifier)
+        panel.addWidget(self.classifier_choose_button)
         # Render the same frames that go to AI, without another acquisition.
         self.capture_preview_title=QLabel("キャプチャプレビュー（ChatGPT送信対象のゲーム領域）")
         panel.addWidget(self.capture_preview_title)
@@ -483,21 +490,18 @@ class MatchReplayDialog(QDialog):
         self.actual_three.hide()
         self.actual_lead.hide()
         self.confirm_button.hide()
-        calibration=QHBoxLayout()
-        for kind,label in (("TEAM_SELECTION","選出画面を登録"),
-                           ("TURN_ACTION","技選択画面を登録"),
-                           ("SWITCH_SELECTION","交代画面を登録")):
-            button=QPushButton(label)
-            button.clicked.connect(lambda _checked=False, k=kind:self._calibrate(k))
-            calibration.addWidget(button)
-        panel.addLayout(calibration)
-        self.manual_batch_button=QPushButton("現在までの重要画像をまとめてAIへ送信（手動保険）")
-        self.manual_batch_button.clicked.connect(self._manual_batch)
-        panel.addWidget(self.manual_batch_button)
-        panel.addWidget(QLabel("自動送信は登録した選択画面への遷移時のみ。登録前は手動送信を使用してください。"))
-        self.prep_button=QPushButton("40秒PREPの手動再実行（保険）")
-        self.prep_button.clicked.connect(self._prep)
-        panel.addWidget(self.prep_button)
+        # No manual calibration, screenshot upload or PREP retry controls.
+        self.manual_batch_button=QPushButton("legacy-hidden-manual-submit",self)
+        self.manual_batch_button.hide()
+        self.prep_button=QPushButton("legacy-hidden-prep-retry",self)
+        self.prep_button.hide()
+        self.prep_banner=QLabel("PREP：選出待ち")
+        self.prep_banner.setObjectName("live_prep_progress")
+        self.prep_banner.setWordWrap(True)
+        self.prep_banner.setStyleSheet(
+            "QLabel#live_prep_progress {font-size: 17px; font-weight: 700;"
+            "padding: 10px; background: #274060; color: white;}")
+        panel.addWidget(self.prep_banner)
         panel.addWidget(QLabel("画像の認識・AI提案・進行ログ（現在の1試合）"))
         self.output=QPlainTextEdit()
         self.output.setReadOnly(True)
@@ -756,11 +760,62 @@ class MatchReplayDialog(QDialog):
         except (AutoCaptureUnavailable,OSError,ValueError) as exc:
             QMessageBox.warning(self,"撮影対象の再接続に失敗",str(exc))
 
+    def _load_selected_screen_classifier(self):
+        """Load an optional validated five-class ONNX directory from user settings."""
+        choice=self.store_root/"screen_classifier_choice.json"
+        directory=None
+        try:
+            if choice.is_file():
+                data=json.loads(choice.read_text(encoding="utf-8"))
+                if not isinstance(data,dict) or not isinstance(data.get("directory"),str):
+                    return None,"MODEL_CONFIG_INVALID"
+                directory=Path(data["directory"])
+        except (OSError,ValueError,TypeError):
+            return None,"MODEL_CONFIG_INVALID"
+        self._screen_model_directory=directory
+        return load_bundled_classifier(model_dir=directory,device="cpu")
+
+    def _choose_screen_classifier(self):
+        if self._auto_running or self._thread is not None or self._prep_thread is not None:
+            QMessageBox.warning(self,"画面分類モデル","監視を停止してから設定してください。")
+            return
+        directory=QFileDialog.getExistingDirectory(
+            self,"検証済み5分類ONNXモデルのフォルダーを指定",
+            str(self._screen_model_directory or self.store_root))
+        if not directory:
+            return
+        model,status=load_bundled_classifier(model_dir=directory,device="cpu")
+        if model is None:
+            QMessageBox.warning(self,"利用できない画面分類モデル",
+                "検証済み5分類ONNXとマニフェストが必要です。理由："+status)
+            return
+        try:
+            self.store_root.mkdir(parents=True,exist_ok=True)
+            target=self.store_root/"screen_classifier_choice.json"
+            temporary=target.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps({"directory":str(Path(directory).resolve())}),
+                encoding="utf-8")
+            temporary.replace(target)
+        except OSError:
+            QMessageBox.warning(self,"モデル設定の保存に失敗",
+                                "ローカル設定フォルダーに書き込めません。")
+            return
+        self._screen_model_directory=Path(directory)
+        self._screen_model=model
+        self._screen_model_status=status
+        self._screen_gate.reset()
+        self._last_local_class=None
+        self.local_classifier_label.setText(self._local_classifier_message())
+        self._trace_event("SCREEN_CLASSIFIER_CONFIGURED",status=status)
+
     def _local_classifier_message(self) -> str:
         if self._screen_model is not None:
-            return "画面判別: 検証用ONNX分類器 / CPU / 画面登録不要"
-        return ("画面判別: 学習済みモデル未配置（"+self._screen_model_status+
-                "）。CPU画像変化検出 → ChatGPT確認。精度未検証")
+            origin="指定フォルダー" if self._screen_model_directory else "同梱"
+            return ("画面判別: 検証済み5分類ONNX利用中 / "+origin+
+                    " / "+self._screen_model_status)
+        return ("画面判別: 未設定・利用不可（"+self._screen_model_status+
+                "）。開始前に警告、低頻度の画像変化検出を使用します。")
 
     def _set_ai_status(self, status: str) -> None:
         """Status of the AI workflow, separate from local capture state."""
@@ -773,8 +828,8 @@ class MatchReplayDialog(QDialog):
                "TURN_ACTION":"技選択画面","SWITCH_SELECTION":"交代画面"}
         found=[names[k] for k in names if k in self._turn_buffer.templates]
         self.menu_detection_label.setText(
-            "標準自動認識: 有効 / 補助登録: "+
-            (" / ".join(found) if found else "なし（登録不要）"))
+            "自動検出: 検証済みONNXがあれば選出・技選択・交代画面のみ送信。"
+            "モデルなしは事前警告後に回数制限付きで確認。")
 
     def _eligible_menu(self, kind: str) -> bool:
         phase=(self.state or {}).get("phase")
@@ -790,7 +845,12 @@ class MatchReplayDialog(QDialog):
         if self._shutdown_intent is not None or self._thread is not None or self._auto_running:
             return
         if self.state is None or self.assets is None:
-            QMessageBox.warning(self, "未開始", "先に新しい対戦を開始してください。")
+            QMessageBox.warning(self,"4ファイル事前読込が未完了",
+                "先に対戦開始（4ファイル事前読込）を実行してください。")
+            return
+        if len(getattr(self.assets,"sha256",{}))!=4:
+            QMessageBox.warning(self,"4ファイル事前読込が未完了",
+                "4件すべての読み込み確認が必要です。再度対戦開始を行ってください。")
             return
         if not self.model or self.capture_config is None:
             QMessageBox.warning(self, "設定不足", "ChatGPTモデルとキャプチャ設定を確認してください。")
@@ -798,14 +858,28 @@ class MatchReplayDialog(QDialog):
         if not self.capture_config.game_viewport_normalized:
             QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
             return
+        if self._screen_model is None:
+            answer=QMessageBox.warning(
+                self,"画面分類モデルが未設定・利用不可",
+                "画面分類モデルが使えません（"+self._screen_model_status+"）。"
+                "誤画面のAI確認や費用増加の可能性があります。"
+                "画像変化検出を用いる低頻度モードで開始しますか？",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            self._trace_event("MODEL_UNAVAILABLE_START_WARNING",
+                              status=self._screen_model_status,
+                              proceeded=answer==QMessageBox.StandardButton.Yes)
+            if answer!=QMessageBox.StandardButton.Yes:
+                return
         storage_note=(
             "学習用JPEGもローカルへ保存します（最大2GB、未ラベル、人手承認まで学習不可）。"
             if self.training_capture_check.isChecked()
             else "学習用画像は保存しません。"
         )
         if QMessageBox.question(self, "自動送信の確認",
-                "指定したゲーム画面をローカルで継続監視します。登録した選択画面を検出した時のみ、"
-                "直近の重要画像をまとめてChatGPTへ送信します。送信ごとの確認は行いません。"
+                "指定したゲーム画面を継続監視します。分類モデルが有効なら"
+                "選出・技選択・交代画面だけAIへ送信します。"
+                "未設定時は警告済みの低頻度モードを使用します。送信ごとの確認はありません。"
                 +storage_note+"開始しますか？",
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
@@ -823,6 +897,7 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._deferred_fallback_batch=None
         self._classifier_unknown_streak=0
+        self._fallback_last_dispatched_at=None
         self._last_observed_ui=None
         self._command_menu_frame=None
         self._turn_screen_seen_at=None
@@ -836,7 +911,9 @@ class MatchReplayDialog(QDialog):
         # Starting capture must update the status before a menu triggers AI.
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
         self._update_menu_detection_label()
-        self._set_ai_status("標準自動判定有効（最初の画面からAI確認を開始）")
+        self._set_ai_status(
+            "5分類モデル監視中（操作画面のみAI送信）" if self._screen_model is not None
+            else "分類モデルなし：画像変化を低頻度でAI確認（誤認識の可能性あり）")
         self._capture_next()
 
     def _stop_auto(self):
@@ -1191,6 +1268,11 @@ class MatchReplayDialog(QDialog):
                         f"確信度 {prediction.confidence:.2f} / "
                         f"{prediction.latency_ms:.1f}ms / {prediction.source}")
                 classified=self._screen_gate.observe(prediction,phase)
+                if classified=="BATTLE_EVENT":
+                    # Non-interactive event animation: do not pay for an AI
+                    # request until the next actionable screen appears.
+                    self._trace_event("NON_ACTION_EVENT_NOT_SENT")
+                    classified=None
                 if (classified is not None and phase=="SELECTION"
                         and not (self._thread is not None
                                  and self._inflight_screen_label=="TEAM_SELECTION")):
@@ -1198,21 +1280,24 @@ class MatchReplayDialog(QDialog):
                 if classified is not None:
                     self._automatic_probe.acknowledge(image,phase)
                     self._queue_batch(self._turn_buffer.batch(image), screen_label=classified)
-                if prediction.label=="UNKNOWN":
-                    self._classifier_unknown_streak+=1
-                    if self._classifier_unknown_streak>=3 and self._thread is None:
-                        self._observe_fallback_transition(image,phase)
-                else:
-                    self._classifier_unknown_streak=0
+                # A loaded, validated ONNX remains authoritative. UNKNOWN
+                # is abstention, not permission to send an unrelated frame.
+                self._classifier_unknown_streak=(
+                    self._classifier_unknown_streak+1
+                    if prediction.label=="UNKNOWN" else 0)
                 return
 
         self._observe_fallback_transition(image,phase)
 
     def _observe_fallback_transition(self,image,phase):
-        """Keep the latest changed scene while GPT works; no invented UI label."""
+        """Model-free fallback is rate-limited; a scene change is NOT a menu."""
+        if (self._fallback_last_dispatched_at is not None
+                and monotonic()-self._fallback_last_dispatched_at<10.0):
+            return
         if self._thread is not None and self._active_job=="batch":
             if self._automatic_probe.observe(image,phase):
                 self._deferred_fallback_batch=self._turn_buffer.batch(image)[-2:]
+                self._fallback_last_dispatched_at=monotonic()
                 self._trace_event("FALLBACK_TRANSITION_DEFERRED")
             return
         if self._automatic_probe.observe(image,phase):
@@ -1225,7 +1310,9 @@ class MatchReplayDialog(QDialog):
                 if float(np.mean(np.abs(current-old)))<0.12:
                     self._trace_event("COMMAND_MENU_DUPLICATE_SUPPRESSED")
                     return
-            self._trace_event("FALLBACK_SCREEN_RECHECK")
+            self._fallback_last_dispatched_at=monotonic()
+            self._trace_event("FALLBACK_SCREEN_RECHECK",
+                              source="MODEL_UNAVAILABLE_RATE_LIMITED")
             self._queue_batch(self._turn_buffer.batch(image))
 
     @Slot(object)
@@ -1711,6 +1798,38 @@ class MatchReplayDialog(QDialog):
         """GUI-only update. Never captures or sends an AI request."""
         state=self.state or {}
         phase=state.get("phase","NOT_STARTED")
+        prep=state.get("prep") or {}
+        prep_status=state.get("prep_status","NOT_STARTED")
+        expected=3*(6-len(state.get("visual_unknown_opponents") or []))
+        done=prep.get("cached_matchups",0)
+        if not isinstance(done,int):
+            done=0
+        roles=sum(
+            isinstance(prep.get(k),str)
+            and prep.get(k) in (state.get("selected_three") or ())
+            for k in ("preserve","stopper","closer"))
+        progress=f"対面 {done}/{expected}・勝ち筋 {roles}/3"
+        complete_statuses={
+            "CACHE_STRUCTURE_COMPLETE","STRUCTURE_COMPLETE",
+            "CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE"}
+        incomplete_statuses={
+            "CACHE_INCOMPLETE","INCOMPLETE","UNAVAILABLE_MATRIX_MISMATCH",
+            "DEADLINE_EXCEEDED","ERROR","INTERRUPTED_BY_NEW_BATTLE_SCREEN"}
+        if self._prep_thread is not None and not self._prep_cancel_event.is_set():
+            prep_text="PREP：処理中（AI評価実行中）／"+progress
+        elif prep_status in complete_statuses:
+            prep_text="PREP：事前評価完了（構造確認）／"+progress
+            if prep_status in ("CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE"):
+                prep_text+="／未知相手あり・部分評価"
+        elif prep_status in incomplete_statuses:
+            prep_text="PREP：未完成・中断・エラー／"+progress+"／"+str(prep_status)
+        elif phase in ("PREP","BATTLE"):
+            prep_text="PREP：処理待ち・評価途中／"+progress
+        else:
+            prep_text="PREP：選出待ち（未開始）"
+        if state.get("selection_assumed") and phase in ("PREP","BATTLE"):
+            prep_text+="／実際の選出3匹は未確認"
+        self.prep_banner.setText(prep_text)
         labels={
             "MATCHMAKING":"マッチング中・選出画面待ち",
             "SELECTION":"選出画面・3匹と初手を決める",
