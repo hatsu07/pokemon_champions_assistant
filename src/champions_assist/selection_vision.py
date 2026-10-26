@@ -214,6 +214,39 @@ def retry_unresolved_opponent_six(
     return result, 2
 
 
+def partial_opponent_preview(raw: Mapping[str, Any],
+                             assets: FrozenMatchAssets) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """Conservative known-4+/6 fallback when two image reads disagree.
+
+    Unknown markers are NOT Pokémon. Return no fabricated matchup rows. This
+    allows a labelled emergency choice while acknowledging that full 18-pair
+    PREP cannot be certified until all six identities are known.
+    """
+    raw_names=raw.get("opponent_six")
+    if raw.get("visual_ui")!="TEAM_SELECTION" or not isinstance(raw_names,list):
+        return None
+    if len(raw_names)!=6 or any(not isinstance(n,str) for n in raw_names):
+        return None
+    names=[]
+    unresolved=[]
+    seen=set()
+    for index,name in enumerate(raw_names,1):
+        canonical=_display_name(name)
+        choices=[canonical] if canonical in assets.matrix_index else [
+            key for key in assets.matrix_index if key.startswith(canonical+"（")]
+        resolved=choices[0] if len(choices)==1 and choices[0] not in seen else None
+        if resolved:
+            names.append(resolved)
+            seen.add(resolved)
+        else:
+            marker=f"未判明相手{index}"
+            names.append(marker)
+            unresolved.append(marker)
+    if len(unresolved)>2 or len(seen)<4:
+        return None
+    return tuple(names),tuple(unresolved)
+
+
 def selection_response(raw: Mapping[str, Any], *, own_names: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
     chosen = raw.get("selected_three")
     lead = raw.get("lead")
@@ -269,12 +302,18 @@ class SelectionPlanner:
                *, started_at: float, max_total_seconds: float = 35.0,
                allow_test_without_matrix: bool = False) -> SelectionDecision:
         details = _diagnostics(observation, assets)
+        partial=False
+        uncertain_names=()
         try:
             opponents = verify_selection_observation(observation, assets)
         except SelectionBlocked as exc:
-            return SelectionDecision("BLOCKED", reason=str(exc),
-                                     elapsed_ms=round((self.clock()-started_at)*1000),
-                                     **details)
+            candidate=partial_opponent_preview(observation,assets)
+            if candidate is None:
+                return SelectionDecision("BLOCKED", reason=str(exc),
+                                         elapsed_ms=round((self.clock()-started_at)*1000),
+                                         **details)
+            opponents,uncertain_names=candidate
+            partial=True
         compatible = matrix_matches_registered_team(assets)
         provisional = provisional_matrix_matches_registered_team(assets)
         if not compatible and not provisional and not allow_test_without_matrix:
@@ -287,8 +326,38 @@ class SelectionPlanner:
                                      elapsed_ms=round((self.clock()-started_at)*1000),
                                      **details)
         try:
-            context = decision_context(assets, opponents)
-            if provisional:
+            if partial:
+                known=tuple(n for n in opponents if n not in uncertain_names)
+                context=decision_context(assets, known) if False else {
+                    "selection_checklist": __import__(
+                        "champions_assist.live_context",fromlist=["SELECTION_CHECKLIST"]
+                    ).SELECTION_CHECKLIST,
+                    "lookup_rows_critical": [],
+                    "own_team": [dict(item) for item in assets.own_team],
+                    "own_roster_source": "PRELOADED_USER_SELECTED_TEAM_NOT_VISION",
+                    "opponent_six": list(opponents),
+                    "known_opponents": list(known),
+                    "unknown_opponent_slots": list(uncertain_names),
+                    "matrix_rows_six": list(assets.matrix_index[n] for n in known),
+                    "matrix_compatible": False,
+                    "matrix_provisional": True,
+                    "evidence_scope": "PARTIAL_VISUAL_HYPOTHESIS_ONLY",
+                    "frozen_gate": "",
+                    "instructions": (
+                        "Only four/five of the opponent's six were read reliably. "
+                        "Produce an EMERGENCY, UNCERTIFIED choice of three registered "
+                        "own Pokémon and lead by covering the KNOWN opponent matrix "
+                        "rows. Unknown placeholder names are NOT Pokémon; do not "
+                        "invent moves, counters, speed or safety for their slots. "
+                        "Favor broad defensive/priority coverage and preserve a "
+                        "stopper for unobserved threats. Full PREP is unavailable "
+                        "until the missing identity is confirmed. "
+                        "Do not claim this is validated or 6/6 coverage."
+                    ),
+                }
+            else:
+                context = decision_context(assets, opponents)
+            if provisional and not partial:
                 # The frozen base gate references a different battle team, so
                 # its old team-specific tactical conclusions cannot be reused.
                 context["frozen_gate"] = ""
@@ -305,7 +374,7 @@ class SelectionPlanner:
                     "opponent set or speed order without evidence. Usage is not proof. "
                     "Do not extrapolate SV/ZA move mechanics. This is advisory, NOT LIVE_READY."
                 )
-            elif not compatible:
+            elif not compatible and not partial:
                 context["instructions"] = (
                     "OFFLINE FUNCTION TEST ONLY: LIVE matrix belongs to another team; "
                     "do not use it for matchup evaluation. Select 3 and a lead from the "
@@ -320,11 +389,15 @@ class SelectionPlanner:
             if elapsed > max_total_seconds*1000:
                 return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
                                          **details)
-            status = "OK" if compatible else "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY"
+            status = ("PARTIAL_ADVICE" if partial else
+                      "OK" if compatible else
+                      "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY")
             return SelectionDecision(status,
                                      chosen, lead, opponents, elapsed_ms=elapsed,
-                                     reason="" if compatible else
-                                            "TACTICAL_CELLS_UNKNOWN" if provisional else "OWN_MATRIX_MISMATCH",
+                                     reason=("VISUAL_SLOT_UNCONFIRMED" if partial else
+                                             "" if compatible else
+                                             "TACTICAL_CELLS_UNKNOWN" if provisional else
+                                             "OWN_MATRIX_MISMATCH"),
                                      **details)
         except SelectionBlocked as exc:
             return SelectionDecision("BLOCKED", opponent_six=opponents, reason=str(exc),
@@ -361,14 +434,17 @@ def _japanese_selection_label(name: str) -> str:
 
 def selection_summary_ja(result: Mapping[str, Any]) -> str:
     """Player-facing concise Japanese summary; raw result stays diagnostic."""
-    if result.get("status") in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE"):
+    if result.get("status") in ("OK", "TEST_ONLY", "PROVISIONAL_ADVICE",
+                                "PARTIAL_ADVICE"):
         picked = result.get("selected_three") or ()
         lead = result.get("lead")
         if len(picked) == 3 and isinstance(lead, str):
             prefix = ("【構築別マトリクスなし・機能試験のみ】"
                       if result.get("status") == "TEST_ONLY" else
                       "【暫定AI推奨・処理役/安全受け未検証】"
-                      if result.get("status") == "PROVISIONAL_ADVICE" else "")
+                      if result.get("status") == "PROVISIONAL_ADVICE" else
+                      "【画像認識が一部未確定・既知の相手から暫定選出／PREP未完成】"
+                      if result.get("status") == "PARTIAL_ADVICE" else "")
             return prefix + "選出：" + " / ".join(_japanese_selection_label(n) for n in picked) + (
                 "　初手：" + _japanese_selection_label(lead))
     reason = str(result.get("reason", ""))
