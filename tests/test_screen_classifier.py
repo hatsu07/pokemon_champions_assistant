@@ -20,11 +20,11 @@ class DummySession:
     def __init__(self, logits=None, metadata=None):
         self.calls=[]
         self.metadata=metadata or {}
+        self.logits=np.array([logits if logits is not None
+            else [9,-10,-10,-10,-10]],dtype=np.float32)
 
     def get_modelmeta(self):
         return type("ModelMeta",(),{"custom_metadata_map":self.metadata})()
-        self.logits=np.array([logits if logits is not None
-            else [9,-10,-10,-10,-10]],dtype=np.float32)
 
     def get_inputs(self):
         return [type("Input",(),{"name":"rgb"})()]
@@ -178,7 +178,7 @@ class ScreenClassifierTests(unittest.TestCase):
         original=self.model.read_bytes()
         with patch.dict(sys.modules,{"onnx":fake_onnx}):
             created=convert_to_standalone(self.model,self.meta,target)
-        self.assertEqual(created,target)
+        self.assertEqual(created,target.resolve())
         self.assertEqual(self.model.read_bytes(),original)
         self.assertEqual(target.read_bytes(),b"standalone fixture")
         embedded=json.loads(added[0][EMBEDDED_MANIFEST_KEY])
