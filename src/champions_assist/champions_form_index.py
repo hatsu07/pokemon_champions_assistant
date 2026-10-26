@@ -11,8 +11,24 @@ import unicodedata
 def _norm(s: object) -> str:
     return unicodedata.normalize("NFKC",str(s or "")).strip()
 
+# Explicit aliases appearing in the shipped 358-row LIVE matrix. Each
+# destination pair exists separately in BOTH Champions fixed masters.
+# Never infer suffixes such as "ヒスイ" for unknown species.
+FORM_ALIASES = {
+    "アローラキュウコン": ("キュウコン","アローラのすがた"),
+    "ウォッシュロトム": ("ロトム","ウォッシュロトム"),
+    "ヒートロトム": ("ロトム","ヒートロトム"),
+    "ヒスイウインディ": ("ウインディ","ヒスイのすがた"),
+    "ヒスイダイケンキ": ("ダイケンキ","ヒスイのすがた"),
+    "ヒスイヌメルゴン": ("ヌメルゴン","ヒスイのすがた"),
+    "ヒスイゾロアーク": ("ゾロアーク","ヒスイのすがた"),
+    "ガラルヤドキング": ("ヤドキング","ガラルのすがた"),
+}
+
 def form_key(name: str) -> tuple[str,str]:
     s=_norm(name).replace("(", "（").replace(")", "）")
+    if s in FORM_ALIASES:
+        return FORM_ALIASES[s]
     if "（" not in s or not s.endswith("）"):
         return _norm(s),""
     base,form=s[:-1].rsplit("（",1)
