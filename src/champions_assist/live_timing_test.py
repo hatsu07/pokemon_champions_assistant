@@ -58,17 +58,19 @@ def prep_timing_test(
     *, state: dict, assets, access_token: str, model: str,
     reasoning_effort: str = "auto",
     started_at: float | None = None,
+    limit_seconds: float = PREP_LIMIT_SECONDS,
     clock: Callable[[], float] = perf_counter,
     prep_runner: Callable = run_replay_prep,
     client_factory=None,
 ) -> tuple[dict, dict]:
     """Include token retrieval (if started_at was provided) in the hard cap."""
     started = clock() if started_at is None else started_at
-    remaining = _response_limit(started, PREP_LIMIT_SECONDS, clock)
+    cap = max(0.0, min(PREP_LIMIT_SECONDS, limit_seconds))
+    remaining = _response_limit(started, cap, clock)
     if remaining <= 1.0:
         return deepcopy(state), {
             "status": "PREP_TIMING_FAIL", "reason": "AUTH_OR_QUEUE_BUDGET",
-            "elapsed_ms": _elapsed_ms(started, clock), "limit_ms": 40000,
+            "elapsed_ms": _elapsed_ms(started, clock), "limit_ms": round(cap*1000),
             "lead_evaluated": 0, "bench_evaluated": 0,
             "win_conditions": 0, "pass": False,
         }
@@ -84,7 +86,7 @@ def prep_timing_test(
     except Exception as exc:
         return deepcopy(state), {
             "status": "PREP_TIMING_FAIL", "reason": type(exc).__name__,
-            "elapsed_ms": _elapsed_ms(started, clock), "limit_ms": 40000,
+            "elapsed_ms": _elapsed_ms(started, clock), "limit_ms": round(cap*1000),
             "lead_evaluated": 0, "bench_evaluated": 0,
             "win_conditions": 0, "pass": False,
         }
@@ -122,15 +124,15 @@ def prep_timing_test(
         and len({(r.get("our_pokemon"), r.get("opponent_pokemon")) for r in rows}) == 18
         and win_roles == 3
     )
-    passed = complete and elapsed <= 40000
+    passed = complete and elapsed <= round(cap*1000)
     return (updated if passed else deepcopy(state)), {
         "status": "PREP_TIMING_PASS" if passed else "PREP_TIMING_FAIL",
         "source_status": report.get("status", "UNKNOWN"),
         "reason": "OK" if passed else (
-            "DEADLINE_EXCEEDED" if elapsed > 40000 else
+            "DEADLINE_EXCEEDED" if elapsed > round(cap*1000) else
             (report.get("reason") if report.get("reason") not in ("OK","") else None)
             or "INCOMPLETE_18_OR_ROLES"),
-        "elapsed_ms": elapsed, "limit_ms": 40000,
+        "elapsed_ms": elapsed, "limit_ms": round(cap*1000),
         "lead_evaluated": len(lead_rows),
         "bench_evaluated": len(bench_rows),
         "win_conditions": win_roles,
