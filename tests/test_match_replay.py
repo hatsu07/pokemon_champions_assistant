@@ -175,8 +175,9 @@ class FullReplayTest(unittest.TestCase):
              "eval_code":lead_code if own==OWN[0] else bench_code}
             for own in OWN[:3] for opp in OPP
         ]
-        response={"matchups_18":matchups,"preserve":OWN[2],
-                  "stopper":OWN[1],"closer":OWN[0]}
+        response={"lead_six":[row["eval_code"] for row in matchups[:6]],
+                  "bench_twelve":[row["eval_code"] for row in matchups[6:]],
+                  "preserve":OWN[2],"stopper":OWN[1],"closer":OWN[0]}
         class Stream:
             def __enter__(self): return self
             def __exit__(self,*args): return False
@@ -199,6 +200,27 @@ class FullReplayTest(unittest.TestCase):
         self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
         self.assertEqual(client.responses.last["stream"],True)
+        response["lead_six"] = response["lead_six"][:-1]
+        missing, missing_report = run_replay_prep(
+            state=state, assets=compatible, access_token="dummy", model="mock",
+            client_factory=lambda **kwargs: client)
+        self.assertEqual(missing_report["status"], "PREP_INCOMPLETE")
+        self.assertEqual(missing_report["reason"], "MATCHUPS_18_INCOMPLETE")
+        self.assertIsNone(missing["prep"])
+
+        self.assertEqual(client.responses.last["reasoning"]["effort"],"low")
+        # Ordered compact wire: six lead, then twelve bench entries; exact
+        # pairs and all mandatory tags are still reconstructed/validated.
+        prompt=json.loads(client.responses.last["input"][0]["content"][0]["text"])
+        self.assertEqual(prompt["response_order"]["lead_six"][:11],
+                         "six strings")
+        self.assertEqual(len(prompt["selected_team"]),3)
+        self.assertNotIn("frozen_gate",prompt)
+        self.assertEqual(
+            [(row["our_pokemon"],row["opponent_pokemon"])
+             for row in updated["prep"]["matchups_18"]],
+            [(own,opp) for own in OWN[:3] for opp in OPP])
+
 
     def test_timeout_suppresses_tactical_model_calls(self):
         calls=[]

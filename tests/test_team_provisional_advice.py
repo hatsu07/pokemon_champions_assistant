@@ -84,15 +84,14 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
         state,out=self.make_selection()
         state=confirm_actual_selection(state,self.assets,out["selected_three"],out["lead"])
         lead_code=("ACT=conditional_attack|KO=unknown|DPS=known_move|PRI=unknown|"
-                   "S=unknown|OUR=registered|OPP=unknown|SAFE=unknown|PROC=unknown|"
+                   "S=unknown|OUR=registered|OPP=unknown|SAFE=unknown|PROC=unverified|"
                    "LOCK=unknown|MEGA=unknown")
         bench_code=("S=unknown|OUR=registered|OPP=unknown|PRI=unknown|"
-                    "SAFE=unknown|PROC=unknown")
+                    "SAFE=unknown|PROC=unverified")
         response={
-            "matchups_18":[
-                {"our_pokemon":member,"opponent_pokemon":opponent,
-                 "eval_code":lead_code if member==self.names[0] else bench_code}
-                for member in self.names[:3] for opponent in self.opponents
+            "lead_six":[lead_code for _ in self.opponents],
+            "bench_twelve":[
+                bench_code for _ in self.names[1:3] for _ in self.opponents
             ],
             "preserve":self.names[0],"stopper":self.names[1],"closer":self.names[2],
         }

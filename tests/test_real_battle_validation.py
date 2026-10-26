@@ -41,13 +41,13 @@ class RealBattleGateTests(unittest.TestCase):
                 "capture":{"path":str(file),"sha256":checksum},
                 "timeline":{
                     "selection_visible_ms":0,
-                    "selection_displayed_ms":90000,
-                    "selection_confirmed_ms":90000,
-                    "prep_finished_ms":130000,
-                    "opponent_lead_visible_ms":131000,
+                    "selection_displayed_ms":14000,
+                    "selection_confirmed_ms":16000,
+                    "prep_finished_ms":87000,
+                    "opponent_lead_visible_ms":88000,
                     "turns":[
-                        {"action_screen_ms":132000,"recommendation_visible_ms":177000},
-                        {"action_screen_ms":179000,"recommendation_visible_ms":204000},
+                        {"action_screen_ms":89000,"recommendation_visible_ms":134000},
+                        {"action_screen_ms":136000,"recommendation_visible_ms":161000},
                     ],
                 },
             })
@@ -65,8 +65,8 @@ class RealBattleGateTests(unittest.TestCase):
         status=self.check(data)
         self.assertTrue(status["device_evidence_passed"])
         self.assertEqual(status["independent_capture_hashes"],MIN_MATCHES)
-        self.assertEqual(status["matches"][0]["selection"]["elapsed_ms"],90000)
-        self.assertEqual(status["matches"][0]["prep"]["elapsed_ms"],40000)
+        self.assertEqual(status["matches"][0]["selection"]["elapsed_ms"],14000)
+        self.assertEqual(status["matches"][0]["prep"]["elapsed_ms"],87000)
         self.assertEqual(status["matches"][0]["turns"][0]["elapsed_ms"],45000)
         self.assertFalse(status["live_ready"])
         self.assertIn("INDEPENDENT_CHAMPIONS_EFFECT_AND_DAMAGE_VALIDATION",
@@ -86,15 +86,14 @@ class RealBattleGateTests(unittest.TestCase):
     def test_any_deadline_miss_fails_even_if_four_are_good(self):
         data=self.packet()
         timeline=data["matches"][0]["timeline"]
-        # The UI returns 1ms too late, and all later events shift with it;
-        # this isolates a missed 90s limit rather than invalid chronology.
-        timeline["selection_displayed_ms"]=90001
-        timeline["selection_confirmed_ms"]=90001
-        timeline["prep_finished_ms"]=130001
-        timeline["opponent_lead_visible_ms"]=131001
+        # The combined PREP result and selection display miss the 87s budget.
+        timeline["selection_displayed_ms"]=87001
+        timeline["selection_confirmed_ms"]=87001
+        timeline["prep_finished_ms"]=87002
+        timeline["opponent_lead_visible_ms"]=88000
         self.assertFalse(self.check(data)["device_evidence_passed"])
         data=self.packet()
-        data["matches"][0]["timeline"]["prep_finished_ms"]=130001
+        data["matches"][0]["timeline"]["prep_finished_ms"]=87001
         self.assertFalse(self.check(data)["device_evidence_passed"])
         data=self.packet()
         data["matches"][3]["timeline"]["turns"][1]["recommendation_visible_ms"]=224001
@@ -102,7 +101,7 @@ class RealBattleGateTests(unittest.TestCase):
 
     def test_prep_interrupt_and_recognition_error_never_pass(self):
         data=self.packet()
-        data["matches"][1]["timeline"]["opponent_lead_visible_ms"]=129999
+        data["matches"][1]["timeline"]["opponent_lead_visible_ms"]=86999
         self.assertFalse(self.check(data)["device_evidence_passed"])
         data=self.packet()
         data["matches"][0]["screen_recognition_errors"]=1

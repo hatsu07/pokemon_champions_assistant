@@ -1,4 +1,4 @@
-"""Explicit off-match PREP (40 s) and turn (30 s) API timing benchmarks.
+"""Explicit off-match shared-clock PREP and turn (30 s) API timing benchmarks.
 
 Both tests call the SAME Champions replay code used by the live observer.
 No invented game actions, no screenshot writes, and no tactical rules/AI
@@ -18,7 +18,9 @@ from .prep import (
     build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
 )
 
-PREP_LIMIT_SECONDS = 40.0
+PREP_LIMIT_SECONDS = 87.0  # Team-selection 90s clock minus 3s for player input.
+# PREP has no independent 40s deadline: the caller gives it the remaining
+# budget from the ORIGINAL selection start, including authentication and UI.
 TURN_TARGET_SECONDS = 30.0
 TURN_GAME_LIMIT_SECONDS = 45.0
 ADVICE_STATUSES = frozenset({"ADVICE", "PROVISIONAL_ADVICE"})
@@ -128,6 +130,11 @@ def prep_timing_test(
     return (updated if passed else deepcopy(state)), {
         "status": "PREP_TIMING_PASS" if passed else "PREP_TIMING_FAIL",
         "source_status": report.get("status", "UNKNOWN"),
+        "source_reason": report.get("reason", ""),
+        "source_elapsed_ms": report.get("elapsed_ms"),
+        "source_stage": report.get("request_stage"),
+        "source_model_elapsed_ms": report.get("model_elapsed_ms"),
+        "source_prompt_chars": report.get("prompt_chars"),
         "reason": "OK" if passed else (
             "DEADLINE_EXCEEDED" if elapsed > round(cap*1000) else
             (report.get("reason") if report.get("reason") not in ("OK","") else None)

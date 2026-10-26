@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 from types import SimpleNamespace
+from types import MappingProxyType
 import unittest
 
 import cv2
@@ -11,6 +12,7 @@ import numpy as np
 
 from champions_assist.match_replay import new_replay, run_replay_image
 from champions_assist.selection_vision import selection_image_content
+from champions_assist.preload import FrozenMatchAssets
 from tests.test_match_replay import fixture_assets, frame, OWN, OPP
 
 
@@ -99,6 +101,42 @@ class SelectionDetailImageTests(unittest.TestCase):
                              endpoint.calls[1]["input"][0]["content"]),2)
         self.assertEqual(sum(x["type"]=="input_image" for x in
                              endpoint.calls[0]["input"][0]["content"]),1)
+
+    def test_type_icon_conflict_retries_same_gpt_model_once(self):
+        original=fixture_assets()
+        # Complete, typed test rows from the frozen Champions master format.
+        correct_types=["くさ/あく","みず/フェアリー","ドラゴン/じめん",
+                       "かくとう/はがね","はがね/ゴースト","ゴースト/フェアリー"]
+        frozen=FrozenMatchAssets(
+            contents=original.contents,sha256=original.sha256,
+            matrix_index=MappingProxyType({
+                n:n+"|"+t+"|0" for n,t in zip(OPP,correct_types)}),
+            lookup_index=original.lookup_index,own_team=original.own_team,
+            frozen_at=original.frozen_at)
+        wrong=frame("TEAM_SELECTION",opponent_six=list(OPP),
+                    opponent_type_icons=[["くさ","あく"],["みず","フェアリー"],
+                                         ["エスパー"],["かくとう","はがね"],
+                                         ["はがね","ゴースト"],["ゴースト","フェアリー"]])
+        corrected=frame("TEAM_SELECTION",opponent_six=list(OPP),
+                        opponent_type_icons=[["くさ","あく"],["みず","フェアリー"],
+                                             ["ドラゴン","じめん"],
+                                             ["かくとう","はがね"],
+                                             ["はがね","ゴースト"],["ゴースト","フェアリー"]])
+        chosen={"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        client,calls=self.fake_client([wrong,corrected,chosen])
+        state,report=run_replay_image(
+            self.image,state=new_replay(frozen),assets=frozen,
+            model="mock",access_token="dummy",client_factory=lambda **_:client)
+        self.assertEqual(report["status"],"TEST_ONLY")
+        self.assertEqual(report["opponent_recognition_attempts"],2)
+        self.assertEqual(len(calls.calls),3)
+        self.assertIn("OPPONENT_TYPE_MISMATCH",calls.calls[1]["instructions"])
+        self.assertIn("type GLYPHS",calls.calls[0]["instructions"])
+        self.assertIn("opponent_type_icons",
+                      calls.calls[0]["text"]["format"]["schema"]["required"])
+        self.assertEqual(state["opponent_six"],list(OPP))
+        self.assertEqual(sum(row["type"]=="input_image" for row in
+                             calls.calls[0]["input"][0]["content"]),1)
 
     def test_two_stages_share_bounded_socket_timeouts_and_explicit_fast_effort(self):
         observed=frame("TEAM_SELECTION",our_six=[],opponent_six=list(OPP))

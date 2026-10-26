@@ -15,10 +15,10 @@ import re
 
 from .app_config import ConfigurationError, atomic_write_text
 
-SCHEMA = "champions-live-e2e-device-evidence-v1"
+SCHEMA = "champions-live-e2e-device-evidence-v2"
 MIN_MATCHES = 5
 SELECTION_LIMIT_MS = 90_000
-PREP_LIMIT_MS = 40_000
+SELECTION_PREP_LIMIT_MS = 87_000  # 90s team preview minus 3s for game input
 TURN_LIMIT_MS = 45_000
 MAX_IMPORT_BYTES = 2_000_000
 MAX_CAPTURE_BYTES = 800_000_000
@@ -108,7 +108,7 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
         if not isinstance(times,dict):
             raise ConfigurationError("実戦計測のタイムラインがありません")
         selection=_interval(times,"selection_visible_ms","selection_displayed_ms",SELECTION_LIMIT_MS)
-        prep=_interval(times,"selection_confirmed_ms","prep_finished_ms",PREP_LIMIT_MS)
+        prep=_interval(times,"selection_visible_ms","prep_finished_ms",SELECTION_PREP_LIMIT_MS)
         if _int(times["selection_confirmed_ms"]) < _int(times["selection_visible_ms"]):
             raise ConfigurationError("選出確定時刻が選出画面前です")
         lead_visible=_int(times.get("opponent_lead_visible_ms"))

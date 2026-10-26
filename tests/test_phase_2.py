@@ -99,7 +99,7 @@ class Phase2TestCase(unittest.TestCase):
         self.assertEqual(prep.selected_three, ("Own2", "Own3", "Own4"))
         self.assertEqual(prep.lead, "Own2")
         self.assertEqual(len(prep.expected_pairs), 18)
-        self.assertEqual(session.prep_deadline.budget_ms, 40_000)
+        self.assertEqual(session.prep_deadline.budget_ms, 47_000)
 
     def test_live_ai_35s_cap_and_10s_input_reserve(self) -> None:
         selection = self.controller.start_match("selection-budget", now_ms=0)
@@ -122,6 +122,17 @@ class Phase2TestCase(unittest.TestCase):
         normal = battle.present_ui(VisualUI.COMMAND_MENU, self.normal_actions(), now_ms=100, actual_ui_remaining_ms=9_000)
         self.assertEqual(normal.deadline.budget_ms, 0)
         self.assertEqual(normal.status, WindowStatus.BLOCKED)
+
+    def test_prep_deadline_shares_original_selection_clock(self) -> None:
+        session = self.controller.start_match("shared-clock", now_ms=0)
+        session.receive_opponent_preview(OPPONENTS, now_ms=1000,
+                                         actual_ui_remaining_ms=90_000)
+        session.record_actual_selection(TEAM[:3], TEAM[0], now_ms=20_000,
+                                        actual_ui_remaining_ms=71_000)
+        self.assertEqual(session.prep_deadline.budget_ms, 68_000)
+        self.assertEqual(session.prep_deadline.expires_at_ms, 88_000)
+        self.assertEqual(session.enforce_deadlines(now_ms=87_999), ())
+        self.assertEqual(session.enforce_deadlines(now_ms=88_000), ("PREP",))
 
     def test_deadline_management_expires_model_work_without_tactical_fallback(self) -> None:
         session = self.controller.start_match("match-1", now_ms=0)

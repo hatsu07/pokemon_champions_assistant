@@ -138,16 +138,15 @@ class TeamProvisionalMatrixTests(unittest.TestCase):
             prompt=json.loads(kwargs["content"][0]["text"])
             captured.append(prompt)
             return {
-                "matchups_18":[{
-                    "our_pokemon":our,"opponent_pokemon":opp,
-                    "eval_code": (
-                        "ACT=attack|KO=unknown|DPS=review|PRI=unknown|S=unknown|"
-                        "OUR=unknown|OPP=unknown|SAFE=unknown|PROC=check|"
-                        "LOCK=none|MEGA=unknown"
-                        if our==chosen[0] else
-                        "S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
-                        "SAFE=unknown|PROC=check")
-                } for our,opp in product(chosen,opponents)],
+                "lead_six":[
+                    "ACT=attack|KO=unknown|DPS=review|PRI=unknown|S=unknown|"
+                    "OUR=unknown|OPP=unknown|SAFE=unknown|PROC=check|"
+                    "LOCK=none|MEGA=unknown"
+                    for _ in opponents],
+                "bench_twelve":[
+                    "S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
+                    "SAFE=unknown|PROC=check"
+                    for _ in product(chosen[1:],opponents)],
                 "preserve":chosen[0],"stopper":chosen[1],"closer":chosen[2],
             }
         with patch("champions_assist.match_replay._stream_json",

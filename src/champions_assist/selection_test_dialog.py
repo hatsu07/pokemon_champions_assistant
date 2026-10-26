@@ -97,7 +97,7 @@ class _TimingTestWorker(QObject):
     finished=Signal(object)
 
     def __init__(self, *, mode, image, assets, state, app_root, model,
-                 reasoning_effort, requested_at, prep_limit_seconds=40.0):
+                 reasoning_effort, requested_at, prep_limit_seconds=87.0):
         super().__init__()
         self.mode=mode
         self.image=image
@@ -124,7 +124,7 @@ class _TimingTestWorker(QObject):
             else:
                 updated, report=turn_timing_test(image=self.image,**kwargs)
         except Exception as exc:
-            limit=40000 if self.mode=="PREP" else 30000
+            limit=round(self.prep_limit_seconds*1000) if self.mode=="PREP" else 30000
             report={"status":self.mode+"_TIMING_FAIL",
                     "reason":type(exc).__name__,"pass":False,
                     "elapsed_ms":round((perf_counter()-self.requested_at)*1000),
@@ -154,6 +154,8 @@ class SelectionTestDialog(QDialog):
         self.selection_display_elapsed_ms=None
         self.auto_prep_pending=False
         self.prep_completed=False
+        self.prep_attempted=False
+        self.prep_limit_seconds=0.0
         self.thread=None
         self.worker=None
         self.log=None
@@ -168,7 +170,7 @@ class SelectionTestDialog(QDialog):
         heading=QLabel(
             "選出を表示した直後、同じ相手6匹・選出3匹でPREPを自動開始します。"
             " 選出表示＋初手6／控え12対面＋勝ち筋3点の完了を合計90秒以内"
-            " （うちPREP最大40秒・ゲーム操作余裕3秒）で検証します。"
+            " （PREPは残り時間を使用・ゲーム操作余裕3秒）で検証します。"
             "ターン30秒は別画像で検証します。実ゲームの操作はしません。"
         )
         heading.setWordWrap(True)
@@ -303,6 +305,7 @@ class SelectionTestDialog(QDialog):
         self.turn_run_button.setEnabled(False)
         self.auto_prep_pending=False
         self.prep_completed=False
+        self.prep_attempted=False
         self.test_state=None
         self.selection_started_at=perf_counter()
         self.selection_display_elapsed_ms=None
@@ -342,6 +345,16 @@ class SelectionTestDialog(QDialog):
             +"\n"+("未検証理由" if status in ("PROVISIONAL_ADVICE","PARTIAL_ADVICE") else "失敗理由")
             +": "+str(report.get("reason","なし"))
         )
+        icons=(observations.get("opponent_type_icons") if isinstance(observations,dict)
+               else None) or report.get("observed_type_icons")
+        if isinstance(icons,list) and len(icons)==6:
+            result+=("\n視認タイプ（AI読取・未確定）: "
+                     + " / ".join("+".join(v) if isinstance(v,list) and v
+                                  else "不明" for v in icons))
+        conflict=report.get("type_mismatch_slots") or []
+        if conflict:
+            result+="\nタイプ矛盾枠（要確認）: "+", ".join(
+                str(n)+"番" for n in conflict)
         unmatched=report.get("unmatched_opponent_slots") or []
         if unmatched and status in ("BLOCKED","PARTIAL_ADVICE"):
             formatted=" / ".join(
@@ -349,7 +362,7 @@ class SelectionTestDialog(QDialog):
                 for entry in unmatched if isinstance(entry,dict))
             if formatted:
                 result+=(
-                    "\nLIVEマトリクス照合不可: "+formatted+
+                    "\n相手の照合・再確認対象: "+formatted+
                     "\n※画像認識候補であり、実際のポケモンではない可能性があります。"
                     " 元の対面AI評価データは削除されていません。")
         if "matrix_ai_hint_rows" in report:
@@ -414,7 +427,7 @@ class SelectionTestDialog(QDialog):
             return
         if mode=="PREP" and self.selection_started_at is None:
             return
-        if mode=="TURN" and not self.prep_completed:
+        if mode=="TURN" and not self.prep_attempted:
             return
         if mode=="TURN" and self.turn_image is None:
             return
@@ -425,16 +438,15 @@ class SelectionTestDialog(QDialog):
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
         self.timing_status.setText(
-            "PREP 40秒：初手6＋控え12＋勝ち筋3点を検査中…"
+            "PREP：選出開始から87秒以内に初手6＋控え12＋勝ち筋3点を検査中…"
             if mode=="PREP" else
             "ターン30秒：画像認識＋AI判断＋合法手検査中…")
         self.timing_requested_at=perf_counter()
-        prep_limit=40.0
+        prep_limit=87.0
         if mode=="PREP":
             # The test begins at the selection button click (not after AI
             # recognition). Reserve three seconds for human game input.
-            prep_limit=max(0.0,min(
-                40.0,87.0-(self.timing_requested_at-self.selection_started_at)))
+            prep_limit=max(0.0,87.0-(self.timing_requested_at-self.selection_started_at))
             if prep_limit<=1.0:
                 self._timing_complete({
                     "mode":"PREP","state":self.test_state,
@@ -444,6 +456,7 @@ class SelectionTestDialog(QDialog):
                               "win_conditions":0}})
                 self._clear_worker()
                 return
+        self.prep_limit_seconds=prep_limit if mode=="PREP" else 0.0
         if self.log:
             self.log.write(mode+"_TIMING_TEST_START",phase=mode,
                            time_limit_ms=round(prep_limit*1000) if mode=="PREP" else 30000,
@@ -473,7 +486,7 @@ class SelectionTestDialog(QDialog):
         # The displayed answer, not merely the model response, must arrive
         # within the hard time budget. Qt event dispatch delay counts too.
         wall=round((perf_counter()-self.timing_requested_at)*1000)
-        limit=40000 if mode=="PREP" else 30000
+        limit=round(self.prep_limit_seconds*1000) if mode=="PREP" else 30000
         report["ui_delivery_elapsed_ms"]=wall
         total=round((perf_counter()-self.selection_started_at)*1000) if (
             mode=="PREP" and self.selection_started_at is not None) else 0
@@ -491,7 +504,8 @@ class SelectionTestDialog(QDialog):
             report["pass"]=False
             report["recommendation"]=""
         if mode=="PREP":
-            self.prep_completed=True
+            self.prep_attempted=True
+            self.prep_completed=bool(report.get("pass"))
             if report.get("pass"):
                 self.test_state=payload["state"]
             details=(
@@ -504,6 +518,8 @@ class SelectionTestDialog(QDialog):
                 f"／控え {report.get('bench_evaluated',0)}/12"
                 f"／勝ち筋 {report.get('win_conditions',0)}/3"
                 f"／理由: {report.get('reason','UNKNOWN')}"
+                f"／AI元結果: {report.get('source_status','UNKNOWN')}"
+                f"／AI元理由: {report.get('source_reason','-')}"
                 "。構造と時間の検証であり、戦術的正確性は未検証。")
         else:
             self.timing_results.append({
@@ -545,9 +561,9 @@ class SelectionTestDialog(QDialog):
             self._start_timing_test("PREP")
             return
         self.turn_choose_button.setEnabled(
-            self.prep_completed and self.test_state is not None)
+            self.prep_attempted and self.test_state is not None)
         self.turn_run_button.setEnabled(
-            self.prep_completed and self.test_state is not None
+            self.prep_attempted and self.test_state is not None
             and self.turn_image is not None)
 
     def closeEvent(self,event):
