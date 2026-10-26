@@ -120,7 +120,6 @@ class ScreenClassifier:
         if manifest_path is None:
             # Metadata is stored in ONNX's custom_metadata_map, so load the
             # runtime session once to retrieve it. No separate JSON is needed.
-            session=session_factory(str(path),providers=providers)
             metadata=session.get_modelmeta().custom_metadata_map
             raw=metadata.get(EMBEDDED_MANIFEST_KEY)
             if not raw:
