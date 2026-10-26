@@ -54,7 +54,9 @@ class LearningSQLiteTests(unittest.TestCase):
 
     def test_v28_batches_import_without_mutation_and_resume_with_new_files(self):
         first=self.asset/"ai-proposal-first.json"
-        save_proposals(first,self.catalog,self.proposal(max_cells=3))
+        # Simulate a v28 JSON batch that predates SQLite-first persistence.
+        first.write_text(json.dumps(self.proposal(max_cells=3),
+                                   ensure_ascii=False),encoding="utf-8")
         original=first.read_bytes()
         before_cat=self.catalog.read_bytes()
         result=self.store.import_legacy_assets()
@@ -66,7 +68,8 @@ class LearningSQLiteTests(unittest.TestCase):
         self.assertEqual(self.store.import_legacy_assets()["imported_cells"],0)
         # v28 app continues completing batches after initial migration.
         second=self.asset/"ai-proposal-second.json"
-        save_proposals(second,self.catalog,self.proposal(max_cells=3))
+        second.write_text(json.dumps(self.proposal(max_cells=3),
+                                    ensure_ascii=False),encoding="utf-8")
         result=self.store.import_legacy_assets()
         self.assertEqual(result["imported_cells"],3)
         self.assertEqual(self.store.coverage(self.catalog)["ai_evaluated"],6)
@@ -82,7 +85,9 @@ class LearningSQLiteTests(unittest.TestCase):
                            ("opponent","slot","member_signature")},
                           "assessment":"まだ仮説","risks":"安全受け未確認",
                           "unknowns":"被ダメージ"} for c in req["cells"]]})
-        save_proposals(self.asset/"ai-proposal-legacy.json",self.catalog,value)
+        # Legacy v1 JSON existed without any SQLite snapshot.
+        (self.asset/"ai-proposal-legacy.json").write_text(
+            json.dumps(value,ensure_ascii=False),encoding="utf-8")
         self.assertEqual(self.store.import_legacy_assets()["imported_cells"],4)
         self.assertEqual(self.store.coverage(self.catalog)["structured_v2"],0)
         self.assertEqual(self.store.coverage(self.catalog)["ai_evaluated"],4)
