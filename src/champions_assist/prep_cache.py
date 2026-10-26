@@ -26,8 +26,8 @@ def _own_names(matrix_text: str) -> tuple[str, ...]:
         return ()
     fields = match.group(1).split(",")
     if len(fields) != 6 or any(
-            not field.startswith(chr(65 + i) + ":")
-            for i, field in enumerate(fields)):
+            re.fullmatch(r"[A-Z]:[^,:{}]+", field) is None
+            for field in fields):
         return ()
     names = tuple(field.split(":", 1)[1] for field in fields)
     return names if len(set(names)) == 6 else ()
