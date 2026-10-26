@@ -90,6 +90,7 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "matrix_provisional": provisional_matrix_matches_registered_team(assets),
         "matrix_rows_six": [],
         "selected_three": [], "lead": None, "opponent_six": [],
+        "visual_unknown_opponents": [],
         "our_active": "", "opponent_active": "", "observed_hp": {},
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
@@ -263,6 +264,11 @@ def advance_observation(
                                 "PARTIAL_ADVICE"):
             state["opponent_six"] = list(selection.opponent_six)
             if selection.status=="PARTIAL_ADVICE":
+                # Keep unconfirmed identity explicitly; PREP will evaluate ONLY
+                # 3 x known opponents, without a fabricated sixth matrix row.
+                state["visual_unknown_opponents"] = [
+                    name for name in selection.opponent_six
+                    if name.startswith("未判明相手")] 
                 # No invented sixth row; PREP cannot claim 18/18 complete.
                 state["matrix_rows_six"] = [
                     assets.matrix_index[name] for name in selection.opponent_six
@@ -270,6 +276,7 @@ def advance_observation(
                 state["prep_status"] = "VISUAL_PARTIAL_5_OF_6"
                 output["partial_known_opponents"] = len(state["matrix_rows_six"])
             elif state["matrix_compatible"] or state["matrix_provisional"]:
+                state["visual_unknown_opponents"] = []
                 state["matrix_rows_six"] = list(
                     assets.matrix_rows_for(tuple(selection.opponent_six)))
         _event(state, obs, output)
@@ -640,6 +647,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
     """Bounded by caller shared-clock budget; complete only if all 18 validate."""
     from .prep import (
         build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+        validate_partial_prep_result,
     )
     started=perf_counter()
     stage="SETUP"
@@ -648,20 +656,48 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
     updated=deepcopy(state)
     if updated.get("phase")!="PREP" or len(updated.get("selected_three",[]))!=3:
         return updated,{"status":"BLOCKED","reason":"PREP_NOT_EXPECTED"}
-    if not (updated["matrix_compatible"] or updated.get("matrix_provisional",False)):
+    unknown_slots=tuple(updated.get("visual_unknown_opponents") or ())
+    partial=bool(unknown_slots)
+    if not (updated["matrix_compatible"] or updated.get("matrix_provisional",False) or partial):
         updated["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
         return updated,{"status":"PREP_UNAVAILABLE","reason":"OWN_MATRIX_MISMATCH",
                         "message":"別構築のLIVEマトリクスは使えません。18対面の実戦評価は行いません。"}
     try:
         opponents=tuple(updated["opponent_six"])
-        rows=tuple(updated.get("matrix_rows_six") or assets.matrix_rows_for(opponents))
-        provisional=not updated["matrix_compatible"]
+        if partial:
+            if (len(opponents)!=6 or not 1<=len(unknown_slots)<=2
+                    or len(set(opponents))!=6
+                    or len(set(unknown_slots))!=len(unknown_slots)
+                    or any(slot not in opponents or
+                           slot!=f"未判明相手{opponents.index(slot)+1}"
+                           for slot in unknown_slots)):
+                return updated, {"status":"PREP_UNAVAILABLE",
+                                 "reason":"PARTIAL_VISUAL_SLOTS_INVALID"}
+            known=tuple(name for name in opponents if name not in unknown_slots)
+            if (len(known) not in (4,5)
+                    or any(name not in assets.matrix_index for name in known)):
+                return updated, {"status":"PREP_UNAVAILABLE",
+                                 "reason":"PARTIAL_KNOWN_ROWS_INVALID"}
+            rows=tuple(updated.get("matrix_rows_six") or ())
+            if rows!=tuple(assets.matrix_index[name] for name in known):
+                return updated, {"status":"PREP_UNAVAILABLE",
+                                 "reason":"PARTIAL_MATRIX_ROW_MISMATCH"}
+        else:
+            known=opponents
+            rows=tuple(updated.get("matrix_rows_six") or assets.matrix_rows_for(opponents))
+        provisional=partial or not updated["matrix_compatible"]
         from .live_context import critical_lookup_rows
-        # Secondary lookup: at most two preloaded, explicitly flagged threats.
-        # AI-generated matrix hints never certify an immediate KO or safe switch.
-        lookup=critical_lookup_rows(assets, opponents, rows)
-        prep_input=build_prep_input(
-            tuple(updated["selected_three"]),updated["lead"],opponents,rows)
+        # With 4-5 known opponents, never requery or invent unknown lookup rows.
+        lookup=[] if partial else critical_lookup_rows(assets, opponents, rows)
+        prep_input=(None if partial else build_prep_input(
+            tuple(updated["selected_three"]),updated["lead"],opponents,rows))
+        # Even for a changed team with no tactical matrix, pinned row columns
+        # 0-2 are immutable species/type/speed context; other team-specific
+        # matchup cells must NOT leak into this partial tactical evaluation.
+        if partial and not (updated["matrix_compatible"] or updated.get("matrix_provisional")):
+            prompt_rows=["|".join(row.split("|")[:3]) for row in rows]
+        else:
+            prompt_rows=list(rows)
         if client_factory is None:
             from openai import OpenAI
             client_factory=OpenAI
@@ -671,19 +707,31 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "selected_three":updated["selected_three"],
             "lead":updated["lead"],
             "opponent_six":updated["opponent_six"],
-            "matrix_rows_six":list(rows),
+            "matrix_rows_six":prompt_rows,
+            "known_opponents":list(known),
+            "unknown_opponent_slots":list(unknown_slots),
             "lookup_rows_critical":lookup,
             "selected_team":[member for member in assets.own_team
                              if member["name"] in updated["selected_three"]],
             "prep_gate_rules":(_prep_gate_excerpt(
                 assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"])
                 if not provisional else ""),
-            "evidence_scope":("CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY" if provisional
-                              else "EXACT_VERIFIED_BASELINE"),
+            "evidence_scope":(
+                "PARTIAL_VISUAL_KNOWN_ONLY_NO_TEAM_MATRIX"
+                if partial and not (updated["matrix_compatible"] or updated.get("matrix_provisional"))
+                else "PARTIAL_VISUAL_HYPOTHESIS_ONLY" if partial
+                else "CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY" if provisional
+                else "EXACT_VERIFIED_BASELINE"),
             "response_order":{
-                "lead_six":"six strings in opponent_six order for the lead",
-                "bench_twelve":"six strings per selected_three member except lead, "
-                               "in selected_three order, each in opponent_six order",
+                "lead_six":(
+                    f"{len(known)} strings in known_opponents order for the lead"
+                    if partial else
+                    "six strings in opponent_six order for the lead"),
+                "bench_twelve":(
+                    f"{len(known)} strings per bench member in known_opponents order, "
+                    "in selected_three order excluding lead" if partial else
+                    "six strings per selected_three member except lead, "
+                    "in selected_three order, each in opponent_six order"),
                 "lead_tags":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
                 "bench_tags":"S|OUR|OPP|PRI|SAFE|PROC",
                 "format":"Every string has TAG=value components separated by |; "
@@ -699,16 +747,24 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Champions shared-clock PREP (no independent 40-second cap). "
-                "Complete before caller deadline. Compare ALL selected 3 x opponent 6 "
-                "= 18 pairs once using these six frozen LIVE matrix rows as PRIMARY. "
+                + ("PARTIAL VISUAL: evaluate ONLY 3 x known_opponents, never "
+                   "the unconfirmed placeholders. Return complete tags for "
+                   "each known matchup and three conditional team roles. "
+                   "Do NOT fabricate the unknown opponent's Pokémon, counters "
+                   "or type. This is not full 18-pair PREP. "
+                   if partial else
+                   "Complete before caller deadline. Compare ALL selected 3 x "
+                   "opponent 6 = 18 pairs once using six LIVE rows as PRIMARY. ")
+                + 
                 "AI_UNVERIFIED matrix notes are provisional conditional hypotheses "
                 "only and NEVER certify KO, processing roles or safe switching. "
                 "Use at most two supplied secondary lookup rows ONLY for explicit "
                 "critical warnings; do not search all six again. "
-                "Return lead_six as six compact TAG=value strings in exact "
-                "opponent_six order; return bench_twelve as twelve strings in "
-                "selected_three order excluding lead, six opponent_six entries "
-                "per bench member. Do NOT repeat Pokémon names inside each entry. "
+                "Return lead_six and bench_twelve compact TAG=value strings "
+                "in known_opponents order, first the lead, then both bench "
+                "members in selected_three order excluding lead. For full "
+                "six this is 6+12; for partial known five, 5+10. "
+                "Do NOT repeat Pokémon names inside each entry. "
                 "Every entry must include all its required tags. "
                 "PROC=unknown or ACT=unknown is an incomplete assessment; "
                 "use PROC=unverified for explicitly assessed but uncertified "
@@ -734,42 +790,69 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         # complete matchup cache. The validator will reject 0 or >18 pairs.
         codes=lead_codes+bench_codes
         expected=_ordered_prep_pairs(
-            updated["lead"], updated["selected_three"], opponents)
+            updated["lead"], updated["selected_three"], known)
         result=PrepResult(
-            "COMPLETE",
+            "PARTIAL" if partial else "COMPLETE",
             tuple(PrepMatchup(own, opponent, str(code))
                   for (own,opponent),code in zip(expected,codes))
-            if len(lead_codes)==6 and len(bench_codes)==12 else (),
+            if (len(lead_codes)==len(known)
+                and len(bench_codes)==2*len(known)) else (),
             str(answer.get("preserve") or ""),
             str(answer.get("stopper") or ""),
             str(answer.get("closer") or ""),
         )
-        validation=validate_prep_result(prep_input,result)
+        validation=(
+            validate_partial_prep_result(
+                tuple(updated["selected_three"]), updated["lead"],
+                known, unknown_slots, result)
+            if partial else validate_prep_result(prep_input,result))
         elapsed=round((perf_counter()-started)*1000)
         if elapsed>limit_seconds*1000:
             updated["prep_status"]="DEADLINE_EXCEEDED"
             return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed,
                             "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                             "prompt_chars":prompt_chars}
-        updated["prep_status"]="STRUCTURE_COMPLETE" if validation.complete else "INCOMPLETE"
+        updated["prep_status"]=(
+            "PARTIAL_STRUCTURE_COMPLETE" if partial else "STRUCTURE_COMPLETE"
+        ) if validation.complete else "INCOMPLETE"
         if validation.complete:
+            matchups=[{"our_pokemon":m.our_pokemon,
+                       "opponent_pokemon":m.opponent_pokemon,
+                       "eval_code":m.eval_code} for m in result.matchups_18]
             updated["prep"]={
-                "matchups_18":[{"our_pokemon":m.our_pokemon,
-                                "opponent_pokemon":m.opponent_pokemon,
-                                "eval_code":m.eval_code} for m in result.matchups_18],
+                ("matchups_known" if partial else "matchups_18"):matchups,
+                "unknown_opponent_slots":list(unknown_slots),
+                "unknown_pairs":[{"our_pokemon":own,"opponent_pokemon":slot}
+                                 for own in updated["selected_three"]
+                                 for slot in unknown_slots],
                 "preserve":result.preserve,"stopper":result.stopper,
                 "closer":result.closer,
-                "note":("暫定AI評価。18対面構造のみ確認、戦術・処理役・安全受けは未検証"
-                        if provisional else "AI評価案。形式確認済みであり戦術的な正確性は別途検証が必要"),
+                "note":(
+                    f"暫定PREP。既知{len(known)}匹×3の{len(matchups)}対面のみ評価。"
+                    f"未判明{len(unknown_slots)}匹×3の{3*len(unknown_slots)}対面は未評価。"
+                    "18対面完成・処理役・安全受けは未認証"
+                    if partial else
+                    "暫定AI評価。18対面構造のみ確認、戦術・処理役・安全受けは未検証"
+                    if provisional else
+                    "AI評価案。形式確認済みであり戦術的な正確性は別途検証が必要"),
             }
-        status=("PREP_PROVISIONAL" if provisional else "PREP_STRUCTURE_OK") if validation.complete else "PREP_INCOMPLETE"
-        message=("暫定18対面評価（構造検証のみ・戦術未認証）。" if provisional else
-                 "事前評価完了（構造検証）。") if validation.complete else "事前評価は未完成です。"
+        status=(
+            "PREP_PARTIAL" if partial else
+            "PREP_PROVISIONAL" if provisional else "PREP_STRUCTURE_OK"
+        ) if validation.complete else "PREP_INCOMPLETE"
+        message=(
+            f"暫定PREP：既知{len(known)}匹の{len(result.matchups_18)}対面と勝ち筋3点を評価。"
+            f"未判明{len(unknown_slots)}匹の{3*len(unknown_slots)}対面は未評価。"
+            if partial else
+            "暫定18対面評価（構造検証のみ・戦術未認証）。" if provisional else
+            "事前評価完了（構造検証）。"
+        ) if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                         "prompt_chars":prompt_chars,
                         "matchups_evaluated":len(result.matchups_18),
+                        "unknown_matchups":3*len(unknown_slots),
                         "message":message}
     except Exception as exc:
         if stage=="MODEL_RESPONSE":

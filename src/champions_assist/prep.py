@@ -93,6 +93,52 @@ def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValid
     return PrepValidation(True, "OK")
 
 
+
+def validate_partial_prep_result(
+    selected_three: tuple[str, ...], lead: str,
+    known_opponents: tuple[str, ...], unknown_slots: tuple[str, ...],
+    result: PrepResult,
+) -> PrepValidation:
+    """Validate only observed opponents; never certify the missing 3/6 pairs.
+
+    Each unknown opponent remains an unresolved placeholder, NOT a member of
+    a fictitious matrix row. This can be useful tactical preparation without
+    being equivalent to complete 18-pair PREP.
+    """
+    if (len(selected_three) != 3 or len(set(selected_three)) != 3
+            or lead not in selected_three
+            or len(known_opponents) not in (4, 5)
+            or len(set(known_opponents)) != len(known_opponents)
+            or len(unknown_slots) != 6-len(known_opponents)
+            or len(set(unknown_slots)) != len(unknown_slots)
+            or any(not slot.startswith("未判明相手") for slot in unknown_slots)):
+        return PrepValidation(False, "PARTIAL_INPUT_INVALID")
+    if result.prep_status != "PARTIAL":
+        return PrepValidation(False, "PARTIAL_STATUS_INVALID")
+    if (not all(role in selected_three
+                for role in (result.preserve, result.stopper, result.closer))):
+        return PrepValidation(False, "WIN_CONDITIONS_INVALID")
+    expected = set(product(selected_three, known_opponents))
+    pairs = [(row.our_pokemon, row.opponent_pokemon)
+             for row in result.matchups_18]
+    if len(pairs) != len(expected) or set(pairs) != expected:
+        return PrepValidation(False, "KNOWN_MATCHUPS_INCOMPLETE")
+    for row in result.matchups_18:
+        parsed = _parse_eval_code(row.eval_code)
+        if parsed is None:
+            return PrepValidation(False, "EVAL_CODE_INVALID")
+        required = LEAD_TAGS if row.our_pokemon == lead else BENCH_TAGS
+        if any(tag not in parsed for tag in required):
+            return PrepValidation(False, "PARTIAL_TAGS_INCOMPLETE")
+        if parsed["PROC"] in UNKNOWN_EVALUATION:
+            return PrepValidation(False, "PROCESSOR_NOT_ASSESSED")
+        if row.our_pokemon == lead and any(
+                parsed[tag] in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
+            return PrepValidation(False, "LEAD_ACTION_NOT_ASSESSED")
+    return PrepValidation(True, "PARTIAL_KNOWN_ONLY")
+
+
+
 def mocked_complete_prep(prep_input: PrepInput) -> PrepResult:
     """A labelled simulation fixture, not a battle evaluation or tactical heuristic."""
     lead_code = "ACT=SIMULATED|KO=?|DPS=SIMULATED|PRI=?|S=?|OUR=?|OPP=?|SAFE=?|PROC=SIMULATED|LOCK=?|MEGA=?"
