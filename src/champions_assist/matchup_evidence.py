@@ -155,7 +155,8 @@ def build_candidate_catalog(*, master_dir: Path, team: tuple[dict, ...],
                 "missing_source":reasons,
             })
     return {
-        "schema":SCHEMA,"generated_at":datetime.now(timezone.utc).isoformat(),
+        "schema":SCHEMA,"form_lookup_revision":"exact-form-v2",
+        "generated_at":datetime.now(timezone.utc).isoformat(),
         "regulation":regulation,"member_signatures":signatures,
         "master_sha256":_source_hashes(master),
         "source_scope":"CHAMPIONS_FIXED_MASTERS_ONLY",
