@@ -15,9 +15,9 @@ from champions_assist.prep_cache import (
     cached_pairs, compile_matchup_cache, cached_evidence_count,
     validate_cached_preparation,
 )
-from champions_assist.match_replay import new_replay, confirm_actual_selection, run_replay_prep
+from champions_assist.match_replay import (new_replay, confirm_actual_selection,\n                                    run_replay_prep, advance_observation)
 from champions_assist.live_timing_test import prep_timing_test
-from tests.test_match_replay import OWN, OPP
+from tests.test_match_replay import OWN, OPP, frame
 
 
 def matrix_file(*, missing: bool=False) -> str:
@@ -182,6 +182,35 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(report["cached_matchups"],15)
         self.assertEqual(updated["prep"]["source"],"FROZEN_CACHE")
         self.assertNotIn("matchups_18",updated["prep"])
+
+    def test_turn_uses_current_opponent_cache_not_all_eighteen(self):
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        state=chosen_state(assets)
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=roles()):
+            state,report=run_replay_prep(
+                state=state,assets=assets,access_token="dummy",model="mock",
+                client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"PREP_CACHE_REUSED")
+        state["phase"]="BATTLE"
+        contexts=[]
+        def tactical(ctx,limit,mode):
+            contexts.append(ctx)
+            return {"action_kind":"MOVE","move":"じしん",
+                    "switch_target":"","warning":""}
+        updated,result=advance_observation(
+            state,assets,
+            frame("MOVE_MENU",our_active=OWN[0],
+                  opponent_active=OPP[0],visible_moves=["じしん"]),
+            tactical,elapsed_seconds=lambda:1.0)
+        self.assertEqual(result["status"],"PROVISIONAL_ADVICE")
+        self.assertEqual(len(contexts),1)
+        self.assertEqual(len(contexts[0]["cached_matchup_hypotheses"]),3)
+        self.assertTrue(all(r["opponent"]==OPP[0] for r in
+                            contexts[0]["cached_matchup_hypotheses"]))
+        self.assertEqual(contexts[0]["cached_win_roles"]["preserve"],OWN[0])
+        self.assertEqual(len(updated["prep"]["matchups_18"]),18)
 
     def test_invalid_roles_never_promoted(self):
         tmp,assets=loaded_assets()
