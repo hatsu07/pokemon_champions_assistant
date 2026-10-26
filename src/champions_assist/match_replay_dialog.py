@@ -483,21 +483,18 @@ class MatchReplayDialog(QDialog):
         self.actual_three.hide()
         self.actual_lead.hide()
         self.confirm_button.hide()
-        calibration=QHBoxLayout()
-        for kind,label in (("TEAM_SELECTION","選出画面を登録"),
-                           ("TURN_ACTION","技選択画面を登録"),
-                           ("SWITCH_SELECTION","交代画面を登録")):
-            button=QPushButton(label)
-            button.clicked.connect(lambda _checked=False, k=kind:self._calibrate(k))
-            calibration.addWidget(button)
-        panel.addLayout(calibration)
-        self.manual_batch_button=QPushButton("現在までの重要画像をまとめてAIへ送信（手動保険）")
-        self.manual_batch_button.clicked.connect(self._manual_batch)
-        panel.addWidget(self.manual_batch_button)
-        panel.addWidget(QLabel("自動送信は登録した選択画面への遷移時のみ。登録前は手動送信を使用してください。"))
-        self.prep_button=QPushButton("40秒PREPの手動再実行（保険）")
-        self.prep_button.clicked.connect(self._prep)
-        panel.addWidget(self.prep_button)
+        # No manual calibration, screenshot upload or PREP retry controls.
+        self.manual_batch_button=QPushButton("legacy-hidden-manual-submit",self)
+        self.manual_batch_button.hide()
+        self.prep_button=QPushButton("legacy-hidden-prep-retry",self)
+        self.prep_button.hide()
+        self.prep_banner=QLabel("PREP：選出待ち")
+        self.prep_banner.setObjectName("live_prep_progress")
+        self.prep_banner.setWordWrap(True)
+        self.prep_banner.setStyleSheet(
+            "QLabel#live_prep_progress {font-size: 17px; font-weight: 700;"
+            "padding: 10px; background: #274060; color: white;}")
+        panel.addWidget(self.prep_banner)
         panel.addWidget(QLabel("画像の認識・AI提案・進行ログ（現在の1試合）"))
         self.output=QPlainTextEdit()
         self.output.setReadOnly(True)
@@ -790,7 +787,12 @@ class MatchReplayDialog(QDialog):
         if self._shutdown_intent is not None or self._thread is not None or self._auto_running:
             return
         if self.state is None or self.assets is None:
-            QMessageBox.warning(self, "未開始", "先に新しい対戦を開始してください。")
+            QMessageBox.warning(self,"4ファイル事前読込が未完了",
+                "先に対戦開始（4ファイル事前読込）を実行してください。")
+            return
+        if len(getattr(self.assets,"sha256",{}))!=4:
+            QMessageBox.warning(self,"4ファイル事前読込が未完了",
+                "4件すべての読み込み確認が必要です。再度対戦開始を行ってください。")
             return
         if not self.model or self.capture_config is None:
             QMessageBox.warning(self, "設定不足", "ChatGPTモデルとキャプチャ設定を確認してください。")
@@ -798,6 +800,19 @@ class MatchReplayDialog(QDialog):
         if not self.capture_config.game_viewport_normalized:
             QMessageBox.warning(self, "ROI未設定", "設定のゲーム画面範囲を指定してください。")
             return
+        if self._screen_model is None:
+            answer=QMessageBox.warning(
+                self,"画面分類モデルが未設定・利用不可",
+                "画面分類モデルが使えません（"+self._screen_model_status+"）。"
+                "誤画面のAI確認や費用増加の可能性があります。"
+                "画像変化検出を用いる低頻度モードで開始しますか？",
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            self._trace_event("MODEL_UNAVAILABLE_START_WARNING",
+                              status=self._screen_model_status,
+                              proceeded=answer==QMessageBox.StandardButton.Yes)
+            if answer!=QMessageBox.StandardButton.Yes:
+                return
         storage_note=(
             "学習用JPEGもローカルへ保存します（最大2GB、未ラベル、人手承認まで学習不可）。"
             if self.training_capture_check.isChecked()
