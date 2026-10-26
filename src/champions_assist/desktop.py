@@ -838,7 +838,7 @@ class DesktopMainWindow(QMainWindow):
         self.compact_box.toggled.connect(self._set_compact)
         controls.addWidget(self.on_top_box)
         controls.addWidget(self.compact_box)
-        test_button = QPushButton("選出画面テスト（試合外）")
+        test_button = QPushButton("テスト全般（個別・実ゲーム統合）")
         test_button.clicked.connect(self._open_selection_test)
         controls.addWidget(test_button)
         settings_button = QPushButton("設定")
@@ -850,7 +850,7 @@ class DesktopMainWindow(QMainWindow):
         self._on_unified_state({}, {"status": "NOT_STARTED"})
 
     def _open_selection_test(self) -> None:
-        """Standalone off-match screenshot replay; no game capture/controls."""
+        """Unified offline diagnostics and opt-in read-only live-game integration test."""
         from .app_config import default_app_root, ConfigurationError
         from .vision_preferences import VisionPreferenceStore
         from .preload import MasterPreloader
@@ -884,7 +884,12 @@ class DesktopMainWindow(QMainWindow):
         # Qt parent manages lifetime; keep Python ref until dialog closes.
         dialog=SelectionTestDialog(
             assets=assets,model=model,reasoning_effort=prefs.reasoning_effort(),
-            app_root=default_app_root(),parent=self)
+            app_root=default_app_root(),parent=self,
+            master_directory=self.settings_service.master_directory,
+            team_path=team_path,
+            capture_config=self.settings_service.settings.capture,
+            matrix_source=prepared.matrix_path,
+            lookup_source=prepared.lookup_path)
         dialog.exec()
 
     def _prepare_unified_match(self) -> None:
