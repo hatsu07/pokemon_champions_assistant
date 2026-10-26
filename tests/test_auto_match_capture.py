@@ -84,8 +84,17 @@ class AutoCaptureTests(unittest.TestCase):
         )
         try:
             dialog.state = {"phase": "MATCHMAKING", "matrix_compatible": False}
-            dialog.assets = object()
-            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+            from types import SimpleNamespace
+            # This fixture tests capture retries, not the four-master preloader.
+            # Supply the expected preload evidence and accept the separate
+            # warning about a missing classifier; never open a modal in CI.
+            dialog.assets = SimpleNamespace(sha256={str(i):str(i) for i in range(4)})
+            dialog._screen_model = None
+            dialog._screen_model_status = "MODEL_NOT_BUNDLED"
+            with patch.object(QMessageBox, "question",
+                              return_value=QMessageBox.StandardButton.Yes), \
+                 patch.object(QMessageBox, "warning",
+                              return_value=QMessageBox.StandardButton.Yes), \
                  patch.object(dialog, "_capture_next"):
                 dialog._start_auto()
             dialog._poll_timer.stop()  # Drive captures deterministically, not by a GUI timer.
