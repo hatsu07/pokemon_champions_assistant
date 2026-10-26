@@ -184,6 +184,9 @@ class SelectionTestDialog(QDialog):
         self.matrix_source=matrix_source
         self.lookup_source=lookup_source
         self.live_panel=None
+        self.live_test_counts={"selection":0,"prep":0,"turns":0,"switches":0,
+                               "events":0,"result":0}
+        self.live_last_phase=""
         self.image=None
         self.turn_image=None
         self.switch_image=None
@@ -381,6 +384,7 @@ class SelectionTestDialog(QDialog):
         panel.lookup_source=(str(self.lookup_source)
                              if self.lookup_source is not None else None)
         self.live_panel=panel
+        panel.state_changed.connect(self._on_live_state)
         self.integration_status.setText(
             "実ゲームキャプチャの支援エンジンを接続しました。"
             "4ファイル事前ロード→監視開始で統合テストします。")
@@ -388,6 +392,48 @@ class SelectionTestDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setWidget(panel)
         self.integration_layout.addWidget(scroll)
+
+    @Slot(object,object)
+    def _on_live_state(self,state,report):
+        """Live-only integration scoreboard, based on delivered observations.
+
+        A test run never claims a win until a RESULT_SCREEN was actually
+        observed and the underlying replay engine changed to ENDED.
+        """
+        stage=str(state.get("phase","UNKNOWN"))
+        status=str(report.get("status","UNKNOWN"))
+        screen=str(report.get("screen","UNKNOWN"))
+        if status=="NEW_MATCH" or (
+                stage=="MATCHMAKING" and self.live_last_phase=="ENDED"):
+            self.live_test_counts={k:0 for k in self.live_test_counts}
+        if screen=="TEAM_SELECTION" and status in (
+                "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY"):
+            self.live_test_counts["selection"]+=1
+        if status.startswith("PREP_") and (
+                state.get("prep") is not None
+                or status in ("PREP_CACHE_REUSED","PREP_CACHE_KNOWN_ONLY")):
+            self.live_test_counts["prep"]+=1
+        if screen=="MOVE_MENU" and report.get("action",{}).get("kind") in (
+                "MOVE","PIVOT"):
+            self.live_test_counts["turns"]+=1
+        if screen=="PARTY_MENU" and report.get("action",{}).get("kind")=="SWITCH":
+            self.live_test_counts["switches"]+=1
+        if status in ("OBSERVED","MATCH_END") and screen in (
+                "ACTION_RESOLUTION","COMMAND_MENU","RESULT_SCREEN"):
+            self.live_test_counts["events"]+=1
+        if stage=="ENDED" and state.get("result") in ("WIN","LOSS"):
+            self.live_test_counts["result"]=1
+        self.live_last_phase=stage
+        c=self.live_test_counts
+        ended=stage=="ENDED" and bool(c["result"])
+        self.integration_status.setText(
+            f"統合テスト {'決着確認' if ended else '進行中'}"
+            f"／段階 {stage}／直近 {screen}:{status}"
+            f"／選出 {c['selection']}／PREP {c['prep']}"
+            f"／技判断 {c['turns']}／交代 {c['switches']}"
+            f"／イベント {c['events']}"
+            f"／勝敗 {state.get('result','UNKNOWN')}"
+            "。戦術的な正確性とゲーム操作成功を保証しません。")
 
     def choose_image(self):
         if self.thread is not None:
@@ -817,6 +863,14 @@ class SelectionTestDialog(QDialog):
             QMessageBox.information(self,"実行中","テスト通信の終了後に閉じてください")
             event.ignore()
             return
+        if self.live_panel is not None:
+            self.live_panel._stop_auto()
+            if (self.live_panel._thread is not None
+                    or self.live_panel._prep_thread is not None):
+                QMessageBox.information(
+                    self,"実行中","ライブ統合テストのAI通信終了後に閉じてください")
+                event.ignore()
+                return
         if self.log:
             self.log.write("SELECTION_TEST_CLOSED")
         super().closeEvent(event)
