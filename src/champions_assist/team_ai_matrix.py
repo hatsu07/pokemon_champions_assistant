@@ -151,12 +151,15 @@ def publish_ai_matrix(*, matrix_path: str | Path,
         opponent_count += 1
         # Column 12 was a placeholder plan in generated matrices. This is
         # ADVISORY-ONLY text, never a match grade or certified processor.
-        if parts[11] != "-" and not parts[11].startswith(TAG):
+        base=parts[11].split(" POSTMATCH_UNVERIFIED:",1)[0]
+        postmatch=parts[11][len(base):]
+        if base != "-" and not base.startswith(TAG):
             raise ConfigurationError("既存のLIVE戦術計画を上書きできません")
         by_slot = notes.get(parts[0], {})
         hints = [chr(65 + slot) + ":" + by_slot[slot]
                  for slot in range(6) if slot in by_slot]
-        parts[11] = (TAG + " ".join(hints))[:720] if hints else "-"
+        generated_hint = (TAG + " ".join(hints)) if hints else "-"
+        parts[11] = generated_hint[:max(1,720-len(postmatch))] + postmatch
         rows.append("|".join(parts))
     generated = "\n".join(rows) + "\n"
     status = {
