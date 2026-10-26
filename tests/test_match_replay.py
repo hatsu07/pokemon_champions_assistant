@@ -200,6 +200,14 @@ class FullReplayTest(unittest.TestCase):
         self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
         self.assertEqual(client.responses.last["stream"],True)
+        response["lead_six"] = response["lead_six"][:-1]
+        missing, missing_report = run_replay_prep(
+            state=state, assets=compatible, access_token="dummy", model="mock",
+            client_factory=lambda **kwargs: client)
+        self.assertEqual(missing_report["status"], "PREP_INCOMPLETE")
+        self.assertEqual(missing_report["reason"], "MATCHUPS_18_INCOMPLETE")
+        self.assertIsNone(missing["prep"])
+
         self.assertEqual(client.responses.last["reasoning"]["effort"],"low")
         # Ordered compact wire: six lead, then twelve bench entries; exact
         # pairs and all mandatory tags are still reconstructed/validated.
