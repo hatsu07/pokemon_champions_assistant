@@ -8,7 +8,6 @@ fails closed to labelled CANDIDATE data and optional existing image fallback.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha256
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
@@ -20,7 +19,7 @@ from .calibrated_screen_fields import (
     ScreenFieldProfile, parse_field_text,
 )
 from .observation_events import ScreenLexicon, TextObservationParser
-from .ocr import OcrEngine, TesseractJapaneseOcr, image_digest
+from .ocr import OcrEngine, TesseractJapaneseOcr
 
 
 @dataclass(frozen=True)
@@ -114,23 +113,20 @@ class AsyncBattleEventReader:
               frame_id: str | None=None, timestamp: float | None=None) -> bool:
         """Fast ROI change gate. Never OCR or wait in the caller's thread.
 
-        HUD_UNCLASSIFIED and unknown scenes may contribute numeric HP only;
-        they cannot assert an event or a legal command.
+        Only BATTLE_EVENT is eligible. No menu, timer or unknown-screen OCR.
         """
         profile=self.profile
         if (not self.enabled or self._stop.is_set() or profile is None
                 or not profile.compatible(image)
-                or label not in ("BATTLE_EVENT","HUD_UNCLASSIFIED")):
+                or label!="BATTLE_EVENT"):
             return False
         crops=[]
         updated={}
         for region in profile.regions:
-            if label=="HUD_UNCLASSIFIED":
-                if region.kind not in ("HP_FRACTION","HP_PERCENT"):
-                    continue
-            elif region.kind not in ("HP_FRACTION","HP_PERCENT","MESSAGE"):
+            # TIMER and TEXT regions are intentionally never read.
+            if region.kind not in ("HP_FRACTION","HP_PERCENT","MESSAGE"):
                 continue
-            elif "BATTLE_EVENT" not in region.applicable_labels:
+            if "BATTLE_EVENT" not in region.applicable_labels:
                 continue
             crop=profile.crop(image,region)
             small=crop[::max(1,crop.shape[0]//20),
