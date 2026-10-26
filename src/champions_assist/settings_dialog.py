@@ -1147,16 +1147,24 @@ class SettingsDialog(QDialog):
                     team_signature=sha256(Path(record.csv_path).read_bytes()).hexdigest())
                 migration=store.import_legacy_assets()
             coverage=store.coverage(catalog)
+            audit=self.service.sqlite_migration_report or {}
+            migration_label=(
+                f"SQLite移行監査: {audit.get('status','未確認')}、"
+                f"元ファイルSHA一致 {audit.get('verified_files','?')}/"
+                f"{audit.get('expected_files','?')}件。"
+                if audit else "SQLite移行監査: 未実施。"
+            )
             self.matchup_review_status.setText(
                 f"AI評価済み {coverage['ai_evaluated']}/{coverage['total_cells']}対面 "
                 f"（構造化v2 {coverage['structured_v2']}）／"
                 f"未解析 {coverage['not_analyzed']}／"
-                f"マスター不足 {coverage['source_gaps']}。"
+                f"根拠不足 {coverage['source_gaps']}。"
                 f" 実戦後AI評価 {coverage['postmatch_reviews']}件。"
-                f" v28旧ファイルは削除せず保持。"
-                f" SQLite格納済み {migration['stored_cells_all_versions']}件、"
-                f"差分再利用 {reused['reused_cells']}件。"
-                f"\n元データ保存先: {catalog.parent}"
+                f" SQLite全履歴 {migration['stored_cells_all_versions']}対面、"
+                f"旧形式差分再利用 {reused['reused_cells']}件。"
+                f" {migration_label}"
+                f" v28・v29の元CSV/JSONは消去しません。"
+                f"\nデータ保存先: {catalog.parent}"
             )
         except (OSError,ValueError,RuntimeError,KeyError) as exc:
             QMessageBox.warning(self,"AI評価の状況確認に失敗",str(exc)[:250])
