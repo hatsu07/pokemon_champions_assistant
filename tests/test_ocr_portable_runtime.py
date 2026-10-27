@@ -46,6 +46,21 @@ class PortableJapaneseOcrTests(TestCase):
         self.assertEqual(ctx.exception.code,"OCR_TESSDATA_LOAD_FAILED")
         self.assertNotIn("C:/private",str(ctx.exception))
 
+    def test_exit_zero_without_ocr_tsv_is_still_invalid(self):
+        from types import SimpleNamespace
+        import numpy as np
+        from champions_assist.ocr import OcrExecutionError
+        reader=TesseractJapaneseOcr()
+        reader.command="tesseract"
+        reader.tessdata_dir="tessdata"
+        with patch("champions_assist.ocr.subprocess.run",
+                   return_value=SimpleNamespace(returncode=0,
+                                                stdout="",stderr="")):
+            with self.assertRaises(OcrExecutionError) as error:
+                reader.read(np.full((24,100),255,dtype=np.uint8),
+                            roi_name="battle_message")
+        self.assertEqual(error.exception.code,"OCR_INVALID_TSV")
+
     def test_windows_smoke_separates_native_execution_and_glyph_accuracy(self):
         """Synthetic ASCII misreads cannot be confused with Tesseract exit 1."""
         from types import SimpleNamespace
