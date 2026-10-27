@@ -18,6 +18,7 @@ _FIELDS = frozenset((
     "side","pokemon","move","item","ability","hp","pp","stat","delta",
     "current_type","confidence","captured_at","processed_at","actor",
     "our_active","opponent_active","our_active_source","opponent_active_source",
+    "active_recheck_required",
     "actor_confirmed","awaiting_replacement","state_revision","turn_epoch",
     "request_id","screen_kind","choice_kind","selected_three","selected_bench",
     "registered_moves","ocr_candidate_count","ocr_candidates","known_hp",
@@ -89,6 +90,8 @@ def current_state_digest(state: dict) -> dict:
         "opponent_active":state.get("opponent_active") or "",
         "awaiting_replacement":bool(state.get("awaiting_replacement")),
         "state_revision":state.get("_live_state_revision",0),
+        "active_recheck_required":bool(
+            state.get("_active_identity_needs_confirmation")),
         "selected_three":(state.get("selected_three") or [])[:3],
         "known_hp":evidence.get("hp_by_pokemon",{}),
         "choice_lock":evidence.get("choice_lock",{}),
