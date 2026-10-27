@@ -243,6 +243,10 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
             return "MOVE_OUT_OF_PP", {}
         temporary=(evidence.get("temporary_effects",{}).get("own",{})
                    .get(own,{}))
+        taunt=temporary.get("taunt",{})
+        move_class=getattr(assets,"move_class_index",{}).get(registered[requested])
+        if taunt.get("active") and move_class=="変化":
+            return "TAUNT_STATUS_MOVE_BLOCKED", {}
         encore=temporary.get("encore",{})
         last_move=(evidence.get("last_move_by_pokemon",{}).get("own",{})
                    .get(own,""))
@@ -1544,6 +1548,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
         "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
+        "registered_move_categories":{
+            n:getattr(assets,"move_class_index",{}).get(n,"UNKNOWN")
+            for n in (own.get("move"+str(i),"") for i in range(1,5)) if n},
         "battle_evidence":state.get("battle_evidence") or {},
         "battlefield":state.get("battlefield") or {},
         "cached_current_opponent_pairs":pairs,
