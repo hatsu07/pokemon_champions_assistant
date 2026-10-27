@@ -1,14 +1,22 @@
 # Trusted Windows CI only: stage Japanese OCR for portable DEVELOPMENT GUI.
 $ErrorActionPreference = 'Stop'
-& choco install tesseract --yes --no-progress --limit-output
-if ($LASTEXITCODE -ne 0) { throw "Tesseract install failed" }
-
 $roots = @(
   (Join-Path $env:ProgramFiles 'Tesseract-OCR'),
   (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Tesseract-OCR')
 )
 $root = $roots | Where-Object { Test-Path (Join-Path $_ 'tesseract.exe') } | Select-Object -First 1
-if (-not $root) { throw "Tesseract binary missing" }
+if (-not $root) {
+  # Chocolatey's community NuGet feed can return transient HTTP 503. Never
+  # treat the choco exit code alone as success; verify the binary on disk.
+  for ($attempt=1; $attempt -le 4; $attempt++) {
+    Write-Host "Tesseract package install attempt $attempt of 4"
+    & choco install tesseract --yes --no-progress --limit-output
+    $root = $roots | Where-Object { Test-Path (Join-Path $_ 'tesseract.exe') } | Select-Object -First 1
+    if ($root) { break }
+    if ($attempt -lt 4) { Start-Sleep -Seconds (5 * $attempt) }
+  }
+}
+if (-not $root) { throw "Tesseract binary missing after retry" }
 
 $out = Join-Path (Resolve-Path .).Path 'build\ocr-runtime'
 New-Item -Force -ItemType Directory -Path (Join-Path $out 'tessdata') | Out-Null
