@@ -1198,15 +1198,22 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             "selected_three":state.get("selected_three",[]),
             "lead":state.get("lead"),
             "opponent_six":state.get("opponent_six",[]),
-            "own_team":list(assets.own_team),
-            "command_menu_action_policy":{
-                "COMMAND_MENU":"CHOOSE_NOW_FROM_REGISTERED_MOVES_OR_SELECTED_BENCH",
-                "moves_source":"OWN_TEAM_FOUR_MOVES",
-                "switch_source":"SELECTED_THREE_EXCLUDING_ACTIVE",
-                "selected_bench_confirmed":not state.get("selection_assumed",False),
-                "unobserved_pp_or_disabled_moves":"UNKNOWN",
-                "no_extra_move_menu_api_call":True,
-            },
+            "own_team":([dict(m) for m in assets.own_team
+                         if m["name"] in _bench_candidates(state)]
+                        if switch_only else list(assets.own_team)),
+            "command_menu_action_policy":(
+                {"SWITCH_SELECTION":"SWITCH_ONLY_FROM_VISIBLE_LIVING_SELECTED_BENCH",
+                 "moves_source":"NOT_LEGAL_IN_THIS_WINDOW",
+                 "switch_source":"SELECTED_LIVING_BENCH",
+                 "selected_bench_confirmed":not state.get("selection_assumed",False)}
+                if switch_only else {
+                    "COMMAND_MENU":"CHOOSE_NOW_FROM_REGISTERED_MOVES_OR_SELECTED_BENCH",
+                    "moves_source":"OWN_TEAM_FOUR_MOVES",
+                    "switch_source":"SELECTED_THREE_EXCLUDING_ACTIVE",
+                    "selected_bench_confirmed":not state.get("selection_assumed",False),
+                    "unobserved_pp_or_disabled_moves":"UNKNOWN",
+                    "no_extra_move_menu_api_call":True,
+                }),
             "replay_state":{
                 k:v for k,v in state.items()
                 if k in ("our_active","opponent_active","observed_hp",
@@ -1223,8 +1230,14 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                     "hp_by_pokemon",{}),
                 "actual_bench_unconfirmed":bool(state.get("selection_assumed")),
             },
-            "previous_observations":state.get("image_observations_unverified",[])[-6:],
-            "history":state.get("history",[])[-6:],
+            "previous_observations":state.get("image_observations_unverified",[])[-2:]
+                if switch_only else state.get("image_observations_unverified",[])[-6:],
+            # Never feed a now-invalid move recommendation back as context
+            # for a forced replacement choice. Preserve game chronology only.
+            "history":([{k:r.get(k) for k in (
+                           "step","ui","our_active","opponent_active","result")}
+                        for r in state.get("history",[])[-6:]]
+                       if switch_only else state.get("history",[])[-6:]),
             "matrix_compatible":state.get("matrix_compatible",False),
             "matrix_provisional":state.get("matrix_provisional",False),
             "evidence_scope":("CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY"
