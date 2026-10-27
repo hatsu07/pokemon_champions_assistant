@@ -293,12 +293,31 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                         # cached PREP is old preview evidence, not proof for
                         # the newly discovered opponent.
                         if updated.get("prep"):
-                            updated["prep"]["unknown_filled_during_match"]=name
-                            # The new opponent did not exist in the frozen
-                            # preview's 18-pair cache: no invented grade.
-                            updated["prep"].setdefault("unrated_new_opponents",[])
-                            if name not in updated["prep"]["unrated_new_opponents"]:
-                                updated["prep"]["unrated_new_opponents"].append(name)
+                            prep=updated["prep"]
+                            prep["unknown_filled_during_match"]=name
+                            from .prep_cache import cached_pairs
+                            three=tuple(updated.get("selected_three") or ())
+                            lead=updated.get("lead")
+                            recovered=(cached_pairs(assets,three,(name,),lead)
+                                       if len(three)==3 and lead in three and
+                                       getattr(assets,"matchup_cache_index",{})
+                                       else [])
+                            if len(recovered)==3:
+                                existing=prep.get("matchups_18") or prep.get("matchups_known") or []
+                                seen_pairs={(p.get("our_pokemon"),p.get("opponent_pokemon"))
+                                            for p in existing}
+                                for row in recovered:
+                                    k=(row["our_pokemon"],row["opponent_pokemon"])
+                                    if k not in seen_pairs:
+                                        existing.append(row)
+                                prep["matchups_known"]=existing
+                                prep["cached_matchups"]=len(existing)
+                            else:
+                                # Missing cached matchup never becomes a
+                                # guessed guaranteed processor/safe switch.
+                                prep.setdefault("unrated_new_opponents",[])
+                                if name not in prep["unrated_new_opponents"]:
+                                    prep["unrated_new_opponents"].append(name)
         elif kind=="PP":
             actor=updated.get("our_active")
             if not actor or actor!=name:
@@ -361,7 +380,13 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 evidence.setdefault("ability_by_pokemon",{"own":{},"opponent":{}})[side][name]=evt["ability"]
                 evidence["ability_state_by_pokemon"][side][name]={"active":True,"name":evt["ability"]}
         elif kind in ("WEATHER","TERRAIN"):
-            battlefield["weather" if kind=="WEATHER" else "terrain"]=evt["value"]
+            key="weather" if kind=="WEATHER" else "terrain"
+            battlefield[key]=evt["value"]
+            battlefield[key+"_state"]={
+                "active":bool(evt["value"]),
+                "value":evt["value"],
+                "remaining_turns":None,
+                "source":"LOCAL_OCR_EXPLICIT_MESSAGE"}
         elif kind=="SIDE_EFFECT":
             effects=battlefield["effects_by_side"][side]
             if evt["active"]:
