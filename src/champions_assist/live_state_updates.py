@@ -320,6 +320,11 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             event=_event_for_message(str(getattr(record,"text","")),own,opponents)
             if event and event.get("kind")=="SWITCH":
                 switching_frames.add((frame,event.get("side")))
+            elif _own_switch_ocr_candidate(
+                    str(getattr(record,"text","")),own) is not None:
+                # Tentative send-out text makes the outgoing HP HUD
+                # ambiguous even before the second OCR frame verifies it.
+                switching_frames.add((frame,"own"))
     names_seen=updated.setdefault("_ocr_name_attestations",{})
     transition_time=updated.setdefault("_ocr_actor_transition_at",{})
     # Order by capture time, then SWITCH and name before HUD.
