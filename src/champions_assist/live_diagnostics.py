@@ -29,6 +29,9 @@ _FIELDS = frozenset((
     "previous_revision","event","evidence","active_own","active_opponent",
     "current_form","status_by_pokemon","item_by_pokemon","moves_by_pokemon",
     "boosts","source_conflict","age_ms","dedup","request_phase","result",
+    "own","opponent","hp_by_pokemon","current","maximum",
+    "percent_displayed","visual_ui","our_hp","opponent_hp",
+    "observed_event","name","phase","selected_bench_unconfirmed",
     "selected_switch_options","verified","stale","display_turn","original_turn",
     "origin","raw_text","ocr_text","parsed","outcome",
 ))
@@ -38,7 +41,7 @@ _TEXT_FIELDS = frozenset((
 _MAX_DETAIL_BYTES = 6000
 
 
-def _clean_value(value, *, key="", depth=0):
+def _clean_value(value, *, key="", depth=0, actor_map=False):
     """Only named structured battle fields; redact and bound every string."""
     if depth>4:
         return None
@@ -50,12 +53,19 @@ def _clean_value(value, *, key="", depth=0):
         limit=800 if key in _TEXT_FIELDS else 160
         return _SECRET.sub("[REDACTED]",value[:limit])
     if isinstance(value,(tuple,list)):
-        return [_clean_value(x,depth=depth+1)
+        return [_clean_value(x,depth=depth+1,actor_map=actor_map)
                 for x in value[:12] if isinstance(x,(str,int,float,bool,dict))]
     if isinstance(value,dict):
-        return {str(k):_clean_value(v,key=str(k),depth=depth+1)
+        return {str(k):_clean_value(
+                    v,key=str(k),depth=depth+1,
+                    actor_map=(actor_map or key in (
+                        "known_hp","hp_by_pokemon","status_by_pokemon",
+                        "item_by_pokemon","moves_by_pokemon","boosts")))
                 for k,v in list(value.items())[:40]
-                if isinstance(k,str) and k in _FIELDS}
+                if isinstance(k,str) and (
+                    k in _FIELDS or
+                    (actor_map and re.fullmatch(
+                        r"[ぁ-んァ-ヴー一-龯A-Za-z0-9・→ _-]{1,48}",k)))} 
     return None
 
 
