@@ -12,6 +12,7 @@ import re
 import unicodedata
 
 from .terminology import japanese_name
+from .battle_evidence import _visual_stages
 
 _CONFIDENCE_MIN = 0.72
 _STATS = {"こうげき":"A","ぼうぎょ":"B","とくこう":"C",
@@ -44,10 +45,12 @@ def _names(assets, state):
     own={}
     for member in assets.own_team:
         label=member.get("name","")
-        if not label or (selected and label not in selected):
+        if not label:
             continue
         original=label.split("→",1)[0].strip()
         evolved=label.split("→")[-1].strip()
+        if selected and not ({label,original,evolved} & selected):
+            continue
         own[_flat(_pokemon(original))]=_pokemon(original)
         own[_flat(_pokemon(evolved))]=_pokemon(evolved)
     opponent={_flat(_pokemon(n)):_pokemon(n)
@@ -389,7 +392,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                                   "frame_id":ref[0]}
         elif kind=="PP":
             actor=updated.get("our_active")
-            if not actor or actor!=name:
+            if not actor or actor!=name or updated.get("awaiting_replacement"):
                 audit.append({"kind":kind,"status":"CANDIDATE",
                               "reason":"ACTIVE_NOT_CONFIRMED","frame_id":ref[0]})
                 continue
@@ -404,6 +407,8 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             updated.setdefault("observed_hp",{})[side]=evt["hp"]
         elif name is not None:
             if kind=="FAINT":
+                names_seen.pop(side,None)
+                transition_time[side]=observed_at
                 evidence.setdefault("hp_by_pokemon",{"own":{},"opponent":{}})[side][name]="0"
                 evidence["fainted"][side][name]=True
                 if side=="own":
@@ -458,6 +463,13 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                     statuses.pop(name,None)
             elif kind=="BOOST":
                 entry=evidence.setdefault("boosts",{"own":{},"opponent":{}})[side].get(name)
+                if isinstance(entry,str):
+                    parsed=_visual_stages(entry)
+                    if parsed is not None:
+                        entry=parsed
+                    else:
+                        evidence["boost_descriptions"][side][name]=entry
+                        entry={}
                 if not isinstance(entry,dict):
                     entry={}
                 if name in evidence["boost_descriptions"][side]:
