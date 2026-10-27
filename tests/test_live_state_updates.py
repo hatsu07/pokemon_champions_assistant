@@ -25,6 +25,9 @@ def assets():
             {"name":"ゲンガー","move1":"シャドーボール","move2":"まもる",
              "move3":"ヘドロばくだん","move4":"ちょうはつ",
              "item":"きあいのタスキ","choice_lock":"N"},
+            {"name":"ドドゲザン","move1":"ドゲザン","move2":"アイアンヘッド",
+             "move3":"ふいうち","move4":"つるぎのまい",
+             "item":"くろいメガネ","choice_lock":"N"},
         ),
         matrix_index={"ウルガモス":"ROW-V","ガブリアス":"ROW-G",
                       "ゲンガー":"ROW-X","カイリュー":"ROW-D",
@@ -74,6 +77,83 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertEqual(self.state["battle_evidence"]["choice_lock"]["move"],"")
         self.assertEqual(self.state["_live_state_revision"],1)
         self.assertFalse(self.state["awaiting_replacement"])
+
+    def test_exact_fragmented_send_out_accepts_confident_registered_name(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        audit=self.apply(read("battle_message",
+                         "ゆけ っ / ドド ゲ ザ ン / ・ e ンー る =",1,
+                         confidence=.96))
+        self.assertEqual(self.state["our_active"],"ドドゲザン")
+        self.assertEqual(audit[-1]["verification"],"SINGLE_EXACT_HIGH_CONFIDENCE")
+
+    def test_real_two_frame_noisy_dodogezan_ocr_commits_without_vision(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        self.state["our_active"]="マスカーニャ"
+        noisy="3 . _ ゆ けっ / ドド グ ゲ ザ ン / = ンー —"
+        readable="ゆけ っ / ドド ゲ ザ ン / ・ e ンー る ="
+        first=self.apply(read("battle_message",noisy,100,
+                              confidence=.6369671386666667))
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+        self.assertEqual(first[-1]["reason"],"SWITCH_SECOND_FRAME_REQUIRED")
+        self.assertEqual(len(self.state["_ocr_switch_attestations"]),1)
+        second=self.apply(read("battle_message",readable,101,
+                               confidence=.7142991961538461))
+        self.assertEqual(self.state["our_active"],"ドドゲザン")
+        self.assertEqual(self.state["_live_state_revision"],1)
+        self.assertEqual(second[-1]["verification"],"TWO_DISTINCT_OCR_FRAMES")
+
+    def test_single_high_confidence_fuzzy_name_is_not_switch_proof(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        audit=self.apply(read("battle_message",
+                              "ゆけっ/ドドグゲザン/",1,confidence=.99))
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+        self.assertEqual(audit[-1]["status"],"CANDIDATE")
+
+    def test_two_fuzzy_frames_do_not_validate_and_mixed_names_do_not_validate(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        self.apply(read("battle_message","ゆけっ/ドドグゲザン/",1,
+                        confidence=.71))
+        result=self.apply(read("battle_message","ゆけっ/ドドゲダン/",2,
+                               confidence=.70))
+        self.assertEqual(result[-1]["status"],"CANDIDATE")
+        self.apply(read("battle_message","ゆけっ/マリルリ/",3,
+                        confidence=.70))
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+
+    def test_switch_corroboration_window_and_min_confidence_are_strict(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        self.apply(read("battle_message","ゆけっ/ドドグゲザン/",1,
+                        confidence=.636))
+        expired=self.apply(read("battle_message","ゆけっ/ドドゲザン/",6,
+                                confidence=.714))
+        self.assertEqual(expired[-1]["status"],"CANDIDATE")
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+        self.apply(read("battle_message","ゆけっ/ドドグゲザン/",7,
+                        confidence=.50))
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+
+    def test_non_switch_ocr_and_unknown_roster_name_never_promote(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        for seq,message in enumerate((
+                "ガブリアスはゆけっ/ドドゲザン/といった",
+                "ゆけっ/ドドゲザン/ゆけっ/マリルリ/",
+                "ゆけっ/ウルガモス/"),1):
+            self.apply(read("battle_message",message,seq,confidence=.99))
+        self.assertEqual(self.state["our_active"],"マスカーニャ")
+
+    def test_tracker_keeps_two_identical_sendouts_for_corroboration(self):
+        tracker=LocalBattleStateTracker()
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ドドゲザン"]
+        first=read("battle_message","ゆけっ/ドドゲザン/",1,confidence=.68)
+        second=read("battle_message","ゆけっ/ドドゲザン/",2,confidence=.68)
+        n,rows=tracker.ingest((first,),collect=True,turn_epoch=4)
+        self.assertEqual(n,1)
+        self.state,_=apply_local_ocr(self.state,rows,self.assets)
+        n,rows=tracker.ingest((second,),collect=True,turn_epoch=4)
+        self.assertEqual(n,1)
+        self.state,audit=apply_local_ocr(self.state,rows,self.assets)
+        self.assertEqual(self.state["our_active"],"ドドゲザン")
+        self.assertEqual(audit[-1]["verification"],"TWO_DISTINCT_OCR_FRAMES")
 
     def test_unknown_six_filled_from_explicit_opponent_switch(self):
         self.apply(read("battle_message","相手は ウルガモスを くりだした！",1))
