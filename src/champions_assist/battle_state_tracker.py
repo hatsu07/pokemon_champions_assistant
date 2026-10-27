@@ -13,9 +13,11 @@ from .local_event_worker import LocalFieldRead
 
 
 class LocalBattleStateTracker:
-    def __init__(self, max_events: int=144):
-        if max_events<1:
+    def __init__(self, max_events: int | None=None):
+        if max_events is not None and max_events<1:
             raise ValueError("max_events must be positive")
+        # Production keeps all distinct OCR observations until explicitly
+        # acknowledged by a verified AI event or the match is reset.
         self._events: deque[LocalFieldRead]=deque(maxlen=max_events)
         self._latest: dict[str,LocalFieldRead]={}
         self.duplicates=0
@@ -58,20 +60,23 @@ class LocalBattleStateTracker:
         return (inserted,tuple(novel)) if collect else inserted
 
     def snapshot(self, *, at_or_before: float | None=None,
-                 limit: int=12, own_active: str | None=None,
+                 limit: int | None=None, own_active: str | None=None,
                  opponent_active: str | None=None,
                  own_names: tuple[str, ...]=(),
-                 opponent_names: tuple[str, ...]=()) -> dict:
+                 opponent_names: tuple[str, ...]=(),
+                 acknowledged: set[tuple[str,str,str]] | None=None) -> dict:
         """Associate OCR hints with known actors without certifying them.
 
         HP overlays belong to the active Pokémon previously verified by
         vision. A candidate does NOT prove that the actor is still active.
         """
         from .terminology import japanese_name
+        ack=acknowledged or set()
         valid=[r for r in self._events
-               if at_or_before is None or r.timestamp<=at_or_before]
+               if (at_or_before is None or r.timestamp<=at_or_before)
+               and (r.frame_id,r.field,r.text[:160]) not in ack]
         payload=[]
-        for row in valid[-limit:]:
+        for row in (valid if limit is None else valid[-limit:]):
             item=row.as_dict()
             actor,side=None,None
             if row.field=="screen_text.own_hp_fraction":
