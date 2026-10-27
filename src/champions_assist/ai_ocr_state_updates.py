@@ -131,6 +131,12 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
         elif side=="field" or (side=="own" and name not in own) or (
                 side=="opponent" and name not in opponent):
             fail("POKEMON_NOT_IN_KNOWN_ROSTER");continue
+        identity=(kind,side,name,prior,value,str(event.get("stat")),
+                  str(event.get("delta")),*sorted(event["evidence_frames"]))
+        # Replayed OCR history must not be misdiagnosed as a new illegal
+        # self-switch on the following turn.
+        if identity in applied:
+            fail("ALREADY_APPLIED");continue
         key="our_active" if side=="own" else "opponent_active"
         current=_canon(result.get(key)) if side!="field" else ""
         if kind=="SWITCH":
@@ -139,10 +145,6 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
             if current==name:fail("SELF_SWITCH");continue
         elif kind not in ("WEATHER","TERRAIN","SIDE_EFFECT") and current!=name:
             fail("ACTOR_NOT_CURRENT");continue
-        identity=(kind,side,name,prior,value,str(event.get("stat")),
-                  str(event.get("delta")),*sorted(event["evidence_frames"]))
-        if identity in applied:
-            fail("ALREADY_APPLIED");continue
         memory=result.setdefault("battle_evidence",empty_battle_evidence())
         if kind=="SWITCH":
             update_battle_evidence(result,{
