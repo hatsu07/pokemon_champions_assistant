@@ -259,8 +259,6 @@ class AsyncBattleEventReader:
                 row=self._out.get_nowait()
             except Empty:
                 break
-            if row.error:
-                self.errors+=1
             ready.append(row)
         return tuple(ready)
 
