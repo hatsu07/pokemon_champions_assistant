@@ -90,6 +90,11 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
             memory["choice_lock"] = {"pokemon": "", "move": "", "source": ""}
     if observation.get("observed_event") == "OUR_FAINTED":
         memory["choice_lock"] = {"pokemon": "", "move": "", "source": ""}
+        # Faint is a directly observed event. Record this actor as 0 HP
+        # even when the numeric HP overlay was not visible in that frame.
+        # Never transfer it to a different or unconfirmed Pokémon.
+        if own:
+            memory["hp_by_pokemon"]["own"][own] = "0"
     move = _clean(observation.get("our_used_move"))
     if move and own and observation.get("visual_ui") == "ACTION_RESOLUTION":
         memory["last_confirmed_our_move"] = move
