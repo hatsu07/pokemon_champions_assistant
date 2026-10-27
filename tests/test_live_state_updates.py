@@ -420,6 +420,7 @@ class LiveStateOcrTests(unittest.TestCase):
                 model="fixture",expected_screen_label="TURN_ACTION",
                 client_factory=lambda **_kwargs:object(),
                 diagnostic_sink=lambda name,detail: events.append((name,detail)))
+        self.assertNotEqual(report["status"],"ERROR",report)
         self.assertEqual([e[0] for e in events],
                          ["AI_INPUT","AI_RESPONSE_RAW","AI_VALIDATION"])
         self.assertEqual(events[0][1]["active_own"],"マスカーニャ")
