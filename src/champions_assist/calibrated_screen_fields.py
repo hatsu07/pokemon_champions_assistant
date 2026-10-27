@@ -43,7 +43,7 @@ IGNORED_OCR_ROIS = frozenset({
 # inferred from other Pokémon games. They are intentionally preliminary.
 _SAMPLE_960 = (
     FieldRegion("own_hp_fraction", "HP_FRACTION", (126, 526, 218, 562), ("TURN_ACTION", "BATTLE_EVENT")),
-    FieldRegion("opponent_hp_percent", "HP_PERCENT", (864, 53, 938, 93), ("TURN_ACTION", "BATTLE_EVENT")),
+    FieldRegion("opponent_hp_percent", "HP_PERCENT", (868, 57, 932, 88), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("own_active_name", "TEXT", (75, 489, 184, 526), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("opponent_active_name", "TEXT", (777, 14, 877, 49), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT",)),
