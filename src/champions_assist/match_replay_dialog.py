@@ -2006,22 +2006,23 @@ class MatchReplayDialog(QDialog):
         role_count=3 if role_ready else sum(
             isinstance(value,str) and value in selected for value in role_values)
         all_cached=evaluated==len(pairs)
-        ready=role_ready and all_cached
+        # Cached matchups are the entire PREP deliverable. Win roles, when
+        # already available from selection, are OPTIONAL; never call AI just
+        # to fill preserve/stopper/closer before the player's first turn.
+        ready=all_cached
         status=("PREP_CACHE_KNOWN_ONLY" if partial and ready else
                 "PREP_CACHE_REUSED" if ready else
-                "PREP_CACHE_INCOMPLETE" if role_ready else
-                "PREP_CACHE_BASE_READY")
+                "PREP_CACHE_INCOMPLETE")
         state_status=("CACHE_KNOWN_ONLY" if partial and ready else
                       "CACHE_STRUCTURE_COMPLETE" if ready else
-                      "CACHE_INCOMPLETE" if role_ready else
-                      "CACHE_PREP_BASE_READY")
+                      "CACHE_INCOMPLETE")
         self.state["prep"] = {
             ("matchups_known" if partial else "matchups_18"):pairs,
             "source":"FROZEN_CACHE",
             "preserve":role_values[0] if role_ready else None,
             "stopper":role_values[1] if role_ready else None,
             "closer":role_values[2] if role_ready else None,
-            "win_roles_status":"SELECTION_REUSED" if role_ready else "PENDING",
+            "win_roles_status":"SELECTION_REUSED" if role_ready else "OPTIONAL_NOT_REQUESTED",
             "cached_matchups":evaluated,"missing_matchups":len(pairs)-evaluated,
             "unknown_opponent_slots":list(self.state.get("visual_unknown_opponents") or []),
             "unknown_pairs":[
@@ -2029,35 +2030,39 @@ class MatchReplayDialog(QDialog):
                 for member in selected
                 for opponent in (self.state.get("visual_unknown_opponents") or [])
             ],
-            "note":("既存の対面評価と選出時に決めた勝ち筋3点を再利用。"
-                    if role_ready else
-                    "凍結済み評価のみ即時抽出。勝ち筋3点は未完成。")
+            "note":"凍結済み対面評価を即時利用。勝ち筋3点の追加AI通信は行わない。"
+                    "温存・切り返し・締めは実際の残り3匹に基づき各ターン判断。",
         }
         self.state["prep_status"]=state_status
         self._trace_event("PREP_CACHE_BASE_READY",
                           matchups_evaluated=evaluated,
                           known_opponents=len(known),missing_matchups=len(pairs)-evaluated,
                           win_conditions=role_count)
-        if role_ready:
+        if ready:
             # A full PREP is now complete without a separate API call. Emit
             # the normal PREP lifecycle markers so live test logs stay useful.
             self._trace_event("PREP_START",status="CACHED_FROM_SELECTION",
                               known_opponents=len(known),timeout_budget_ms=0)
             self._trace_event("PREP_RESULT",status=status,
-                              matchups_evaluated=evaluated,win_conditions=3)
+                              matchups_evaluated=evaluated,win_conditions=role_count)
         self._render({"status":status,
                       "matchups_evaluated":evaluated,
                       "win_conditions":role_count,
                       "message":(
-                          f"事前対面{evaluated}/{len(pairs)}と勝ち筋3点を"
-                          "選出AIから再利用。追加通信なし。"
+                          f"事前対面{evaluated}/{len(pairs)}を即時利用。"
+                          "追加AI通信なし。勝ち筋は各ターン判断。"
                           if ready else
-                          f"既存{evaluated}/{len(pairs)}対面を即時保持。"
-                          "勝ち筋3点を補完中。" if not role_ready else
-                          f"評価未済{len(pairs)-evaluated}件を残したまま"
-                          "勝ち筋3点を保持。")})
+                          f"事前対面{evaluated}/{len(pairs)}を保持。"
+                          "欠損箇所は未評価として保持。追加AI通信なし。")})
 
     def _start_prep_auto(self, *, provisional=False):
+        # No authentication, QThread, or API request for PREP. The six frozen
+        # LIVE rows supply all available pairs. Missing cells stay unknown.
+        if not provisional and self.state is not None and self.state.get("phase")=="PREP":
+            self._prefill_cached_prep()
+            return
+        if provisional:
+            return
         if (self.state is None or self._prep_thread is not None
                 or self._thread is not None):
             return
@@ -2228,17 +2233,12 @@ class MatchReplayDialog(QDialog):
             self._trace_event("FALLBACK_DEFERRED_DISPATCH")
             self._queue_batch(frames)
         elif (self.state is not None and self.state.get("phase")=="PREP"
-              and self.state.get("prep_status") in ("PENDING","CACHE_PREP_BASE_READY")
+              and self.state.get("prep_status")=="PENDING"
               and self._prep_thread is None):
             # An auto-adopted selection immediately starts PREP once its
             # selection-image QThread has really finished.
             self._start_prep_auto()
-        elif (self.state is not None and self.state.get("phase")=="SELECTION"
-              and self._proposed_selection is not None
-              and self._proposed_prep_key is None
-              and self._prep_thread is None):
-            # Legacy/partial states created without auto adoption.
-            self._start_prep_auto(provisional=True)
+        # Provisional PREP no longer starts an additional AI request.
 
     def _refresh_live_status(self):
         """GUI-only update. Never captures or sends an AI request."""
