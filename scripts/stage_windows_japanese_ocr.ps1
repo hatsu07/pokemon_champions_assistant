@@ -31,6 +31,20 @@ Write-Host $check
 if ($check -notmatch '(?m)^jpn\s*$' -or $check -notmatch '(?m)^eng\s*$') {
   throw "Packaged OCR lacks jpn or eng"
 }
+# --list-langs alone does not prove that OCR can actually load both models
+# and process an image with bundled DLLs. Exercise the native binary offline.
+$smoke = Join-Path $env:RUNNER_TEMP 'champions-ocr-smoke.pgm'
+$rows = @('P2','32 16','255')
+for ($y=0; $y -lt 16; $y++) {
+  $rows += ((@(0..31 | ForEach-Object { if ($y -ge 4 -and $y -le 11 -and $_ -ge 8 -and $_ -le 23) { '0' } else { '255' } })) -join ' ')
+}
+Set-Content -LiteralPath $smoke -Value $rows -Encoding Ascii
+$null = & (Join-Path $out 'tesseract.exe') $smoke stdout -l jpn+eng --tessdata-dir (Join-Path $out 'tessdata') --psm 6 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+  throw "Bundled OCR binary failed the Japanese/English recognition smoke test"
+}
+Remove-Item -LiteralPath $smoke -Force
+
 $notice = @'
 Tesseract OCR: https://github.com/tesseract-ocr/tesseract
 tessdata_fast/jpn.traineddata: https://github.com/tesseract-ocr/tessdata_fast
