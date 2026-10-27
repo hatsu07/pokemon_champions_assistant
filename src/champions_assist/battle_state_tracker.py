@@ -39,9 +39,13 @@ class LocalBattleStateTracker:
                           previous.text==row.text and previous.value==row.value)
             same_epoch=(turn_epoch is not None and
                         self._latest_epoch.get(row.field)==turn_epoch)
-            near_in_time=(turn_epoch is None and previous is not None and
+            near_in_time=(previous is not None and
                           0 <= row.timestamp-previous.timestamp <= 1.5)
-            if same_payload and (same_epoch or near_in_time):
+            # Only one continuing OCR display is a duplicate. An identical
+            # battle message later in the SAME turn may represent a distinct
+            # event and must still reach ChatGPT.
+            if same_payload and near_in_time and (
+                    turn_epoch is None or same_epoch):
                 self.duplicates+=1
                 continue
             status="CANDIDATE"
