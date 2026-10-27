@@ -164,7 +164,12 @@ class TesseractJapaneseOcr:
                 classify_ocr_failure(process.stderr,process.returncode),
                 status=process.returncode)
         try:
-            rows=list(csv.DictReader(StringIO(process.stdout),delimiter="\t"))
+            table=csv.DictReader(StringIO(process.stdout),delimiter="\t")
+            # An exit-zero process without a valid TSV header did not deliver
+            # OCR output. A legitimate empty detection still has TSV columns.
+            if not {"text","conf"}.issubset(set(table.fieldnames or ())):
+                raise OcrExecutionError("OCR_INVALID_TSV")
+            rows=list(table)
             tokens=[r["text"].strip() for r in rows if r.get("text","").strip()]
             confs=[float(r["conf"]) for r in rows
                    if r.get("conf","").strip() not in ("","-1")]
