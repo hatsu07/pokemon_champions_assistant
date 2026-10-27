@@ -990,8 +990,10 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(summary["ocr_jobs_enqueued"],1)
         self.assertEqual(summary["ocr_candidates_sent"],1)
         self.assertEqual(summary["ocr_status"],"READY")
-        self.assertEqual(stopped,[True])
-        self.assertIsNone(panel._local_event_reader)
+        # The asynchronous reader now continues through the command
+        # screen so late HP/name results are not discarded.
+        self.assertEqual(stopped,[])
+        self.assertIs(panel._local_event_reader,reader)
         self.assertEqual(panel._drain_event_candidates()[0]["raw_text"],
                          "まひになった")
 
