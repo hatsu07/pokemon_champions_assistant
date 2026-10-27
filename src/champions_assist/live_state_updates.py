@@ -442,6 +442,9 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                         if types and all(t in _TYPES for t in types):
                             evidence.setdefault("current_type",{
                                 "own":{},"opponent":{}})[side][name]=row[1]
+                        if row[2].isdigit():
+                            evidence.setdefault("current_base_speed_by_pokemon",{
+                                "own":{},"opponent":{}})[side][name]=int(row[2])
                 updated["our_current_form" if side=="own"
                         else "opponent_current_form"]=form
                 evidence.setdefault("form_by_pokemon",{
