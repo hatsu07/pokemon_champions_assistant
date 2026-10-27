@@ -194,6 +194,19 @@ class AsyncBattleEventReader:
         return True
 
     def _run(self) -> None:
+        # Warm the model in the OCR worker, never on the Qt render thread.
+        try:
+            warmup=getattr(self._ocr,"warmup",None)
+            if warmup is not None:
+                warmup()
+                self.reason="GPU_OCR_READY"
+        except Exception as exc:
+            self.errors+=1
+            self.reason=getattr(exc,"code","GPU_OCR_INITIALIZATION_FAILED")
+            # Do not consume queued evidence with an unusable inference
+            # engine; report failure rather than inventing observations.
+            self.enabled=False
+            return
         while not self._stop.is_set():
             try:
                 job=self._queue.get(timeout=0.1)
@@ -301,4 +314,8 @@ class AsyncBattleEventReader:
             self._queue.put_nowait(None)
         except Full:
             pass
+        ocr=self._ocr
+        if ocr is not None and hasattr(ocr,"stop"):
+            # Sidecar shutdown never blocks the render/turn thread.
+            ocr.stop()
         # Absolutely no join() on the GUI/turn thread.
