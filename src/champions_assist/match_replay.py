@@ -1636,6 +1636,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
         if switch_only and answer.get("action_kind") not in ("SWITCH","NO_ACTION"):
+            if diagnostic_sink is not None:
+                diagnostic_sink("AI_VALIDATION",{
+                    "validation_code":"SWITCH_ONLY_MOVE_REJECTED",
+                    "status":"BLOCKED"})
             return deepcopy(state),{"status":"BLOCKED",
                                     "reason":"SWITCH_ONLY_MOVE_REJECTED",
                                     "images_sent":0}
@@ -1660,6 +1664,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         result["action_basis"]="SELECTED_BENCH_UNVERIFIED_VISIBILITY" if switch_only else "REGISTERED_MOVES"
         return updated,result
     except Exception as exc:
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_VALIDATION",{
+                "validation_code":type(exc).__name__,
+                "status":"ERROR","reason":"ACTION_PATH_EXCEPTION"})
         return deepcopy(state),{"status":"ERROR","reason":type(exc).__name__,
                                 "images_sent":0,
                                 "elapsed_ms":round((perf_counter()-started)*1000)}
