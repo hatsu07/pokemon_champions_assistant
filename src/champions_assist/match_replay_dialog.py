@@ -204,6 +204,7 @@ class _ReplayWorker(QObject):
                             reasoning_effort=self.reasoning_effort,
                             total_seconds=remaining,
                             local_field_candidates=local_candidates,
+                            expected_screen_label=self.screen_label,
                         )
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
@@ -1579,7 +1580,15 @@ class MatchReplayDialog(QDialog):
                                           raw_count=len(result.observations))
         if not include_snapshot:
             return []
-        snapshot=self._local_battle_tracker.snapshot(limit=12)
+        state=self.state or {}
+        assets=self.assets
+        snapshot=self._local_battle_tracker.snapshot(
+            limit=12,
+            own_active=state.get("our_active"),
+            opponent_active=state.get("opponent_active"),
+            own_names=tuple(m["name"] for m in assets.own_team) if assets else (),
+            opponent_names=tuple(state.get("opponent_six") or ()),
+        )
         return snapshot["local_observations"]
 
     def _freeze_local_events_for_action(self,screen_label):
@@ -1637,16 +1646,23 @@ class MatchReplayDialog(QDialog):
             roi_validated=bool(self._field_profile
                                and self._field_profile.validated_on_game_capture),
             ocr_counters=self._last_local_ocr_stats)
-        frames=(self._event_frames[-2:] if plan.include_event_images else [])
+        # When a faint and the prior actor were explicitly confirmed,
+        # replaying the same event images to choose a replacement is wasted.
+        # Without confirmed faint, retain image fallback on OCR uncertainty.
+        confirmed_faint=bool((self.state or {}).get("awaiting_replacement"))
+        include_events=plan.include_event_images and not confirmed_faint
+        frames=(self._event_frames[-2:] if include_events else [])
         frames=list(frames)+[command_image.copy()]
         self._event_frames.clear()
         self._event_frame_ids.clear()
         self._trace_event("EVENT_IMAGE_TEXT_FIRST_DECISION",
                           image_count=len(frames),
-                          fallback_reason=plan.reason,
+                          fallback_reason=(
+                              "CONFIRMED_FAINT_STATE_NO_EVENT_REPLAY"
+                              if confirmed_faint else plan.reason),
                           event_images_buffered=plan.buffered,
                           event_images_recognized=plan.recognized,
-                          image_fallback=plan.include_event_images)
+                          image_fallback=include_events)
         self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",image_count=len(frames))
         return frames
 
