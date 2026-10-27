@@ -479,8 +479,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertIsNone(panel.state["prep"]["preserve"])
-        self.assertIn("選出：",self.window.recommendation_label.text())
+        self.assertIn("選出（提案）：",self.window.recommendation_label.text())
         self.assertIn("初手（提案）：",panel.selection_banner.text())
+        self.assertIn("実選出未確認",panel.selection_banner.text())
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as prep:
             panel._cleanup()
