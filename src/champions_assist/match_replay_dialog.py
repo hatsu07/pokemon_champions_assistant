@@ -36,6 +36,7 @@ from .local_event_image_policy import event_image_plan
 from .observation_events import ScreenLexicon
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .match_debug_log import MatchDebugLog
+from .live_diagnostics import current_state_digest
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
 from .background_training_capture import BackgroundTrainingCapture
@@ -123,7 +124,7 @@ class _ReplayWorker(QObject):
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
-                 local_field_candidates=None,
+                 local_field_candidates=None,diagnostic_sink=None,
                  selection_seconds=55.0, prep_seconds=40.0,battle_seconds=30.0,
                  result_messages=None):
         super().__init__()
@@ -132,6 +133,7 @@ class _ReplayWorker(QObject):
         self.screen_label=screen_label
         self.field_profile=field_profile
         self.local_field_candidates=list(local_field_candidates or [])[:12]
+        self.diagnostic_sink=diagnostic_sink
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -226,7 +228,8 @@ class _ReplayWorker(QObject):
                                 reasoning_effort=self.reasoning_effort,
                                 total_seconds=remaining,
                                 expected_screen_label=self.screen_label,
-                                local_field_candidates=local_candidates)
+                                local_field_candidates=local_candidates,
+                                diagnostic_sink=self.diagnostic_sink)
                         else:
                             # One current image only when essential active
                             # identity is genuinely missing from local state.
@@ -236,7 +239,8 @@ class _ReplayWorker(QObject):
                                 reasoning_effort=self.reasoning_effort,
                                 total_seconds=remaining,
                                 local_field_candidates=local_candidates,
-                                expected_screen_label=self.screen_label)
+                                expected_screen_label=self.screen_label,
+                                diagnostic_sink=self.diagnostic_sink)
                             report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
@@ -332,6 +336,7 @@ class MatchReplayDialog(QDialog):
         self._local_battle_tracker=LocalBattleStateTracker()
         self._ocr_capture_epochs={}
         self._active_state_revision=None
+        self._active_request_id=None
         self._pending_result_messages=None
         self._result_check_sent_keys=set()
         self._result_ocr_candidate=None
@@ -579,10 +584,12 @@ class MatchReplayDialog(QDialog):
             return
         if self._debug_log is not None:
             self._debug_log.write("PREVIOUS_SESSION_CLOSED")
+            self._debug_log.close()
         new_id="capture-"+uuid4().hex
         self._debug_log=None
         try:
-            self._debug_log=MatchDebugLog(self.store_root,match_id=new_id)
+            self._debug_log=MatchDebugLog(self.store_root,match_id=new_id,
+                                          async_mode=True)
             self.debug_log_status.setText("自動デバッグログ保存先: "+str(self._debug_log.path))
         except OSError:
             # Logging must NEVER prevent starting the match.
@@ -614,6 +621,7 @@ class MatchReplayDialog(QDialog):
             self._local_battle_tracker.clear()
             self._ocr_capture_epochs.clear()
             self._active_state_revision=None
+            self._active_request_id=None
             self._pending_result_messages=None
             self._result_check_sent_keys.clear()
             self._result_ocr_candidate=None
@@ -732,6 +740,7 @@ class MatchReplayDialog(QDialog):
         self._local_battle_tracker.clear()
         self._ocr_capture_epochs.clear()
         self._active_state_revision=None
+        self._active_request_id=None
         self._pending_result_messages=None
         self._result_check_sent_keys.clear()
         self._result_ocr_candidate=None
@@ -747,7 +756,22 @@ class MatchReplayDialog(QDialog):
         self._set_ai_status("AI未送信（対戦未開始）")
         self._render({"status":"RESET"})
         self.match_id=None
+        if self._debug_log is not None:
+            self._debug_log.close()
         self._debug_log=None
+
+    def _diagnostic(self, event: str, detail: dict) -> None:
+        """Bounded non-blocking evidence recording, no images or API bodies."""
+        log=self._debug_log
+        if log is None:
+            return
+        state=self.state or {}
+        log.write_diagnostic(
+            event,detail,
+            turn_epoch=self._turn_epoch,
+            frame_seq=self._last_capture_seq,
+            state_revision=state.get("_live_state_revision",0),
+            request_id=self._active_request_id or "")
 
     def _trace_event(self, event: str, **data) -> None:
         """Unverified UI-clock telemetry; no screenshot, disk or network use."""
