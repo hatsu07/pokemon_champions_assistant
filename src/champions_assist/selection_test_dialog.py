@@ -92,6 +92,21 @@ class _SelectionTestWorker(QObject):
         self.finished.emit(report)
 
 
+class _LocalOcrWorker(QObject):
+    """Separate OCR-only worker; no API calls and no saved screenshots."""
+    finished=Signal(object)
+
+    def __init__(self, image, profile):
+        super().__init__()
+        self.image=image
+        self.profile=profile
+
+    @Slot()
+    def run(self):
+        from .ocr_diagnostics import inspect_battle_event_image
+        self.finished.emit(inspect_battle_event_image(self.image,self.profile))
+
+
 class _TimingTestWorker(QObject):
     """Off-match diagnostic only; no actual game observations are confirmed."""
     finished=Signal(object)
@@ -192,6 +207,8 @@ class SelectionTestDialog(QDialog):
         self.turn_image=None
         self.switch_image=None
         self.event_image=None
+        self.ocr_thread=None
+        self.ocr_worker=None
         self.test_state=None
         self.timing_results=[]
         self.timing_requested_at=None
@@ -336,14 +353,26 @@ class SelectionTestDialog(QDialog):
         self.event_run_button=QPushButton("イベント読み取りテスト")
         self.event_run_button.clicked.connect(self.run_event_test)
         self.event_run_button.setEnabled(False)
+        self.event_ocr_button=QPushButton("ローカルOCR診断（AI送信なし）")
+        self.event_ocr_button.clicked.connect(self.run_local_ocr_test)
+        self.event_ocr_button.setEnabled(False)
         row.addWidget(self.event_choose_button)
         row.addWidget(self.event_run_button)
+        row.addWidget(self.event_ocr_button)
         event_layout.addLayout(row)
         self.event_status=QLabel("選出＋PREP後、イベント画面を指定してください。")
         self.event_status.setWordWrap(True)
         self.event_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         event_layout.addWidget(self.event_status)
-        event_layout.addStretch(1)
+        self.event_ocr_status=QLabel("OCR：画像未選択")
+        self.event_ocr_status.setWordWrap(True)
+        event_layout.addWidget(self.event_ocr_status)
+        self.event_ocr_scroll=QScrollArea(self.event_page)
+        self.event_ocr_scroll.setWidgetResizable(True)
+        self.event_ocr_holder=QWidget()
+        self.event_ocr_rows=QVBoxLayout(self.event_ocr_holder)
+        self.event_ocr_scroll.setWidget(self.event_ocr_holder)
+        event_layout.addWidget(self.event_ocr_scroll)
 
         self.integration_page=QWidget(self.tabs)
         self.tabs.addTab(self.integration_page,"1対戦統合テスト（実ゲーム画面）")
@@ -673,12 +702,84 @@ class SelectionTestDialog(QDialog):
             self.event_status.setText("イベント画像を読込済み。戦闘状態への観測反映を検証します。")
             self.event_run_button.setEnabled(
                 self.test_state is not None and self.prep_attempted)
+            self.event_ocr_button.setEnabled(self.ocr_thread is None)
+            self.event_ocr_status.setText("OCR：画像読込済み。独立してテストできます。")
 
     def run_switch_test(self):
         self._start_timing_test("SWITCH")
 
     def run_event_test(self):
         self._start_timing_test("EVENT")
+
+    def run_local_ocr_test(self):
+        if self.event_image is None or self.ocr_thread is not None:
+            return
+        from .calibrated_screen_fields import ScreenFieldProfile
+        private=self.app_root/"calibration"/"screen_fields.json"
+        try:
+            profile=(ScreenFieldProfile.from_json(private)
+                     if private.is_file()
+                     else ScreenFieldProfile.from_user_samples_960x572())
+        except (OSError,ValueError,TypeError,KeyError):
+            profile=ScreenFieldProfile.from_user_samples_960x572()
+        self.event_ocr_button.setEnabled(False)
+        self.event_ocr_status.setText("OCRをローカル実行中（AI通信なし）")
+        self.ocr_thread=QThread(self)
+        self.ocr_worker=_LocalOcrWorker(self.event_image.copy(),profile)
+        self.ocr_worker.moveToThread(self.ocr_thread)
+        self.ocr_thread.started.connect(self.ocr_worker.run)
+        self.ocr_worker.finished.connect(self._local_ocr_result)
+        self.ocr_worker.finished.connect(self.ocr_thread.quit)
+        self.ocr_thread.finished.connect(self.ocr_worker.deleteLater)
+        self.ocr_thread.finished.connect(self.ocr_thread.deleteLater)
+        self.ocr_thread.finished.connect(self._local_ocr_cleanup)
+        self.ocr_thread.start()
+
+    @Slot(object)
+    def _local_ocr_result(self, report):
+        while self.event_ocr_rows.count():
+            item=self.event_ocr_rows.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        rows=report.get("rows",[])
+        errors=sum(bool(r["error"]) for r in rows)
+        self.event_ocr_status.setText(
+            f"OCR：{report['status']} / {len(rows)}領域 / {errors}エラー"
+            "（結果は候補であり対戦状態へは反映しません）")
+        for result in rows:
+            container=QWidget()
+            layout=QHBoxLayout(container)
+            crop=result["crop"]
+            h,w=crop.shape[:2]
+            preview=QLabel()
+            qimage=QImage(crop.data,w,h,3*w,QImage.Format.Format_RGB888).copy()
+            preview.setPixmap(QPixmap.fromImage(qimage).scaled(
+                340,120,Qt.AspectRatioMode.KeepAspectRatio))
+            layout.addWidget(preview)
+            confidence=("不明" if result["confidence"] is None
+                        else f"{result['confidence']:.2f}")
+            details=QLabel(
+                f"{result['name']} ({result['kind']}) / "
+                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\\n"
+                f"認識: {result['text'] or '（空）'}\\n"
+                f"解析: {str(result['parsed']) if result['parsed'] is not None else '未確定'}"
+                f" / エラー: {result['error'] or 'なし'}")
+            details.setWordWrap(True)
+            details.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(details,1)
+            self.event_ocr_rows.addWidget(container)
+        if not rows:
+            self.event_ocr_rows.addWidget(
+                QLabel("ROI範囲が画像と不一致／対象領域がありません。校正を確認してください。"))
+
+    @Slot()
+    def _local_ocr_cleanup(self):
+        self.ocr_thread=None
+        self.ocr_worker=None
+        self.event_ocr_button.setEnabled(self.event_image is not None)
+        if self._close_after_workers:
+            self._retry_close_after_workers()
 
     def _start_timing_test(self, mode):
         if self.thread is not None or self.test_state is None:
