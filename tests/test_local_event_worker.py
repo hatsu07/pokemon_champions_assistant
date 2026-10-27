@@ -75,6 +75,21 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         finally:
             reader.stop()
 
+    def test_action_screen_reads_hp_without_event_message_or_timer(self):
+        profile,image,engine=fixture()
+        reader=AsyncBattleEventReader(profile,ocr_engine=engine)
+        try:
+            self.assertTrue(reader.offer(image,label="TURN_ACTION"))
+            result=completed(reader)
+            self.assertEqual(len(result),1)
+            self.assertEqual(
+                {r.field for r in result[0].observations},
+                {"screen_text.own_hp_fraction"})
+            self.assertNotIn("battle_message",engine.calls)
+            self.assertNotIn("turn_command_timer",engine.calls)
+        finally:
+            reader.stop()
+
     def test_legacy_system_message_does_not_start_ocr(self):
         profile,image,engine=fixture()
         legacy_region=FieldRegion(
