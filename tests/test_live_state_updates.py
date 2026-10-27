@@ -338,6 +338,20 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertTrue(captured["cached_pairs_invalidated_for_form"])
         self.assertEqual(captured["cached_current_opponent_pairs"],[])
 
+    def test_unresolved_opponent_mega_invalidates_pre_form_type(self):
+        evidence=self.state["battle_evidence"]
+        evidence["current_type"]={"own":{},
+            "opponent":{"ガブリアス":"ドラゴン/じめん"}}
+        evidence["current_base_speed_by_pokemon"]={"own":{},
+            "opponent":{"ガブリアス":102}}
+        self.apply(read("battle_message","相手のガブリアスはメガシンカした",1))
+        updated=self.state["battle_evidence"]
+        self.assertEqual(self.state["opponent_current_form"],
+                         "MEGA_EVOLVED_FORM_UNCONFIRMED")
+        self.assertNotIn("ガブリアス",updated["current_type"]["opponent"])
+        self.assertNotIn("ガブリアス",
+                         updated["current_base_speed_by_pokemon"]["opponent"])
+
     def test_item_exchange_clears_stale_choice_lock_and_old_item(self):
         memory=self.state["battle_evidence"]
         memory["choice_lock"]={"pokemon":"マスカーニャ",
