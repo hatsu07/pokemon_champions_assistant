@@ -90,6 +90,9 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
             fail(proof);continue
         if kind in ("WEATHER","TERRAIN"):
             if side!="field":fail("FIELD_SIDE_REQUIRED");continue
+        elif kind=="SIDE_EFFECT":
+            if side not in ("own","opponent"):
+                fail("SIDE_EFFECT_SIDE_REQUIRED");continue
         elif side=="field" or (side=="own" and name not in own) or (
                 side=="opponent" and name not in opponent):
             fail("POKEMON_NOT_IN_KNOWN_ROSTER");continue
@@ -99,7 +102,7 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
             if prior and current and prior!=current:
                 fail("STALE_FROM_ACTIVE");continue
             if current==name:fail("SELF_SWITCH");continue
-        elif kind not in ("WEATHER","TERRAIN") and current!=name:
+        elif kind not in ("WEATHER","TERRAIN","SIDE_EFFECT") and current!=name:
             fail("ACTOR_NOT_CURRENT");continue
         identity=(kind,side,name,prior,value,str(event.get("stat")),
                   str(event.get("delta")),*sorted(event["evidence_frames"]))
