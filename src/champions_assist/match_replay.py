@@ -1376,7 +1376,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             # An unverified switch may already have happened. Never issue a
             # new action on the old active merely because local OCR missed it.
             observed_actor=str(obs.get("our_active") or "")
-            if _member_for(observed_actor,assets) is None:
+            if (obs.get("visual_ui") not in (
+                    "COMMAND_MENU","MOVE_MENU","PARTY_MENU")
+                    or _member_for(observed_actor,assets) is None):
                 if diagnostic_sink is not None:
                     diagnostic_sink("AI_VALIDATION",{
                         "validation_code":"POST_SWITCH_ACTIVE_NOT_CONFIRMED",
