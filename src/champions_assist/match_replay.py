@@ -1664,6 +1664,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             for row in audit:
                 diagnostic_sink("AI_OCR_STATE_DECISION",row)
         actor_conflict=any(row.get("status")=="REJECTED" and
+                           row.get("reason")!="ALREADY_APPLIED" and
                            row.get("kind") in ("SWITCH","FAINT","MEGA")
                            for row in audit)
         if combined and (actor_conflict or
