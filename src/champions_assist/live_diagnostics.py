@@ -29,7 +29,7 @@ _FIELDS = frozenset((
     "previous_revision","event","evidence","active_own","active_opponent",
     "current_form","status_by_pokemon","item_by_pokemon","moves_by_pokemon",
     "boosts","source_conflict","age_ms","dedup","request_phase","result",
-    "own","opponent","hp_by_pokemon","current","maximum",
+    "detected_pokemon","detected_moves","own","opponent","hp_by_pokemon","current","maximum",
     "percent_displayed","visual_ui","our_hp","opponent_hp",
     "observed_event","name","phase","selected_bench_unconfirmed",
     "selected_switch_options","verified","stale","display_turn","original_turn",
