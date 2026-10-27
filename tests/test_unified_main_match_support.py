@@ -172,7 +172,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(order[:2],["SELECTION_DISPLAYED","PREP_STARTED"])
         self.assertEqual(panel.state["phase"],"PREP")
 
-    def test_selection_reply_after_observed_departure_is_not_displayed(self):
+    def test_selection_reply_without_new_request_is_preserved_as_unconfirmed(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
         from tests.test_match_replay import OWN
@@ -194,14 +194,17 @@ class UnifiedMainWindowTests(unittest.TestCase):
         with patch.object(panel,"_render") as render:
             panel._completed({"state":deepcopy(preview),"report":report})
         displayed=render.call_args.args[0]
-        self.assertEqual(displayed["status"],"SUPERSEDED")
-        self.assertFalse(displayed.get("recommendation"))
-        self.assertEqual(panel.state["phase"],"MATCHMAKING")
+        self.assertEqual(displayed["status"],"PROVISIONAL_ADVICE")
+        self.assertTrue(displayed["selection_screen_unconfirmed"])
+        self.assertIn("画面の継続未確認",displayed["recommendation"])
+        # The response is retained for review, not treated as a playable
+        # selection or used to start PREP on a departed screen.
+        self.assertEqual(panel.state["phase"],"SELECTION")
         self.assertIsNone(panel._proposed_selection)
-        self.assertTrue(any(x["event"]=="STALE_SELECTION_ADVICE_DROPPED"
+        self.assertTrue(any(x["event"]=="SELECTION_RESULT_SCREEN_CHANGED"
                             for x in panel._timing_trace))
 
-    def test_selection_result_survives_pending_battle_command(self):
+    def test_newer_action_request_supersedes_unanswered_selection(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
         from tests.test_match_replay import OWN
@@ -221,11 +224,11 @@ class UnifiedMainWindowTests(unittest.TestCase):
         report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
                 "selected_three":list(OWN[:3]),"lead":OWN[0]}
         panel._completed({"state":deepcopy(preview),"report":report})
-        self.assertEqual(panel.state["phase"],"PREP")
-        self.assertTrue(panel.state["selection_assumed"])
+        self.assertEqual(panel.state["phase"],"SELECTION")
+        self.assertIsNone(panel._proposed_selection)
         self.assertIsNotNone(panel._pending_batch)
         self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
-        self.assertTrue(any(row.get("event")=="SELECTION_PRESERVED_FOR_BATTLE_TRANSITION"
+        self.assertTrue(any(row.get("event")=="STALE_SELECTION_ADVICE_DROPPED"
                             for row in panel._timing_trace))
 
     def test_turn_clock_starts_from_local_screen_not_model_completion(self):
