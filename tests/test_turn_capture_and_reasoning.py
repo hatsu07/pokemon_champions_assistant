@@ -65,6 +65,67 @@ class MemoryAndReasoningTests(unittest.TestCase):
         self.assertIsNone(buffer.observe(menu))
         self.assertEqual(buffer.observe(menu),"TEAM_SELECTION")
 
+    def test_switch_classifier_rejects_new_move_from_fainted_actor(self):
+        from unittest.mock import patch
+        from tests.test_match_replay import fixture_assets, OWN
+        state=new_replay(fixture_assets())
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),lead=OWN[0],
+                     our_active=OWN[0],opponent_active="マスカーニャ",
+                     awaiting_replacement=True)
+        observation={
+            "visual_ui":"PARTY_MENU","our_six":[],"opponent_six":[],
+            "our_active":OWN[0],"opponent_active":"マスカーニャ",
+            "visible_moves":[],"visible_party":[OWN[1],OWN[2]],
+            "our_hp":"","opponent_hp":"","messages":[],
+            "observed_event":"NONE","match_result":"UNKNOWN",
+            "uncertain_slots":[],
+        }
+        answer={"observation":observation,
+                "selection":{"selected_three":[],"lead":""},
+                "action":{"action_kind":"MOVE","move":"じしん",
+                          "switch_target":"","warning":""}}
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=answer):
+            updated,report=run_replay_batch(
+                [np.zeros((40,60,3),dtype=np.uint8)],
+                state=state,assets=fixture_assets(),
+                access_token="dummy",model="mock",
+                client_factory=lambda **kwargs:object(),
+                expected_screen_label="SWITCH_SELECTION")
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"SWITCH_ONLY_MOVE_REJECTED")
+        self.assertEqual(report["recommendation"],"")
+        self.assertEqual(updated["our_active"],OWN[0])
+
+    def test_switch_classifier_rejects_overlay_without_reproposing_move(self):
+        from unittest.mock import patch
+        from tests.test_match_replay import fixture_assets, OWN
+        assets=fixture_assets()
+        state=new_replay(assets)
+        state.update(phase="BATTLE",selected_three=list(OWN[:3]),
+                     lead=OWN[0],our_active=OWN[0])
+        observation={
+            "visual_ui":"DETAIL_OVERLAY","our_six":[],"opponent_six":[],
+            "our_active":OWN[0],"opponent_active":"マスカーニャ",
+            "visible_moves":[],"visible_party":[],
+            "our_hp":"","opponent_hp":"","messages":[],
+            "observed_event":"NONE","match_result":"UNKNOWN",
+            "uncertain_slots":[],
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value={"observation":observation,
+                                 "selection":{"selected_three":[],"lead":""},
+                                 "action":{"action_kind":"MOVE","move":"じしん",
+                                           "switch_target":"","warning":""}}):
+            _,report=run_replay_batch(
+                [np.zeros((40,60,3),dtype=np.uint8)],
+                state=state,assets=assets,access_token="dummy",model="mock",
+                client_factory=lambda **kwargs:object(),
+                expected_screen_label="SWITCH_SELECTION")
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"SWITCH_SCREEN_RECOGNITION_MISMATCH")
+        self.assertFalse(report["recommendation"])
+
     def test_batch_uses_one_stream_call_and_rejects_unsupported_action(self):
         own=["ピカチュウ","ドドゲザン","ガブリアス"]
         assets=FrozenMatchAssets(
