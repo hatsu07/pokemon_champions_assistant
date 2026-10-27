@@ -97,7 +97,8 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "selection_assumed": False, "observed_lead": None,
         "visual_unknown_opponents": [],
         "our_active": "", "opponent_active": "", "observed_hp": {},
-        "awaiting_replacement": False,
+        "awaiting_replacement": False, "_live_state_revision":0,
+        "_ocr_applied_event_ids":[],
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
         "image_observations_unverified": [], "prep_status": "NOT_STARTED",
@@ -176,6 +177,11 @@ def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) ->
             name = ""  # Unknown species is not promoted to a confirmed team state.
         if name:
             state[field] = name
+            if field=="opponent_active":
+                # ChatGPT visual observation and local OCR use exactly the
+                # same unknown-preview completion rules. No fabricated sixth.
+                from .live_state_updates import fill_unknown_preview
+                fill_unknown_preview(state,assets,name)
     for field, owner in (("our_hp", "own"), ("opponent_hp", "opponent")):
         hp = obs.get(field) or ""
         if hp:
@@ -235,7 +241,35 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
             visible = {move_key(name) for name in obs["visible_moves"]}
             if requested not in visible:
                 return "MOVE_NOT_VERIFIED", {}
-        lock = state.get("battle_evidence", {}).get("choice_lock", {})
+        evidence=state.get("battle_evidence", {})
+        known_pp=(evidence.get("pp_by_pokemon",{}).get("own",{})
+                  .get(own,{}).get(registered[requested]))
+        if known_pp == 0:
+            return "MOVE_OUT_OF_PP", {}
+        temporary=(evidence.get("temporary_effects",{}).get("own",{})
+                   .get(own,{}))
+        taunt=temporary.get("taunt",{})
+        move_class=getattr(assets,"move_class_index",{}).get(registered[requested])
+        if taunt.get("active") and move_class=="変化":
+            return "TAUNT_STATUS_MOVE_BLOCKED", {}
+        encore=temporary.get("encore",{})
+        last_move=(evidence.get("last_move_by_pokemon",{}).get("own",{})
+                   .get(own,""))
+        if (encore.get("active") and last_move
+                and requested!=move_key(last_move)):
+            return "ENCORE_LOCK_VIOLATION", {}
+        disabled=temporary.get("disable",{})
+        if (disabled.get("active") and disabled.get("move")
+                and requested==move_key(disabled["move"])):
+            return "DISABLED_MOVE_VIOLATION", {}
+        # Taunt/Encore with UNKNOWN move category or bound move stays in the
+        # prompt as explicit uncertainty, never an invented legal option.
+        lock = evidence.get("choice_lock", {})
+        spent=(evidence.get("item_state_by_pokemon",{}).get("own",{})
+               .get(own,{}))
+        if spent.get("state") in ("SPENT_OR_LOST",
+                                      "CURRENT_UNKNOWN_AFTER_EXCHANGE"):
+            lock={}  # No continued lock after lost or unknown swapped item.
         if (_canonical(lock.get("pokemon", "")) == _canonical(own)
                 and lock.get("move") and requested != move_key(lock["move"])):
             return "CHOICE_LOCK_VIOLATION", {}
@@ -1524,9 +1558,31 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
         "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
+        "registered_move_categories":{
+            n:getattr(assets,"move_class_index",{}).get(n,"UNKNOWN")
+            for n in (own.get("move"+str(i),"") for i in range(1,5)) if n},
         "battle_evidence":state.get("battle_evidence") or {},
         "battlefield":state.get("battlefield") or {},
-        "cached_current_opponent_pairs":pairs,
+        "current_own_form":(state.get("battle_evidence") or {}).get(
+            "form_by_pokemon",{}).get("own",{}).get(current,"UNKNOWN"),
+        "current_own_type":(state.get("battle_evidence") or {}).get(
+            "current_type",{}).get("own",{}).get(current,"UNKNOWN"),
+        "current_own_base_speed":(state.get("battle_evidence") or {}).get(
+            "current_base_speed_by_pokemon",{}).get("own",{}).get(current,"UNKNOWN"),
+        "current_opponent_form":(state.get("battle_evidence") or {}).get(
+            "form_by_pokemon",{}).get("opponent",{}).get(opponent,"UNKNOWN"),
+        # Prior pair scores for a changed-form active may no longer apply.
+        "cached_current_opponent_pairs":(
+            [] if ((state.get("battle_evidence") or {}).get(
+                        "form_by_pokemon",{}).get("own",{}).get(current)
+                   or (state.get("battle_evidence") or {}).get(
+                        "form_by_pokemon",{}).get("opponent",{}).get(opponent))
+            else pairs),
+        "cached_pairs_invalidated_for_form":bool(
+            (state.get("battle_evidence") or {}).get(
+                "form_by_pokemon",{}).get("own",{}).get(current)
+            or (state.get("battle_evidence") or {}).get(
+                "form_by_pokemon",{}).get("opponent",{}).get(opponent)),
         "recent_history":(state.get("history") or [])[-3:],
         "ocr_candidates_unverified":candidates,
         "no_visible_party_confirmation":switch_only,

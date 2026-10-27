@@ -67,6 +67,8 @@ class FrozenMatchAssets:
     frozen_at: str
     matchup_cache_index: Mapping[str, Mapping[str, Mapping]] = field(
         default_factory=lambda: MappingProxyType({}))
+    move_class_index: Mapping[str,str] = field(
+        default_factory=lambda: MappingProxyType({}))
 
     @property
     def manifest(self) -> tuple[dict[str, str], ...]:
@@ -138,6 +140,21 @@ class MasterPreloader:
         except (UnicodeDecodeError, csv.Error, ValueError) as exc:
             raise PreloadError({"compiled_indexes": str(exc)}) from exc
 
+        # Optional, Champions-specific move CATEGORY snapshot. This is read
+        # ONCE at the new-match boundary and never during a live turn.
+        # Only four required assets determine "preload success". Absence of
+        # the optional move master means taunt legality is UNKNOWN, not guessed.
+        move_classes={}
+        move_source=self._master_directory / "Pokemon_Champions_MC_move_master.csv"
+        try:
+            with move_source.open("r",encoding="utf-8-sig",newline="") as source:
+                for row in csv.DictReader(source):
+                    name=(row.get("技名") or "").strip()
+                    category=(row.get("分類") or "").strip()
+                    if name and category in ("物理","特殊","変化"):
+                        move_classes[name]=category
+        except (OSError,UnicodeError,csv.Error):
+            move_classes={}
         from .prep_cache import compile_matchup_cache
         matchup_cache = compile_matchup_cache(
             contents[REQUIRED_MASTER_FILES[1]], matrix, team)
@@ -149,4 +166,5 @@ class MasterPreloader:
             own_team=team,
             frozen_at=datetime.now(timezone.utc).isoformat(),
             matchup_cache_index=matchup_cache,
+            move_class_index=MappingProxyType(move_classes),
         )

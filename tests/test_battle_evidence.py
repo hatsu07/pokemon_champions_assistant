@@ -70,10 +70,15 @@ class BattleEvidenceTests(unittest.TestCase):
                      opponent_ability_revealed="さめはだ",
                      our_stat_changes="攻撃+1",opponent_stat_changes="素早さ+1",
                      our_status="まひ",opponent_status="やけど")
-        # This was visible before the opponent switched, then boosts reset.
+        # Kanji observations are normalized to numeric stages before
+        # OCR deltas; the confirmed +1 must survive until the switch.
         self.assertEqual(
             self.state["battle_evidence"]["boosts"]["opponent"]["ガブリアス"],
-            "素早さ+1",
+            {"S":1},
+        )
+        self.assertEqual(
+            self.state["battle_evidence"]["boosts"]["own"]["マスカーニャ"],
+            {"A":1},
         )
         self.advance("ACTION_RESOLUTION",our_active="アシレーヌ",
                      opponent_active="サーフゴー",our_hp="160/160",

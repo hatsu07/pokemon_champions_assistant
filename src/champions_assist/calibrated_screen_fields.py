@@ -78,7 +78,8 @@ class ScreenFieldProfile:
             raise ValueError("calibration requires regions")
         regions = []
         seen = set()
-        valid_kinds = {"HP_FRACTION", "HP_PERCENT", "TIMER", "MESSAGE", "TEXT"}
+        valid_kinds = {"HP_FRACTION", "HP_PERCENT", "PP_FRACTION",
+                       "TIMER", "MESSAGE", "TEXT"}
         valid_labels = {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT"}
         for raw in raw_regions:
             name = raw.get("name")
@@ -154,7 +155,7 @@ def parse_field_text(region: FieldRegion, raw_text: str, *, frame_id: str) -> Vi
     text = " ".join(str(raw_text).strip().split())
     if not text:
         return None
-    if region.kind == "HP_FRACTION":
+    if region.kind in ("HP_FRACTION","PP_FRACTION"):
         hits = _FRACTION_RE.findall(text)
         if len(hits) != 1:
             return None
