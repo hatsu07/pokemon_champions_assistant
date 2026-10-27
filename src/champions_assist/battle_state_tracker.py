@@ -13,7 +13,7 @@ from .local_event_worker import LocalFieldRead
 
 
 class LocalBattleStateTracker:
-    def __init__(self, max_events: int=36):
+    def __init__(self, max_events: int=144):
         if max_events<1:
             raise ValueError("max_events must be positive")
         self._events: deque[LocalFieldRead]=deque(maxlen=max_events)
