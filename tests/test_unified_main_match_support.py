@@ -191,8 +191,10 @@ class UnifiedMainWindowTests(unittest.TestCase):
         report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
                 "selected_three":list(OWN[:3]),"lead":OWN[0],
                 "recommendation":"選出： "+" / ".join(OWN[:3])}
+        result_state=deepcopy(preview)
+        result_state["phase"]="SELECTION"  # Real reducer completed vision.
         with patch.object(panel,"_render") as render:
-            panel._completed({"state":deepcopy(preview),"report":report})
+            panel._completed({"state":result_state,"report":report})
         displayed=render.call_args.args[0]
         self.assertEqual(displayed["status"],"PROVISIONAL_ADVICE")
         self.assertTrue(displayed["selection_screen_unconfirmed"])
