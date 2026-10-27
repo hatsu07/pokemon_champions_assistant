@@ -31,6 +31,9 @@ OBSERVATION_FACT_FIELDS = (
     "our_current_form", "opponent_current_form",
     "our_stat_changes", "opponent_stat_changes",
     "our_status", "opponent_status",
+    "opponent_used_move", "our_temporary_effects",
+    "opponent_temporary_effects", "our_current_type",
+    "opponent_current_type",
 )
 
 
@@ -44,6 +47,13 @@ def empty_battle_evidence() -> dict:
         "boosts": {"own": {}, "opponent": {}},
         "choice_lock": {"pokemon": "", "move": "", "source": ""},
         "last_confirmed_our_move": "",
+        "moves_by_pokemon":{"own":{},"opponent":{}},
+        "pp_by_pokemon":{"own":{},"opponent":{}},
+        "temporary_effects":{"own":{},"opponent":{}},
+        "item_state_by_pokemon":{"own":{},"opponent":{}},
+        "ability_state_by_pokemon":{"own":{},"opponent":{}},
+        "fainted":{"own":{},"opponent":{}},
+        "update_provenance":[],
     }
 
 
@@ -82,6 +92,26 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
             value = _clean(observation.get(source))
             if value:
                 memory[field][team][active] = value
+    for side,actor,key in (("own",own,"our_used_move"),
+                            ("opponent",opponent,"opponent_used_move")):
+        move=_clean(observation.get(key))
+        if move and actor:
+            known=memory.setdefault("moves_by_pokemon",{
+                "own":{},"opponent":{}})[side].setdefault(actor,[])
+            if move not in known:
+                known.append(move)
+    for side,actor,prefix in (("own",own,"our"),
+                               ("opponent",opponent,"opponent")):
+        if actor:
+            temporary=_clean(observation.get(prefix+"_temporary_effects"))
+            if temporary:
+                memory.setdefault("temporary_effects",{
+                    "own":{},"opponent":{}})[side].setdefault(actor,{})[
+                        "image_observed_description"]={"active":True,"raw":temporary}
+            current_type=_clean(observation.get(prefix+"_current_type"))
+            if current_type:
+                memory.setdefault("current_type",{
+                    "own":{},"opponent":{}})[side][actor]=current_type
     if _clean(observation.get("our_item_revealed")) and own:
         registered = next((m for m in own_team if _key(m.get("name", "")) == _key(own)), None)
         # If an explicitly revealed item differs from the registered choice
