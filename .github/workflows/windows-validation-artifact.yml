@@ -147,7 +147,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $report)) { throw "missing desktop startup smoke report" }
           $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
           if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED" -or
-              $result.bundled_native_ocr -ne "OCR_NATIVE_SMOKE_OK") {
+              $result.bundled_native_ocr -ne "OCR_NATIVE_EXECUTION_OK") {
             throw "desktop GUI startup smoke returned unexpected report"
           }
           Remove-Item Env:QT_QPA_PLATFORM
