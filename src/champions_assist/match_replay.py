@@ -1664,12 +1664,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                            row.get("kind") in ("SWITCH","FAINT","MEGA")
                            for row in audit)
         if combined and (actor_conflict or
-                (answer.get("interpreted_own_active") and
-                 _canonical(answer["interpreted_own_active"])!=
-                 _canonical(updated.get("our_active",""))) or
-                (answer.get("interpreted_opponent_active") and
-                 _canonical(answer["interpreted_opponent_active"])!=
-                 _canonical(updated.get("opponent_active","")))):
+                _canonical(answer.get("interpreted_own_active",""))!=
+                _canonical(updated.get("our_active","")) or
+                _canonical(answer.get("interpreted_opponent_active",""))!=
+                _canonical(updated.get("opponent_active",""))):
             return updated,{"status":"BLOCKED","recommendation":"",
                             "reason":"AI_OCR_ACTIVE_STATE_UNVERIFIED",
                             "transport":"OCR_TEXT_ONLY","images_sent":0}
@@ -1680,8 +1678,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 diagnostic_sink("AI_VALIDATION",{
                     "validation_code":"SWITCH_ONLY_MOVE_REJECTED",
                     "status":"BLOCKED"})
-            return deepcopy(state),{"status":"BLOCKED",
+            return updated,{"status":"BLOCKED",
                                     "reason":"SWITCH_ONLY_MOVE_REJECTED",
+                                    "transport":"OCR_TEXT_ONLY",
                                     "images_sent":0}
         updated,result=advance_observation(
             updated,assets,obs,
