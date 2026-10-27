@@ -170,7 +170,9 @@ class _ReplayWorker(QObject):
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
                 self.progress.emit("ChatGPT認証確認中")
+                auth_started=perf_counter()
                 token=auth.access_token()
+                auth_ms=round((perf_counter()-auth_started)*1000)
                 self.progress.emit("AI画像送信処理中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
@@ -203,6 +205,7 @@ class _ReplayWorker(QObject):
                             total_seconds=remaining,
                             local_field_candidates=local_candidates,
                         )
+                report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
                     "FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label
@@ -1542,7 +1545,8 @@ class MatchReplayDialog(QDialog):
         if reader is not None:
             for result in reader.drain():
                 if result.error:
-                    self._trace_event("LOCAL_OCR_ERROR",reason=result.error)
+                    self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
+                                      ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
                 else:
                     count=self._local_battle_tracker.ingest(result.observations)
                     if count:
@@ -1668,13 +1672,21 @@ class MatchReplayDialog(QDialog):
         elif (self._active_job=="batch" and self._active_turn_epoch is not None
               and self._turn_screen_seen_at is not None
               and monotonic()-self._turn_screen_seen_at
-                  >_CONSERVATIVE_AI_TURN_SECONDS):
-            report={**report,"status":"DEADLINE_EXCEEDED",
-                    "recommendation":"",
-                    "warning":"LOCAL_HARD_ADVICE_DEADLINE_PASSED"}
-            self._trace_event("LATE_TURN_ADVICE_DROPPED",
+                  >_CONSERVATIVE_AI_TURN_SECONDS
+              and report.get("status") in (
+                  "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
+              and report.get("recommendation")):
+            # A local stopwatch is NOT authoritative evidence that the game's
+            # current turn ended. A valid, same-epoch answer remains visible.
+            # Truly superseded turns are rejected by the epoch/event guard above.
+            elapsed=monotonic()-self._turn_screen_seen_at
+            report["late_advice_presented"]=True
+            report["warning"]=(str(report.get("warning") or "")+
+                " 【32秒超過：現在のターンとゲーム内の残り時間を確認してください】")
+            self._trace_event("LATE_TURN_ADVICE_PRESENTED",
                               turn_epoch=self._turn_epoch,
                               ai_request_attempt=self._ai_request_attempts,
+                              elapsed_ms=round(elapsed*1000),
                               timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
         elif (self._active_job=="batch"
               and self._active_turn_epoch is not None
@@ -1695,6 +1707,7 @@ class MatchReplayDialog(QDialog):
                               timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
         if self._active_request_started is not None:
             report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
+            self._trace_event("AI_WORKER_FINISHED",queue_elapsed_ms=report["queue_elapsed_ms"],status=report.get("status","UNKNOWN"),api_total_ms=report.get("api_total_ms",0),api_first_output_ms=report.get("api_first_output_ms",0),image_prepare_ms=report.get("image_prepare_ms",0),validation_ms=report.get("validation_ms",0),auth_ms=report.get("auth_ms",0))
             self._active_request_started=None
         if self._active_job in ("auto_frame","batch") and not self._auto_running and self._cancel_event.is_set():
             return
