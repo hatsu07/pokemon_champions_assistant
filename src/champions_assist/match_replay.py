@@ -111,6 +111,7 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "visual_unknown_opponents": [],
         "our_active": "", "opponent_active": "", "observed_hp": {},
         "awaiting_replacement": False, "_live_state_revision":0,
+        "opponent_active_unknown":False, "last_known_opponent":"",
         "_ocr_applied_event_ids":[],
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
@@ -1548,9 +1549,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     current=state.get("our_active")
     opponent=state.get("opponent_active")
     if (expected_screen_label not in ("TURN_ACTION","SWITCH_SELECTION")
-            or not current or not opponent):
+            or not current):
         return deepcopy(state),{
-            "status":"BLOCKED","reason":"TEXT_DECISION_REQUIRES_KNOWN_ACTIVES",
+            "status":"BLOCKED","reason":"TEXT_DECISION_REQUIRES_KNOWN_OWN_ACTIVE",
             "images_sent":0}
     switch_only=expected_screen_label=="SWITCH_SELECTION"
     bench=_bench_candidates(state)
@@ -1587,6 +1588,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "selected_three":state.get("selected_three",[]),
         "selected_bench_unconfirmed":bool(state.get("selection_assumed")),
         "active_own":current,"active_opponent":opponent,
+        "opponent_identity_uncertain":bool(state.get("opponent_active_unknown")) or not bool(opponent),
+        "opponent_candidates":list(state.get("opponent_six") or ()),
+        "last_known_opponent":state.get("last_known_opponent") or opponent,
         "our_registered_moves":[] if switch_only else [
             own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
@@ -1641,7 +1645,13 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "Evaluate moves for interpreted_own_active after the updates. "
                 "Cite actual OCR frame IDs in evidence_frames for each update. "
                 "Never treat previous recommended moves or switches as executed. "
-                "Unknown evidence means UNCERTAIN and potentially NO_ACTION. "
+                Unknown observations remain UNKNOWN: do not fabricate Pokémon. "
+                "A missing or switched-out opponent is NOT by itself a "
+                "reason for NO_ACTION. Evaluate the legal own moves and bench "
+                "against remaining opponent candidates, minimize losing lines, "
+                "and give the best defensible action with a brief uncertainty "
+                "warning. Use NO_ACTION only if no legal action can be "
+                "meaningfully assessed. "
                 "List a frame in processed_ocr_frames ONLY when every OCR "
                 "observation from that frame is fully understood and all "
                 "confirmed battle changes are reflected in state_updates or "
@@ -1669,18 +1679,33 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         if diagnostic_sink is not None:
             for row in audit:
                 diagnostic_sink("AI_OCR_STATE_DECISION",row)
-        actor_conflict=any(row.get("status")=="REJECTED" and
-                           row.get("reason")!="ALREADY_APPLIED" and
-                           row.get("kind") in ("SWITCH","FAINT","MEGA")
-                           for row in audit)
-        if combined and (actor_conflict or
-                _canonical(answer.get("interpreted_own_active",""))!=
-                _canonical(updated.get("our_active","")) or
-                _canonical(answer.get("interpreted_opponent_active",""))!=
-                _canonical(updated.get("opponent_active",""))):
+        # A rejected opponent-only OCR event makes the matchup uncertain,
+        # not the own registered action illegal. A rejected own actor change
+        # still blocks actions that rely on an unverified own Pokémon.
+        own_conflict=any(row.get("status")=="REJECTED" and
+                         row.get("reason")!="ALREADY_APPLIED" and
+                         row.get("side")=="own" and
+                         row.get("kind") in ("SWITCH","SWITCH_OUT","FAINT","MEGA")
+                         for row in audit)
+        own_mismatch=(combined and
+            _canonical(answer.get("interpreted_own_active",""))!=
+            _canonical(updated.get("our_active","")))
+        opponent_mismatch=(combined and
+            _canonical(answer.get("interpreted_opponent_active",""))!=
+            _canonical(updated.get("opponent_active","")))
+        if own_conflict or own_mismatch:
             return updated,{"status":"BLOCKED","recommendation":"",
-                            "reason":"AI_OCR_ACTIVE_STATE_UNVERIFIED",
+                            "reason":"AI_OCR_OWN_ACTIVE_UNVERIFIED",
                             "transport":"OCR_TEXT_ONLY","images_sent":0}
+        if opponent_mismatch:
+            # Preserve verified internal facts; do not turn a model's empty
+            # or contradictory opponent label into a fabricated confirmation.
+            updated["opponent_active_unknown"]=True
+            if diagnostic_sink is not None:
+                diagnostic_sink("AI_OPPONENT_UNCERTAIN",{
+                    "internal":updated.get("opponent_active") or "",
+                    "model":answer.get("interpreted_opponent_active") or "",
+                    "reason":"OCR_ACTOR_MISMATCH_NONFATAL"})
         # Explicit model acknowledgments remove only fully handled OCR
         # frames from the next request. Unknown, uncertain or rejected events
         # cannot silently delete their observations.
@@ -1724,6 +1749,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "opponent_active":updated.get("opponent_active"),
                 "state_revision":updated.get("_live_state_revision",0),
             })
+        if opponent_mismatch:
+            result["warning"]=(str(result.get("warning") or "")+
+                " 【相手の現在ポケモン未確定：候補に基づく暫定判断】")
+            result["opponent_identity_uncertain"]=True
         result["transport"]="OCR_TEXT_ONLY"
         result["images_sent"]=0
         result["screen_label_hint"]=expected_screen_label
