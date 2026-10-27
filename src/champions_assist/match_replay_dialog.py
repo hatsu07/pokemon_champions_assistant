@@ -602,6 +602,9 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self._stop_local_event_reader()
             self._local_battle_tracker.clear()
+            self._pending_result_messages=None
+            self._result_check_sent_keys.clear()
+            self._last_advised_switch=None
             self.match_id=new_id
             self._selection_screen_started=None
             self._selection_clock_source=None
@@ -1089,6 +1092,7 @@ class MatchReplayDialog(QDialog):
         self._poll_timer.setInterval(300)
         self._pending_batch=None
         self._pending_screen_label=None
+        self._pending_result_messages=None
         self._latest_image=None
         self._automatic_probe.reset()
         self._screen_gate.reset()
@@ -1773,6 +1777,11 @@ class MatchReplayDialog(QDialog):
             # its stale action, advance the match, or dispatch more captures.
             return
         report=payload["report"]
+        if (self._active_job=="result" and report.get("status")=="MATCH_END"):
+            # Verified OCR match result outranks any pending turn-screen frame.
+            self._pending_batch=None
+            self._pending_screen_label=None
+            self._pending_result_messages=None
         if (self.state is not None and self.state.get("phase")=="ENDED"
                 and report.get("status")!="MATCH_END"):
             # An earlier tactical answer may finish after a manual result.
@@ -2142,6 +2151,7 @@ class MatchReplayDialog(QDialog):
             return
         key=tuple(messages)
         if key in self._result_check_sent_keys:
+            self._pending_result_messages=None
             return
         if self._thread is not None:
             self._pending_result_messages=messages
