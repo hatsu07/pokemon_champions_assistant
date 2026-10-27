@@ -146,6 +146,30 @@ class OcrAiContextRegression(unittest.TestCase):
         self.assertEqual(report["status"],"BLOCKED")
         self.assertEqual(report["reason"],"SWITCH_TARGET_NOT_SELECTED")
 
+    def test_already_applied_switch_evidence_is_not_a_new_actor_conflict(self):
+        evidence,_=select_ai_ocr_evidence(self.snapshot)
+        updated,audit=apply_ai_ocr_updates(
+            self.state,[switch()],evidence,self.assets)
+        self.assertEqual(audit[0]["status"],"APPLIED")
+        response={
+            "state_updates":[switch()],
+            "interpreted_own_active":"ドドゲザン",
+            "interpreted_opponent_active":"マスカーニャ",
+            "action":{"action_kind":"MOVE","move":"じしん",
+                      "switch_target":"","warning":""},
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after,report=run_replay_text_action(
+                state=updated,assets=self.assets,
+                access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=evidence,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(after["our_active"],"ドドゲザン")
+        self.assertNotEqual(report.get("reason"),
+                            "AI_OCR_ACTIVE_STATE_UNVERIFIED")
+
     def test_expired_observations_not_sent(self):
         evidence=self.snapshot+ [{
             "frame_id":"capture-old","field":"screen_text.battle_message",
