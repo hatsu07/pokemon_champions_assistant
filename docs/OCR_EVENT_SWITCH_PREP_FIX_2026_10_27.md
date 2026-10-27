@@ -4,7 +4,7 @@ PR #84。ユーザーの8項目に対応。外部OCR字幕やゲーム画面画�
 
 ## ① Tesseract実行と日本語辞書
 - 配布版の `ocr-runtime` に同梱した実体と `jpn+eng` を明示使用する。
-- `pytesseract` のグローバルコマンド変更を排除し、PNG一時ファイル→ネイティブCLI→UTF-8 TSVを直接処理する。子プロセスに同梱tessdataを明示し、Windowsコンソールを非表示にする。一時画像は毎回削除する。
+- `pytesseract` のグローバルコマンド変更を排除し、PNG一時ファイル→ネイティブCLI（`-c tessedit_create_tsv=1`、名前付き `configs/tsv` に依存しない）→UTF-8 TSVを直接処理する。配布用スクリプトで実際にTSVヘッダーが出ることも検査する。子プロセスに同梱tessdataを明示し、Windowsコンソールを非表示にする。一時画像は毎回削除する。
 - `OCR_TESSDATA_LOAD_FAILED`, `OCR_LANGUAGE_UNAVAILABLE`, `OCR_PROCESS_START_FAILED`, `OCR_PROCESS_TIMEOUT`, `OCR_INVALID_TSV` 等の安全なコードを返す。実際のstderr・個人パスは保存しない。
 - PR Windows CI のGUI起動スモークで、PyInstaller実行ファイルから同梱Tesseractを起動し、PNG→ネイティブCLI→TSV解析の成功を `OCR_NATIVE_EXECUTION_OK` として確認する。合成画像 `97%` の一致可否は `synthetic_numeric_recognized` として別途報告し、**文字認識の一致をOCRプロセス起動合格の条件に混同しない**。実画像・日本語の認識率はBlueStacks実機のOCR診断で別検証。非ゼロ終了、tessdata失敗、起動失敗、TSV不正などはCI失敗のまま。
 
