@@ -404,5 +404,29 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertNotIn("A",entry)
 
 
+    def test_text_turn_diagnostics_record_pre_validation_action(self):
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ゲンガー"]
+        self.state.update(
+            matrix_compatible=False,matrix_provisional=False,
+            selection_assumed=False,lead="マスカーニャ",
+            prep_status="NOT_STARTED",last_event="NONE",
+            image_observations_unverified=[])
+        events=[]
+        raw={"action_kind":"SWITCH","move":"","switch_target":"マリルリ",
+             "warning":""}
+        with patch("champions_assist.match_replay._stream_json",return_value=raw):
+            _,report=run_replay_text_action(
+                state=self.state,assets=self.assets,access_token="unused",
+                model="fixture",expected_screen_label="TURN_ACTION",
+                client_factory=lambda **_kwargs:object(),
+                diagnostic_sink=lambda name,detail: events.append((name,detail)))
+        self.assertNotEqual(report["status"],"ERROR",report)
+        self.assertEqual([e[0] for e in events],
+                         ["AI_INPUT","AI_RESPONSE_RAW","AI_VALIDATION"])
+        self.assertEqual(events[0][1]["active_own"],"マスカーニャ")
+        self.assertEqual(events[1][1]["switch_target"],"マリルリ")
+        self.assertIn("validation_code",events[2][1])
+
+
 if __name__=="__main__":
     unittest.main()

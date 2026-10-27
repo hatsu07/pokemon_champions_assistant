@@ -1211,7 +1211,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      access_token: str, model: str, total_seconds: float = 35.0,
                      client_factory=None, reasoning_effort: str = "auto",
                      local_field_candidates: list[dict] | None = None,
-                     expected_screen_label: str | None = None) -> tuple[dict, dict]:
+                     expected_screen_label: str | None = None,
+                     diagnostic_sink=None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1303,6 +1304,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                     "Pokemon_Champions_MC_live_decision_gate.txt","")
             elif state.get("matrix_provisional"):
                 prompt["matrix_rows_six"]=state.get("matrix_rows_six",[])
+        if diagnostic_sink is not None:
+            from .live_diagnostics import ai_input_digest
+            diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
         content=[{"type":"input_text",
                   "text":json.dumps(prompt,ensure_ascii=False,default=str)}]
         content.append({"type":"input_text",
@@ -1363,6 +1367,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             ),
             content=content,
         )
+        if diagnostic_sink is not None:
+            from .live_diagnostics import ai_response_digest
+            diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
         obs=answer["observation"]
         if switch_only and obs.get("visual_ui")!="PARTY_MENU":
             return deepcopy(state),{"status":"BLOCKED",
@@ -1385,6 +1392,15 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             limit_seconds=total_seconds,
         )
         validation_ms=round((perf_counter()-validation_started)*1000)
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_VALIDATION",{
+                "validation_code":result.get("reason") or result.get("status"),
+                "status":result.get("status"),
+                "recommendation":result.get("recommendation") or "",
+                "our_active":updated.get("our_active"),
+                "opponent_active":updated.get("opponent_active"),
+                "state_revision":updated.get("_live_state_revision",0),
+            })
         result.update(
             image_prepare_ms=image_prepare_ms,
             api_total_ms=round((perf_counter()-api_started)*1000)-validation_ms,
@@ -1505,7 +1521,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                            expected_screen_label: str,
                            local_field_candidates: list[dict] | None=None,
                            total_seconds: float=30.0, client_factory=None,
-                           reasoning_effort: str="low") -> tuple[dict,dict]:
+                           reasoning_effort: str="low",
+                           diagnostic_sink=None) -> tuple[dict,dict]:
     """Normal live tactical path: zero screenshots, one compact JSON call.
 
     A screen classifier proves a menu KIND, not which Pokémon has HP or
@@ -1587,6 +1604,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "ocr_candidates_unverified":candidates,
         "no_visible_party_confirmation":switch_only,
     }
+    if diagnostic_sink is not None:
+        from .live_diagnostics import ai_input_digest
+        diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
     if client_factory is None:
         from openai import OpenAI
         client_factory=OpenAI
@@ -1612,7 +1632,14 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             ),
             content=[{"type":"input_text","text":json.dumps(
                 prompt,ensure_ascii=False,separators=(",",":"))}])
+        if diagnostic_sink is not None:
+            from .live_diagnostics import ai_response_digest
+            diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
         if switch_only and answer.get("action_kind") not in ("SWITCH","NO_ACTION"):
+            if diagnostic_sink is not None:
+                diagnostic_sink("AI_VALIDATION",{
+                    "validation_code":"SWITCH_ONLY_MOVE_REJECTED",
+                    "status":"BLOCKED"})
             return deepcopy(state),{"status":"BLOCKED",
                                     "reason":"SWITCH_ONLY_MOVE_REJECTED",
                                     "images_sent":0}
@@ -1621,6 +1648,15 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             lambda *_args:answer,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=max(total_seconds,perf_counter()-started+2))
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_VALIDATION",{
+                "validation_code":result.get("reason") or result.get("status"),
+                "status":result.get("status"),
+                "recommendation":result.get("recommendation") or "",
+                "our_active":updated.get("our_active"),
+                "opponent_active":updated.get("opponent_active"),
+                "state_revision":updated.get("_live_state_revision",0),
+            })
         result["transport"]="OCR_TEXT_ONLY"
         result["images_sent"]=0
         result["screen_label_hint"]=expected_screen_label
@@ -1628,6 +1664,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         result["action_basis"]="SELECTED_BENCH_UNVERIFIED_VISIBILITY" if switch_only else "REGISTERED_MOVES"
         return updated,result
     except Exception as exc:
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_VALIDATION",{
+                "validation_code":type(exc).__name__,
+                "status":"ERROR","reason":"ACTION_PATH_EXCEPTION"})
         return deepcopy(state),{"status":"ERROR","reason":type(exc).__name__,
                                 "images_sent":0,
                                 "elapsed_ms":round((perf_counter()-started)*1000)}

@@ -36,6 +36,7 @@ from .local_event_image_policy import event_image_plan
 from .observation_events import ScreenLexicon
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .match_debug_log import MatchDebugLog
+from .live_diagnostics import current_state_digest
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
 from .background_training_capture import BackgroundTrainingCapture
@@ -123,7 +124,7 @@ class _ReplayWorker(QObject):
                  reasoning_effort='auto',
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
-                 local_field_candidates=None,
+                 local_field_candidates=None,diagnostic_sink=None,
                  selection_seconds=55.0, prep_seconds=40.0,battle_seconds=30.0,
                  result_messages=None):
         super().__init__()
@@ -132,6 +133,7 @@ class _ReplayWorker(QObject):
         self.screen_label=screen_label
         self.field_profile=field_profile
         self.local_field_candidates=list(local_field_candidates or [])[:12]
+        self.diagnostic_sink=diagnostic_sink
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -226,7 +228,8 @@ class _ReplayWorker(QObject):
                                 reasoning_effort=self.reasoning_effort,
                                 total_seconds=remaining,
                                 expected_screen_label=self.screen_label,
-                                local_field_candidates=local_candidates)
+                                local_field_candidates=local_candidates,
+                                diagnostic_sink=self.diagnostic_sink)
                         else:
                             # One current image only when essential active
                             # identity is genuinely missing from local state.
@@ -236,7 +239,8 @@ class _ReplayWorker(QObject):
                                 reasoning_effort=self.reasoning_effort,
                                 total_seconds=remaining,
                                 local_field_candidates=local_candidates,
-                                expected_screen_label=self.screen_label)
+                                expected_screen_label=self.screen_label,
+                                diagnostic_sink=self.diagnostic_sink)
                             report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
@@ -332,6 +336,7 @@ class MatchReplayDialog(QDialog):
         self._local_battle_tracker=LocalBattleStateTracker()
         self._ocr_capture_epochs={}
         self._active_state_revision=None
+        self._active_request_id=None
         self._pending_result_messages=None
         self._result_check_sent_keys=set()
         self._result_ocr_candidate=None
@@ -579,10 +584,12 @@ class MatchReplayDialog(QDialog):
             return
         if self._debug_log is not None:
             self._debug_log.write("PREVIOUS_SESSION_CLOSED")
+            self._debug_log.close()
         new_id="capture-"+uuid4().hex
         self._debug_log=None
         try:
-            self._debug_log=MatchDebugLog(self.store_root,match_id=new_id)
+            self._debug_log=MatchDebugLog(self.store_root,match_id=new_id,
+                                          async_mode=True)
             self.debug_log_status.setText("自動デバッグログ保存先: "+str(self._debug_log.path))
         except OSError:
             # Logging must NEVER prevent starting the match.
@@ -614,6 +621,7 @@ class MatchReplayDialog(QDialog):
             self._local_battle_tracker.clear()
             self._ocr_capture_epochs.clear()
             self._active_state_revision=None
+            self._active_request_id=None
             self._pending_result_messages=None
             self._result_check_sent_keys.clear()
             self._result_ocr_candidate=None
@@ -732,6 +740,7 @@ class MatchReplayDialog(QDialog):
         self._local_battle_tracker.clear()
         self._ocr_capture_epochs.clear()
         self._active_state_revision=None
+        self._active_request_id=None
         self._pending_result_messages=None
         self._result_check_sent_keys.clear()
         self._result_ocr_candidate=None
@@ -747,7 +756,22 @@ class MatchReplayDialog(QDialog):
         self._set_ai_status("AI未送信（対戦未開始）")
         self._render({"status":"RESET"})
         self.match_id=None
+        if self._debug_log is not None:
+            self._debug_log.close()
         self._debug_log=None
+
+    def _diagnostic(self, event: str, detail: dict) -> None:
+        """Bounded non-blocking evidence recording, no images or API bodies."""
+        log=self._debug_log
+        if log is None:
+            return
+        state=self.state or {}
+        log.write_diagnostic(
+            event,detail,
+            turn_epoch=self._turn_epoch,
+            frame_seq=self._last_capture_seq,
+            state_revision=state.get("_live_state_revision",0),
+            request_id=self._active_request_id or "")
 
     def _trace_event(self, event: str, **data) -> None:
         """Unverified UI-clock telemetry; no screenshot, disk or network use."""
@@ -1274,8 +1298,15 @@ class MatchReplayDialog(QDialog):
                 # switch, not presenting another tactical decision.
                 self._trace_event("PROPOSED_NORMAL_SWITCH_MENU_REUSED",
                                   turn_epoch=self._turn_epoch)
-                self.action_banner.setText(
-                    "次の行動："+str(self._last_advised_switch["target"])+"に交代。")
+                display="次の行動："+str(self._last_advised_switch["target"])+"に交代。"
+                self.action_banner.setText(display)
+                self._diagnostic("SWITCH_REUSED",{
+                    "target":self._last_advised_switch["target"],
+                    "original_turn":self._last_advised_switch["turn_epoch"],
+                    "display_turn":self._turn_epoch,
+                    "our_active":(self.state or {}).get("our_active"),
+                    "displayed":display,
+                    "display_source":"CACHED_SWITCH_PROPOSAL"})
                 return
             new_switch_window=(
                 screen_label=="SWITCH_SELECTION"
@@ -1402,6 +1433,23 @@ class MatchReplayDialog(QDialog):
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
         self._active_state_revision=self.state.get("_live_state_revision",0)
+        self._active_request_id="req-"+str(self._ai_request_attempts)
+        request_id=self._active_request_id
+        turn_epoch=self._turn_epoch
+        log=self._debug_log
+        revision=self._active_state_revision
+        def diagnostic_sink(event,detail):
+            if log is not None:
+                log.write_diagnostic(event,detail,request_id=request_id,
+                                     turn_epoch=turn_epoch,
+                                     state_revision=revision or 0)
+        self._diagnostic("ACTION_REQUEST",{
+            **current_state_digest(self.state),
+            "request_id":request_id,
+            "screen_kind":screen_label or "UNCLASSIFIED",
+            "transport":"OCR_TEXT_ONLY" if text_only else "VISION_EXCEPTION",
+            "ocr_candidate_count":len(local_candidates),
+        })
         self._trace_event("ACTION_STATE_SNAPSHOT",
                           own_known=bool(self.state.get("our_active")),
                           opponent_known=bool(self.state.get("opponent_active")),
@@ -1482,6 +1530,7 @@ class MatchReplayDialog(QDialog):
             screen_label=screen_label,
             field_profile=self._field_profile,
             local_field_candidates=local_candidates,
+            diagnostic_sink=diagnostic_sink,
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -1693,6 +1742,20 @@ class MatchReplayDialog(QDialog):
                     self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
                 if result.observations:
+                    for row in result.observations:
+                        self._diagnostic("OCR_RAW",{
+                            "field":row.field,"roi":row.roi,
+                            "frame_id":row.frame_id,
+                            "raw_text":row.text,"confidence":row.confidence,
+                            "captured_at":row.timestamp,
+                            "processed_at":monotonic(),
+                            "capture_epoch":capture_epoch,
+                            "status":row.status,
+                            "detected_pokemon":list(row.detected_pokemon),
+                            "detected_moves":list(row.detected_moves),
+                            "parsed":row.value if isinstance(row.value,dict)
+                                     else {"evidence":str(row.value)[:160]},
+                        })
                     # Battle messages are OCR candidates, not confirmed results.
                     # Request an independent text-only result judgment only
                     # for a narrow explicit match-result phrase.
@@ -1724,10 +1787,55 @@ class MatchReplayDialog(QDialog):
                     count,novel=self._local_battle_tracker.ingest(
                         result.observations,collect=True,
                         turn_epoch=capture_epoch)
+                    if len(novel)<len(result.observations):
+                        self._diagnostic("OCR_DEDUP",{
+                            "dedup":len(result.observations)-len(novel),
+                            "capture_epoch":capture_epoch,
+                            "reason":"SAME_TURN_OR_NEAR_FRAME"})
                     if (novel and self.state is not None and self.assets is not None
                             and self.state.get("phase")!="ENDED"):
+                        before=current_state_digest(self.state)
                         changed,audit=apply_local_ocr(
                             self.state,novel,self.assets)
+                        for event in audit:
+                            if event.get("kind")=="ACTIVE" and event.get("status")=="APPLIED":
+                                self._diagnostic("ACTIVE_PROVENANCE",{
+                                    "side":event.get("side"),
+                                    "our_active":changed.get("our_active"),
+                                    "opponent_active":changed.get("opponent_active"),
+                                    "source":"LOCAL_OCR_NAME",
+                                    "verified":True,
+                                    "last_confirmed_turn":capture_epoch,
+                                    "last_confirmed_frame":event.get("frame_id")})
+                            if "CONFLICT" in str(event.get("reason","")):
+                                self._diagnostic("SOURCE_CONFLICT",{
+                                    "kind":event.get("kind"),
+                                    "reason":event.get("reason"),
+                                    "frame_id":event.get("frame_id"),
+                                    "source":"LOCAL_OCR",
+                                    "before":before})
+                            self._diagnostic("OCR_DECISION",{
+                                "kind":event.get("kind"),
+                                "status":event.get("status"),
+                                "reason":event.get("reason"),
+                                "frame_id":event.get("frame_id"),
+                                "source":"LOCAL_OCR",
+                                "state_revision":changed.get("_live_state_revision",0)})
+                        if any(e["status"]=="APPLIED" for e in audit):
+                            self._diagnostic("OCR_STATE_UPDATE",{
+                                "before":before,
+                                "after":current_state_digest(changed),
+                                "source":"LOCAL_OCR"})
+                            for side in ("our_active","opponent_active"):
+                                if before.get(side)!=changed.get(side):
+                                    self._diagnostic("ACTIVE_TRANSITION",{
+                                        "side":"own" if side=="our_active" else "opponent",
+                                        "previous":before.get(side),
+                                        "current":changed.get(side),
+                                        "source":"LOCAL_OCR",
+                                        "verified":True,
+                                        "last_confirmed_turn":capture_epoch,
+                                        "last_confirmed_frame":str(result.frame_id)})
                         if any(e["status"]=="APPLIED" for e in audit):
                             self.state=changed
                             self._trace_event("LOCAL_OCR_STATE_APPLIED",
@@ -2032,6 +2140,22 @@ class MatchReplayDialog(QDialog):
             self._interrupt_prep()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
+            before=current_state_digest(self.state)
+            after=current_state_digest(payload["state"])
+            if before!=after:
+                self._diagnostic("AI_STATE_UPDATE",{
+                    "before":before,"after":after,
+                    "source":"AI_IMAGE_OBSERVATION" if report.get(
+                        "transport")!="OCR_TEXT_ONLY" else "TEXT_NO_NEW_IMAGE"})
+                for side in ("our_active","opponent_active"):
+                    if before.get(side)!=after.get(side):
+                        self._diagnostic("ACTIVE_TRANSITION",{
+                            "side":"own" if side=="our_active" else "opponent",
+                            "previous":before.get(side),"current":after.get(side),
+                            "source":"AI_IMAGE_OBSERVATION" if report.get(
+                                "transport")!="OCR_TEXT_ONLY" else "TEXT_NO_NEW_IMAGE",
+                            "verified":report.get("transport")!="OCR_TEXT_ONLY",
+                            "last_confirmed_turn":self._turn_epoch})
             self.state=payload["state"]
             observed=report.get("screen")
             if observed and observed!="UNKNOWN":
@@ -2491,6 +2615,7 @@ class MatchReplayDialog(QDialog):
         self._active_request_frame=None
         self._active_turn_epoch=None
         self._active_state_revision=None
+        self._active_request_id=None
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -2707,7 +2832,22 @@ class MatchReplayDialog(QDialog):
             action_text=self._last_action_text
         else:
             action_text="技・交代先の画像判定待ち（まだ行動提案なし）"
-        self.action_banner.setText("次の行動："+action_text)
+        displayed="次の行動："+action_text
+        self.action_banner.setText(displayed)
+        if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY",
+                                   "SUPERSEDED","NO_ACTION","BLOCKED",
+                                   "AI_REQUEST_QUEUED"):
+            self._diagnostic("GUI_DISPLAY",{
+                "displayed":displayed,
+                "recommendation":report.get("recommendation") or "",
+                "display_source":(
+                    "NEW_AI_RESPONSE" if report.get("status") in (
+                        "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
+                    else "QUEUE_OR_BLOCKED"),
+                "status":report.get("status"),
+                "our_active":state.get("our_active"),
+                "opponent_active":state.get("opponent_active"),
+                "state_revision":state.get("_live_state_revision",0)})
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"):
             self._trace_event("ACTION_GUI_RENDERED",
                 status=report.get("status"),
@@ -2767,4 +2907,6 @@ class MatchReplayDialog(QDialog):
         self._stop_auto()
         if self._debug_log is not None:
             self._debug_log.write("WINDOW_CLOSED")
+            self._debug_log.close()
+            self._debug_log=None
         super().closeEvent(event)
