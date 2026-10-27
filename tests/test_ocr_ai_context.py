@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from champions_assist.ai_ocr_state_updates import apply_ai_ocr_updates
 from champions_assist.battle_state_tracker import LocalBattleStateTracker
-from champions_assist.local_event_worker import LocalFieldRead
+from champions_assist.local_event_worker import LocalFieldRead, AsyncBattleEventReader, _Result
 from champions_assist.match_replay import new_replay, run_replay_text_action
 from champions_assist.ocr_ai_evidence import select_ai_ocr_evidence
 from tests.test_match_replay import fixture_assets
@@ -169,6 +169,27 @@ class OcrAiContextRegression(unittest.TestCase):
         self.assertEqual(after["our_active"],"ドドゲザン")
         self.assertNotEqual(report.get("reason"),
                             "AI_OCR_ACTIVE_STATE_UNVERIFIED")
+
+    def test_completed_ocr_output_queue_does_not_discard_old_results(self):
+        reader=AsyncBattleEventReader(None)
+        for i in range(60):
+            reader._out.put_nowait(_Result(
+                frame_id=f"capture-{i}",
+                timestamp=float(i),observations=()))
+        self.assertEqual(len(reader.drain()),60)
+        self.assertEqual(reader.results_dropped,0)
+
+    def test_same_frame_duplicate_is_collapsed_but_distinct_frames_survive(self):
+        same={"field":"screen_text.battle_message",
+              "raw_text":"ゆけっ ドドゲザン",
+              "frame_id":"capture-1","confidence":.82,
+              "observed_at":1.0}
+        again={**same,"confidence":.85}
+        later={**same,"frame_id":"capture-2","observed_at":2.0}
+        items,meta=select_ai_ocr_evidence([same,again,later])
+        self.assertEqual(len(items),2)
+        self.assertEqual(items[0]["confidence"],.85)
+        self.assertEqual(meta["dropped_count"],1)
 
     def test_more_than_144_observations_are_preserved_and_sent(self):
         for frame in range(600,880):
