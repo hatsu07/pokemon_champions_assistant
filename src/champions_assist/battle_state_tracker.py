@@ -64,17 +64,17 @@ class LocalBattleStateTracker:
                  opponent_active: str | None=None,
                  own_names: tuple[str, ...]=(),
                  opponent_names: tuple[str, ...]=(),
-                 acknowledged: set[tuple[str,str,str]] | None=None) -> dict:
+                 acknowledged_frames: set[str] | None=None) -> dict:
         """Associate OCR hints with known actors without certifying them.
 
         HP overlays belong to the active Pokémon previously verified by
         vision. A candidate does NOT prove that the actor is still active.
         """
         from .terminology import japanese_name
-        ack=acknowledged or set()
+        ack=acknowledged_frames or set()
         valid=[r for r in self._events
                if (at_or_before is None or r.timestamp<=at_or_before)
-               and (r.frame_id,r.field,r.text[:160]) not in ack]
+               and r.frame_id not in ack]
         payload=[]
         for row in (valid if limit is None else valid[-limit:]):
             item=row.as_dict()
