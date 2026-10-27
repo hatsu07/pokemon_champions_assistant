@@ -1236,6 +1236,10 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             "expected_screen_label":expected_screen_label or "UNCLASSIFIED",
             "required_action_kind":"SWITCH" if switch_only else "MOVE_OR_SWITCH",
             "awaiting_replacement":bool(state.get("awaiting_replacement")),
+            "mandatory_current_actor_recheck":bool(
+                state.get("_active_identity_needs_confirmation")),
+            "stale_own_actor_must_not_be_copied":bool(
+                state.get("_active_identity_needs_confirmation")),
             "selected_three":state.get("selected_three",[]),
             "lead":state.get("lead"),
             "opponent_six":state.get("opponent_six",[]),
@@ -1342,6 +1346,13 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "opponent sets, actions, mechanic effects, or unseen HP. "
                 "Any local_field_candidates_unverified are optional untrusted "
                 "OCR hints, never confirmed mechanics or override evidence. "
+                "If mandatory_current_actor_recheck is true, identify the "
+                "CURRENT own active from the LAST current-menu image, NOT "
+                "from replay_state. An older remembered actor may be stale "
+                "because a proposed switch was carried out. Do not copy "
+                "replay_state.our_active when the image is unclear; return "
+                "our_active as empty instead and NO_ACTION. A switch proposal "
+                "is not evidence that a switch happened. "
                 "For COMMAND_MENU choose a concrete action NOW instead of "
                 "asking to open 'たたかう': a move from the four registered "
                 "moves of our CURRENT active Pokémon in own_team, or SWITCH "
