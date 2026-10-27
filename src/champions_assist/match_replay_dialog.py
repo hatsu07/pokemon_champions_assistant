@@ -59,9 +59,13 @@ def prep_budget_before_battle(selection_started_at: float | None, *,
 # A fresh *verified* command candidate may replace stale frames, but an
 # unclassified animation is not grounds to erase a completed turn decision.
 _URGENT_SCREENS = frozenset(("TURN_ACTION", "SWITCH_SELECTION"))
-# Nominal 45s; observed menu onset can lag the in-game clock by ~10s.
-# Reserve 10s of onset uncertainty and 15s for the player's input.
-_CONSERVATIVE_AI_TURN_SECONDS = 20.0
+# The in-game clock may start ~10 s before the first actionable classifier
+# frame. Aim to finish within 20 s, but do not throw away a useful answer
+# at 20.1 s: it may still leave actual user input time. The 28 s hard limit
+# leaves a provisional 7 s for input (45 - 10 lag - 28 processing).
+# Neither limit is a measured in-game countdown.
+_TARGET_AI_TURN_SECONDS = 20.0
+_CONSERVATIVE_AI_TURN_SECONDS = 28.0
 _SCREEN_PRIORITY = {
     "TEAM_SELECTION": 1, "BATTLE_EVENT": 2,
     "TURN_ACTION": 3, "SWITCH_SELECTION": 3,
@@ -1294,11 +1298,12 @@ class MatchReplayDialog(QDialog):
                 and battle_remaining<=1.0):
             self._trace_event("TURN_BUDGET_EXHAUSTED",
                               screen_label=screen_label or "UNKNOWN",
-                              timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
+                              timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000),
+                              target_budget_ms=int(_TARGET_AI_TURN_SECONDS*1000))
             self._last_action_text=""
             self._render({"status":"DEADLINE_EXCEEDED",
                           "screen":screen_label,
-                          "warning":"保守的なAI提案期限を超過しました。ゲーム内時計は未取得。"})
+                          "warning":"AI表示の最終期限を超過しました。ゲーム内時計は未取得。"})
             return
         if screen_label in _URGENT_SCREENS:
             self._turn_action_sent=True
@@ -1626,10 +1631,28 @@ class MatchReplayDialog(QDialog):
                   >_CONSERVATIVE_AI_TURN_SECONDS):
             report={**report,"status":"DEADLINE_EXCEEDED",
                     "recommendation":"",
-                    "warning":"LOCAL_CONSERVATIVE_ADVICE_DEADLINE_PASSED"}
+                    "warning":"LOCAL_HARD_ADVICE_DEADLINE_PASSED"}
             self._trace_event("LATE_TURN_ADVICE_DROPPED",
                               turn_epoch=self._turn_epoch,
-                              ai_request_attempt=self._ai_request_attempts)
+                              ai_request_attempt=self._ai_request_attempts,
+                              timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
+        elif (self._active_job=="batch"
+              and self._active_turn_epoch is not None
+              and self._turn_screen_seen_at is not None
+              and monotonic()-self._turn_screen_seen_at>_TARGET_AI_TURN_SECONDS
+              and report.get("status") in (
+                  "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
+              and report.get("recommendation")):
+            elapsed=monotonic()-self._turn_screen_seen_at
+            report["warning"]=(str(report.get("warning") or "")+
+                " 【応答遅延：ゲーム内の残り時間を確認して直ちに操作してください】")
+            report["soft_target_exceeded"]=True
+            self._trace_event("TURN_ADVICE_AFTER_SOFT_TARGET",
+                              turn_epoch=self._turn_epoch,
+                              ai_request_attempt=self._ai_request_attempts,
+                              elapsed_ms=round(elapsed*1000),
+                              target_budget_ms=int(_TARGET_AI_TURN_SECONDS*1000),
+                              timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
         if self._active_request_started is not None:
             report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
             self._active_request_started=None
@@ -2163,8 +2186,8 @@ class MatchReplayDialog(QDialog):
             if phase in ("PREP","BATTLE") and self._turn_screen_seen_at is not None:
                 remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
                                      (monotonic()-self._turn_screen_seen_at)))
-                clock=(f"操作画面の初回検知から保守的AI締切まで約{remaining}秒"
-                       "／ゲーム内時計の開始が約10秒早い可能性・操作用15秒確保")
+                clock=(f"操作画面初回検知からAI表示最終期限まで約{remaining}秒"
+                       "／目標20秒・ゲーム内時計は未取得・遅延約10秒を仮定")
             else:
                 remaining=max(0,int(55-elapsed))
                 clock=f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
@@ -2187,7 +2210,7 @@ class MatchReplayDialog(QDialog):
                     and not self._turn_event_after_action):
                 remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
                                      (monotonic()-self._turn_screen_seen_at)))
-                clock=f"ローカル保守的AI締切まで約{remaining}秒"
+                clock=f"AI表示最終期限まで約{remaining}秒（目標20秒／ゲーム内時計未取得）"
             else:
                 clock="次の画面の認識待ち／ゲーム内の残り時間は未取得"
         if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
@@ -2258,7 +2281,7 @@ class MatchReplayDialog(QDialog):
         elif report.get("status")=="AI_REQUEST_QUEUED":
             action_text="現在の対面から技4つ・交代候補を比較中"
         elif report.get("status")=="DEADLINE_EXCEEDED":
-            action_text="保守的AI締切超過：このターンの新しい提案なし"
+            action_text="AI表示最終期限超過：このターンの新しい提案なし"
         elif report.get("status")=="SUPERSEDED":
             action_text="前ターンの提案を破棄（新しい画面を確認中）"
         elif report.get("screen")=="COMMAND_MENU" and (
