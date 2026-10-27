@@ -91,7 +91,11 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
         ):
             value = _clean(observation.get(source))
             if value:
-                memory[field][team][active] = value
+                if field=="status_by_pokemon" and value in (
+                        "なおった","かいふくした","状態異常がなおった"):
+                    memory[field][team].pop(active,None)
+                else:
+                    memory[field][team][active] = value
     for side,actor,key in (("own",own,"our_used_move"),
                             ("opponent",opponent,"opponent_used_move")):
         move=_clean(observation.get(key))
