@@ -26,7 +26,7 @@ _ALLOWED_TEXT = frozenset({
 _ALLOWED_BOOL = frozenset({
     "recommendation_present", "selection_present", "matrix_compatible",
     "matrix_provisional", "superseded", "timer_ocr",
-    "gate_dispatched", "late_advice_presented",
+    "gate_dispatched", "late_advice_presented", "late_selection_presented",
 })
 _ALLOWED_NUMBER = frozenset({
     "elapsed_ms", "capture_and_auth_ms", "at_ms", "ai_request_attempt",
