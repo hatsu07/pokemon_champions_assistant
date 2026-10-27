@@ -36,9 +36,15 @@ def _pokemon(name: str) -> str:
 
 def _names(assets, state):
     selected=set(state.get("selected_three") or ())
-    own={_flat(_pokemon(m["name"])):_pokemon(m["name"])
-         for m in assets.own_team
-         if m.get("name") and (not selected or m["name"] in selected)}
+    own={}
+    for member in assets.own_team:
+        label=member.get("name","")
+        if not label or (selected and label not in selected):
+            continue
+        original=label.split("→",1)[0].strip()
+        evolved=label.split("→")[-1].strip()
+        own[_flat(_pokemon(original))]=_pokemon(original)
+        own[_flat(_pokemon(evolved))]=_pokemon(evolved)
     opponent={_flat(_pokemon(n)):_pokemon(n)
               for n in getattr(assets,"matrix_index",{})
               if n and not n.startswith("未判明")}
@@ -165,6 +171,7 @@ def _ensure(evidence: dict):
         evidence.setdefault(key,{"own":{},"opponent":{}})
     evidence.setdefault("update_provenance",[])
     evidence.setdefault("last_observed_own_move","")
+    evidence.setdefault("last_move_by_pokemon",{"own":{},"opponent":{}})
 
 
 def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
@@ -265,6 +272,11 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                         # the newly discovered opponent.
                         if updated.get("prep"):
                             updated["prep"]["unknown_filled_during_match"]=name
+                            # The new opponent did not exist in the frozen
+                            # preview's 18-pair cache: no invented grade.
+                            updated["prep"].setdefault("unrated_new_opponents",[])
+                            if name not in updated["prep"]["unrated_new_opponents"]:
+                                updated["prep"]["unrated_new_opponents"].append(name)
                 updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
         elif kind=="PP":
             actor=updated.get("our_active")
@@ -292,6 +304,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 moves=evidence["moves_by_pokemon"][side].setdefault(name,[])
                 if evt["move"] not in moves:
                     moves.append(evt["move"])
+                evidence["last_move_by_pokemon"][side][name]=evt["move"]
                 if side=="own":
                     evidence["last_confirmed_our_move"]=evt["move"]
                     evidence["last_observed_own_move"]=evt["move"]
