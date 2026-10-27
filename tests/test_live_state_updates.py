@@ -1,6 +1,8 @@
 """Regression gates for text-only local-OCR live state and decision legality."""
 from __future__ import annotations
 from copy import deepcopy
+import json
+from unittest.mock import patch
 from types import SimpleNamespace
 import unittest
 
@@ -8,7 +10,7 @@ from champions_assist.battle_evidence import empty_battle_evidence, update_battl
 from champions_assist.battle_state_tracker import LocalBattleStateTracker
 from champions_assist.live_state_updates import apply_local_ocr
 from champions_assist.local_event_worker import LocalFieldRead
-from champions_assist.match_replay import validate_battle_choice
+from champions_assist.match_replay import validate_battle_choice, run_replay_text_action
 
 
 def assets():
@@ -317,6 +319,24 @@ class LiveStateOcrTests(unittest.TestCase):
             {"visual_ui":"COMMAND_MENU","visible_moves":[]},
             self.state,self.assets)
         self.assertEqual(code,"OK")
+        self.state["prep"]["matchups_known"]=[{
+            "our_pokemon":"リザードン","opponent_pokemon":"ガブリアス",
+            "matrix_cell":"PRE_MEGA_OBSOLETE","source":"TEST"}]
+        captured={}
+        def inspect(_client,**kwargs):
+            captured.update(json.loads(kwargs["content"][0]["text"]))
+            raise RuntimeError("CAPTURE_ONLY")
+        with patch("champions_assist.match_replay._stream_json",side_effect=inspect):
+            _,report=run_replay_text_action(
+                state=self.state,assets=self.assets,access_token="unused",
+                model="fixture",expected_screen_label="TURN_ACTION",
+                client_factory=lambda **_kwargs: object())
+        self.assertEqual(report["status"],"ERROR")
+        self.assertEqual(captured["current_own_form"],"メガリザードンX")
+        self.assertEqual(captured["current_own_type"],"ほのお/ドラゴン")
+        self.assertEqual(captured["current_own_base_speed"],100)
+        self.assertTrue(captured["cached_pairs_invalidated_for_form"])
+        self.assertEqual(captured["cached_current_opponent_pairs"],[])
 
     def test_item_exchange_clears_stale_choice_lock_and_old_item(self):
         memory=self.state["battle_evidence"]
