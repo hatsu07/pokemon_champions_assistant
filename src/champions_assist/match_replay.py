@@ -76,10 +76,11 @@ AI_OCR_TURN_SCHEMA={
         "state_updates":{"type":"array","items":UPDATE_SCHEMA},
         "interpreted_own_active":{"type":"string"},
         "interpreted_opponent_active":{"type":"string"},
+        "processed_ocr_frames":{"type":"array","items":{"type":"string"}},
         "action":ACTION_SCHEMA,
     },
     "required":["state_updates","interpreted_own_active",
-                "interpreted_opponent_active","action"],
+                "interpreted_opponent_active","processed_ocr_frames","action"],
 }
 _SELECTION_NAME = "champions_replay_selection"
 _OBSERVATION_NAME = "champions_replay_observation"
@@ -1641,6 +1642,11 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "Cite actual OCR frame IDs in evidence_frames for each update. "
                 "Never treat previous recommended moves or switches as executed. "
                 "Unknown evidence means UNCERTAIN and potentially NO_ACTION. "
+                "List a frame in processed_ocr_frames ONLY when every OCR "
+                "observation from that frame is fully understood and all "
+                "confirmed battle changes are reflected in state_updates or "
+                "already recorded. Never acknowledge uncertain or ignored "
+                "battle messages; otherwise return an empty list. "
                 "No new visual evidence is available. Optimize all remaining "
                 "three Pokémon; preserve identified win conditions and respect "
                 "known fainting, statuses, choice locks, mega forms and first-"
@@ -1675,6 +1681,24 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             return updated,{"status":"BLOCKED","recommendation":"",
                             "reason":"AI_OCR_ACTIVE_STATE_UNVERIFIED",
                             "transport":"OCR_TEXT_ONLY","images_sent":0}
+        # Explicit model acknowledgments remove only fully handled OCR
+        # frames from the next request. Unknown, uncertain or rejected events
+        # cannot silently delete their observations.
+        if combined and isinstance(answer.get("processed_ocr_frames"),list):
+            known_frames={row.get("frame_id") for row in candidates
+                          if isinstance(row,dict) and row.get("frame_id")}
+            unverified_frames=set()
+            for event,row in zip(proposed,audit):
+                if not isinstance(event,dict):
+                    continue
+                if (row.get("status")=="REJECTED"
+                        and row.get("reason")!="ALREADY_APPLIED"):
+                    unverified_frames.update(event.get("evidence_frames") or ())
+            ack=set(updated.get("_ai_ocr_ack_frames") or ())
+            ack.update(frame for frame in answer["processed_ocr_frames"]
+                       if isinstance(frame,str) and frame in known_frames
+                       and frame not in unverified_frames)
+            updated["_ai_ocr_ack_frames"]=sorted(ack)
         obs["our_active"]=updated.get("our_active","")
         obs["opponent_active"]=updated.get("opponent_active","")
         if switch_only and action.get("action_kind") not in ("SWITCH","NO_ACTION"):
