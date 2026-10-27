@@ -132,6 +132,20 @@ class LiveStateOcrTests(unittest.TestCase):
         self.apply(read("own_active_name","マリルリ",3))
         self.assertNotIn("マスカーニャ",self.state["battle_evidence"]["boosts"]["own"])
 
+    def test_taunt_forbids_category_from_frozen_champions_move_master(self):
+        self.assets.move_class_index={"まもる":"変化","トリックフラワー":"物理"}
+        self.apply(read("battle_message","マスカーニャはちょうはつをうけた",1))
+        code,_=validate_battle_choice(
+            {"action_kind":"MOVE","move":"まもる"},
+            {"visual_ui":"COMMAND_MENU","visible_moves":[]},
+            self.state,self.assets)
+        self.assertEqual(code,"TAUNT_STATUS_MOVE_BLOCKED")
+        good,_=validate_battle_choice(
+            {"action_kind":"MOVE","move":"トリックフラワー"},
+            {"visual_ui":"COMMAND_MENU","visible_moves":[]},
+            self.state,self.assets)
+        self.assertEqual(good,"OK")
+
     def test_en_core_taunt_and_weather_terrain_expiration(self):
         self.apply(read("battle_message","マスカーニャはアンコールをうけた",1),
                    read("battle_message","マスカーニャはちょうはつをうけた",2),
@@ -142,6 +156,8 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertIsNone(temp["taunt"]["remaining_turns"])
         self.assertEqual(self.state["battlefield"]["weather"],"あめ")
         self.assertEqual(self.state["battlefield"]["terrain"],"エレキフィールド")
+        self.assertTrue(self.state["battlefield"]["weather_state"]["active"])
+        self.assertIsNone(self.state["battlefield"]["terrain_state"]["remaining_turns"])
         self.apply(read("battle_message","マスカーニャのアンコールがとけた",5),
                    read("battle_message","あめがやんだ",6),
                    read("battle_message","エレキフィールドがきえた",7))
