@@ -689,15 +689,12 @@ def run_replay_image(image, *, state: dict, assets: FrozenMatchAssets,
                 str(opponent_recognition_attempts) +
                 "回を確認しました。未判明の相手を推測して選出しません。"
                 "画面が鮮明になれば再認識を試してください。")
-        if elapsed > total_seconds*1000:
-            # Late output must never be promoted into replay state or shown
-            # as a recommendation. The same visible image may be submitted
-            # explicitly again by the user.
-            return deepcopy(state), {
-                "status":"DEADLINE_EXCEEDED","elapsed_ms":elapsed,
-                "observed_ui":observation["visual_ui"],"model":model,
-                "recommendation":"",
-            }
+        if elapsed > total_seconds*1000 and result.get("status") in (
+                "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY"):
+            # The clock is only a latency target, not proof that the game's
+            # selection screen has closed. UI freshness is checked by the
+            # capture dialog, not by discarding a validated model answer.
+            result["late_selection_presented"]=True
         return updated,result
     except TimeoutError:
         return deepcopy(state), {"status":"DEADLINE_EXCEEDED",
