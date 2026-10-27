@@ -97,6 +97,7 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "selection_assumed": False, "observed_lead": None,
         "visual_unknown_opponents": [],
         "our_active": "", "opponent_active": "", "observed_hp": {},
+        "awaiting_replacement": False,
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
         "image_observations_unverified": [], "prep_status": "NOT_STARTED",
@@ -159,7 +160,15 @@ def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) ->
                     "our_stat_changes", "our_status"):
             evidence_obs[key] = ""
     # Never use a model's recommended action to fabricate observed execution.
+    previous_active=state.get("our_active") or ""
     update_battle_evidence(state, evidence_obs, assets.own_team)
+    if (obs.get("observed_event")=="OUR_FAINTED"
+            and (previous_active or evidence_obs.get("our_active"))):
+        state["awaiting_replacement"]=True
+    current_observed=str(evidence_obs.get("our_active") or "")
+    if (current_observed and previous_active
+            and _canonical(current_observed)!=_canonical(previous_active)):
+        state["awaiting_replacement"]=False
     for field in ("our_active", "opponent_active"):
         raw = obs.get(field) or ""
         name = _canonical(raw) if raw else ""
@@ -207,6 +216,12 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
     if member is None or not state["selected_three"]:
         return "REGISTERED_ACTUAL_SELECTION_REQUIRED", {}
     if kind in ("MOVE", "PIVOT"):
+        current_hp=(state.get("battle_evidence") or {}).get(
+            "hp_by_pokemon",{}).get("own",{}).get(own,"")
+        known_fainted=str(current_hp).strip().casefold() in (
+            "0","0hp","0%","ひんし","fainted") or str(current_hp).startswith(("0/","0 /"))
+        if state.get("awaiting_replacement") or known_fainted:
+            return "OWN_FAINTED_REPLACEMENT_REQUIRED", {}
         if obs["visual_ui"] not in ("MOVE_MENU","COMMAND_MENU"):
             return "MOVE_INPUT_NOT_AVAILABLE", {}
         def move_key(label):
@@ -865,15 +880,9 @@ def _run_cached_prep(*, state: dict, assets: FrozenMatchAssets,
              response.get("closer"))
     role_count = sum(isinstance(role, str) and role in selected for role in roles)
     elapsed = round((perf_counter()-started)*1000)
-    if elapsed > limit_seconds*1000:
-        updated["prep_status"] = "DEADLINE_EXCEEDED"
-        return updated, {
-            "status": "PREP_DEADLINE_EXCEEDED", "reason": "DEADLINE_EXCEEDED",
-            "request_stage": "CACHE_ROLE_MODEL", "elapsed_ms": elapsed,
-            "model_elapsed_ms": model_ms, "prompt_chars": len(encoded),
-            "cached_matchups": cached_count, "missing_matchups": missing_count,
-            "win_conditions": role_count,
-        }
+    # A local wall-clock target is advisory: never discard a fully returned,
+    # schema-valid role answer merely because the selection countdown ended.
+    overtime = elapsed > limit_seconds*1000
     if role_count != 3:
         updated["prep_status"] = "CACHE_ROLES_INCOMPLETE"
         return updated, {
@@ -914,6 +923,7 @@ def _run_cached_prep(*, state: dict, assets: FrozenMatchAssets,
                   "CACHED_EVIDENCE_GAPS",
         "request_stage": "CACHE_ROLE_VALIDATE",
         "elapsed_ms": elapsed, "model_elapsed_ms": model_ms,
+        "prep_soft_deadline_exceeded": overtime,
         "prompt_chars": len(encoded),
         "cached_matchups": count, "missing_matchups": missing_count,
         "matchups_evaluated": count, "win_conditions": role_count,
@@ -1095,11 +1105,9 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 known, unknown_slots, result)
             if partial else validate_prep_result(prep_input,result))
         elapsed=round((perf_counter()-started)*1000)
-        if elapsed>limit_seconds*1000:
-            updated["prep_status"]="DEADLINE_EXCEEDED"
-            return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed,
-                            "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
-                            "prompt_chars":prompt_chars}
+        # Completed PREP output remains useful after the soft time target.
+        # The caller cancels it only when a newer AI request is dispatched.
+        overtime=elapsed>limit_seconds*1000
         updated["prep_status"]=(
             "PARTIAL_STRUCTURE_COMPLETE" if partial else "STRUCTURE_COMPLETE"
         ) if validation.complete else "INCOMPLETE"
@@ -1136,6 +1144,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "事前評価完了（構造検証）。"
         ) if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
+                        "prep_soft_deadline_exceeded":overtime,
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                         "prompt_chars":prompt_chars,
@@ -1166,7 +1175,8 @@ _BATCH_SCHEMA = {
 def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      access_token: str, model: str, total_seconds: float = 35.0,
                      client_factory=None, reasoning_effort: str = "auto",
-                     local_field_candidates: list[dict] | None = None) -> tuple[dict, dict]:
+                     local_field_candidates: list[dict] | None = None,
+                     expected_screen_label: str | None = None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1184,20 +1194,31 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         client=client_factory(api_key=access_token,base_url="https://api.openai.com/v1",
                               timeout=total_seconds,max_retries=0)
         phase=state.get("phase")
+        switch_only=expected_screen_label=="SWITCH_SELECTION"
         prompt={
             "phase":phase,
+            "expected_screen_label":expected_screen_label or "UNCLASSIFIED",
+            "required_action_kind":"SWITCH" if switch_only else "MOVE_OR_SWITCH",
+            "awaiting_replacement":bool(state.get("awaiting_replacement")),
             "selected_three":state.get("selected_three",[]),
             "lead":state.get("lead"),
             "opponent_six":state.get("opponent_six",[]),
-            "own_team":list(assets.own_team),
-            "command_menu_action_policy":{
-                "COMMAND_MENU":"CHOOSE_NOW_FROM_REGISTERED_MOVES_OR_SELECTED_BENCH",
-                "moves_source":"OWN_TEAM_FOUR_MOVES",
-                "switch_source":"SELECTED_THREE_EXCLUDING_ACTIVE",
-                "selected_bench_confirmed":not state.get("selection_assumed",False),
-                "unobserved_pp_or_disabled_moves":"UNKNOWN",
-                "no_extra_move_menu_api_call":True,
-            },
+            "own_team":([dict(m) for m in assets.own_team
+                         if m["name"] in _bench_candidates(state)]
+                        if switch_only else list(assets.own_team)),
+            "command_menu_action_policy":(
+                {"SWITCH_SELECTION":"SWITCH_ONLY_FROM_VISIBLE_LIVING_SELECTED_BENCH",
+                 "moves_source":"NOT_LEGAL_IN_THIS_WINDOW",
+                 "switch_source":"SELECTED_LIVING_BENCH",
+                 "selected_bench_confirmed":not state.get("selection_assumed",False)}
+                if switch_only else {
+                    "COMMAND_MENU":"CHOOSE_NOW_FROM_REGISTERED_MOVES_OR_SELECTED_BENCH",
+                    "moves_source":"OWN_TEAM_FOUR_MOVES",
+                    "switch_source":"SELECTED_THREE_EXCLUDING_ACTIVE",
+                    "selected_bench_confirmed":not state.get("selection_assumed",False),
+                    "unobserved_pp_or_disabled_moves":"UNKNOWN",
+                    "no_extra_move_menu_api_call":True,
+                }),
             "replay_state":{
                 k:v for k,v in state.items()
                 if k in ("our_active","opponent_active","observed_hp",
@@ -1205,15 +1226,23 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                          "battle_evidence","battlefield")
             },
             "registered_command_options":{
-                "moves_by_pokemon":{
+                "moves_by_pokemon":({} if switch_only else {
                     m["name"]:[m.get("move"+str(i),"") for i in range(1,5)]
                     for m in assets.own_team
-                    if m["name"] in (state.get("selected_three") or [])},
+                    if m["name"] in (state.get("selected_three") or [])}),
                 "bench_candidates_from_current_state":_bench_candidates(state),
+                "confirmed_hp_by_pokemon":(state.get("battle_evidence") or {}).get(
+                    "hp_by_pokemon",{}),
                 "actual_bench_unconfirmed":bool(state.get("selection_assumed")),
             },
-            "previous_observations":state.get("image_observations_unverified",[])[-6:],
-            "history":state.get("history",[])[-6:],
+            "previous_observations":state.get("image_observations_unverified",[])[-2:]
+                if switch_only else state.get("image_observations_unverified",[])[-6:],
+            # Never feed a now-invalid move recommendation back as context
+            # for a forced replacement choice. Preserve game chronology only.
+            "history":([{k:r.get(k) for k in (
+                           "step","ui","our_active","opponent_active","result")}
+                        for r in state.get("history",[])[-6:]]
+                       if switch_only else state.get("history",[])[-6:]),
             "matrix_compatible":state.get("matrix_compatible",False),
             "matrix_provisional":state.get("matrix_provisional",False),
             "evidence_scope":("CHAMPIONS_TEAM_SPECIFIC_HYPOTHESIS_ONLY"
@@ -1289,13 +1318,29 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "For MOVE_MENU "
                 "and PARTY_MENU require currently visible options. If current "
                 "active or a safe legal action cannot be identified, output "
-                "NO_ACTION and empty strings. Only fill our_used_move when "
+                "NO_ACTION and empty strings. For expected_screen_label "
+                "SWITCH_SELECTION, this is a separate forced/manual switch "
+                "decision: never choose MOVE/PIVOT or reuse a prior move; "
+                "choose a visible, non-fainted bench with SWITCH, or NO_ACTION. "
+                "Only fill our_used_move when "
                 "its resolved use is directly visible. Do not infer Mega "
                 "types or stat stages."
             ),
             content=content,
         )
         obs=answer["observation"]
+        if switch_only and obs.get("visual_ui")!="PARTY_MENU":
+            return deepcopy(state),{"status":"BLOCKED",
+                "reason":"SWITCH_SCREEN_RECOGNITION_MISMATCH",
+                "screen":obs.get("visual_ui","UNKNOWN"),"recommendation":"",
+                "expected_screen_label":expected_screen_label,
+                "elapsed_ms":round((perf_counter()-started)*1000)}
+        if switch_only and answer["action"].get("action_kind") not in ("SWITCH","NO_ACTION"):
+            return deepcopy(state),{"status":"BLOCKED",
+                "reason":"SWITCH_ONLY_MOVE_REJECTED",
+                "screen":"PARTY_MENU","recommendation":"",
+                "expected_screen_label":expected_screen_label,
+                "elapsed_ms":round((perf_counter()-started)*1000)}
         def cached_tactical(_context:dict,_remaining:float,kind:str)->dict:
             return answer["selection"] if kind=="SELECTION" else answer["action"]
         validation_started=perf_counter()
@@ -1314,6 +1359,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             late_advice_presented=bool(result.get("late_advice_presented")),
             elapsed_ms=round((perf_counter()-started)*1000),
             observed_ui=obs["visual_ui"],observation=obs,
+            expected_screen_label=expected_screen_label,
             model=model,images_sent=len(images),
             request_count=1,
         )

@@ -80,6 +80,34 @@ def _show_startup_failure(log_path: Path | None) -> None:
         pass
 
 
+def probe_bundled_ocr_execution() -> dict[str, object]:
+    """Exercise native OCR via the *bundled executable* and TSV parser.
+
+    Runtime execution is a release gate. Synthetic glyph accuracy is a
+    separate diagnostic, not proof of Japanese recognition on BlueStacks:
+    different bundled Tesseract models can legitimately read the same
+    synthetic ASCII crop differently even with a healthy OCR process.
+    """
+    import cv2
+    import numpy as np
+    from champions_assist.ocr import TesseractJapaneseOcr
+
+    sample=np.full((150,800,3),255,dtype=np.uint8)
+    cv2.putText(sample,"97%",(25,106),
+                cv2.FONT_HERSHEY_SIMPLEX,2.1,(0,0,0),3,cv2.LINE_AA)
+    reading=TesseractJapaneseOcr(timeout_seconds=5.0).read(
+        sample,roi_name="opponent_hp_percent")
+    if reading.engine!="tesseract-jpn+eng":
+        raise RuntimeError("BUNDLED_OCR_ENGINE_MISMATCH")
+    if reading.confidence is not None and not 0.0<=reading.confidence<=1.0:
+        raise RuntimeError("BUNDLED_OCR_CONFIDENCE_INVALID")
+    return {
+        "bundled_native_ocr": "OCR_NATIVE_EXECUTION_OK",
+        # Only a result of a generated, non-user image: never emit OCR text.
+        "synthetic_numeric_recognized": "97" in reading.text,
+    }
+
+
 def run_smoke(report_path: Path) -> int:
     """Start the REAL desktop offline with an isolated profile, then close it."""
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -88,6 +116,9 @@ def run_smoke(report_path: Path) -> int:
     from champions_assist.__main__ import main as assistant_main
 
     master_dir = bundled_master_directory()
+    # A CLI invocation and parsed TSV are required; an incorrect numeric
+    # guess is reported but must not masquerade as a native execution crash.
+    ocr_probe=probe_bundled_ocr_execution()
     app = ensure_application()
     with tempfile.TemporaryDirectory(prefix="champions-desktop-smoke-") as temporary:
         root = Path(temporary)
@@ -106,6 +137,7 @@ def run_smoke(report_path: Path) -> int:
                 "network": "NOT_USED",
                 "openai_api": "DISABLED_BY_ENTRYPOINT",
                 "bundled_master_files": len(REQUIRED_BUNDLED_MASTERS),
+                **ocr_probe,
             },
             ensure_ascii=False,
             indent=2,

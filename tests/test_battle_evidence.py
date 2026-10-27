@@ -93,6 +93,25 @@ class BattleEvidenceTests(unittest.TestCase):
         self.assertEqual(self.state["battle_evidence"]["form_by_pokemon"]["own"]["メガルカリオZ"],"メガルカリオZ")
         self.assertEqual(self.state["battle_evidence"]["hp_by_pokemon"]["own"]["メガルカリオZ"],"140/140")
 
+    def test_observed_faint_sets_only_own_actor_zero_and_requires_replacement(self):
+        self.advance("ACTION_RESOLUTION",our_active="マスカーニャ",
+                     opponent_active="ガブリアス",our_hp="31/145")
+        self.advance("ACTION_RESOLUTION",our_active="マスカーニャ",
+                     observed_event="OUR_FAINTED")
+        self.assertEqual(self.state["battle_evidence"]["hp_by_pokemon"]["own"]["マスカーニャ"],"0")
+        self.assertTrue(self.state["awaiting_replacement"])
+        self.assertNotIn("アシレーヌ",self.state["battle_evidence"]["hp_by_pokemon"]["own"])
+        illegal={"action_kind":"MOVE","move":"トリックフラワー",
+                 "switch_target":"","warning":""}
+        reason,_=validate_battle_choice(illegal,
+            obs("MOVE_MENU",our_active="マスカーニャ",
+                visible_moves=["トリックフラワー"]),self.state,self.assets)
+        self.assertEqual(reason,"OWN_FAINTED_REPLACEMENT_REQUIRED")
+        self.advance("ACTION_RESOLUTION",our_active="アシレーヌ",
+                     our_hp="160/160")
+        self.assertFalse(self.state["awaiting_replacement"])
+        self.assertEqual(self.state["battle_evidence"]["hp_by_pokemon"]["own"]["マスカーニャ"],"0")
+
     def test_choice_lock_requires_observed_resolution_and_blocks_different_move(self):
         self.advance("MOVE_MENU",our_active="マスカーニャ",
                      visible_moves=["トリックフラワー","はたきおとす"])

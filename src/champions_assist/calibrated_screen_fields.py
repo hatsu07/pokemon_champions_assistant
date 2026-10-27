@@ -43,7 +43,7 @@ IGNORED_OCR_ROIS = frozenset({
 # inferred from other Pokémon games. They are intentionally preliminary.
 _SAMPLE_960 = (
     FieldRegion("own_hp_fraction", "HP_FRACTION", (126, 526, 218, 562), ("TURN_ACTION", "BATTLE_EVENT")),
-    FieldRegion("opponent_hp_percent", "HP_PERCENT", (864, 53, 938, 93), ("TURN_ACTION", "BATTLE_EVENT")),
+    FieldRegion("opponent_hp_percent", "HP_PERCENT", (868, 57, 932, 88), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("own_active_name", "TEXT", (75, 489, 184, 526), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("opponent_active_name", "TEXT", (777, 14, 877, 49), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT",)),
@@ -133,10 +133,14 @@ class ScreenFieldProfile:
         x0, y0, x1, y1 = region.bounds_px
         crop=NormalizedROI(region.name, x0 / width, y0 / height, x1 / width, y1 / height).crop(image)
         if (image.shape[1],image.shape[0])!=(width,height):
-            # Bound Tesseract subprocess cost on 3343x2001 capture streams;
-            # retain near-reference font size for calibrated 960x572 ROIs.
+            # Do not destroy small Japanese glyphs by downscaling a 3.5x
+            # native image all the way to the 960x572 sample size.
+            # Limit the OCR workload while retaining up to 2x reference size.
             import cv2
-            crop=cv2.resize(crop,(x1-x0,y1-y0),interpolation=cv2.INTER_AREA)
+            target_w=min(crop.shape[1],2*(x1-x0))
+            target_h=min(crop.shape[0],2*(y1-y0))
+            if (target_w,target_h)!=(crop.shape[1],crop.shape[0]):
+                crop=cv2.resize(crop,(target_w,target_h),interpolation=cv2.INTER_AREA)
         return crop
 
 

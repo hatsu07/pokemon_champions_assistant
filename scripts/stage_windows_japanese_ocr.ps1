@@ -47,9 +47,16 @@ for ($y=0; $y -lt 16; $y++) {
   $rows += ((@(0..31 | ForEach-Object { if ($y -ge 4 -and $y -le 11 -and $_ -ge 8 -and $_ -le 23) { '0' } else { '255' } })) -join ' ')
 }
 Set-Content -LiteralPath $smoke -Value $rows -Encoding Ascii
-$null = & (Join-Path $out 'tesseract.exe') $smoke stdout -l jpn+eng --tessdata-dir (Join-Path $out 'tessdata') --psm 6 2>&1 | Out-String
+# Use the SAME config-free TSV mode as the Python adapter. No packaged
+# configs/tsv is required. Prevent a zero-exit plain-text result from being
+# accepted as if the OCR parser could consume it.
+$smokeText = & (Join-Path $out 'tesseract.exe') $smoke stdout -l jpn+eng --tessdata-dir (Join-Path $out 'tessdata') --psm 6 -c tessedit_create_tsv=1 -c tessedit_create_txt=0 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) {
-  throw "Bundled OCR binary failed the Japanese/English recognition smoke test"
+  throw "Bundled OCR native TSV invocation failed"
+}
+if ($smokeText -notmatch 'level\s+page_num\s+block_num' -or
+    $smokeText -notmatch '\bconf\s+text\b') {
+  throw "Bundled OCR did not emit a TSV header"
 }
 Remove-Item -LiteralPath $smoke -Force
 

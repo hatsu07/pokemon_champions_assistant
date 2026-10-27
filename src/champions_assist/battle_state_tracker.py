@@ -46,10 +46,39 @@ class LocalBattleStateTracker:
         return inserted
 
     def snapshot(self, *, at_or_before: float | None=None,
-                 limit: int=12) -> dict:
+                 limit: int=12, own_active: str | None=None,
+                 opponent_active: str | None=None,
+                 own_names: tuple[str, ...]=(),
+                 opponent_names: tuple[str, ...]=()) -> dict:
+        """Associate OCR hints with known actors without certifying them.
+
+        HP overlays belong to the active Pokémon previously verified by
+        vision. A candidate does NOT prove that the actor is still active.
+        """
+        from .terminology import japanese_name
         valid=[r for r in self._events
                if at_or_before is None or r.timestamp<=at_or_before]
-        payload=[r.as_dict() for r in valid[-limit:]]
+        payload=[]
+        for row in valid[-limit:]:
+            item=row.as_dict()
+            actor,side=None,None
+            if row.field=="screen_text.own_hp_fraction":
+                actor,side=own_active,"own"
+            elif row.field=="screen_text.opponent_hp_percent":
+                actor,side=opponent_active,"opponent"
+            else:
+                matches=[(name,"own") for name in own_names
+                         if name in row.detected_pokemon]
+                matches += [(name,"opponent") for name in opponent_names
+                            if name in row.detected_pokemon]
+                if len(matches)==1:
+                    actor,side=matches[0]
+            if actor:
+                item["species_candidate"]=japanese_name(
+                    "pokemon",str(actor).split("→",1)[0].strip())
+                item["candidate_side"]=side
+                item["species_source"]="LAST_VERIFIED_ACTIVE_OR_OCR_NAME_UNVERIFIED"
+            payload.append(item)
         return {
             "certainty":"UNVERIFIED_LOCAL_ROI_OCR",
             "local_observations":deepcopy(payload),
