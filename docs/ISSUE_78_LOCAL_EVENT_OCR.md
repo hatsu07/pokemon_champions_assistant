@@ -3,6 +3,7 @@
 ## 方針と境界
 - キャプチャは既存の300msタイマーを再利用し、追加キャプチャ・追加ChatGPT APIリクエストは行わない。
 - ONNX が `BATTLE_EVENT` と判別したフレームのROI変化をQtスレッドで軽く比較する。別のdaemonワーカーでメッセージ・自軍HP分数・相手HP割合を日本語Tesseract OCRで読む。
+- 選出一覧 (`selection_own_list` / `selection_opponent_list`)、交代一覧・詳細 (`switch_party_list` / `switch_detail_panel`)、上部システム通知 (`system_message`：入力未到達・技の自動選択通知等) はOCR対象から除外する。選出と交代の既存画像認識は維持し、古いローカル校正ファイルにこれらのROIが残っていてもOCRしない。
 - **タイマーROI (`TIMER` / `turn_command_timer`) は決してOCRしない。** `TURN_ACTION` / `SWITCH_SELECTION` でもOCRを実行しない。行動選択45秒は画面検出のローカルクロックで制御し、文字でタイマーを読まない。
 - 複数イベントは有界キューに入れ、同じROIが変化しない場合は重複を除外。キュー満杯・認識不能・実行環境不備・不正ROI・ワーカー例外は観測候補なしとして継続する。
 - 最新の認識済み候補はイベント時刻・フレームID・ROI・OCR信頼度・出典を添えてローカルメモリに保持する。現在のHP、状態異常、持ち物、フォーム、天候、技の効果などを確定したものとは**みなさない**。
