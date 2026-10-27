@@ -105,12 +105,17 @@ jobs:
           foreach ($file in $files) {
             Copy-Item -LiteralPath (Join-Path ".\\masters" $file) -Destination (Join-Path $destination $file) -Force
           }
+      - name: Stage native Japanese OCR runtime
+        shell: pwsh
+        run: |
+          & ./scripts/stage_windows_japanese_ocr.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Japanese OCR staging failed" }
       - name: Build portable Windows desktop GUI (not MSI)
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name PokemonChampionsAssistant --paths src
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
-          --add-data "build\\desktop-assets\\masters;masters"
+          --add-data "build\\desktop-assets\\masters;masters" --add-data "build\\ocr-runtime;ocr-runtime"
           scripts/windows_desktop_entry.py
       - name: Build standalone local dataset collector GUI
         run: >-
