@@ -1094,9 +1094,10 @@ class DesktopMainWindow(QMainWindow):
                     match_id=panel.match_id,state=state)
                 from .matchup_learning_store import MatchupLearningStore
                 learning=MatchupLearningStore(self.settings_service.settings.storage.data_root)
+                result_source=report.get("result_source") or "AI_VISUAL_UNVERIFIED"
                 inserted=learning.record_finished(
                     match_id=panel.match_id,team_id=self._unified_team_id,state=state,
-                    team_signature=self._unified_team_sha)
+                    team_signature=self._unified_team_sha,source=result_source)
                 if inserted:
                     # All AI transport is deferred until AFTER END and detached
                     # from the live state. Failed reviews stay pending in SQLite.
