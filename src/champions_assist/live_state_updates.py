@@ -140,7 +140,7 @@ def _event_for_message(text: str, own: dict, opponents: dict):
                         phrase+"からかいほうされた"):
                 return {"kind":"TEMP_END","side":side,"pokemon":name,
                         "effect":kind}
-        item=re.fullmatch(r"(.+?)を(?:つかった|消費した|なくした)",tail)
+        item=re.fullmatch(r"(.+?)を(?:消費した|なくした)",tail)
         if item:
             return {"kind":"ITEM_SPENT","side":side,"pokemon":name,
                     "item":item.group(1)}
@@ -231,6 +231,7 @@ def _ensure(evidence: dict):
                 "ability_state_by_pokemon","temporary_effects","fainted"):
         evidence.setdefault(key,{"own":{},"opponent":{}})
     evidence.setdefault("update_provenance",[])
+    evidence.setdefault("boost_descriptions",{"own":{},"opponent":{}})
     evidence.setdefault("last_observed_own_move","")
     evidence.setdefault("last_move_by_pokemon",{"own":{},"opponent":{}})
 
@@ -257,23 +258,42 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
     # member. Only the same-frame name can attribute it to a new entrant.
     switching_frames=set()
     named_frames=set()
+    trusted_names={}
     for record in records:
         field=getattr(record,"field","")
         frame=str(getattr(record,"frame_id",""))
         if field in ("screen_text.own_active_name",
                      "screen_text.opponent_active_name"):
-            named_frames.add((frame,"own" if field=="screen_text.own_active_name"
-                              else "opponent"))
+            side="own" if field=="screen_text.own_active_name" else "opponent"
+            names=own if side=="own" else opponents
+            name=names.get(_flat(getattr(record,"text","")))
+            conf=getattr(record,"confidence",None)
+            if (name and getattr(record,"status","")=="CANDIDATE"
+                    and isinstance(conf,(int,float)) and conf>=_CONFIDENCE_MIN):
+                named_frames.add((frame,side))
+                trusted_names[(frame,side)]=name
         elif field.endswith("battle_message"):
             event=_event_for_message(str(getattr(record,"text","")),own,opponents)
             if event and event.get("kind")=="SWITCH":
                 switching_frames.add((frame,event.get("side")))
-    for rec in records:
+    names_seen=updated.setdefault("_ocr_name_attestations",{})
+    transition_time=updated.setdefault("_ocr_actor_transition_at",{})
+    # Order by capture time, then SWITCH and name before HUD.
+    def _record_order(rec):
+        field=getattr(rec,"field","")
+        event=(_event_for_message(str(getattr(rec,"text","")),own,opponents)
+               if field.endswith("battle_message") else None)
+        priority=(0 if event and event.get("kind")=="SWITCH" else
+                  1 if field in ("screen_text.own_active_name",
+                                 "screen_text.opponent_active_name") else 2)
+        return float(getattr(rec,"timestamp",0)),priority
+    for rec in sorted(records,key=_record_order):
         text=str(getattr(rec,"text","") or "")
         field=getattr(rec,"field","")
         from hashlib import sha256
         digest=sha256(_flat(text).encode("utf-8")).hexdigest()[:20]
         ref=(str(getattr(rec,"frame_id","")),field,digest)
+        observed_at=float(getattr(rec,"timestamp",0))
         if ref in seen_set or not text:
             continue
         seen.append(ref)
@@ -315,9 +335,14 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             evt=_event_for_message(text,own,opponents)
         if evt is None:
             continue
-        if evt["kind"]=="HP" and (ref[0],evt.get("side")) in switching_frames and (
+        if (evt["kind"] in ("ACTIVE","HP","PP") and
+                observed_at<transition_time.get(evt["side"],float("-inf"))):
+            audit.append({"kind":evt["kind"],"status":"CANDIDATE",
+                          "reason":"PRE_SWITCH_STALE_HUD","frame_id":ref[0]})
+            continue
+        if evt["kind"] in ("HP","PP") and (ref[0],evt.get("side")) in switching_frames and (
                 ref[0],evt.get("side")) not in named_frames:
-            audit.append({"kind":"HP","status":"CANDIDATE",
+            audit.append({"kind":evt["kind"],"status":"CANDIDATE",
                           "reason":"SAME_FRAME_SWITCH_HUD_AMBIGUOUS",
                           "frame_id":ref[0]})
             continue
@@ -328,6 +353,17 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         kind,side=evt["kind"],evt.get("side")
         name=evt.get("pokemon")
         old=updated.get("our_active" if side=="own" else "opponent_active")
+        if kind in ("HP","PP"):
+            same_frame=trusted_names.get((ref[0],side))
+            attestation=names_seen.get(side,{})
+            good=(same_frame==old or
+                  (attestation.get("pokemon")==old and
+                   0<=observed_at-attestation.get("timestamp",float("-inf"))<=2.0))
+            if (not old or not good or
+                    ((ref[0],side) in switching_frames and same_frame!=old)):
+                audit.append({"kind":kind,"status":"CANDIDATE",
+                              "reason":"ACTOR_HUD_NOT_ATTESTED","frame_id":ref[0]})
+                continue
         if kind in ("ACTIVE","SWITCH"):
             key="our_active" if side=="own" else "opponent_active"
             if name!=old:
@@ -335,6 +371,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 # stale switch proposal; OCR message itself is execution proof.
                 if name and old:
                     evidence["boosts"][side].pop(old,None)
+                    evidence["boost_descriptions"][side].pop(old,None)
                     for temporary in evidence["temporary_effects"][side].get(old,{}).values():
                         if isinstance(temporary,dict):
                             temporary["active"]=False
@@ -343,8 +380,13 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                     evidence["choice_lock"]={"pokemon":"","move":"","source":""}
                     updated["awaiting_replacement"]=False
                 updated[key]=name
+                transition_time[side]=observed_at
+                names_seen.pop(side,None)
                 if side=="opponent":
                     fill_unknown_preview(updated,assets,name)
+            if kind=="ACTIVE" and name:
+                names_seen[side]={"pokemon":name,"timestamp":observed_at,
+                                  "frame_id":ref[0]}
         elif kind=="PP":
             actor=updated.get("our_active")
             if not actor or actor!=name:
@@ -378,6 +420,17 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                                 _pokemon(m["name"].split("→")[0])==name]
                     if len(candidates)==1:
                         form=candidates[0]
+                # Use the frozen Champions matrix only. Unknown type stays unknown.
+                if form!="MEGA_EVOLVED_FORM_UNCONFIRMED":
+                    frozen=getattr(assets,"matrix_index",{}).get(form)
+                    if isinstance(frozen,str):
+                        row=frozen.split("|")
+                        types=row[1].split("/") if len(row)>2 else []
+                        if types and all(t in _TYPES for t in types):
+                            evidence.setdefault("current_type",{
+                                "own":{},"opponent":{}})[side][name]=row[1]
+                updated["our_current_form" if side=="own"
+                        else "opponent_current_form"]=form
                 evidence.setdefault("form_by_pokemon",{
                     "own":{},"opponent":{}})[side][name]=form
             elif kind=="TYPE":
@@ -407,7 +460,13 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 entry=evidence.setdefault("boosts",{"own":{},"opponent":{}})[side].get(name)
                 if not isinstance(entry,dict):
                     entry={}
-                entry[evt["stat"]]=entry.get(evt["stat"],0)+evt["delta"]
+                if name in evidence["boost_descriptions"][side]:
+                    entry["_prior_stage_uncertain"]=True
+                prior=entry.get(evt["stat"])
+                if isinstance(prior,int):
+                    entry[evt["stat"]]=max(-6,min(6,prior+evt["delta"]))
+                elif not entry.get("_prior_stage_uncertain"):
+                    entry[evt["stat"]]=max(-6,min(6,evt["delta"]))
                 evidence["boosts"][side][name]=entry
             elif kind in ("TEMP_START","TEMP_END"):
                 active=evidence["temporary_effects"][side].setdefault(name,{})
@@ -419,6 +478,17 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             elif kind=="ITEM_SPENT":
                 evidence["item_state_by_pokemon"][side][name]={
                     "item":evt["item"],"state":"SPENT_OR_LOST"}
+                items=evidence.setdefault("item_by_pokemon",{
+                    "own":{},"opponent":{}})[side]
+                if items.get(name)==evt["item"]:
+                    items.pop(name,None)
+                if side=="own":
+                    registered=next((m for m in assets.own_team
+                        if any(_pokemon(part)==name
+                               for part in m.get("name","").split("→"))),None)
+                    if (registered and registered.get("item")==evt["item"]
+                            and evidence.get("choice_lock",{}).get("pokemon")==name):
+                        evidence["choice_lock"]={"pokemon":"","move":"","source":""}
             elif kind=="ABILITY":
                 evidence.setdefault("ability_by_pokemon",{"own":{},"opponent":{}})[side][name]=evt["ability"]
                 evidence["ability_state_by_pokemon"][side][name]={"active":True,"name":evt["ability"]}
