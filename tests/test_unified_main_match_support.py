@@ -1568,6 +1568,61 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         panel._stop_auto()
 
+    def test_result_ocr_requires_two_confident_distinct_frames(self):
+        from types import SimpleNamespace
+        from champions_assist.local_event_worker import LocalFieldRead
+        panel=self.window._match_panel
+        panel._result_ocr_candidate=None
+        panel._local_battle_tracker.clear()
+        def record(frame,at,confidence=.96):
+            return LocalFieldRead(
+                field="screen_text.battle_message",value="勝利しました",
+                frame_id=frame,timestamp=at,confidence=confidence,
+                roi="battle_message",source="fixture",text="勝利しました")
+        results=iter((
+            (record("r1",1.0),),
+            (record("r2",2.0,confidence=.45),),
+            (record("r3",3.0),),
+        ))
+        panel._local_event_reader=SimpleNamespace(
+            drain=lambda:(SimpleNamespace(error=None,observations=next(results,())),),
+            stop=lambda:None)
+        with patch.object(panel,"_request_result_from_ocr") as verify:
+            panel._drain_event_candidates(include_snapshot=False)
+            verify.assert_not_called()
+            panel._drain_event_candidates(include_snapshot=False)
+            verify.assert_not_called()
+            panel._drain_event_candidates(include_snapshot=False)
+            verify.assert_called_once_with(["勝利しました"])
+        panel._local_event_reader=None
+
+    def test_superseded_ocr_revision_requeues_without_new_classifier_frame(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._active_state_revision=1
+        panel.state={"phase":"BATTLE","our_active":"マスカーニャ",
+                     "opponent_active":"ガブリアス","_live_state_revision":2}
+        panel._pending_batch=None
+        panel._pending_screen_label=None
+        panel._inflight_screen_label="TURN_ACTION"
+        panel._active_request_frame=np.zeros((16,20,3),dtype=np.uint8)
+        panel._turn_event_after_action=False
+        panel._completed({
+            "state":{"phase":"BATTLE","our_active":"マスカーニャ",
+                     "_live_state_revision":1},
+            "report":{"status":"ADVICE","screen":"MOVE_MENU",
+                      "recommendation":"トリックフラワー。"}})
+        self.assertEqual(panel.entries[-1]["status"],"SUPERSEDED")
+        self.assertEqual(panel.entries[-1]["recommendation"],"")
+        self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
+        self.assertEqual(panel.state["_live_state_revision"],2)
+        with patch.object(panel,"_send_pending") as resend:
+            panel._cleanup()
+            resend.assert_called_once()
+        panel._pending_batch=None
+        panel._auto_running=False
+
     def test_selection_known_preview_duplicate_is_not_queued_again(self):
         panel=self.window._match_panel
         panel._auto_running=True
