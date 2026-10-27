@@ -1301,7 +1301,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         if local_field_candidates:
             # Local ROI OCR is non-authoritative and may be wrong: attach it
             # separately, never merge into the verified battle snapshot.
-            prompt["local_field_candidates_unverified"] = local_field_candidates[:12]
+            from .ocr_ai_evidence import select_ai_ocr_evidence
+            selected_ocr,_=select_ai_ocr_evidence(local_field_candidates)
+            prompt["local_field_candidates_unverified"] = selected_ocr
         if phase in ("MATCHMAKING","SELECTION"):
             # Only registered-team derived rows; never include old-team tactics.
             opp=tuple(state.get("opponent_six") or ())
@@ -1576,7 +1578,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "cell":r.get("matrix_cell"),"source":r.get("source"),
         "hint":str(r.get("ai_hint") or "")[:140],
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
-    candidates=list(local_field_candidates or [])[-36:]
+    from .ocr_ai_evidence import select_ai_ocr_evidence
+    candidates,_=select_ai_ocr_evidence(local_field_candidates)
     prompt={
         "screen_kind":expected_screen_label,
         "choice_kind":"SWITCH_ONLY" if switch_only else "MOVE_OR_SWITCH",
