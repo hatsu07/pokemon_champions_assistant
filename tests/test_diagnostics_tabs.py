@@ -74,6 +74,25 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.assertFalse(self.dialog.switch_run_button.isEnabled())
         self.assertFalse(self.dialog.event_run_button.isEnabled())
 
+    def test_local_ocr_diagnostics_are_separate_from_api_event_test(self):
+        # No selection, PREP or ChatGPT access is necessary to inspect a
+        # user-selected screenshot's exact ROI and OCR result.
+        self.assertFalse(self.dialog.event_run_button.isEnabled())
+        with patch.object(self.dialog,"_pick_diagnostic_image",
+                          return_value=np.zeros((572,960,3),dtype=np.uint8)):
+            self.dialog.choose_event_image()
+        self.assertTrue(self.dialog.event_ocr_button.isEnabled())
+        self.assertFalse(self.dialog.event_run_button.isEnabled())
+        result={"status":"OCR_DIAGNOSTIC_COMPLETE","rows":[{
+            "name":"battle_message","kind":"MESSAGE",
+            "crop":np.zeros((40,150,3),dtype=np.uint8),
+            "text":"ガブリアスは たおれた",
+            "confidence":0.91,"parsed":"ガブリアスは たおれた",
+            "elapsed_ms":20,"error":""}]}
+        self.dialog._local_ocr_result(result)
+        self.assertIn("1領域",self.dialog.event_ocr_status.text())
+        self.assertEqual(self.dialog.event_ocr_rows.count(),1)
+
     def test_event_observation_requires_actual_event_not_generic_screen(self):
         state=selection_test_prep_state(self.assets,selection_fixture())
         emitted=[]
