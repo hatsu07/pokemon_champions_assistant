@@ -69,7 +69,7 @@ def discover_japanese_tesseract() -> tuple[str, str] | None:
 
 
 class TesseractJapaneseOcr:
-    """Japanese/English Tesseract adapter with an explicit bundled runtime.""",
+    """Japanese/English Tesseract adapter with an explicit bundled runtime."""
 
     engine_name = "tesseract-jpn+eng"
 
