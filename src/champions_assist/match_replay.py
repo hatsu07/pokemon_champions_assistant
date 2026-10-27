@@ -445,14 +445,14 @@ def advance_observation(
                     output["late_advice_presented"]=True
                 valid, action = validate_battle_choice(answer, obs, state, assets)
                 if valid != "OK":
-                        output.update(status="BLOCKED",reason=valid)
+                    output.update(status="BLOCKED",reason=valid)
                 elif action["kind"] == "NO_ACTION":
-                        output.update(status="NO_ACTION")
+                    output.update(status="NO_ACTION")
                 else:
-                        status = ("ADVICE" if state["matrix_compatible"] else
+                    status = ("ADVICE" if state["matrix_compatible"] else
                                   "PROVISIONAL_ADVICE" if state["matrix_provisional"] else
                                   "TEST_ONLY")
-                        output.update(status=status,
+                    output.update(status=status,
                                       action=action, recommendation=_action_text(action),
                                       warning=str(answer.get("warning", "")),
                                       action_basis=(
