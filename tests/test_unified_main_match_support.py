@@ -874,6 +874,53 @@ class UnifiedMainWindowTests(unittest.TestCase):
                             and row.get("image_count")==3
                             for row in panel._timing_trace))
 
+    def test_text_first_omits_recognized_event_but_keeps_current_menu(self):
+        from dataclasses import replace
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._event_frames.clear()
+        panel._event_frame_ids.clear()
+        panel._field_profile=replace(
+            ScreenFieldProfile.from_user_samples_960x572(),
+            validated_on_game_capture=True)
+        panel._last_local_ocr_status="READY"
+        panel._last_local_ocr_stats={
+            "ocr_jobs_enqueued":1,"ocr_jobs_completed":1,
+            "ocr_queue_pending":0,"overflow":0,
+            "ocr_results_dropped":0,"ocr_errors":0}
+        frame=np.full((80,160,3),150,dtype=np.uint8)
+        panel._last_capture_seq=31
+        panel._remember_event_frame(frame)
+        text=[{"frame_id":"capture-31","roi":"battle_message",
+               "raw_text":"相手のこうげきが上がった","confidence":0.98,
+               "certainty":"CANDIDATE","game_validated":False}]
+        command=np.zeros_like(frame)
+        result=panel._frames_for_action(command,text)
+        self.assertEqual(len(result),1)
+        self.assertTrue(np.array_equal(result[0],command))
+        self.assertTrue(any(row["event"]=="EVENT_IMAGE_TEXT_FIRST_DECISION"
+                            and row.get("image_count")==1
+                            for row in panel._timing_trace))
+
+    def test_event_image_kept_for_nonvalidated_ocr_even_with_high_confidence(self):
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._event_frames.clear()
+        panel._event_frame_ids.clear()
+        panel._field_profile=ScreenFieldProfile.from_user_samples_960x572()
+        panel._last_local_ocr_status="READY"
+        panel._last_local_ocr_stats={"ocr_jobs_enqueued":1,
+            "ocr_jobs_completed":1,"ocr_queue_pending":0}
+        frame=np.full((80,160,3),150,dtype=np.uint8)
+        panel._last_capture_seq=55
+        panel._remember_event_frame(frame)
+        obs=[{"frame_id":"capture-55","roi":"battle_message",
+              "raw_text":"ピカチュウはまひした","confidence":0.99,
+              "certainty":"CANDIDATE","game_validated":False}]
+        self.assertEqual(len(panel._frames_for_action(np.zeros_like(frame),obs)),2)
+
     def test_loaded_classifier_never_sends_non_action_or_unknown(self):
         from champions_assist.screen_classifier import ScreenPrediction
         panel=self.window._match_panel
