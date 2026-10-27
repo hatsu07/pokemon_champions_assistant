@@ -190,7 +190,8 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
         member = next((m for m in own_team if _key(m.get("name", "")) == _key(own)), None)
         spent = memory.get("item_state_by_pokemon",{}).get("own",{}).get(own,{})
         if (member and member.get("choice_lock") == "Y"
-                and spent.get("state")!="SPENT_OR_LOST"):
+                and spent.get("state") not in (
+                    "SPENT_OR_LOST","CURRENT_UNKNOWN_AFTER_EXCHANGE")):
             revealed_item = memory["item_by_pokemon"]["own"].get(own, "")
             if not revealed_item or revealed_item == member.get("item"):
                 # Do not invent a lock on a move absent from the actual set.
