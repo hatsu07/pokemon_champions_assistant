@@ -1680,10 +1680,12 @@ class MatchReplayDialog(QDialog):
                             and possible_result_message(row.text)]
                     if ending:
                         self._request_result_from_ocr(ending)
-                    count=self._local_battle_tracker.ingest(result.observations)
-                    if self.state is not None and self.assets is not None and self.state.get("phase")!="ENDED":
+                    count,novel=self._local_battle_tracker.ingest(
+                        result.observations,collect=True)
+                    if (novel and self.state is not None and self.assets is not None
+                            and self.state.get("phase")!="ENDED"):
                         changed,audit=apply_local_ocr(
-                            self.state,result.observations,self.assets)
+                            self.state,novel,self.assets)
                         if any(e["status"]=="APPLIED" for e in audit):
                             self.state=changed
                             self._trace_event("LOCAL_OCR_STATE_APPLIED",
