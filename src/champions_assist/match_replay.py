@@ -1572,12 +1572,16 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             "form_by_pokemon",{}).get("opponent",{}).get(opponent,"UNKNOWN"),
         # Prior pair scores for a changed-form active may no longer apply.
         "cached_current_opponent_pairs":(
-            [] if (state.get("battle_evidence") or {}).get(
-                "form_by_pokemon",{}).get("own",{}).get(current)
+            [] if ((state.get("battle_evidence") or {}).get(
+                        "form_by_pokemon",{}).get("own",{}).get(current)
+                   or (state.get("battle_evidence") or {}).get(
+                        "form_by_pokemon",{}).get("opponent",{}).get(opponent))
             else pairs),
         "cached_pairs_invalidated_for_form":bool(
             (state.get("battle_evidence") or {}).get(
-                "form_by_pokemon",{}).get("own",{}).get(current)),
+                "form_by_pokemon",{}).get("own",{}).get(current)
+            or (state.get("battle_evidence") or {}).get(
+                "form_by_pokemon",{}).get("opponent",{}).get(opponent)),
         "recent_history":(state.get("history") or [])[-3:],
         "ocr_candidates_unverified":candidates,
         "no_visible_party_confirmation":switch_only,
