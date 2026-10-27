@@ -405,7 +405,7 @@ class LiveStateOcrTests(unittest.TestCase):
 
 
     def test_text_turn_diagnostics_record_pre_validation_action(self):
-        self.state["selected_three"]=["マスカーニャ","マリルリ","ルカリオ"]
+        self.state["selected_three"]=["マスカーニャ","マリルリ","ゲンガー"]
         events=[]
         raw={"action_kind":"SWITCH","move":"","switch_target":"マリルリ",
              "warning":""}
