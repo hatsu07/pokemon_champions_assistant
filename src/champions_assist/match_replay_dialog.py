@@ -1572,7 +1572,7 @@ class MatchReplayDialog(QDialog):
                 if result.error:
                     self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
-                else:
+                if result.observations:
                     count=self._local_battle_tracker.ingest(result.observations)
                     if count:
                         self._trace_event("LOCAL_OCR_CANDIDATES",
