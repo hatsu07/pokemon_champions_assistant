@@ -478,7 +478,7 @@ class MatchReplayDialog(QDialog):
         self.classifier_choose_button.clicked.connect(self._choose_screen_classifier)
         panel.addWidget(self.classifier_choose_button)
         # Render the same frames that go to AI, without another acquisition.
-        self.capture_preview_title=QLabel("キャプチャプレビュー（ChatGPT送信対象のゲーム領域）")
+        self.capture_preview_title=QLabel("ローカルキャプチャプレビュー（通常ターンは画像を送信しません）")
         panel.addWidget(self.capture_preview_title)
         self.capture_preview=QLabel("監視開始後にここへ撮影画像を表示します")
         self.capture_preview.setObjectName("live_capture_preview")
@@ -1030,7 +1030,7 @@ class MatchReplayDialog(QDialog):
         )
         if QMessageBox.question(self, "自動送信の確認",
                 "指定したゲーム画面を継続監視します。分類モデルが有効なら"
-                "選出・技選択・交代画面だけAIへ送信します。"
+                "選出画面のみ画像、ターンと交代は原則OCRテキストをAIへ送信します。"
                 "未設定時は警告済みの低頻度モードを使用します。送信ごとの確認はありません。"
                 +storage_note+"開始しますか？",
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
@@ -2409,7 +2409,8 @@ class MatchReplayDialog(QDialog):
             isinstance(prep.get(k),str)
             and prep.get(k) in (state.get("selected_three") or ())
             for k in ("preserve","stopper","closer"))
-        progress=f"対面 {done}/{expected}・勝ち筋 {roles}/3"
+        progress=(f"対面 {done}/{expected}・役割 {roles}/3（任意）"
+                  if roles else f"対面 {done}/{expected}・役割は各ターンで判断")
         complete_statuses={
             "CACHE_STRUCTURE_COMPLETE","STRUCTURE_COMPLETE",
             "CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE"}
@@ -2447,7 +2448,9 @@ class MatchReplayDialog(QDialog):
             "現在のフェイズ："+labels.get(phase,phase)+indicator)
         if self._active_job=="batch" and self._active_request_started is not None:
             elapsed=monotonic()-self._active_request_started
-            current="画面をAI認識・行動判断中"
+            current=("OCRテキストから戦術判断中"
+                     if self._inflight_screen_label in _URGENT_SCREENS
+                     else "画像から相手選出を確認中")
             if phase in ("PREP","BATTLE") and self._turn_screen_seen_at is not None:
                 remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
                                      (monotonic()-self._turn_screen_seen_at)))
@@ -2465,7 +2468,7 @@ class MatchReplayDialog(QDialog):
                     "PENDING","CACHE_PREP_BASE_READY"):
                 cache=state.get("prep") or {}
                 current=(f"事前対面評価{cache.get('cached_matchups',0)}件を保持済み"
-                         "／勝ち筋3点の検討待ち")
+                         "／追加AI通信なし")
             else:
                 current=("選出の画像認識・判断待ち" if phase=="SELECTION"
                          else "次の行動選択画面の検出待ち" if phase=="BATTLE"
