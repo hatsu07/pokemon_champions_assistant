@@ -2328,10 +2328,12 @@ class MatchReplayDialog(QDialog):
                 "選出（提案）："+ " / ".join(selection)
                 +"   初手（提案）："+str(report["lead"]))
         elif state.get("selected_three") and state.get("lead"):
-            assumption="（提案）" if state.get("selection_assumed") else "（手動登録）"
+            is_proposal=bool(state.get("selection_assumed"))
+            assumption="（提案）" if is_proposal else "（手動登録）"
+            lead_label="初手（提案）：" if is_proposal else "初手："
             self._last_selection_text=(
                 "選出"+assumption+"："+ " / ".join(state["selected_three"])
-                +"   初手："+str(state["lead"]))
+                +"   "+lead_label+str(state["lead"]))
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY") and (
                 report.get("screen") in ("COMMAND_MENU","MOVE_MENU","PARTY_MENU")
                 and report.get("recommendation")):
