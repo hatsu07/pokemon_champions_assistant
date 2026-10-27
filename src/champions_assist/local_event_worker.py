@@ -70,15 +70,15 @@ class AsyncBattleEventReader:
     def __init__(self, profile: ScreenFieldProfile | None,
                  *, ocr_engine: OcrEngine | None = None,
                  lexicon: ScreenLexicon | None = None,
-                 max_pending: int = 4, max_results: int = 12,
+                 max_pending: int = 4, max_results: int | None = None,
                  change_threshold: float = 0.030):
-        if max_pending < 1 or max_results < 1:
+        if max_pending < 1 or (max_results is not None and max_results < 1):
             raise ValueError("queue limits must be positive")
         self.profile=profile
         self.max_results=max_results
         self.change_threshold=change_threshold
         self._queue: Queue[_Job | None]=Queue(maxsize=max_pending)
-        self._out: Queue[_Result]=Queue(maxsize=max_results)
+        self._out: Queue[_Result]=Queue(maxsize=max_results or 0)
         self._stop=Event()
         self._signatures: dict[str,np.ndarray]={}
         self._counter=0
