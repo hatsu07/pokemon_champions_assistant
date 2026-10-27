@@ -55,7 +55,7 @@ def _visual_stages(raw: str) -> dict[str, int] | None:
     for part in parts:
         part=part.strip()
         match=re.fullmatch(
-            r"(こうげき|ぼうぎょ|とくこう|とくぼう|すばやさ|めいちゅう|かいひ|ACC|EVA|[ABCDS])\\s*[:：]?\\s*([+-]\\d+)",part,
+            r"(こうげき|ぼうぎょ|とくこう|とくぼう|すばやさ|めいちゅう|かいひ|ACC|EVA|[ABCDS])\s*[:：]?\s*([+-]\d+)",part,
             re.IGNORECASE)
         if not match:
             return None
