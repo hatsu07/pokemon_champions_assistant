@@ -316,6 +316,7 @@ class MatchReplayDialog(QDialog):
         self._turn_event_after_action=False
         self._turn_epoch=0
         self._active_turn_epoch=None
+        self._last_action_request_screen=None
         self._capture_seq=0
         self._last_capture_seq=0
         self._last_classifier_sample_at=None
@@ -1013,6 +1014,7 @@ class MatchReplayDialog(QDialog):
         self._turn_event_after_action=False
         self._turn_epoch=0
         self._active_turn_epoch=None
+        self._last_action_request_screen=None
         self._selection_screen_started=None
         self._selection_clock_source=None
         self._prep_budget_seconds=40.0
@@ -1195,7 +1197,23 @@ class MatchReplayDialog(QDialog):
         if not self._auto_running and not self._manual_submission:
             return
         if screen_label in _URGENT_SCREENS:
-            if self._turn_action_sent and not self._turn_event_after_action:
+            # A forced party choice can follow an action without an
+            # intervening classified BATTLE_EVENT. It is a NEW actionable
+            # decision, not another use of the fainted member's move.
+            new_switch_window=(
+                screen_label=="SWITCH_SELECTION"
+                and self._turn_action_sent and not self._turn_event_after_action
+                and getattr(self,"_last_action_request_screen",None)=="TURN_ACTION")
+            if new_switch_window:
+                self._turn_screen_seen_at=None
+                self._turn_action_sent=False
+                self._last_action_text=""
+                self._trace_event("SWITCH_NEW_DECISION_WINDOW",
+                                  previous_screen="TURN_ACTION",
+                                  turn_epoch=self._turn_epoch)
+                self.action_banner.setText(
+                    "次の行動：交代先を確認中（直前の技提案は無効）")
+            elif self._turn_action_sent and not self._turn_event_after_action:
                 self._trace_event("SAME_TURN_AI_REQUEST_SUPPRESSED",
                                   screen_label=screen_label)
                 return
@@ -1239,10 +1257,8 @@ class MatchReplayDialog(QDialog):
                                   frame_seq=self._last_capture_seq)
         if screen_label=="BATTLE_EVENT":
             self._note_battle_event()
-        # A newly observed turn/party/event candidate outranks PREP.
-        if (self.state is not None and self.state.get("phase")=="PREP"
-                and screen_label in ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT")):
-            self._interrupt_prep()
+        # PREP remains valid during screen changes. It is cancelled only
+        # when the NEXT model request actually begins (_send_pending).
         # An unclassified image change is not proof that battle has started.
         # Let the visual AI observation confirm the opponent lead first.
         # At most one pending batch: new observed events replace stale ones.
@@ -1292,6 +1308,12 @@ class MatchReplayDialog(QDialog):
             frames=frames[-2:]
         self._pending_batch=None
         self._pending_screen_label=None
+        # The next outgoing AI message supersedes unfinished PREP, not a
+        # locally estimated 40-second PREP deadline or a screen animation.
+        if self._prep_thread is not None:
+            self._trace_event("PREP_SUPERSEDED_BY_NEW_AI_REQUEST",
+                              screen_label=screen_label or "UNCLASSIFIED")
+            self._interrupt_prep()
         self._turn_buffer.reset_turn()
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
@@ -1349,6 +1371,8 @@ class MatchReplayDialog(QDialog):
         self.entries.append(request_report)
         self._render(request_report)
         self._set_busy(True)
+        if screen_label in _URGENT_SCREENS:
+            self._last_action_request_screen=screen_label
         self._active_job="batch"
         self._inflight_screen_label=screen_label
         self._thread=QThread(self)
@@ -2039,17 +2063,13 @@ class MatchReplayDialog(QDialog):
             self._render({"status":"PREP_UNAVAILABLE",
                           "reason":"OWN_MATRIX_MISMATCH"})
             return
-        # PREP must fit in the remaining selection-screen countdown:
-        # 90s overall, with 3s reserved for final game UI operations.
-        # Normal 40s cap is retained whenever sufficient time remains.
+        # The selection countdown limits what we can promise to the player;
+        # it must not kill a pending PREP request or discard a valid reply.
+        # The next outgoing AI message is the only automatic supersession.
         self._prep_budget_seconds=prep_budget_before_battle(
             self._selection_screen_started,now=monotonic())
         if self._prep_budget_seconds<=2.0:
-            self.state["prep_status"]="DEADLINE_EXCEEDED"
-            self._trace_event("PREP_NO_TIME_BEFORE_BATTLE")
-            self._render({"status":"PREP_DEADLINE_EXCEEDED",
-                          "message":"選出90秒の残りが不足しています。PREPを実行しません。"})
-            return
+            self._trace_event("PREP_SOFT_BUDGET_EXPIRED_CONTINUING")
         self._prep_cancel_event.clear()
         if not provisional:
             self.state["prep_status"]="RUNNING"
@@ -2064,7 +2084,9 @@ class MatchReplayDialog(QDialog):
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=prep_state, job="prep",
-            prep_seconds=self._prep_budget_seconds,
+            # Network failure still needs a finite socket timeout. It is NOT
+            # the local game-clock target and late valid results are accepted.
+            prep_seconds=max(120.0,self._prep_budget_seconds),
             cancel_event=self._prep_cancel_event,
         )
         self._prep_worker.moveToThread(self._prep_thread)
@@ -2074,7 +2096,8 @@ class MatchReplayDialog(QDialog):
         self._prep_thread.finished.connect(self._prep_worker.deleteLater)
         self._prep_thread.finished.connect(self._prep_thread.deleteLater)
         self._prep_thread.finished.connect(self._prep_cleanup)
-        self._prep_timer.start(int(self._prep_budget_seconds*1000))
+        if self._prep_budget_seconds>0:
+            self._prep_timer.start(int(self._prep_budget_seconds*1000))
         unknown_count=len(prep_state.get("visual_unknown_opponents") or [])
         known_count=6-unknown_count
         self._render({"status":"PREP_PROVISIONAL_RUNNING" if provisional else "PREP_RUNNING",
@@ -2084,7 +2107,8 @@ class MatchReplayDialog(QDialog):
                           if unknown_count else
                           "提案選出に基づく18対面PREPを先行計算中。"
                           if provisional else "実際の選出で18対面PREPを計算中。")
-                          +f"（残り {self._prep_budget_seconds:.1f}秒上限）"})
+                          +f"（目標残り {self._prep_budget_seconds:.1f}秒・"
+                          "超過後も次のAI依頼まで継続）"})
         self._prep_thread.start()
 
     def _interrupt_prep(self):
@@ -2098,15 +2122,12 @@ class MatchReplayDialog(QDialog):
     def _prep_deadline(self):
         if self._prep_thread is None:
             return
-        self._prep_cancel_event.set()
-        self._trace_event("PREP_DEADLINE_EXCEEDED")
+        # Advisory timer: never cancel or discard PREP merely for 40s expiry.
+        self._trace_event("PREP_SOFT_DEADLINE_EXCEEDED_CONTINUING")
         if self.state is not None and self.state.get("phase")=="PREP":
-            self.state["prep_status"]="DEADLINE_EXCEEDED"
-            # Keep already cached matchup evidence; missing win roles are NOT
-            # marked as complete and remain visible.
-            self._render({"status":"PREP_DEADLINE_EXCEEDED",
-                          "message":"勝ち筋3点の判定が期限超過。"
-                          "事前に抽出した対面評価は引き続き使用可能。"})
+            self._render({"status":"PREP_OVERTIME_RUNNING",
+                          "message":"PREPの目標時間を超過しましたが、"
+                          "次のAI依頼まで計算と有効回答の受付を継続します。"})
 
     @Slot(object)
     def _on_prep_result(self, payload):
@@ -2129,8 +2150,8 @@ class MatchReplayDialog(QDialog):
             return
         if (self.state.get("phase")!="PREP"
                 or self.state.get("prep_status")!="RUNNING"
-                or self._pending_batch is not None):
-            return  # Late/stale PREP must not overwrite a live battle.
+                or self._prep_cancel_event.is_set()):
+            return  # A new AI request or explicit stop supersedes PREP.
         self._trace_event("PREP_RESULT",status=result.get("status","UNKNOWN"))
         if result.get("status")=="CANCELLED":
             return
@@ -2341,7 +2362,9 @@ class MatchReplayDialog(QDialog):
         if report.get("status") in ("MATCH_STARTED","RESET"):
             self._last_action_text=""
             self._last_selection_text=""
-        if (report.get("screen") in ("COMMAND_MENU","ACTION_RESOLUTION","RESULT_SCREEN")
+        if (report.get("screen") in (
+                "COMMAND_MENU","PARTY_MENU","DETAIL_OVERLAY",
+                "ACTION_RESOLUTION","RESULT_SCREEN")
                 and report.get("status") in ("OBSERVED","MATCH_END","BLOCKED",
                                               "NO_ACTION","DEADLINE_EXCEEDED",
                                               "SUPERSEDED")):
@@ -2353,7 +2376,9 @@ class MatchReplayDialog(QDialog):
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
         elif report.get("status")=="AI_REQUEST_QUEUED":
-            action_text="現在の対面から技4つ・交代候補を比較中"
+            action_text=("交代先を判定中（倒れたポケモンの技は無効）"
+                         if report.get("screen_label_hint")=="SWITCH_SELECTION"
+                         else "現在の対面から技4つ・交代候補を比較中")
         elif report.get("status")=="DEADLINE_EXCEEDED":
             action_text="AI表示最終期限超過：このターンの新しい提案なし"
         elif report.get("status")=="SUPERSEDED":
@@ -2361,6 +2386,10 @@ class MatchReplayDialog(QDialog):
         elif report.get("screen")=="COMMAND_MENU" and (
                 report.get("status") not in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
             action_text="技4つ・交代先の判定未成立（AIによる提案なし）"
+        elif (self._latest_recognition_screen=="SWITCH_SELECTION"
+              and report.get("status") not in (
+                  "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
+            action_text="交代画面を検出。次に出すポケモンは未確定（旧技提案は無効）"
         elif self._last_action_text and state.get("phase")=="BATTLE":
             action_text=self._last_action_text
         else:
