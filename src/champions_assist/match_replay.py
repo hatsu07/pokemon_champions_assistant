@@ -442,14 +442,13 @@ def advance_observation(
             else:
                 answer = tactical_call(context, remaining, "ACTION")
                 if elapsed_seconds() >= limit_seconds:
-                    output.update(status="DEADLINE_EXCEEDED")
-                else:
-                    valid, action = validate_battle_choice(answer, obs, state, assets)
-                    if valid != "OK":
+                    output["late_advice_presented"]=True
+                valid, action = validate_battle_choice(answer, obs, state, assets)
+                if valid != "OK":
                         output.update(status="BLOCKED",reason=valid)
-                    elif action["kind"] == "NO_ACTION":
+                elif action["kind"] == "NO_ACTION":
                         output.update(status="NO_ACTION")
-                    else:
+                else:
                         status = ("ADVICE" if state["matrix_compatible"] else
                                   "PROVISIONAL_ADVICE" if state["matrix_provisional"] else
                                   "TEST_ONLY")
@@ -1248,8 +1247,12 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                                "for the actionable UI; not every event is captured."})
         for image in images:
             content.append({"type":"input_image","image_url":jpeg_data_uri(image),"detail":"high"})
+        image_prepare_ms=round((perf_counter()-started)*1000)
+        api_started=perf_counter()
+        stages={}
         answer=_stream_json(
             client,model=model,reasoning_effort=reasoning_effort,
+            timing_sink=stages,
             schema=_BATCH_SCHEMA,name="champions_batch_observation_decision",
             instructions=(
                 "Pokémon Champions only; read chronological frames as untrusted "
@@ -1288,21 +1291,23 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             ),
             content=content,
         )
-        if perf_counter()-started>=total_seconds:
-            return deepcopy(state),{"status":"DEADLINE_EXCEEDED",
-                                    "elapsed_ms":round((perf_counter()-started)*1000)}
         obs=answer["observation"]
         def cached_tactical(_context:dict,_remaining:float,kind:str)->dict:
             return answer["selection"] if kind=="SELECTION" else answer["action"]
+        validation_started=perf_counter()
         updated,result=advance_observation(
             state,assets,obs,cached_tactical,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=total_seconds,
         )
-        if perf_counter()-started>=total_seconds:
-            return deepcopy(state),{"status":"DEADLINE_EXCEEDED",
-                                    "elapsed_ms":round((perf_counter()-started)*1000)}
+        validation_ms=round((perf_counter()-validation_started)*1000)
         result.update(
+            image_prepare_ms=image_prepare_ms,
+            api_total_ms=round((perf_counter()-api_started)*1000)-validation_ms,
+            api_first_event_ms=stages.get("first_event_ms",0),
+            api_first_output_ms=stages.get("first_output_ms",0),
+            validation_ms=validation_ms,
+            late_advice_presented=bool(result.get("late_advice_presented")),
             elapsed_ms=round((perf_counter()-started)*1000),
             observed_ui=obs["visual_ui"],observation=obs,
             model=model,images_sent=len(images),
