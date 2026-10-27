@@ -177,15 +177,17 @@ class AsyncBattleEventReader:
                 break
             records=[]
             started=monotonic()
-            try:
-                for name,kind,crop in job.crops:
-                    if self._stop.is_set():
-                        break
-                    region=next((r for r in self.profile.regions
-                                 if r.name==name),None)
-                    if region is None:
-                        continue
-                    self.rois_attempted+=1
+            first_error=None
+            first_error_code=None
+            for name,kind,crop in job.crops:
+                if self._stop.is_set():
+                    break
+                region=next((r for r in self.profile.regions
+                             if r.name==name),None)
+                if region is None:
+                    continue
+                self.rois_attempted+=1
+                try:
                     reading=self._ocr.read(crop,roi_name=name)
                     observed=parse_field_text(region,reading.text,
                                               frame_id=job.frame_id)
@@ -202,17 +204,19 @@ class AsyncBattleEventReader:
                         source="ROI_OCR_UNVERIFIED",text=reading.text,
                         detected_moves=parsed.detected_moves,
                         detected_pokemon=parsed.detected_pokemon))
-                result=_Result(job.frame_id,job.timestamp,tuple(records))
-            except Exception as exc:
-                # Never log raw Tesseract stderr (it can include local paths).
-                # Exit status and exception type are stable, safe diagnostics.
-                exit_status=getattr(exc,"status",None)
-                error_code=(getattr(exc,"code",None) or (
-                    "TESSERACT_EXIT_"+str(exit_status)
-                    if type(exit_status) is int and 0<=exit_status<=255
-                    else type(exc).__name__))
-                result=_Result(job.frame_id,job.timestamp,(),
-                               error=type(exc).__name__,error_code=error_code)
+                except Exception as exc:
+                    # One failing ROI never discards another successfully
+                    # recognized HP/message in the same battle-event frame.
+                    self.errors+=1
+                    if first_error is None:
+                        first_error=type(exc).__name__
+                        status=getattr(exc,"status",None)
+                        first_error_code=(getattr(exc,"code",None) or (
+                            "TESSERACT_EXIT_"+str(status)
+                            if type(status) is int and 0<=status<=255
+                            else first_error))
+            result=_Result(job.frame_id,job.timestamp,tuple(records),
+                           error=first_error,error_code=first_error_code)
             latency=max(0,int((monotonic()-started)*1000))
             self.last_latency_ms=latency
             self.max_latency_ms=max(self.max_latency_ms,latency)
