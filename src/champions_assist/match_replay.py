@@ -1645,7 +1645,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "Evaluate moves for interpreted_own_active after the updates. "
                 "Cite actual OCR frame IDs in evidence_frames for each update. "
                 "Never treat previous recommended moves or switches as executed. "
-                Unknown observations remain UNKNOWN: do not fabricate Pokémon. "
+                "Unknown observations remain UNKNOWN: do not fabricate Pokémon. "
                 "A missing or switched-out opponent is NOT by itself a "
                 "reason for NO_ACTION. Evaluate the legal own moves and bench "
                 "against remaining opponent candidates, minimize losing lines, "
