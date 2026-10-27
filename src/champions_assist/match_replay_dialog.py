@@ -1405,6 +1405,33 @@ class MatchReplayDialog(QDialog):
         screen_label=self._pending_screen_label
         # Only the CURRENT screenshot is needed for the opponent-six preview;
         # old transition frames are unhelpful and cost capture/memory time.
+        if screen_label in _URGENT_SCREENS:
+            # Non-blocking GUI synchronization: allow the just-seen battle
+            # message OCR a brief completion window before the ONE AI call.
+            # Never spend more than 1.5 seconds or eat the action deadline.
+            reader=self._local_event_reader
+            if reader is not None:
+                stats=reader.diagnostic_counts()
+                outstanding=max(0,stats.get("ocr_jobs_enqueued",0)-
+                                stats.get("ocr_jobs_completed",0))
+                marker=(self._turn_epoch,screen_label)
+                if getattr(self,"_ocr_sync_key",None)!=marker:
+                    self._ocr_sync_key=marker
+                    self._ocr_sync_started=monotonic()
+                waited=monotonic()-self._ocr_sync_started
+                remaining=(_CONSERVATIVE_AI_TURN_SECONDS-
+                    (monotonic()-self._turn_screen_seen_at)
+                    if self._turn_screen_seen_at else 32.0)
+                if outstanding and waited<1.5 and remaining>5.0:
+                    self._trace_event("OCR_AI_SYNC_WAIT",{
+                        "outstanding":outstanding,
+                        "elapsed_ms":int(waited*1000)})
+                    QTimer.singleShot(100,self._send_pending)
+                    return
+                self._trace_event("OCR_AI_SYNC_FINISHED",
+                    outstanding=outstanding,wait_ms=int(waited*1000),
+                    reason="READY" if not outstanding else "TIME_BUDGET")
+            self._ocr_sync_key=None
         local_candidates=(
             self._freeze_local_events_for_action(screen_label)
             if screen_label in _URGENT_SCREENS else [])
@@ -1707,7 +1734,7 @@ class MatchReplayDialog(QDialog):
         self._stop_local_event_reader()
         lexicon=ScreenLexicon.from_frozen_assets(
             self.assets,opponent_names=tuple(getattr(self.assets,"matrix_index",{}).keys()))
-        self._local_event_reader=AsyncBattleEventReader.with_local_tesseract(
+        self._local_event_reader=AsyncBattleEventReader.with_gpu_paddle(
             self._field_profile,lexicon=lexicon)
         self._trace_event("LOCAL_OCR_STARTED",
                           status=self._local_event_reader.reason,
@@ -1729,8 +1756,6 @@ class MatchReplayDialog(QDialog):
         capture_id=f"capture-{self._last_capture_seq}"
         if reader.offer(image,label=label,frame_id=capture_id):
             self._ocr_capture_epochs[capture_id]=self._turn_epoch
-            if len(self._ocr_capture_epochs)>128:
-                self._ocr_capture_epochs.pop(next(iter(self._ocr_capture_epochs)))
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
