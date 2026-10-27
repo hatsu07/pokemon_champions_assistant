@@ -27,7 +27,9 @@ class PortableJapaneseOcrTests(TestCase):
         self.assertAlmostEqual(result.confidence,0.98)
         args=cmd.call_args.args[0]
         self.assertEqual(args[0],"tesseract")
-        self.assertIn("tsv",args)
+        self.assertIn("tessedit_create_tsv=1",args)
+        self.assertIn("tessedit_create_txt=0",args)
+        self.assertNotIn("tsv",args)
         self.assertIn("--tessdata-dir",args)
         self.assertEqual(cmd.call_args.kwargs["env"]["TESSDATA_PREFIX"],"tessdata")
 
