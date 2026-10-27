@@ -127,6 +127,17 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
                 if field=="status_by_pokemon" and value in (
                         "なおった","かいふくした","状態異常がなおった"):
                     memory[field][team].pop(active,None)
+                elif field=="item_by_pokemon":
+                    history=memory.setdefault("item_state_by_pokemon",{
+                        "own":{},"opponent":{}})[team].get(active,{})
+                    if (history.get("state")=="SPENT_OR_LOST"
+                            and history.get("item")==value):
+                        # A later stale image must not revive an expended item.
+                        continue
+                    if (history.get("state")=="SPENT_OR_LOST"):
+                        memory["item_state_by_pokemon"][team][active]={
+                            "item":value,"state":"HELD_CONFIRMED"}
+                    memory[field][team][active]=value
                 elif field=="boosts":
                     stages=_visual_stages(value)
                     if stages is not None:
