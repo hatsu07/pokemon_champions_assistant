@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from types import MappingProxyType, SimpleNamespace
+from unittest.mock import patch
 import unittest
 import json
+import numpy as np
 
 from champions_assist.match_replay import (
     new_replay, advance_observation, confirm_actual_selection,
     assume_advised_selection, validate_battle_choice, run_replay_prep,
+    run_replay_image,
 )
 from champions_assist.preload import FrozenMatchAssets
 
@@ -63,6 +66,39 @@ class FullReplayTest(unittest.TestCase):
         self.state,result=advance_observation(
             self.state,self.assets,observation,callback,elapsed_seconds=lambda:5.0)
         return result
+
+    def test_replay_image_keeps_valid_selection_after_55s_without_new_request(self):
+        # Fake the two model stages without network or control of the game.
+        # A complete response at 59 seconds must not be erased by the
+        # local 55-second target, while current-screen freshness remains GUI's job.
+        elapsed=[0.0]
+        observed=frame("TEAM_SELECTION",
+                       opponent_six=list(OPP),
+                       opponent_type_icons=[[] for _ in OPP])
+        def reply(_client, **kwargs):
+            if kwargs["name"]=="champions_opponent_preview":
+                elapsed[0]=5.0
+                return observed
+            self.assertEqual(kwargs["name"],"champions_replay_selection")
+            self.assertEqual(kwargs["schema"]["required"],["selected_three","lead"])
+            elapsed[0]=59.0
+            return {"selected_three":["Pikachu","Azumarill","Gyarados"],
+                    "lead":"Pikachu"}
+        image=np.zeros((572,960,3),dtype=np.uint8)
+        with patch("champions_assist.match_replay.perf_counter",
+                   side_effect=lambda:elapsed[0]),patch(
+                "champions_assist.match_replay._stream_json",side_effect=reply):
+            updated,report=run_replay_image(
+                image,state=self.state,assets=self.assets,
+                access_token="test",model="mock",total_seconds=55.0,
+                client_factory=lambda **_kwargs:object())
+        self.assertEqual(report["status"],"TEST_ONLY")
+        self.assertEqual(report["selected_three"],["ピカチュウ","マリルリ","ギャラドス"])
+        self.assertEqual(report["lead"],"ピカチュウ")
+        self.assertTrue(report["late_selection_presented"])
+        self.assertEqual(report["selection_visual_ms"],5000)
+        self.assertEqual(report["selection_tactical_ms"],54000)
+        self.assertEqual(updated["phase"],"SELECTION")
 
     def test_full_match_sequence_from_matchmaking_to_result(self):
         self.assertFalse(self.state["matrix_compatible"])
