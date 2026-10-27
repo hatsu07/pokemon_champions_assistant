@@ -638,7 +638,10 @@ CHOICE_SCHEMA = {
 }
 
 def _stream_json(client, *, model: str, instructions: str, content: list,
-                 schema: dict, name: str, reasoning_effort: str = "auto") -> dict:
+                 schema: dict, name: str, reasoning_effort: str = "auto",
+                 timing_sink: dict | None = None) -> dict:
+    from time import perf_counter
+    started=perf_counter()
     stream = client.responses.create(
         model=model, stream=True, store=False,
         **reasoning_request_kwargs(reasoning_effort),
@@ -651,8 +654,12 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
     completed = False
     with stream:
         for event in stream:
+            if timing_sink is not None and "first_event_ms" not in timing_sink:
+                timing_sink["first_event_ms"]=round((perf_counter()-started)*1000)
             event_type = getattr(event, "type", "")
             if event_type == "response.output_text.delta":
+                if timing_sink is not None and "first_output_ms" not in timing_sink:
+                    timing_sink["first_output_ms"]=round((perf_counter()-started)*1000)
                 pieces.append(str(event.delta))
             elif event_type == "response.completed":
                 completed = True
@@ -660,6 +667,8 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
                 raise SelectionBlocked("MODEL_STREAM_FAILED")
     if not completed:
         raise SelectionBlocked("MODEL_STREAM_INCOMPLETE")
+    if timing_sink is not None:
+        timing_sink["stream_complete_ms"]=round((perf_counter()-started)*1000)
     return json.loads("".join(pieces))
 
 def selection_image_content(image, *, introduction: str,

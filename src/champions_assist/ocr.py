@@ -88,6 +88,17 @@ class TesseractJapaneseOcr:
             raise RuntimeError("JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE")
         import pytesseract
 
+        # Tesseract requires a nonempty uint8 image with supported channels.
+        # Capture/ROI pipelines can supply noncontiguous or BGRA arrays.
+        if image.size == 0 or image.ndim not in (2,3):
+            raise ValueError("OCR_INVALID_IMAGE_SHAPE")
+        if image.ndim==3 and image.shape[2] not in (1,3,4):
+            raise ValueError("OCR_INVALID_IMAGE_CHANNELS")
+        if image.dtype!=np.uint8:
+            image=np.clip(image,0,255).astype(np.uint8)
+        if image.ndim==3 and image.shape[2]==1:
+            image=image[:,:,0]
+        image=np.ascontiguousarray(image)
         pytesseract.pytesseract.tesseract_cmd=self.command
         config=f'--tessdata-dir "{self.tessdata_dir}" {self.config}'
         data = pytesseract.image_to_data(

@@ -309,6 +309,30 @@ class UnifiedMainWindowTests(unittest.TestCase):
                             "DEADLINE_EXCEEDED")
         self.assertEqual(render.call_args.args[0]["recommendation"],"じしん。")
 
+    def test_same_turn_valid_late_advice_is_presented_with_warning(self):
+        from time import monotonic
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP"}
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._active_turn_epoch=12
+        panel._turn_epoch=12
+        panel._turn_screen_seen_at=monotonic()-34.0
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        with patch.object(panel,"_render") as render:
+            panel._completed({"state":{"phase":"BATTLE"},
+                              "report":{"status":"PROVISIONAL_ADVICE",
+                                        "recommendation":"じしん。",
+                                        "screen":"COMMAND_MENU"}})
+        result=render.call_args.args[0]
+        self.assertEqual(result["status"],"PROVISIONAL_ADVICE")
+        self.assertEqual(result["recommendation"],"じしん。")
+        self.assertTrue(result["late_advice_presented"])
+        self.assertIn("32秒超過",result["warning"])
+        self.assertTrue(any(x["event"]=="LATE_TURN_ADVICE_PRESENTED"
+                            for x in panel._timing_trace))
+
     def test_event_observed_before_ai_finishes_discards_stale_first_turn(self):
         panel=self.window._match_panel
         panel.state={"phase":"BATTLE"}

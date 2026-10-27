@@ -11,6 +11,22 @@ from champions_assist.ocr import TesseractJapaneseOcr,discover_japanese_tesserac
 
 
 class PortableJapaneseOcrTests(TestCase):
+    def test_ocr_sanitizes_noncontiguous_and_single_channel_uint8(self):
+        import numpy as np
+        from unittest.mock import MagicMock
+        import pytesseract
+        reader=TesseractJapaneseOcr()
+        reader.command="tesseract"
+        reader.tessdata_dir="tessdata"
+        sample=np.full((12,13,3),120,dtype=np.float32)[:,::2,0:1]
+        with patch("pytesseract.image_to_data",return_value={"text":["test"],"conf":["98"]}) as read:
+            result=reader.read(sample,roi_name="MESSAGE")
+        self.assertEqual(result.text,"test")
+        passed=read.call_args.args[0]
+        self.assertEqual(passed.dtype,np.uint8)
+        self.assertTrue(passed.flags["C_CONTIGUOUS"])
+        self.assertEqual(passed.ndim,2)
+
     def test_bundled_runtime_requires_both_language_models(self):
         with tempfile.TemporaryDirectory() as tmp:
             base=Path(tmp)/"ocr-runtime"

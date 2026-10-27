@@ -75,6 +75,21 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         finally:
             reader.stop()
 
+    def test_legacy_system_message_does_not_start_ocr(self):
+        profile,image,engine=fixture()
+        legacy_region=FieldRegion(
+            "system_message","MESSAGE",(34,2,62,15),("BATTLE_EVENT",))
+        legacy=ScreenFieldProfile(
+            profile.reference_resolution,profile.regions+(legacy_region,),
+            "OLD_CALIBRATION",False)
+        reader=AsyncBattleEventReader(legacy,ocr_engine=engine)
+        try:
+            self.assertTrue(reader.offer(image,label="BATTLE_EVENT"))
+            self.assertEqual(len(completed(reader)),1)
+            self.assertNotIn("system_message",engine.calls)
+        finally:
+            reader.stop()
+
     def test_event_offer_never_waits_for_blocked_ocr_and_queue_is_bounded(self):
         profile,image,_=fixture()
         entered=Event()
