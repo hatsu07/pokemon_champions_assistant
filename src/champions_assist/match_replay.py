@@ -1170,7 +1170,8 @@ _BATCH_SCHEMA = {
 def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      access_token: str, model: str, total_seconds: float = 35.0,
                      client_factory=None, reasoning_effort: str = "auto",
-                     local_field_candidates: list[dict] | None = None) -> tuple[dict, dict]:
+                     local_field_candidates: list[dict] | None = None,
+                     expected_screen_label: str | None = None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1188,8 +1189,12 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         client=client_factory(api_key=access_token,base_url="https://api.openai.com/v1",
                               timeout=total_seconds,max_retries=0)
         phase=state.get("phase")
+        switch_only=expected_screen_label=="SWITCH_SELECTION"
         prompt={
             "phase":phase,
+            "expected_screen_label":expected_screen_label or "UNCLASSIFIED",
+            "required_action_kind":"SWITCH" if switch_only else "MOVE_OR_SWITCH",
+            "awaiting_replacement":bool(state.get("awaiting_replacement")),
             "selected_three":state.get("selected_three",[]),
             "lead":state.get("lead"),
             "opponent_six":state.get("opponent_six",[]),
@@ -1209,11 +1214,13 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                          "battle_evidence","battlefield")
             },
             "registered_command_options":{
-                "moves_by_pokemon":{
+                "moves_by_pokemon":({} if switch_only else {
                     m["name"]:[m.get("move"+str(i),"") for i in range(1,5)]
                     for m in assets.own_team
-                    if m["name"] in (state.get("selected_three") or [])},
+                    if m["name"] in (state.get("selected_three") or [])}),
                 "bench_candidates_from_current_state":_bench_candidates(state),
+                "confirmed_hp_by_pokemon":(state.get("battle_evidence") or {}).get(
+                    "hp_by_pokemon",{}),
                 "actual_bench_unconfirmed":bool(state.get("selection_assumed")),
             },
             "previous_observations":state.get("image_observations_unverified",[])[-6:],
@@ -1293,13 +1300,29 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "For MOVE_MENU "
                 "and PARTY_MENU require currently visible options. If current "
                 "active or a safe legal action cannot be identified, output "
-                "NO_ACTION and empty strings. Only fill our_used_move when "
+                "NO_ACTION and empty strings. For expected_screen_label "
+                "SWITCH_SELECTION, this is a separate forced/manual switch "
+                "decision: never choose MOVE/PIVOT or reuse a prior move; "
+                "choose a visible, non-fainted bench with SWITCH, or NO_ACTION. "
+                "Only fill our_used_move when "
                 "its resolved use is directly visible. Do not infer Mega "
                 "types or stat stages."
             ),
             content=content,
         )
         obs=answer["observation"]
+        if switch_only and obs.get("visual_ui")!="PARTY_MENU":
+            return deepcopy(state),{"status":"BLOCKED",
+                "reason":"SWITCH_SCREEN_RECOGNITION_MISMATCH",
+                "screen":obs.get("visual_ui","UNKNOWN"),"recommendation":"",
+                "expected_screen_label":expected_screen_label,
+                "elapsed_ms":round((perf_counter()-started)*1000)}
+        if switch_only and answer["action"].get("action_kind") not in ("SWITCH","NO_ACTION"):
+            return deepcopy(state),{"status":"BLOCKED",
+                "reason":"SWITCH_ONLY_MOVE_REJECTED",
+                "screen":"PARTY_MENU","recommendation":"",
+                "expected_screen_label":expected_screen_label,
+                "elapsed_ms":round((perf_counter()-started)*1000)}
         def cached_tactical(_context:dict,_remaining:float,kind:str)->dict:
             return answer["selection"] if kind=="SELECTION" else answer["action"]
         validation_started=perf_counter()
@@ -1318,6 +1341,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             late_advice_presented=bool(result.get("late_advice_presented")),
             elapsed_ms=round((perf_counter()-started)*1000),
             observed_ui=obs["visual_ui"],observation=obs,
+            expected_screen_label=expected_screen_label,
             model=model,images_sent=len(images),
             request_count=1,
         )
