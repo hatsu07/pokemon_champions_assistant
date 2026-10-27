@@ -10,7 +10,7 @@ import numpy as np
 from champions_assist.match_replay import (
     new_replay, advance_observation, confirm_actual_selection,
     assume_advised_selection, validate_battle_choice, run_replay_prep,
-    run_replay_image, run_replay_text_action, run_replay_text_result,
+    run_replay_image, run_replay_batch, run_replay_text_action, run_replay_text_result,
     possible_result_message,
 )
 from champions_assist.preload import FrozenMatchAssets
@@ -67,6 +67,78 @@ class FullReplayTest(unittest.TestCase):
         self.state,result=advance_observation(
             self.state,self.assets,observation,callback,elapsed_seconds=lambda:5.0)
         return result
+
+    def _post_switch_state(self):
+        state=new_replay(self.assets)
+        state.update(
+            phase="BATTLE",our_active="ガブリアス",
+            opponent_active="マスカーニャ",
+            selected_three=["ガブリアス","マリルリ","ドドゲザン"],
+            lead="ガブリアス",_active_identity_needs_confirmation=True)
+        return state
+
+    def test_post_switch_stale_text_only_turn_is_blocked_before_ai(self):
+        state=self._post_switch_state()
+        with patch("champions_assist.match_replay._stream_json") as model:
+            next_state,report=run_replay_text_action(
+                state=state,assets=self.assets,
+                access_token="mock",model="mock",
+                expected_screen_label="TURN_ACTION")
+        model.assert_not_called()
+        self.assertEqual(report["reason"],"POST_SWITCH_ACTIVE_RECHECK_REQUIRED")
+        self.assertTrue(next_state["_active_identity_needs_confirmation"])
+
+    def test_post_switch_image_without_current_actor_blocks_repeat_switch(self):
+        state=self._post_switch_state()
+        response={
+            "observation":frame(
+                "COMMAND_MENU",our_active="",
+                opponent_active="マスカーニャ"),
+            "action":{"action_kind":"SWITCH","move":"",
+                      "switch_target":"ドドゲザン","warning":""},
+            "selection":{"selected_three":[],"lead":""},
+        }
+        diagnostics=[]
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            updated,report=run_replay_batch(
+                [np.zeros((32,48,3),dtype=np.uint8)],
+                state=state,assets=self.assets,access_token="mock",
+                model="mock",client_factory=lambda **kw:object(),
+                expected_screen_label="TURN_ACTION",
+                diagnostic_sink=lambda event,details:diagnostics.append(
+                    (event,details)))
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"POST_SWITCH_ACTIVE_NOT_CONFIRMED")
+        self.assertFalse(report.get("recommendation"))
+        self.assertEqual(updated["our_active"],"ガブリアス")
+        self.assertTrue(updated["_active_identity_needs_confirmation"])
+        self.assertEqual(diagnostics[-1][1]["validation_code"],
+                         "POST_SWITCH_ACTIVE_NOT_CONFIRMED")
+
+    def test_post_switch_current_actor_updates_before_action_validation(self):
+        state=self._post_switch_state()
+        response={
+            "observation":frame(
+                "COMMAND_MENU",our_active="ドドゲザン",
+                opponent_active="マスカーニャ"),
+            # The model still tries the stale action: validation must reject.
+            "action":{"action_kind":"SWITCH","move":"",
+                      "switch_target":"ドドゲザン","warning":""},
+            "selection":{"selected_three":[],"lead":""},
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            updated,report=run_replay_batch(
+                [np.zeros((32,48,3),dtype=np.uint8)],
+                state=state,assets=self.assets,access_token="mock",
+                model="mock",client_factory=lambda **kw:object(),
+                expected_screen_label="TURN_ACTION")
+        self.assertEqual(updated["our_active"],"ドドゲザン")
+        self.assertFalse(updated["_active_identity_needs_confirmation"])
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"SWITCH_TARGET_NOT_SELECTED")
+        self.assertFalse(report.get("recommendation"))
 
     def test_replay_image_keeps_valid_selection_after_55s_without_new_request(self):
         # Fake the two model stages without network or control of the game.
