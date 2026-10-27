@@ -1392,7 +1392,7 @@ def possible_result_message(message: str) -> bool:
     return bool(re.search(
         r"勝利|敗北|しょうり|試合に勝|試合に負|対戦に勝|対戦に負|"
         r"勝ちました|勝った|負けました|負けた|"
-        r"you\\s+win|you\\s+lose|相手.{0,8}(?:降参|投了)",
+        r"you\s+win|you\s+lose|相手.{0,8}(?:降参|投了)",
         compact))
 
 
@@ -1565,7 +1565,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             lambda *_args:answer,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=max(total_seconds,perf_counter()-started+2))
-         result["transport"]="OCR_TEXT_ONLY"
+        result["transport"]="OCR_TEXT_ONLY"
         result["images_sent"]=0
         result["screen_label_hint"]=expected_screen_label
         result["elapsed_ms"]=round((perf_counter()-started)*1000)
