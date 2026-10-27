@@ -15,6 +15,13 @@ _MESSAGE_SUFFIXES=("battle_message","system_message")
 _EFFECT_SUFFIXES=("item_popup","effect_popup","ability_popup")
 
 
+def _frame_id(row):
+    if row.get("frame_id"):
+        return str(row["frame_id"])
+    ids=row.get("evidence_ids")
+    return str(ids[0]) if isinstance(ids,(list,tuple)) and ids else ""
+
+
 def _at(row, default):
     value=row.get("observed_at")
     if type(value) in (int,float) and isfinite(value) and value>=0:
@@ -42,8 +49,8 @@ def select_ai_ocr_evidence(rows, *, max_rows=MAX_AI_OCR_ROWS):
     if not 1<=max_rows<=MAX_AI_OCR_ROWS:
         raise ValueError("OCR AI row cap must be in 1..36")
     source=[r for r in rows or () if isinstance(r,dict)
-            and r.get("frame_id") and r.get("field")
-            and r.get("raw_text") is not None]
+            and _frame_id(r) and r.get("field")
+            and (r.get("raw_text") is not None or "candidate" in r)]
     indexed=sorted(enumerate(source),key=lambda row:(
         _at(row[1],row[0]),row[0]))
     if indexed:
@@ -55,7 +62,8 @@ def select_ai_ocr_evidence(rows, *, max_rows=MAX_AI_OCR_ROWS):
                  last-_at(r,i)<=OCR_LOOKBACK_SECONDS]
     unique={}
     for i,r in indexed:
-        key=(str(r["frame_id"]),str(r["field"]),str(r.get("raw_text") or ""))
+        key=(_frame_id(r),str(r["field"]),
+             str(r.get("raw_text") or r.get("candidate") or ""))
         # Preserve strongest reading when a frame/ROI is duplicated.
         old=unique.get(key)
         if old is None or (r.get("confidence") or 0)>(
@@ -73,11 +81,11 @@ def select_ai_ocr_evidence(rows, *, max_rows=MAX_AI_OCR_ROWS):
     reserve(messages,24,4)
     reserve(popups,6,0)
     reserve(hud,6,0)
-    selected_keys={(i,str(r.get("frame_id")),str(r.get("field")))
+    selected_keys={(i,_frame_id(r),str(r.get("field")))
                    for i,r in kept}
     if len(kept)<max_rows:
         remainder=[x for x in ordered
-                   if (x[0],str(x[1].get("frame_id")),str(x[1].get("field")))
+                   if (x[0],_frame_id(x[1]),str(x[1].get("field")))
                    not in selected_keys]
         kept.extend(remainder[-(max_rows-len(kept)):])
     kept=sorted(kept,key=lambda t:(_at(t[1],t[0]),t[0]))
@@ -93,7 +101,7 @@ def select_ai_ocr_evidence(rows, *, max_rows=MAX_AI_OCR_ROWS):
             str(x.get("field","")).endswith(_MESSAGE_SUFFIXES)
             for x in selected),
         "selected_frames":list(dict.fromkeys(
-            str(x["frame_id"]) for x in selected))[-36:],
+            _frame_id(x) for x in selected))[-36:],
         "dropped_frames":list(dict.fromkeys(
-            str(x["frame_id"]) for x in excluded))[-12:],
+            _frame_id(x) for x in excluded))[-12:],
     }
