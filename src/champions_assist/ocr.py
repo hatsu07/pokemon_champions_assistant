@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import csv
+from io import StringIO
+import os
+import tempfile
 from pathlib import Path
 import subprocess
 import shutil
@@ -68,6 +72,25 @@ def discover_japanese_tesseract() -> tuple[str, str] | None:
     return None
 
 
+class OcrExecutionError(RuntimeError):
+    """Sanitized OCR failure. Never include raw stderr or private paths."""
+    def __init__(self, code: str, *, status: int | None=None):
+        super().__init__(code)
+        self.code=code
+        self.status=status
+
+
+def classify_ocr_failure(stderr: str, status: int) -> str:
+    message=str(stderr).casefold()
+    if "error opening data file" in message or "failed loading language" in message:
+        return "OCR_TESSDATA_LOAD_FAILED"
+    if "couldn't load any languages" in message or "no languages could be loaded" in message:
+        return "OCR_LANGUAGE_UNAVAILABLE"
+    if "image" in message and ("read" in message or "decode" in message):
+        return "OCR_IMAGE_READ_FAILED"
+    return "TESSERACT_EXIT_"+str(status) if 0<=status<=255 else "OCR_NATIVE_FAILED"
+
+
 class TesseractJapaneseOcr:
     """Japanese/English Tesseract adapter with an explicit bundled runtime."""
 
@@ -84,30 +107,58 @@ class TesseractJapaneseOcr:
         self.command,self.tessdata_dir=runtime if runtime is not None else (None,None)
 
     def read(self, image: np.ndarray, *, roi_name: str) -> OcrRead:
-        if self.command is None or self.tessdata_dir is None:
-            raise RuntimeError("JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE")
-        import pytesseract
+        """Execute the packaged binary with isolated tessdata and a real PNG.
 
-        # Tesseract requires a nonempty uint8 image with supported channels.
-        # Capture/ROI pipelines can supply noncontiguous or BGRA arrays.
+        Avoid pytesseract's process-global binary path and config parsing.
+        A Tesseract exit-1 is diagnosed without leaking user paths/text.
+        """
+        if self.command is None or self.tessdata_dir is None:
+            raise OcrExecutionError("OCR_RUNTIME_MISSING")
         if image.size == 0 or image.ndim not in (2,3):
             raise ValueError("OCR_INVALID_IMAGE_SHAPE")
         if image.ndim==3 and image.shape[2] not in (1,3,4):
             raise ValueError("OCR_INVALID_IMAGE_CHANNELS")
-        if image.dtype!=np.uint8:
+        if image.dtype != np.uint8:
             image=np.clip(image,0,255).astype(np.uint8)
         if image.ndim==3 and image.shape[2]==1:
             image=image[:,:,0]
         image=np.ascontiguousarray(image)
-        pytesseract.pytesseract.tesseract_cmd=self.command
-        config=f'--tessdata-dir "{self.tessdata_dir}" {self.config}'
-        data = pytesseract.image_to_data(
-            image,lang=self.languages,config=config,
-            output_type=pytesseract.Output.DICT,timeout=self.timeout_seconds)
-        tokens = [str(token).strip() for token in data["text"] if str(token).strip()]
-        confidences = [float(value) for value in data["conf"] if str(value) not in {"", "-1"}]
-        confidence = None if not confidences else sum(confidences) / (100.0 * len(confidences))
-        return OcrRead(" ".join(tokens), confidence, self.engine_name)
+        import cv2
+        if image.ndim==3 and image.shape[2]==3:
+            image=cv2.cvtColor(image,cv2.COLOR_RGB2BGR)
+        elif image.ndim==3 and image.shape[2]==4:
+            image=cv2.cvtColor(image,cv2.COLOR_RGBA2BGRA)
+        ok, buffer=cv2.imencode(".png",image)
+        if not ok:
+            raise OcrExecutionError("OCR_PNG_ENCODING_FAILED")
+        environment=os.environ.copy()
+        environment["TESSDATA_PREFIX"]=self.tessdata_dir
+        with tempfile.TemporaryDirectory(prefix="champions-ocr-") as directory:
+            path=Path(directory)/"roi.png"
+            path.write_bytes(buffer.tobytes())
+            try:
+                process=subprocess.run(
+                    [self.command,str(path),"stdout","-l",self.languages,
+                     "--tessdata-dir",self.tessdata_dir,*self.config.split(),"tsv"],
+                    capture_output=True,text=True,errors="replace",
+                    env=environment,timeout=self.timeout_seconds,check=False)
+            except subprocess.TimeoutExpired as exc:
+                raise OcrExecutionError("OCR_PROCESS_TIMEOUT") from exc
+            except OSError as exc:
+                raise OcrExecutionError("OCR_PROCESS_START_FAILED") from exc
+        if process.returncode != 0:
+            raise OcrExecutionError(
+                classify_ocr_failure(process.stderr,process.returncode),
+                status=process.returncode)
+        try:
+            rows=list(csv.DictReader(StringIO(process.stdout),delimiter="\t"))
+            tokens=[r["text"].strip() for r in rows if r.get("text","").strip()]
+            confs=[float(r["conf"]) for r in rows
+                   if r.get("conf","").strip() not in ("","-1")]
+        except (KeyError,ValueError,TypeError) as exc:
+            raise OcrExecutionError("OCR_INVALID_TSV") from exc
+        confidence=(sum(confs)/(100.0*len(confs))) if confs else None
+        return OcrRead(" ".join(tokens),confidence,self.engine_name)
 
     @staticmethod
     def runtime_manifest() -> dict[str, object]:
