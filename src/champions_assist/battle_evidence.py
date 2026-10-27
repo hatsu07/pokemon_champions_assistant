@@ -93,8 +93,9 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
         # Faint is a directly observed event. Record this actor as 0 HP
         # even when the numeric HP overlay was not visible in that frame.
         # Never transfer it to a different or unconfirmed Pokémon.
-        if own:
-            memory["hp_by_pokemon"]["own"][own] = "0"
+        fainted_actor=previous_own or own
+        if fainted_actor:
+            memory["hp_by_pokemon"]["own"][fainted_actor] = "0"
     move = _clean(observation.get("our_used_move"))
     if move and own and observation.get("visual_ui") == "ACTION_RESOLUTION":
         memory["last_confirmed_our_move"] = move
