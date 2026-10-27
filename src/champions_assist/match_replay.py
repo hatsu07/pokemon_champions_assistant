@@ -1633,6 +1633,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
+                "Interpret OCR frames as observed events, return state_updates and action together. "
+                "Evaluate moves for interpreted_own_active after the updates. "
                 "No new visual evidence is available. Optimize all remaining "
                 "three Pokémon; preserve identified win conditions and respect "
                 "known fainting, statuses, choice locks, mega forms and first-"
