@@ -472,6 +472,7 @@ class SelectionTestDialog(QDialog):
     @Slot()
     def _retry_close_after_workers(self):
         if (self._close_after_workers and self.thread is None
+                and self.ocr_thread is None
                 and (self.live_panel is None or
                      (self.live_panel._thread is None
                       and self.live_panel._prep_thread is None))):
