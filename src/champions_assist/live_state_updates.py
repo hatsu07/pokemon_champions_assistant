@@ -196,6 +196,17 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             name=corpus.get(_flat(text))
             if name:
                 evt={"kind":"ACTIVE","side":side,"pokemon":name}
+        elif field.startswith("screen_text.own_pp_move") and field[-1:] in "1234":
+            obj=getattr(rec,"value",None)
+            if isinstance(obj,dict) and set(("current","maximum"))<=obj.keys():
+                slot=int(field[-1:])
+                actor=updated.get("our_active","")
+                member=next((m for m in assets.own_team
+                             if _pokemon(m["name"])==_pokemon(actor)),None)
+                move=member.get("move"+str(slot),"") if member else ""
+                if move:
+                    evt={"kind":"PP","side":"own","pokemon":actor,
+                         "move":move,"pp":int(obj["current"])}
         elif field=="screen_text.own_hp_fraction":
             obj=getattr(rec,"value",None)
             if isinstance(obj,dict) and set(("current","maximum"))<=obj.keys():
@@ -246,6 +257,13 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                         if updated.get("prep"):
                             updated["prep"]["unknown_filled_during_match"]=name
                 updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
+        elif kind=="PP":
+            actor=updated.get("our_active")
+            if not actor or actor!=name:
+                audit.append({"kind":kind,"status":"CANDIDATE",
+                              "reason":"ACTIVE_NOT_CONFIRMED","frame_id":ref[0]})
+                continue
+            evidence["pp_by_pokemon"]["own"].setdefault(actor,{})[evt["move"]]=evt["pp"]
         elif kind=="HP":
             actor=updated.get("our_active" if side=="own" else "opponent_active")
             if not actor or (side=="own" and updated.get("awaiting_replacement")):
