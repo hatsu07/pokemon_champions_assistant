@@ -1309,12 +1309,6 @@ class MatchReplayDialog(QDialog):
             frames=frames[-2:]
         self._pending_batch=None
         self._pending_screen_label=None
-        # The next outgoing AI message supersedes unfinished PREP, not a
-        # locally estimated 40-second PREP deadline or a screen animation.
-        if self._prep_thread is not None:
-            self._trace_event("PREP_SUPERSEDED_BY_NEW_AI_REQUEST",
-                              screen_label=screen_label or "UNCLASSIFIED")
-            self._interrupt_prep()
         self._turn_buffer.reset_turn()
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
@@ -1341,6 +1335,13 @@ class MatchReplayDialog(QDialog):
                           "screen":screen_label,
                           "warning":"AI表示の最終期限を超過しました。ゲーム内時計は未取得。"})
             return
+        # Only this successful new AI dispatch invalidates unfinished PREP.
+        # No cancellation on soft 40s expiry, screen animations or a request
+        # abandoned before it was actually sent.
+        if self._prep_thread is not None:
+            self._trace_event("PREP_SUPERSEDED_BY_NEW_AI_REQUEST",
+                              screen_label=screen_label or "UNCLASSIFIED")
+            self._interrupt_prep()
         if screen_label in _URGENT_SCREENS:
             self._turn_action_sent=True
             self._active_turn_epoch=self._turn_epoch
