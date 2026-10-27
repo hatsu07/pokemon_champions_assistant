@@ -1770,6 +1770,13 @@ class MatchReplayDialog(QDialog):
                     captured_frame=result.observations[0].frame_id
                 capture_epoch=self._ocr_capture_epochs.pop(
                     captured_frame,self._turn_epoch)
+                if (self._active_request_started is not None and
+                        result.timestamp<=self._active_request_started):
+                    self._trace_event("OCR_COMPLETED_AFTER_AI_INPUT_FREEZE",
+                        frame_id=captured_frame,
+                        capture_epoch=capture_epoch,
+                        delay_ms=max(0,int((monotonic()-result.timestamp)*1000)),
+                        active_request_id=self._active_request_id)
                 if result.error:
                     self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
