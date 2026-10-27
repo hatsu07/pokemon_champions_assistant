@@ -276,14 +276,38 @@ class UnifiedMainWindowTests(unittest.TestCase):
         frame=np.zeros((80,160,3),dtype=np.uint8)
         with patch.object(panel,"_send_pending"):
             panel._queue_batch([frame],screen_label="TURN_ACTION")
-        panel._turn_screen_seen_at=monotonic()-22.0
+        panel._turn_screen_seen_at=monotonic()-33.0
         panel._send_pending()
         self.assertEqual(panel._last_action_text,"")
-        self.assertIn("保守的AI締切超過",panel.action_banner.text())
+        self.assertIn("AI表示最終期限超過",panel.action_banner.text())
         self.assertTrue(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
-                            and x.get("timeout_budget_ms")==20000
+                            and x.get("timeout_budget_ms")==32000
                             for x in panel._timing_trace))
         self.assertIsNone(panel._thread)
+
+    def test_30_second_target_allows_22_second_first_turn_advice(self):
+        from time import monotonic
+        from champions_assist.match_replay_dialog import (
+            _TARGET_AI_TURN_SECONDS,_CONSERVATIVE_AI_TURN_SECONDS)
+        self.assertEqual(_TARGET_AI_TURN_SECONDS,30.0)
+        self.assertEqual(_CONSERVATIVE_AI_TURN_SECONDS,32.0)
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP"}
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._active_turn_epoch=1
+        panel._turn_epoch=1
+        panel._turn_screen_seen_at=monotonic()-22.8
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        with patch.object(panel,"_render") as render:
+            panel._completed({"state":{"phase":"BATTLE"},
+                              "report":{"status":"PROVISIONAL_ADVICE",
+                                        "recommendation":"じしん。",
+                                        "screen":"COMMAND_MENU"}})
+        self.assertNotEqual(render.call_args.args[0]["status"],
+                            "DEADLINE_EXCEEDED")
+        self.assertEqual(render.call_args.args[0]["recommendation"],"じしん。")
 
     def test_event_observed_before_ai_finishes_discards_stale_first_turn(self):
         panel=self.window._match_panel
@@ -873,6 +897,53 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(any(row.get("event")=="BATTLE_EVENT_FRAMES_INCLUDED"
                             and row.get("image_count")==3
                             for row in panel._timing_trace))
+
+    def test_text_first_omits_recognized_event_but_keeps_current_menu(self):
+        from dataclasses import replace
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._event_frames.clear()
+        panel._event_frame_ids.clear()
+        panel._field_profile=replace(
+            ScreenFieldProfile.from_user_samples_960x572(),
+            validated_on_game_capture=True)
+        panel._last_local_ocr_status="READY"
+        panel._last_local_ocr_stats={
+            "ocr_jobs_enqueued":1,"ocr_jobs_completed":1,
+            "ocr_queue_pending":0,"overflow":0,
+            "ocr_results_dropped":0,"ocr_errors":0}
+        frame=np.full((80,160,3),150,dtype=np.uint8)
+        panel._last_capture_seq=31
+        panel._remember_event_frame(frame)
+        text=[{"frame_id":"capture-31","roi":"battle_message",
+               "raw_text":"相手のこうげきが上がった","confidence":0.98,
+               "certainty":"CANDIDATE","game_validated":False}]
+        command=np.zeros_like(frame)
+        result=panel._frames_for_action(command,text)
+        self.assertEqual(len(result),1)
+        self.assertTrue(np.array_equal(result[0],command))
+        self.assertTrue(any(row["event"]=="EVENT_IMAGE_TEXT_FIRST_DECISION"
+                            and row.get("image_count")==1
+                            for row in panel._timing_trace))
+
+    def test_event_image_kept_for_nonvalidated_ocr_even_with_high_confidence(self):
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._event_frames.clear()
+        panel._event_frame_ids.clear()
+        panel._field_profile=ScreenFieldProfile.from_user_samples_960x572()
+        panel._last_local_ocr_status="READY"
+        panel._last_local_ocr_stats={"ocr_jobs_enqueued":1,
+            "ocr_jobs_completed":1,"ocr_queue_pending":0}
+        frame=np.full((80,160,3),150,dtype=np.uint8)
+        panel._last_capture_seq=55
+        panel._remember_event_frame(frame)
+        obs=[{"frame_id":"capture-55","roi":"battle_message",
+              "raw_text":"ピカチュウはまひした","confidence":0.99,
+              "certainty":"CANDIDATE","game_validated":False}]
+        self.assertEqual(len(panel._frames_for_action(np.zeros_like(frame),obs)),2)
 
     def test_loaded_classifier_never_sends_non_action_or_unknown(self):
         from champions_assist.screen_classifier import ScreenPrediction

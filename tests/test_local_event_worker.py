@@ -134,10 +134,11 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
 
     def test_missing_tesseract_is_nonfatal(self):
         profile,_,_=fixture()
-        with patch("shutil.which",return_value=None):
+        with patch("champions_assist.ocr.discover_japanese_tesseract",
+                   return_value=None):
             reader=AsyncBattleEventReader.with_local_tesseract(profile)
         self.assertFalse(reader.enabled)
-        self.assertEqual(reader.reason,"TESSERACT_EXECUTABLE_UNAVAILABLE")
+        self.assertEqual(reader.reason,"JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE")
         reader.stop()
 
     def test_observations_remain_candidates_and_changing_hp_is_not_conflict(self):

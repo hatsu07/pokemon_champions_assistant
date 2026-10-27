@@ -106,12 +106,12 @@ class AsyncBattleEventReader:
                              *, lexicon: ScreenLexicon | None=None,
                              ocr_engine: OcrEngine | None=None):
         if ocr_engine is None:
-            # Do not invoke a subprocess on the UI/capture thread. If missing,
-            # leave image-based battle-event evidence intact.
-            import shutil
-            if shutil.which("tesseract") is None:
+            # A portable Windows EXE includes native tesseract and tessdata;
+            # merely finding "tesseract" on PATH is insufficient without jpn.
+            from .ocr import discover_japanese_tesseract
+            if discover_japanese_tesseract() is None:
                 instance=cls(profile,lexicon=lexicon)
-                instance.reason="TESSERACT_EXECUTABLE_UNAVAILABLE"
+                instance.reason="JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE"
                 return instance
             ocr_engine=TesseractJapaneseOcr()
         return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)

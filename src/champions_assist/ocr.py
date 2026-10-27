@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import subprocess
+import shutil
+import sys
 from typing import Iterable, Mapping, Protocol
 
 import numpy as np
@@ -42,8 +44,32 @@ class MappingOcrEngine:
         return self.readings.get((roi_name, image_digest(image)), OcrRead("", None, "MAPPING_OCR"))
 
 
+def discover_japanese_tesseract() -> tuple[str, str] | None:
+    """Find both native executable and Japanese data; no subprocess or network.
+
+    Portable builds stage OCR in _MEIPASS/ocr-runtime. A locally installed
+    Tesseract with jpn.traineddata remains supported.
+    """
+    roots=[Path(getattr(sys,"_MEIPASS",Path(sys.executable).parent))/"ocr-runtime",
+           Path(sys.executable).parent/"ocr-runtime"]
+    if sys.platform=="win32":
+        roots.extend([
+            Path("C:/Program Files/Tesseract-OCR"),
+            Path("C:/Program Files (x86)/Tesseract-OCR")])
+    found=shutil.which("tesseract")
+    if found:
+        roots.append(Path(found).parent)
+    for root in roots:
+        binary=root/("tesseract.exe" if sys.platform=="win32" else "tesseract")
+        data=root/"tessdata"
+        if binary.is_file() and (data/"jpn.traineddata").is_file() and (
+                data/"eng.traineddata").is_file():
+            return str(binary),str(data)
+    return None
+
+
 class TesseractJapaneseOcr:
-    """Japanese/English Tesseract adapter, used only when explicitly configured."""
+    """Japanese/English Tesseract adapter with an explicit bundled runtime."""
 
     engine_name = "tesseract-jpn+eng"
 
@@ -52,11 +78,21 @@ class TesseractJapaneseOcr:
         self.languages = languages
         self.config = config
         self.timeout_seconds = timeout_seconds
+        runtime=discover_japanese_tesseract()
+        # Offline synthetic/labelled replay can construct the adapter without
+        # any native OCR executable. Only ACTUAL OCR requires the runtime.
+        self.command,self.tessdata_dir=runtime if runtime is not None else (None,None)
 
     def read(self, image: np.ndarray, *, roi_name: str) -> OcrRead:
+        if self.command is None or self.tessdata_dir is None:
+            raise RuntimeError("JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE")
         import pytesseract
 
-        data = pytesseract.image_to_data(image, lang=self.languages, config=self.config, output_type=pytesseract.Output.DICT, timeout=self.timeout_seconds)
+        pytesseract.pytesseract.tesseract_cmd=self.command
+        config=f'--tessdata-dir "{self.tessdata_dir}" {self.config}'
+        data = pytesseract.image_to_data(
+            image,lang=self.languages,config=config,
+            output_type=pytesseract.Output.DICT,timeout=self.timeout_seconds)
         tokens = [str(token).strip() for token in data["text"] if str(token).strip()]
         confidences = [float(value) for value in data["conf"] if str(value) not in {"", "-1"}]
         confidence = None if not confidences else sum(confidences) / (100.0 * len(confidences))
