@@ -31,6 +31,7 @@ from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile
 from .local_event_worker import AsyncBattleEventReader
 from .battle_state_tracker import LocalBattleStateTracker
+from .local_event_image_policy import event_image_plan
 from .observation_events import ScreenLexicon
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
 from .match_debug_log import MatchDebugLog
@@ -288,6 +289,9 @@ class MatchReplayDialog(QDialog):
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
         self._event_frames=[]
+        self._event_frame_ids=[]
+        self._last_local_ocr_stats={}
+        self._last_local_ocr_status="NOT_RUNNING"
         self._local_event_reader=None
         self._local_battle_tracker=LocalBattleStateTracker()
         self._automatic_probe=AutomaticVisualProbe(
@@ -656,6 +660,7 @@ class MatchReplayDialog(QDialog):
         self._stop_auto()
         self._turn_buffer.reset_turn()
         self._event_frames.clear()
+        self._event_frame_ids.clear()
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._last_local_class=None
@@ -755,6 +760,7 @@ class MatchReplayDialog(QDialog):
             # Recalibrate command screens if target/window content changed.
             self._turn_buffer=TurnCaptureBuffer()
             self._event_frames.clear()
+            self._event_frame_ids.clear()
             self._automatic_probe.reset()
             self._screen_gate.reset()
             self._last_local_class=None
@@ -989,6 +995,7 @@ class MatchReplayDialog(QDialog):
         self._capture_gate.reset()
         self._turn_buffer.reset_turn()
         self._event_frames.clear()
+        self._event_frame_ids.clear()
         self._automatic_probe.reset()
         self._screen_gate.reset()
         self._last_local_class=None
@@ -1264,11 +1271,14 @@ class MatchReplayDialog(QDialog):
         screen_label=self._pending_screen_label
         # Only the CURRENT screenshot is needed for the opponent-six preview;
         # old transition frames are unhelpful and cost capture/memory time.
+        local_candidates=(
+            self._freeze_local_events_for_action(screen_label)
+            if screen_label in _URGENT_SCREENS else [])
         if frames and self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             frames=[frames[-1]]
         elif frames and screen_label in _URGENT_SCREENS:
             # Preserve preceding event text without standalone paid event calls.
-            frames=self._frames_for_action(frames[-1])
+            frames=self._frames_for_action(frames[-1],local_candidates)
         elif frames and (
                 screen_label=="BATTLE_EVENT"
                 or (screen_label is None and self.state.get("phase")
@@ -1346,7 +1356,7 @@ class MatchReplayDialog(QDialog):
             frames=frames,cancel_event=self._cancel_event,
             screen_label=screen_label,
             field_profile=self._field_profile,
-            local_field_candidates=self._freeze_local_events_for_action(screen_label),
+            local_field_candidates=local_candidates,
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -1517,7 +1527,8 @@ class MatchReplayDialog(QDialog):
         if self._local_event_reader is None:
             self._start_local_event_reader()
         reader=self._local_event_reader
-        if reader.offer(image,label="BATTLE_EVENT"):
+        if reader.offer(image,label="BATTLE_EVENT",
+                        frame_id=f"capture-{self._last_capture_seq}"):
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
@@ -1545,6 +1556,8 @@ class MatchReplayDialog(QDialog):
         if screen_label in _URGENT_SCREENS:
             reader=self._local_event_reader
             stats=reader.diagnostic_counts() if reader is not None else {}
+            self._last_local_ocr_stats=dict(stats)
+            self._last_local_ocr_status=reader.reason if reader else "NOT_RUNNING"
             # Once per actionable menu, rather than logging every ROI / frame.
             self._trace_event("LOCAL_OCR_TURN_SUMMARY",
                               frame_seq=self._last_capture_seq,
@@ -1570,16 +1583,38 @@ class MatchReplayDialog(QDialog):
             if float(np.mean(np.abs(signature-last)))<0.025:
                 return
         self._event_frames.append(image.copy())
+        self._event_frame_ids.append(f"capture-{self._last_capture_seq}")
         self._event_frames=self._event_frames[-2:]
+        self._event_frame_ids=self._event_frame_ids[-2:]
         self._trace_event("BATTLE_EVENT_FRAME_BUFFERED",
                           pending_count=len(self._event_frames))
 
-    def _frames_for_action(self,command_image):
-        """One current action screen + at most two preceding event screenshots."""
-        frames=self._event_frames[-2:]+[command_image.copy()]
+    def _frames_for_action(self,command_image,local_candidates=None):
+        """Send OCR text first; retain image fallback if ANY evidence is missing.
+
+        Current actionable menu image is ALWAYS included to verify active and
+        opponent state. Event screenshots can be skipped only when the saved
+        ROI profile is validated on actual capture, OCR is complete and each
+        buffered frame has confident message recognition.
+        """
+        plan=event_image_plan(
+            self._event_frame_ids,
+            local_candidates or [],
+            reader_status=self._last_local_ocr_status,
+            roi_validated=bool(self._field_profile
+                               and self._field_profile.validated_on_game_capture),
+            ocr_counters=self._last_local_ocr_stats)
+        frames=(self._event_frames[-2:] if plan.include_event_images else [])
+        frames=list(frames)+[command_image.copy()]
         self._event_frames.clear()
-        self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",
-                          image_count=len(frames))
+        self._event_frame_ids.clear()
+        self._trace_event("EVENT_IMAGE_TEXT_FIRST_DECISION",
+                          image_count=len(frames),
+                          fallback_reason=plan.reason,
+                          event_images_buffered=plan.buffered,
+                          event_images_recognized=plan.recognized,
+                          image_fallback=plan.include_event_images)
+        self._trace_event("BATTLE_EVENT_FRAMES_INCLUDED",image_count=len(frames))
         return frames
 
     def _observe_fallback_transition(self,image,phase):
