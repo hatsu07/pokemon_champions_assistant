@@ -46,6 +46,32 @@ class PortableJapaneseOcrTests(TestCase):
         self.assertEqual(ctx.exception.code,"OCR_TESSDATA_LOAD_FAILED")
         self.assertNotIn("C:/private",str(ctx.exception))
 
+    def test_windows_smoke_separates_native_execution_and_glyph_accuracy(self):
+        """Synthetic ASCII misreads cannot be confused with Tesseract exit 1."""
+        from types import SimpleNamespace
+        from scripts.windows_desktop_entry import probe_bundled_ocr_execution
+        from champions_assist.ocr import OcrExecutionError
+        from unittest.mock import MagicMock
+        for value,expected in (("",False),("79%",False),("97%",True)):
+            with self.subTest(value=value):
+                mock=MagicMock()
+                mock.read.return_value=SimpleNamespace(
+                    engine="tesseract-jpn+eng",text=value,confidence=None)
+                with patch("champions_assist.ocr.TesseractJapaneseOcr",
+                           return_value=mock):
+                    report=probe_bundled_ocr_execution()
+                self.assertEqual(report["bundled_native_ocr"],
+                                 "OCR_NATIVE_EXECUTION_OK")
+                self.assertIs(report["synthetic_numeric_recognized"],expected)
+                mock.read.assert_called_once()
+        broken=MagicMock()
+        broken.read.side_effect=OcrExecutionError(
+            "OCR_TESSDATA_LOAD_FAILED",status=1)
+        with patch("champions_assist.ocr.TesseractJapaneseOcr",
+                   return_value=broken):
+            with self.assertRaises(OcrExecutionError):
+                probe_bundled_ocr_execution()
+
     def test_bundled_runtime_requires_both_language_models(self):
         with tempfile.TemporaryDirectory() as tmp:
             base=Path(tmp)/"ocr-runtime"
