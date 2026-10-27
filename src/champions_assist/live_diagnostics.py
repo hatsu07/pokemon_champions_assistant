@@ -34,6 +34,8 @@ _FIELDS = frozenset((
     "observed_event","name","phase","selected_bench_unconfirmed",
     "selected_switch_options","verified","stale","display_turn","original_turn",
     "origin","raw_text","ocr_text","parsed","outcome",
+    "state_updates","evidence_frames","certainty","from_pokemon","value",
+    "interpreted_own_active","interpreted_opponent_active",
 ))
 _TEXT_FIELDS = frozenset((
     "raw_text","ocr_text","warning","recommendation","displayed","evidence",
@@ -136,6 +138,9 @@ def ai_response_digest(response: dict) -> dict:
         "move":a.get("move"),
         "switch_target":a.get("switch_target"),
         "warning":a.get("warning"),
+        "interpreted_own_active":response.get("interpreted_own_active"),
+        "interpreted_opponent_active":response.get("interpreted_opponent_active"),
+        "state_updates":(response.get("state_updates") or [])[:8],
         "observation":{k:obs.get(k) for k in (
             "our_active","opponent_active","visual_ui","our_hp",
             "opponent_hp","observed_event")},
