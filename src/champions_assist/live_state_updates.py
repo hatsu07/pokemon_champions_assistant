@@ -469,12 +469,27 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 if side=="own":
                     evidence["last_confirmed_our_move"]=evt["move"]
                     evidence["last_observed_own_move"]=evt["move"]
-                # Opponent PP is UNKNOWN. Own PP decreases only when an
-                # independently observed prior numeric count was available.
-                pp=evidence["pp_by_pokemon"][side].get(name,{})
-                val=pp.get(evt["move"])
-                if isinstance(val,int) and val>0:
-                    pp[evt["move"]]=val-1
+                if side=="own":
+                    member=next((m for m in assets.own_team if
+                        any(_pokemon(part)==name for part in
+                            m.get("name","").split("→"))),None)
+                    if member and member.get("choice_lock")=="Y":
+                        item_state=evidence["item_state_by_pokemon"][
+                            "own"].get(name,{})
+                        held=evidence.get("item_by_pokemon",{}).get(
+                            "own",{}).get(name,"")
+                        item_ok=(item_state.get("state") not in (
+                            "SPENT_OR_LOST","CURRENT_UNKNOWN_AFTER_EXCHANGE")
+                            and (not held or held==member.get("item")))
+                        legal={_flat(member.get("move"+str(i),""))
+                               for i in range(1,5)}
+                        if item_ok and _flat(evt["move"]) in legal:
+                            evidence["choice_lock"]={
+                                "pokemon":name,"move":evt["move"],
+                                "source":"LOCAL_OCR_CONFIRMED_MOVE_AND_REGISTERED_CHOICE"}
+                # PP is authoritative only from a named, time-attested HUD.
+                # A move message alone does not prove the previous numeric
+                # read was pre-use (or that it costs exactly one PP).
             elif kind=="STATUS":
                 evidence.setdefault("status_by_pokemon",{"own":{},"opponent":{}})[side][name]=evt["status"]
             elif kind=="STATUS_CLEAR":
