@@ -39,7 +39,14 @@ class LocalBattleStateTracker:
                         self._latest_epoch.get(row.field)==turn_epoch)
             near_in_time=(turn_epoch is None and previous is not None and
                           0 <= row.timestamp-previous.timestamp <= 1.5)
-            if same_payload and (same_epoch or near_in_time):
+            # Two separate frames of an explicit send-out message may be
+            # necessary to corroborate a low-confidence read. Other repeated
+            # OCR (moves, HP, effects) remains deduplicated as before.
+            possible_send_out=(row.field.endswith("battle_message") and
+                               "ゆけっ" in "".join(row.text.split()) and
+                               previous is not None and
+                               previous.frame_id!=row.frame_id)
+            if same_payload and (same_epoch or near_in_time) and not possible_send_out:
                 self.duplicates+=1
                 continue
             status="CANDIDATE"
