@@ -97,6 +97,12 @@ def _event_for_message(text: str, own: dict, opponents: dict):
     if side and name:
         if re.fullmatch(r"(?:たおれた|倒れた|ひんしになった)!?",tail):
             return {"kind":"FAINT","side":side,"pokemon":name}
+        # Berry activation has the same つかった verb as a move.
+        # A known berry name is an item, never a fifth move.
+        berry=re.fullmatch(r"(.+?のみ)を(?:つかった|使った)!?",tail)
+        if berry:
+            return {"kind":"ITEM_SPENT","side":side,"pokemon":name,
+                    "item":berry.group(1)}
         move=re.fullmatch(r"(.+?)を(?:つかった|使った)!?",tail)
         if move:
             return {"kind":"MOVE","side":side,"pokemon":name,
@@ -235,7 +241,8 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 slot=int(field[-1:])
                 actor=updated.get("our_active","")
                 member=next((m for m in assets.own_team
-                             if _pokemon(m["name"])==_pokemon(actor)),None)
+                             if any(_pokemon(part)==_pokemon(actor)
+                                    for part in m["name"].split("→"))),None)
                 move=member.get("move"+str(slot),"") if member else ""
                 if move:
                     evt={"kind":"PP","side":"own","pokemon":actor,
