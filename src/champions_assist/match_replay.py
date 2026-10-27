@@ -69,6 +69,18 @@ ACTION_SCHEMA = {
     },
     "required": ["action_kind", "move", "switch_target", "warning"],
 }
+from .ai_ocr_state_updates import UPDATE_SCHEMA, apply_ai_ocr_updates
+AI_OCR_TURN_SCHEMA={
+    "type":"object","additionalProperties":False,
+    "properties":{
+        "state_updates":{"type":"array","items":UPDATE_SCHEMA},
+        "interpreted_own_active":{"type":"string"},
+        "interpreted_opponent_active":{"type":"string"},
+        "action":ACTION_SCHEMA,
+    },
+    "required":["state_updates","interpreted_own_active",
+                "interpreted_opponent_active","action"],
+}
 _SELECTION_NAME = "champions_replay_selection"
 _OBSERVATION_NAME = "champions_replay_observation"
 _ACTION_NAME = "champions_replay_action"
@@ -1564,7 +1576,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "cell":r.get("matrix_cell"),"source":r.get("source"),
         "hint":str(r.get("ai_hint") or "")[:140],
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
-    candidates=list(local_field_candidates or [])[-12:]
+    candidates=list(local_field_candidates or [])[-36:]
     prompt={
         "screen_kind":expected_screen_label,
         "choice_kind":"SWITCH_ONLY" if switch_only else "MOVE_OR_SWITCH",
@@ -1574,6 +1586,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "our_registered_moves":[] if switch_only else [
             own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
+        "registered_selected_moves":{m["name"]:[m.get("move"+str(i),"") for i in range(1,5)] for m in assets.own_team if m["name"] in (state.get("selected_three") or [])},
         "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
         "registered_move_categories":{
             n:getattr(assets,"move_class_index",{}).get(n,"UNKNOWN")
@@ -1615,11 +1628,16 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                               base_url="https://api.openai.com/v1",
                               timeout=total_seconds,max_retries=0)
         answer=_stream_json(
-            client,model=model,schema=ACTION_SCHEMA,
-            name="champions_text_only_turn",
+            client,model=model,schema=AI_OCR_TURN_SCHEMA,
+            name="champions_text_only_state_and_action",
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
+                "Interpret OCR frames as observed events, return state_updates and action together. "
+                "Evaluate moves for interpreted_own_active after the updates. "
+                "Cite actual OCR frame IDs in evidence_frames for each update. "
+                "Never treat previous recommended moves or switches as executed. "
+                "Unknown evidence means UNCERTAIN and potentially NO_ACTION. "
                 "No new visual evidence is available. Optimize all remaining "
                 "three Pokémon; preserve identified win conditions and respect "
                 "known fainting, statuses, choice locks, mega forms and first-"
@@ -1635,17 +1653,38 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
-        if switch_only and answer.get("action_kind") not in ("SWITCH","NO_ACTION"):
+        combined=isinstance(answer.get("action"),dict)
+        proposed=answer.get("state_updates",[]) if combined else []
+        action=answer["action"] if combined else answer
+        updated,audit=apply_ai_ocr_updates(state,proposed,candidates,assets)
+        if diagnostic_sink is not None:
+            for row in audit:
+                diagnostic_sink("AI_OCR_STATE_DECISION",row)
+        actor_conflict=any(row.get("status")=="REJECTED" and
+                           row.get("kind") in ("SWITCH","FAINT","MEGA")
+                           for row in audit)
+        if combined and (actor_conflict or
+                _canonical(answer.get("interpreted_own_active",""))!=
+                _canonical(updated.get("our_active","")) or
+                _canonical(answer.get("interpreted_opponent_active",""))!=
+                _canonical(updated.get("opponent_active",""))):
+            return updated,{"status":"BLOCKED","recommendation":"",
+                            "reason":"AI_OCR_ACTIVE_STATE_UNVERIFIED",
+                            "transport":"OCR_TEXT_ONLY","images_sent":0}
+        obs["our_active"]=updated.get("our_active","")
+        obs["opponent_active"]=updated.get("opponent_active","")
+        if switch_only and action.get("action_kind") not in ("SWITCH","NO_ACTION"):
             if diagnostic_sink is not None:
                 diagnostic_sink("AI_VALIDATION",{
                     "validation_code":"SWITCH_ONLY_MOVE_REJECTED",
                     "status":"BLOCKED"})
-            return deepcopy(state),{"status":"BLOCKED",
+            return updated,{"status":"BLOCKED",
                                     "reason":"SWITCH_ONLY_MOVE_REJECTED",
+                                    "transport":"OCR_TEXT_ONLY",
                                     "images_sent":0}
         updated,result=advance_observation(
-            state,assets,obs,
-            lambda *_args:answer,
+            updated,assets,obs,
+            lambda *_args:action,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=max(total_seconds,perf_counter()-started+2))
         if diagnostic_sink is not None:

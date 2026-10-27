@@ -524,7 +524,9 @@ class TextOnlyLivePathTests(unittest.TestCase):
         self.assertEqual(report["transport"],"OCR_TEXT_ONLY")
         self.assertEqual(report["recommendation"],"10まんボルト。")
         self.assertEqual(updated["phase"],"BATTLE")
-        self.assertEqual(observed[0]["name"],"champions_text_only_turn")
+        self.assertEqual(observed[0]["name"],"champions_text_only_state_and_action")
+        self.assertIn("state_updates",observed[0]["schema"]["properties"])
+        self.assertIn("registered_selected_moves",json.loads(observed[0]["content"][0]["text"]))
         self.assertEqual([x["type"] for x in observed[0]["content"]],
                          ["input_text"])
         data=json.loads(observed[0]["content"][0]["text"])
