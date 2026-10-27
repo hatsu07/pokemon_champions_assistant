@@ -340,6 +340,25 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertTrue(any(x["event"]=="SAME_TURN_AI_REQUEST_SUPPRESSED"
                                 for x in panel._timing_trace))
 
+    def test_forced_switch_after_move_request_is_new_decision_and_clears_move(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","selected_three":[
+            "ガブリアス","ギャラドス","ピカチュウ"]}
+        panel._auto_running=True
+        panel._last_action_request_screen="TURN_ACTION"
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        panel._last_action_text="じしん。"
+        frame=np.zeros((100,160,3),dtype=np.uint8)
+        with patch.object(panel,"_send_pending") as send:
+            panel._queue_batch([frame],screen_label="SWITCH_SELECTION")
+            send.assert_called_once()
+        self.assertEqual(panel._last_action_text,"")
+        self.assertEqual(panel._pending_screen_label,"SWITCH_SELECTION")
+        self.assertNotIn("じしん",panel.action_banner.text())
+        self.assertTrue(any(r.get("event")=="SWITCH_NEW_DECISION_WINDOW"
+                            for r in panel._timing_trace))
+
     def test_expired_conservative_turn_blocks_ai_dispatch_and_clears_advice(self):
         from time import monotonic
         panel=self.window._match_panel
@@ -1324,8 +1343,11 @@ class UnifiedMainWindowTests(unittest.TestCase):
             with patch.object(panel,"_send_pending") as queued:
                 panel._queue_batch([image],screen_label="TURN_ACTION")
                 queued.assert_called_once()
-                self.assertTrue(panel._prep_cancel_event.is_set())
-                self.assertEqual(panel.state["prep_status"],"INTERRUPTED_BY_NEW_BATTLE_SCREEN")
+                self.assertFalse(panel._prep_cancel_event.is_set())
+                self.assertEqual(panel.state["prep_status"],"RUNNING")
+            # Only the actual next AI dispatch, not detecting/queuing a
+            # screen, supersedes the PREP request.
+            panel._interrupt_prep()
             old={"state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
                  "report":{"status":"PREP_STRUCTURE_OK"}}
             panel._on_prep_result(old)
@@ -1363,18 +1385,19 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
-    def test_prep_timeout_discards_late_result(self):
+    def test_prep_soft_deadline_keeps_late_result_until_next_ai_request(self):
         panel=self.window._match_panel
         panel.state={"phase":"PREP","prep_status":"RUNNING"}
         panel._prep_thread=object()
         panel._prep_cancel_event.clear()
         try:
             panel._prep_deadline()
-            self.assertEqual(panel.state["prep_status"],"DEADLINE_EXCEEDED")
+            self.assertFalse(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["prep_status"],"RUNNING")
             panel._on_prep_result({
                 "state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
                 "report":{"status":"PREP_STRUCTURE_OK"}})
-            self.assertEqual(panel.state["prep_status"],"DEADLINE_EXCEEDED")
+            self.assertEqual(panel.state["prep_status"],"STRUCTURE_COMPLETE")
         finally:
             panel._prep_thread=None
 
