@@ -1568,6 +1568,48 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         panel._stop_auto()
 
+    def test_gui_keeps_weak_switch_evidence_until_next_ocr_frame(self):
+        from types import SimpleNamespace
+        from champions_assist.local_event_worker import LocalFieldRead
+        from champions_assist.battle_evidence import empty_battle_evidence
+        panel=self.window._match_panel
+        panel._local_battle_tracker.clear()
+        panel.assets=SimpleNamespace(
+            own_team=tuple({"name":n} for n in
+                           ("ガブリアス","マリルリ","ドドゲザン")),
+            matrix_index={"マスカーニャ":""})
+        panel.state={
+            "phase":"BATTLE","our_active":"ガブリアス",
+            "opponent_active":"マスカーニャ",
+            "selected_three":["ガブリアス","マリルリ","ドドゲザン"],
+            "opponent_six":["マスカーニャ"],
+            "battle_evidence":empty_battle_evidence(),
+            "battlefield":{},"_live_state_revision":0}
+        def record(frame,time,text,confidence):
+            return LocalFieldRead(
+                field="screen_text.battle_message",value=text,
+                frame_id=frame,timestamp=time,confidence=confidence,
+                roi="battle_message",source="fixture",text=text)
+        first=record("capture-300",100.0,
+                     "3 . _ ゆ けっ / ドド グ ゲ ザ ン / = ンー —",.636967)
+        second=record("capture-301",100.3,
+                      "ゆけ っ / ドド ゲ ザ ン / ・ e ンー る =",.714299)
+        results=iter((first,second))
+        def drain():
+            return [SimpleNamespace(
+                frame_id=row.frame_id,error=None,
+                observations=(row,))] if (row:=next(results,None)) else []
+        panel._local_event_reader=SimpleNamespace(drain=drain,stop=lambda:None)
+        try:
+            panel._drain_event_candidates(include_snapshot=False)
+            self.assertEqual(panel.state["our_active"],"ガブリアス")
+            self.assertEqual(len(panel.state["_ocr_switch_attestations"]),1)
+            panel._drain_event_candidates(include_snapshot=False)
+            self.assertEqual(panel.state["our_active"],"ドドゲザン")
+            self.assertEqual(panel.state["_live_state_revision"],1)
+        finally:
+            panel._local_event_reader=None
+
     def test_result_ocr_requires_two_confident_distinct_frames(self):
         from types import SimpleNamespace
         from champions_assist.local_event_worker import LocalFieldRead
