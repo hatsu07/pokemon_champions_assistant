@@ -1526,6 +1526,9 @@ class MatchReplayDialog(QDialog):
     def _offer_event_for_local_ocr(self,image):
         if self._local_event_reader is None:
             self._start_local_event_reader()
+        # Persist already-finished OCR immediately DURING event animations.
+        # Drain is nonblocking and does not perform OCR or an API call.
+        self._drain_event_candidates(include_snapshot=False)
         reader=self._local_event_reader
         if reader.offer(image,label="BATTLE_EVENT",
                         frame_id=f"capture-{self._last_capture_seq}"):
@@ -1533,8 +1536,8 @@ class MatchReplayDialog(QDialog):
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
 
-    def _drain_event_candidates(self):
-        """Read completed OCR only; never wait in the command-menu path."""
+    def _drain_event_candidates(self,*,include_snapshot=True):
+        """Persist completed OCR only; never wait in the command-menu path."""
         reader=self._local_event_reader
         if reader is not None:
             for result in reader.drain():
@@ -1546,6 +1549,8 @@ class MatchReplayDialog(QDialog):
                         self._trace_event("LOCAL_OCR_CANDIDATES",
                                           accepted=count,
                                           raw_count=len(result.observations))
+        if not include_snapshot:
+            return []
         snapshot=self._local_battle_tracker.snapshot(limit=12)
         return snapshot["local_observations"]
 
