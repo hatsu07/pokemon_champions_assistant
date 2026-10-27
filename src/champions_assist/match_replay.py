@@ -1648,7 +1648,29 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
-        if switch_only and answer.get("action_kind") not in ("SWITCH","NO_ACTION"):
+        combined=isinstance(answer.get("action"),dict)
+        proposed=answer.get("state_updates",[]) if combined else []
+        action=answer["action"] if combined else answer
+        updated,audit=apply_ai_ocr_updates(state,proposed,candidates,assets)
+        if diagnostic_sink is not None:
+            for row in audit:
+                diagnostic_sink("AI_OCR_STATE_DECISION",row)
+        actor_conflict=any(row.get("status")=="REJECTED" and
+                           row.get("kind") in ("SWITCH","FAINT","MEGA")
+                           for row in audit)
+        if combined and (actor_conflict or
+                (answer.get("interpreted_own_active") and
+                 _canonical(answer["interpreted_own_active"])!=
+                 _canonical(updated.get("our_active",""))) or
+                (answer.get("interpreted_opponent_active") and
+                 _canonical(answer["interpreted_opponent_active"])!=
+                 _canonical(updated.get("opponent_active","")))):
+            return updated,{"status":"BLOCKED","recommendation":"",
+                            "reason":"AI_OCR_ACTIVE_STATE_UNVERIFIED",
+                            "transport":"OCR_TEXT_ONLY","images_sent":0}
+        obs["our_active"]=updated.get("our_active","")
+        obs["opponent_active"]=updated.get("opponent_active","")
+        if switch_only and action.get("action_kind") not in ("SWITCH","NO_ACTION"):
             if diagnostic_sink is not None:
                 diagnostic_sink("AI_VALIDATION",{
                     "validation_code":"SWITCH_ONLY_MOVE_REJECTED",
