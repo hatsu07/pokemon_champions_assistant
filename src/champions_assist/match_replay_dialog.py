@@ -1792,60 +1792,14 @@ class MatchReplayDialog(QDialog):
                             "dedup":len(result.observations)-len(novel),
                             "capture_epoch":capture_epoch,
                             "reason":"SAME_TURN_OR_NEAR_FRAME"})
-                    if (novel and self.state is not None and self.assets is not None
-                            and self.state.get("phase")!="ENDED"):
-                        before=current_state_digest(self.state)
-                        changed,audit=apply_local_ocr(
-                            self.state,novel,self.assets)
-                        for event in audit:
-                            if event.get("kind")=="ACTIVE" and event.get("status")=="APPLIED":
-                                self._diagnostic("ACTIVE_PROVENANCE",{
-                                    "side":event.get("side"),
-                                    "our_active":changed.get("our_active"),
-                                    "opponent_active":changed.get("opponent_active"),
-                                    "source":"LOCAL_OCR_NAME",
-                                    "verified":True,
-                                    "last_confirmed_turn":capture_epoch,
-                                    "last_confirmed_frame":event.get("frame_id")})
-                            if "CONFLICT" in str(event.get("reason","")):
-                                self._diagnostic("SOURCE_CONFLICT",{
-                                    "kind":event.get("kind"),
-                                    "reason":event.get("reason"),
-                                    "frame_id":event.get("frame_id"),
-                                    "source":"LOCAL_OCR",
-                                    "before":before})
-                            self._diagnostic("OCR_DECISION",{
-                                "kind":event.get("kind"),
-                                "status":event.get("status"),
-                                "reason":event.get("reason"),
-                                "frame_id":event.get("frame_id"),
-                                "source":"LOCAL_OCR",
-                                "state_revision":changed.get("_live_state_revision",0)})
-                        if any(e["status"]=="APPLIED" for e in audit):
-                            self._diagnostic("OCR_STATE_UPDATE",{
-                                "before":before,
-                                "after":current_state_digest(changed),
-                                "source":"LOCAL_OCR"})
-                            for side in ("our_active","opponent_active"):
-                                if before.get(side)!=changed.get(side):
-                                    self._diagnostic("ACTIVE_TRANSITION",{
-                                        "side":"own" if side=="our_active" else "opponent",
-                                        "previous":before.get(side),
-                                        "current":changed.get(side),
-                                        "source":"LOCAL_OCR",
-                                        "verified":True,
-                                        "last_confirmed_turn":capture_epoch,
-                                        "last_confirmed_frame":str(result.frame_id)})
-                        if any(e["status"]=="APPLIED" for e in audit):
-                            self.state=changed
-                            self._trace_event("LOCAL_OCR_STATE_APPLIED",
-                                kinds=[e["kind"] for e in audit
-                                       if e["status"]=="APPLIED"],
-                                source="LOCAL_OCR",images_sent=0,
-                                state_revision=self.state.get("_live_state_revision",0))
-                        elif audit:
-                            self._trace_event("LOCAL_OCR_STATE_UNVERIFIED",
-                                count=len(audit))
+                    # OCR is observation-only. Do not translate text into
+                    # battle state locally. The tactical AI interprets raw
+                    # candidates and the validated AI update is committed
+                    # together with its same-turn action.
+                    if novel:
+                        self._trace_event("LOCAL_OCR_TEXT_PENDING_AI",
+                                          accepted=count,
+                                          raw_count=len(result.observations))
                     if count:
                         self._trace_event("LOCAL_OCR_CANDIDATES",
                                           accepted=count,
@@ -1855,7 +1809,7 @@ class MatchReplayDialog(QDialog):
         state=self.state or {}
         assets=self.assets
         snapshot=self._local_battle_tracker.snapshot(
-            limit=12,
+            limit=36,
             own_active=state.get("our_active"),
             opponent_active=state.get("opponent_active"),
             own_names=tuple(m["name"] for m in assets.own_team) if assets else (),
