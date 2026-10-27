@@ -162,7 +162,8 @@ def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) ->
     # Never use a model's recommended action to fabricate observed execution.
     previous_active=state.get("our_active") or ""
     update_battle_evidence(state, evidence_obs, assets.own_team)
-    if obs.get("observed_event")=="OUR_FAINTED" and previous_active:
+    if (obs.get("observed_event")=="OUR_FAINTED"
+            and (previous_active or evidence_obs.get("our_active"))):
         state["awaiting_replacement"]=True
     current_observed=str(evidence_obs.get("our_active") or "")
     if (current_observed and previous_active
