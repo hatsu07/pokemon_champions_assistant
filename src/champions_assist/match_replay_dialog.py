@@ -1751,6 +1751,8 @@ class MatchReplayDialog(QDialog):
                             "processed_at":monotonic(),
                             "capture_epoch":capture_epoch,
                             "status":row.status,
+                            "detected_pokemon":list(row.detected_pokemon),
+                            "detected_moves":list(row.detected_moves),
                             "parsed":row.value if isinstance(row.value,dict)
                                      else {"evidence":str(row.value)[:160]},
                         })
@@ -1796,6 +1798,22 @@ class MatchReplayDialog(QDialog):
                         changed,audit=apply_local_ocr(
                             self.state,novel,self.assets)
                         for event in audit:
+                            if event.get("kind")=="ACTIVE" and event.get("status")=="APPLIED":
+                                self._diagnostic("ACTIVE_PROVENANCE",{
+                                    "side":event.get("side"),
+                                    "our_active":changed.get("our_active"),
+                                    "opponent_active":changed.get("opponent_active"),
+                                    "source":"LOCAL_OCR_NAME",
+                                    "verified":True,
+                                    "last_confirmed_turn":capture_epoch,
+                                    "last_confirmed_frame":event.get("frame_id")})
+                            if "CONFLICT" in str(event.get("reason","")):
+                                self._diagnostic("SOURCE_CONFLICT",{
+                                    "kind":event.get("kind"),
+                                    "reason":event.get("reason"),
+                                    "frame_id":event.get("frame_id"),
+                                    "source":"LOCAL_OCR",
+                                    "before":before})
                             self._diagnostic("OCR_DECISION",{
                                 "kind":event.get("kind"),
                                 "status":event.get("status"),
