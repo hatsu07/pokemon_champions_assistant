@@ -267,8 +267,9 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
         lock = evidence.get("choice_lock", {})
         spent=(evidence.get("item_state_by_pokemon",{}).get("own",{})
                .get(own,{}))
-        if spent.get("state")=="SPENT_OR_LOST":
-            lock={}  # No continued choice lock after confirmed item loss.
+        if spent.get("state") in ("SPENT_OR_LOST",
+                                      "CURRENT_UNKNOWN_AFTER_EXCHANGE"):
+            lock={}  # No continued lock after lost or unknown swapped item.
         if (_canonical(lock.get("pokemon", "")) == _canonical(own)
                 and lock.get("move") and requested != move_key(lock["move"])):
             return "CHOICE_LOCK_VIOLATION", {}
