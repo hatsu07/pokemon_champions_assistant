@@ -14,7 +14,7 @@ _SECRET = re.compile(
     r"|[a-z0-9_.+-]+@[a-z0-9.-]+\.[a-z]{2,})"
 )
 _FIELDS = frozenset((
-    "kind","status","reason","source","field","roi","frame_id","capture_epoch",
+    "kind","status","reason","source","verification","field","roi","frame_id","capture_epoch",
     "side","pokemon","move","item","ability","hp","pp","stat","delta",
     "current_type","confidence","captured_at","processed_at","actor",
     "our_active","opponent_active","our_active_source","opponent_active_source",
