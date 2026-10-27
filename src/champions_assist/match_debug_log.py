@@ -10,7 +10,11 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+from queue import Queue, Full, Empty
+from threading import Thread, Lock
 from time import monotonic
+
+from .live_diagnostics import redact_battle_detail
 from uuid import uuid4
 
 SCHEMA = "champions-local-live-debug-v1"
@@ -18,6 +22,7 @@ MAX_BYTES = 3 * 1024 * 1024
 KEEP_FILES = 20
 _ALLOWED_TEXT = frozenset({
     "status", "reason", "phase", "screen", "ui", "observed_ui",
+    "request_id", "active_source", "display_source", "validation_code",
     "request_stage", "screen_label", "screen_label_hint", "transport",
     "screen_label_source", "live_reasoning_effort", "warning",
     "kind", "result", "model", "clock_source", "classifier_source",
@@ -30,6 +35,7 @@ _ALLOWED_BOOL = frozenset({
 })
 _ALLOWED_NUMBER = frozenset({
     "elapsed_ms", "capture_and_auth_ms", "at_ms", "ai_request_attempt",
+    "state_revision", "previous_revision", "display_turn",
     "image_count", "opponent_recognition_attempts", "step", "preload_count",
     "matchups_evaluated", "consecutive_failures", "queue_elapsed_ms",
     "timeout_budget_ms", "latency_ms",
@@ -85,7 +91,7 @@ def _clean(data: dict) -> dict:
 
 class MatchDebugLog:
     def __init__(self, app_root: str | Path, *, match_id: str | None = None,
-                 clock=monotonic):
+                 clock=monotonic, async_mode: bool = False):
         self.started=clock()
         self.clock=clock
         self.match_id=match_id if match_id and _SAFE_SESSION.fullmatch(match_id) else (
@@ -103,27 +109,90 @@ class MatchDebugLog:
                     pass
         self.failed=False
         self.capped=False
+        # The GUI opts into non-blocking writes. Direct/test callers retain
+        # synchronous behavior and immediate file readability.
+        self._async_mode=bool(async_mode)
+        self._queue=Queue(maxsize=2048) if async_mode else None
+        self._lock=Lock()
+        self._dropped=0
+        self._thread=None
+        if async_mode:
+            self._thread=Thread(target=self._write_worker,daemon=True,
+                                name="champions-live-diagnostics")
+            self._thread.start()
         self.write("SESSION_OPEN",source="AUTO_LOCAL_DIAGNOSTICS")
 
-    def write(self,event: str,**fields) -> bool:
+    def _persist(self, record: dict) -> bool:
         if self.failed or self.capped:
             return False
+        try:
+            line=json.dumps(record,ensure_ascii=False,separators=(",",":"))+"\n"
+            with self._lock:
+                size=self.path.stat().st_size if self.path.exists() else 0
+                if size+len(line.encode("utf-8"))>MAX_BYTES:
+                    self.capped=True
+                    return False
+                with self.path.open("a",encoding="utf-8",newline="\n") as out:
+                    out.write(line)
+        except OSError:
+            self.failed=True
+            return False
+        return True
+
+    def _write_worker(self) -> None:
+        while True:
+            row=self._queue.get()
+            try:
+                if row is None:
+                    return
+                self._persist(row)
+            finally:
+                self._queue.task_done()
+
+    def _submit(self, record: dict) -> bool:
+        if self.failed or self.capped:
+            return False
+        if self._queue is None:
+            return self._persist(record)
+        try:
+            self._queue.put_nowait(record)
+            return True
+        except Full:
+            self._dropped+=1
+            return False
+
+    def write(self,event: str,**fields) -> bool:
         if not isinstance(event,str) or not _SAFE_CODE.fullmatch(event):
             return False
         record={"schema":SCHEMA,"utc":datetime.now(timezone.utc).isoformat(),
                 "event":event,
                 "at_ms":int((self.clock()-self.started)*1000),
                 **_clean(fields)}
-        try:
-            if self.path.exists() and self.path.stat().st_size>=MAX_BYTES:
-                self.capped=True
-                return False
-            with self.path.open("a",encoding="utf-8",newline="\n") as out:
-                out.write(json.dumps(record,ensure_ascii=False,separators=(",",":"))+"\n")
-        except OSError:
-            self.failed=True
+        return self._submit(record)
+
+    def write_diagnostic(self,event: str,detail: dict,**fields) -> bool:
+        """Queued bounded structured evidence; never arbitrary API payload."""
+        if not isinstance(event,str) or not _SAFE_CODE.fullmatch(event):
             return False
-        return True
+        record={"schema":SCHEMA,"utc":datetime.now(timezone.utc).isoformat(),
+                "event":event,
+                "at_ms":int((self.clock()-self.started)*1000),
+                **_clean(fields),
+                "detail":redact_battle_detail(detail)}
+        return self._submit(record)
+
+    def flush(self) -> None:
+        """Explicit test/finalization barrier; never call during live turns."""
+        if self._queue is not None:
+            self._queue.join()
+
+    def close(self) -> None:
+        if self._thread is None:
+            return
+        self.write("DIAGNOSTIC_QUEUE_SUMMARY",ocr_results_dropped=self._dropped)
+        self._queue.put(None)
+        self._thread.join(timeout=2.0)
+        self._thread=None
 
     def report(self,report: dict,*,event: str = "UI_REPORT") -> bool:
         fields=_clean(report)
