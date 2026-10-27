@@ -1628,8 +1628,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                               base_url="https://api.openai.com/v1",
                               timeout=total_seconds,max_retries=0)
         answer=_stream_json(
-            client,model=model,schema=ACTION_SCHEMA,
-            name="champions_text_only_turn",
+            client,model=model,schema=AI_OCR_TURN_SCHEMA,
+            name="champions_text_only_state_and_action",
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
