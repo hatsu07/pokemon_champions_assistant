@@ -406,6 +406,11 @@ class LiveStateOcrTests(unittest.TestCase):
 
     def test_text_turn_diagnostics_record_pre_validation_action(self):
         self.state["selected_three"]=["マスカーニャ","マリルリ","ゲンガー"]
+        self.state.update(
+            matrix_compatible=False,matrix_provisional=False,
+            selection_assumed=False,lead="マスカーニャ",
+            prep_status="NOT_STARTED",last_event="NONE",
+            image_observations_unverified=[])
         events=[]
         raw={"action_kind":"SWITCH","move":"","switch_target":"マリルリ",
              "warning":""}
