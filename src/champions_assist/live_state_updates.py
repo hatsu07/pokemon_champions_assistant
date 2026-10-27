@@ -35,8 +35,10 @@ def _pokemon(name: str) -> str:
 
 
 def _names(assets, state):
+    selected=set(state.get("selected_three") or ())
     own={_flat(_pokemon(m["name"])):_pokemon(m["name"])
-         for m in assets.own_team if m.get("name")}
+         for m in assets.own_team
+         if m.get("name") and (not selected or m["name"] in selected)}
     opponent={_flat(_pokemon(n)):_pokemon(n)
               for n in getattr(assets,"matrix_index",{})
               if n and not n.startswith("未判明")}
@@ -50,14 +52,13 @@ def _owner(raw: str, own: dict, opponents: dict, *, explicit_opponent=False):
     key=_flat(raw)
     if explicit_opponent:
         return ("opponent",opponents[key]) if key in opponents else (None,None)
-    if key in own and key not in opponents:
+    if key in own:
+        # Unprefixed in-game Japanese player messages identify the player's
+        # selected member. A same-species mirror requires the explicit side
+        # in a future calibration; never promote an opponent preview guess.
         return "own",own[key]
-    if key in own and key in opponents:
-        # A mirror team needs an explicit side, not a guess.
-        return None,None
     if key in opponents:
-        # Japanese text without 相手の can still refer to an opponent;
-        # require explicit opponent-side evidence to mutate current actor.
+        # No explicit side => do not bind opponent to an actor.
         return None,None
     return None,None
 
@@ -147,6 +148,14 @@ def _event_for_message(text: str, own: dict, opponents: dict):
             return {"kind":"TERRAIN","value":name}
         if msg in (name+"がきえた",name+"がなくなった"):
             return {"kind":"TERRAIN","value":""}
+    screen=re.fullmatch(
+        r"^(相手の)?場に(リフレクター|ひかりのかべ|ステルスロック|まきびし|"
+        r"どくびし|ねばねばネット)が(はられた|しかれた|なくなった|きえた)$",msg)
+    if screen:
+        return {"kind":"SIDE_EFFECT",
+                "side":"opponent" if screen.group(1) else "own",
+                "effect":screen.group(2),
+                "active":screen.group(3) in ("はられた","しかれた")}
     return None
 
 
@@ -319,8 +328,16 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 evidence["ability_state_by_pokemon"][side][name]={"active":True,"name":evt["ability"]}
         elif kind in ("WEATHER","TERRAIN"):
             battlefield["weather" if kind=="WEATHER" else "terrain"]=evt["value"]
+        elif kind=="SIDE_EFFECT":
+            effects=battlefield["effects_by_side"][side]
+            if evt["active"]:
+                effects[evt["effect"]]={"active":True,"turns_remaining":None,
+                                        "source":"LOCAL_OCR_EXPLICIT_MESSAGE"}
+            else:
+                effects.pop(evt["effect"],None)
         else:
             continue
+        updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
         audit.append({"kind":kind,"status":"APPLIED","side":side or "",
                       "frame_id":ref[0],"revision":updated.get("_live_state_revision",0)})
         provenance=evidence["update_provenance"]
