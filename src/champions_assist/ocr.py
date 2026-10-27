@@ -144,12 +144,18 @@ class TesseractJapaneseOcr:
             path=Path(directory)/"roi.png"
             path.write_bytes(buffer.tobytes())
             try:
+                # The portable tessdata package ships traineddata, not
+                # configs/tsv. Tesseract may exit 0 but write plain TEXT when
+                # a missing named configfile "tsv" is requested. Enable TSV
+                # directly through its built-in parameters instead.
                 flags=(["--psm","7","-c","tessedit_char_whitelist=0123456789/%"]
                        if numeric_percent else self.config.split())
+                flags.extend(["-c","tessedit_create_tsv=1",
+                              "-c","tessedit_create_txt=0"])
                 process=subprocess.run(
                     [self.command,str(path),"stdout","-l",
                      "eng" if numeric_percent else self.languages,
-                     "--tessdata-dir",self.tessdata_dir,*flags,"tsv"],
+                     "--tessdata-dir",self.tessdata_dir,*flags],
                     capture_output=True,text=True,encoding="utf-8",
                     errors="replace",env=environment,
                     creationflags=(getattr(subprocess,"CREATE_NO_WINDOW",0)
