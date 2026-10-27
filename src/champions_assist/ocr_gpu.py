@@ -158,7 +158,7 @@ class PaddleGpuSidecar:
         req=uuid4().hex
         message["request_id"]=req
         try:
-            self._process.stdin.write(json.dumps(message)+"\\n")
+            self._process.stdin.write(json.dumps(message)+"\n")
             self._process.stdin.flush()
         except (OSError,BrokenPipeError) as exc:
             self.stop()
