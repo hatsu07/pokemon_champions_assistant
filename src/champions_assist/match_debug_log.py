@@ -34,6 +34,7 @@ _ALLOWED_NUMBER = frozenset({
     "matchups_evaluated", "consecutive_failures", "queue_elapsed_ms",
     "timeout_budget_ms", "latency_ms",
     "visual_first_attempt_elapsed_ms", "visual_transport_retry_elapsed_ms",
+    "selection_visual_ms", "selection_tactical_ms",
     "visual_image_count",
     "visual_source_width","visual_source_height",
     "visual_crop_x","visual_crop_y","visual_crop_width","visual_crop_height",
