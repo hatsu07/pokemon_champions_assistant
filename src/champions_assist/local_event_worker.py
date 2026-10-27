@@ -121,22 +121,25 @@ class AsyncBattleEventReader:
               frame_id: str | None=None, timestamp: float | None=None) -> bool:
         """Fast ROI change gate. Never OCR or wait in the caller's thread.
 
-        Only BATTLE_EVENT is eligible. No menu, timer or unknown-screen OCR.
+        Only BATTLE_EVENT and verified local action/party UI are eligible.
+        Work stays on the worker, never the render or AI turn thread.
         """
         profile=self.profile
         if (not self.enabled or self._stop.is_set() or profile is None
                 or not profile.compatible(image)
-                or label!="BATTLE_EVENT"):
+                or label not in ("BATTLE_EVENT","TURN_ACTION","SWITCH_SELECTION")):
             return False
         crops=[]
         updated={}
         for region in profile.regions:
             if region.name in IGNORED_OCR_ROIS:
                 continue
-            # TIMER and TEXT regions are intentionally never read.
-            if region.kind not in ("HP_FRACTION","HP_PERCENT","MESSAGE"):
+            # Optional calibrated PP fields are read only on action screens.
+            # Unknown scene/timer is deliberately never interpreted.
+            if region.kind not in ("HP_FRACTION","HP_PERCENT","MESSAGE",
+                                   "TEXT","PP_FRACTION"):
                 continue
-            if "BATTLE_EVENT" not in region.applicable_labels:
+            if label not in region.applicable_labels:
                 continue
             crop=profile.crop(image,region)
             small=crop[::max(1,crop.shape[0]//20),
