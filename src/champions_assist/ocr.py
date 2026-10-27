@@ -128,6 +128,13 @@ class TesseractJapaneseOcr:
             image=cv2.cvtColor(image,cv2.COLOR_RGB2BGR)
         elif image.ndim==3 and image.shape[2]==4:
             image=cv2.cvtColor(image,cv2.COLOR_RGBA2BGRA)
+        # Calibrated Japanese popup text is most legible at 2x on the
+        # user-provided 960x572 sample. Percent HUD is numeric-only and its
+        # best offline result uses psm7/eng/whitelist. Other crops remain raw.
+        if roi_name=="opponent_effect_popup":
+            image=cv2.resize(image,None,fx=2,fy=2,
+                             interpolation=cv2.INTER_CUBIC)
+        numeric_percent=roi_name=="opponent_hp_percent"
         ok, buffer=cv2.imencode(".png",image)
         if not ok:
             raise OcrExecutionError("OCR_PNG_ENCODING_FAILED")
@@ -137,9 +144,12 @@ class TesseractJapaneseOcr:
             path=Path(directory)/"roi.png"
             path.write_bytes(buffer.tobytes())
             try:
+                flags=(["--psm","7","-c","tessedit_char_whitelist=0123456789/%"]
+                       if numeric_percent else self.config.split())
                 process=subprocess.run(
-                    [self.command,str(path),"stdout","-l",self.languages,
-                     "--tessdata-dir",self.tessdata_dir,*self.config.split(),"tsv"],
+                    [self.command,str(path),"stdout","-l",
+                     "eng" if numeric_percent else self.languages,
+                     "--tessdata-dir",self.tessdata_dir,*flags,"tsv"],
                     capture_output=True,text=True,encoding="utf-8",
                     errors="replace",env=environment,
                     creationflags=(getattr(subprocess,"CREATE_NO_WINDOW",0)
