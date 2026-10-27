@@ -1818,6 +1818,7 @@ class MatchReplayDialog(QDialog):
                                 "kind":event.get("kind"),
                                 "status":event.get("status"),
                                 "reason":event.get("reason"),
+                                "verification":event.get("verification"),
                                 "frame_id":event.get("frame_id"),
                                 "source":"LOCAL_OCR",
                                 "state_revision":changed.get("_live_state_revision",0)})
@@ -1844,6 +1845,16 @@ class MatchReplayDialog(QDialog):
                                 source="LOCAL_OCR",images_sent=0,
                                 state_revision=self.state.get("_live_state_revision",0))
                         elif audit:
+                            # A single weak switch OCR frame is deliberately
+                            # NOT a battle fact. Persist only its bounded
+                            # corroboration evidence so the NEXT distinct
+                            # frame can verify it; no tactical state changes.
+                            if (changed.get("_ocr_switch_attestations") !=
+                                    self.state.get("_ocr_switch_attestations")):
+                                self.state["_ocr_switch_attestations"]=list(
+                                    changed.get("_ocr_switch_attestations") or [])
+                                self._trace_event("LOCAL_OCR_SWITCH_PENDING_SECOND_FRAME",
+                                    frame_seq=self._last_capture_seq)
                             self._trace_event("LOCAL_OCR_STATE_UNVERIFIED",
                                 count=len(audit))
                     if count:
