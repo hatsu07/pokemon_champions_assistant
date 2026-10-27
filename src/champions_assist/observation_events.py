@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import re
+import unicodedata
 from typing import Any, Iterable, Mapping
 
 from .ocr import OcrRead
@@ -157,9 +158,16 @@ class TextObservationParser:
 
     def parse(self, reading: OcrRead, *, roi_name: str, raw_observation_id: str, episode_id: int) -> ParsedOcr:
         text = reading.text.strip()
-        pokemon = tuple(item for item in self.lexicon.pokemon_names if item and item in text)
-        moves = tuple(item for item in self.lexicon.move_names if item and item in text)
-        statuses = tuple(item for item in self.lexicon.statuses if item and item in text)
+        # Japanese OCR may insert whitespace within a Pokémon/move name.
+        # Normalize both the reading and the frozen Champions lexicon
+        # before matching. These are *candidate* spans, not action proof.
+        normalized = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
+        def has_term(term: str) -> bool:
+            canonical=re.sub(r"\s+", "", unicodedata.normalize("NFKC",term))
+            return bool(canonical) and canonical in normalized
+        pokemon = tuple(item for item in self.lexicon.pokemon_names if has_term(item))
+        moves = tuple(item for item in self.lexicon.move_names if has_term(item))
+        statuses = tuple(item for item in self.lexicon.statuses if has_term(item))
         hp_values = self._numbers(self.lexicon.hp_pattern, text)
         remaining_turns = self._numbers(self.lexicon.remaining_turn_pattern, text)
         events: list[ObservedEvent] = []
