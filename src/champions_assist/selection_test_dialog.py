@@ -750,7 +750,7 @@ class SelectionTestDialog(QDialog):
         for result in rows:
             container=QWidget()
             layout=QHBoxLayout(container)
-            crop=result["crop"]
+            crop=np.ascontiguousarray(result["crop"])
             h,w=crop.shape[:2]
             preview=QLabel()
             qimage=QImage(crop.data,w,h,3*w,QImage.Format.Format_RGB888).copy()
