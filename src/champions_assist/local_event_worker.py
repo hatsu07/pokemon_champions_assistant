@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from .calibrated_screen_fields import (
-    ScreenFieldProfile, parse_field_text,
+    IGNORED_OCR_ROIS, ScreenFieldProfile, parse_field_text,
 )
 from .observation_events import ScreenLexicon, TextObservationParser
 from .ocr import OcrEngine, TesseractJapaneseOcr
@@ -131,6 +131,8 @@ class AsyncBattleEventReader:
         crops=[]
         updated={}
         for region in profile.regions:
+            if region.name in IGNORED_OCR_ROIS:
+                continue
             # TIMER and TEXT regions are intentionally never read.
             if region.kind not in ("HP_FRACTION","HP_PERCENT","MESSAGE"):
                 continue
