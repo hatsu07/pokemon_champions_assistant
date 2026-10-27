@@ -27,7 +27,7 @@ _TERRAIN = ("エレキフィールド","グラスフィールド",
 
 
 def _flat(text: object) -> str:
-    return re.sub(r"\\s+","",unicodedata.normalize("NFKC",str(text or ""))).replace("！","!").replace("。","")
+    return re.sub(r"\s+","",unicodedata.normalize("NFKC",str(text or ""))).replace("！","!").replace("。","")
 
 
 def _pokemon(name: str) -> str:
@@ -210,7 +210,9 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
     for rec in records:
         text=str(getattr(rec,"text","") or "")
         field=getattr(rec,"field","")
-        ref=(str(getattr(rec,"frame_id","")),field,_flat(text))
+        from hashlib import sha256
+        digest=sha256(_flat(text).encode("utf-8")).hexdigest()[:20]
+        ref=(str(getattr(rec,"frame_id","")),field,digest)
         if ref in seen_set or not text:
             continue
         seen.append(ref)
@@ -269,7 +271,6 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             if name!=old:
                 # The same exact Pokémon-name ROI must be read after any
                 # stale switch proposal; OCR message itself is execution proof.
-                from .battle_evidence import empty_battle_evidence
                 if name and old:
                     evidence["boosts"][side].pop(old,None)
                 if side=="own":
