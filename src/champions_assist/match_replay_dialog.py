@@ -1423,9 +1423,9 @@ class MatchReplayDialog(QDialog):
                     (monotonic()-self._turn_screen_seen_at)
                     if self._turn_screen_seen_at else 32.0)
                 if outstanding and waited<1.5 and remaining>5.0:
-                    self._trace_event("OCR_AI_SYNC_WAIT",{
-                        "outstanding":outstanding,
-                        "elapsed_ms":int(waited*1000)})
+                    self._trace_event("OCR_AI_SYNC_WAIT",
+                        outstanding=outstanding,
+                        elapsed_ms=int(waited*1000))
                     QTimer.singleShot(100,self._send_pending)
                     return
                 self._trace_event("OCR_AI_SYNC_FINISHED",
