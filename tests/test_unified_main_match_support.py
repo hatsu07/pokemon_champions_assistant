@@ -136,6 +136,71 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertFalse(panel._automatic_probe.observe(image,"MATCHMAKING"))
         self.assertEqual(panel._automatic_probe.matchmaking_recheck,float("inf"))
 
+    def test_selection_display_precedes_prep_work(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        panel=self.window._match_panel
+        preview=chosen_state(assets)
+        preview.update(phase="SELECTION",selected_three=[],lead=None,
+                       prep=None,prep_status="NOT_STARTED")
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._cancel_event.clear()
+        panel._screen_model=object()
+        panel._last_local_class="TEAM_SELECTION"
+        order=[]
+        original_render=panel._render
+        original_prefill=panel._prefill_cached_prep
+        def render(report):
+            if report.get("status")=="PROVISIONAL_ADVICE":
+                order.append("SELECTION_DISPLAYED")
+            return original_render(report)
+        def prefill(*,roles=None):
+            order.append("PREP_STARTED")
+            return original_prefill(roles=roles)
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "recommendation":"選出： "+" / ".join(OWN[:3])}
+        with patch.object(panel,"_render",side_effect=render),patch.object(
+                panel,"_prefill_cached_prep",side_effect=prefill):
+            panel._completed({"state":deepcopy(preview),"report":report})
+        self.assertEqual(order[:2],["SELECTION_DISPLAYED","PREP_STARTED"])
+        self.assertEqual(panel.state["phase"],"PREP")
+
+    def test_selection_reply_after_observed_departure_is_not_displayed(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        panel=self.window._match_panel
+        preview=chosen_state(assets)
+        preview.update(phase="MATCHMAKING",selected_three=[],lead=None)
+        panel.state=deepcopy(preview)
+        panel.assets=assets
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._cancel_event.clear()
+        panel._screen_model=object()
+        panel._last_local_class="OTHER"
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "recommendation":"選出： "+" / ".join(OWN[:3])}
+        with patch.object(panel,"_render") as render:
+            panel._completed({"state":deepcopy(preview),"report":report})
+        displayed=render.call_args.args[0]
+        self.assertEqual(displayed["status"],"SUPERSEDED")
+        self.assertFalse(displayed.get("recommendation"))
+        self.assertEqual(panel.state["phase"],"MATCHMAKING")
+        self.assertIsNone(panel._proposed_selection)
+        self.assertTrue(any(x["event"]=="STALE_SELECTION_ADVICE_DROPPED"
+                            for x in panel._timing_trace))
+
     def test_selection_result_survives_pending_battle_command(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
