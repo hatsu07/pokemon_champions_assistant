@@ -45,6 +45,18 @@ class SampleScreenFieldTests(unittest.TestCase):
                          "opponent_effect_popup", "own_item_popup"):
             self.assertIn(expected, names)
 
+    def test_scaled_full_frame_capture_has_compatible_ocr_crops(self):
+        import cv2
+        self.image[412:505,141:540]=150
+        large=cv2.resize(self.image,(3343,2001))
+        self.assertTrue(self.profile.compatible(large))
+        roi=next(r for r in self.profile.regions if r.name=="battle_message")
+        scaled=self.profile.crop(large,roi)
+        self.assertEqual(scaled.shape[:2],(roi.bounds_px[3]-roi.bounds_px[1],
+                                           roi.bounds_px[2]-roi.bounds_px[0]))
+        self.assertFalse(self.profile.compatible(np.zeros((900,1600,3),
+                                                          dtype=np.uint8)))
+
     def test_fraction_percent_and_timer_remain_unconfirmed(self):
         regions = {r.name: r for r in self.profile.regions}
         own = parse_field_text(regions["own_hp_fraction"], "117/131", frame_id="capture-12")
