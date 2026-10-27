@@ -262,6 +262,7 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
         if possible[0] not in _bench_candidates(state):
             return "SWITCH_TARGET_FAINTED", {}
         if (obs["visual_ui"]=="PARTY_MENU"
+                and not obs.get("_local_screen_only")
                 and _canonical(target) not in displayed):
             return "SWITCH_TARGET_NOT_VISIBLE", {}
         return "OK", {"kind":"SWITCH", "target":possible[0]}
@@ -1366,4 +1367,211 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         return updated,result
     except Exception as exc:
         return deepcopy(state),{"status":"ERROR","reason":type(exc).__name__,
+                                "elapsed_ms":round((perf_counter()-started)*1000)}
+
+# Local screen classification and OCR, not a model-made screenshot
+# observation, are the normal inputs to live battle AI requests.
+_TEXT_RESULT_SCHEMA = {
+    "type":"object","additionalProperties":False,
+    "properties":{
+        "result":{"type":"string","enum":["WIN","LOSS","UNKNOWN"]},
+        "evidence":{"type":"string"},
+    },
+    "required":["result","evidence"],
+}
+
+
+def possible_result_message(message: str) -> bool:
+    """Narrow candidate gate, NOT a result determination.
+
+    A single Pokémon fainting, a type-effect message or the word 勝負 alone
+    is never evidence of WIN/LOSS. A model receives OCR text for confirmation.
+    """
+    import re
+    compact=" ".join(str(message).split()).casefold()
+    return bool(re.search(
+        r"勝利|敗北|しょうり|試合に勝|試合に負|対戦に勝|対戦に負|"
+        r"勝ちました|勝った|負けました|負けた|"
+        r"you\s+win|you\s+lose|相手.{0,8}(?:降参|投了)",
+        compact))
+
+
+def run_replay_text_result(*, state: dict, messages: list[str],
+                           access_token: str, model: str,
+                           total_seconds: float=20.0, client_factory=None,
+                           reasoning_effort: str="low") -> tuple[dict,dict]:
+    """Confirm a possible match ending from OCR TEXT ONLY; never upload pixels."""
+    started=perf_counter()
+    updated=deepcopy(state)
+    recent=[str(m).strip()[:160] for m in messages[-12:]
+            if isinstance(m,str) and m.strip()]
+    if updated.get("phase")=="ENDED":
+        return updated,{"status":"BLOCKED","reason":"MATCH_ALREADY_ENDED"}
+    if not any(possible_result_message(m) for m in recent):
+        return updated,{"status":"RESULT_UNCONFIRMED",
+                        "reason":"NO_EXPLICIT_FINAL_RESULT_MESSAGE","images_sent":0}
+    if client_factory is None:
+        from openai import OpenAI
+        client_factory=OpenAI
+    payload=json.dumps({
+        "ocr_messages_in_time_order":recent,
+        "our_active":updated.get("our_active",""),
+        "opponent_active":updated.get("opponent_active",""),
+        "recognition_source":"LOCAL_TESSERACT_UNVERIFIED",
+        "task":"Match result, NOT an individual Pokémon faint."
+    },ensure_ascii=False,separators=(",",":"))
+    try:
+        client=client_factory(api_key=access_token,
+                              base_url="https://api.openai.com/v1",
+                              timeout=total_seconds,max_retries=0)
+        answer=_stream_json(
+            client,model=model,schema=_TEXT_RESULT_SCHEMA,
+            name="champions_result_ocr_text_only",
+            reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
+            instructions=(
+                "Use ONLY the supplied local OCR text. Determine whether the "
+                "human player won or lost the entire Pokémon Champions match, "
+                "not whether one Pokémon fainted. UNKNOWN for any unclear, "
+                "truncated, contradictory, or non-final message. Quote an "
+                "EXACT substring from one supplied OCR message as evidence; "
+                "never invent winner labels or infer from party HP. No images."),
+            content=[{"type":"input_text","text":payload}])
+        result=answer.get("result","UNKNOWN")
+        evidence=str(answer.get("evidence") or "").strip()
+        # Enforce that the AI grounded its decision in an actual OCR snippet.
+        if (result not in ("WIN","LOSS") or not evidence
+                or not any(evidence in m and possible_result_message(m)
+                           for m in recent)):
+            return updated,{"status":"RESULT_UNCONFIRMED",
+                            "reason":"NO_GROUNDED_EXPLICIT_RESULT",
+                            "images_sent":0,
+                            "elapsed_ms":round((perf_counter()-started)*1000)}
+        updated["phase"]="ENDED"
+        updated["result"]=result
+        updated["last_event"]="OCR_TEXT_MATCH_RESULT"
+        updated.setdefault("history",[]).append({
+            "step":updated.get("step_number",0)+1,
+            "ui":"OCR_TEXT_RESULT","result":"MATCH_END",
+            "evidence_source":"AI_CLASSIFIED_LOCAL_OCR_TEXT_UNVERIFIED"})
+        updated["step_number"]=updated.get("step_number",0)+1
+        return updated,{"status":"MATCH_END","screen":"OCR_TEXT_RESULT",
+                        "recommendation":"勝利。" if result=="WIN" else "敗北。",
+                        "result_source":"AI_GROUNDED_LOCAL_OCR_TEXT",
+                        "evidence_confirmed_by_user":False,
+                        "images_sent":0,
+                        "elapsed_ms":round((perf_counter()-started)*1000)}
+    except Exception as exc:
+        return updated,{"status":"RESULT_UNCONFIRMED",
+                        "reason":type(exc).__name__,"images_sent":0,
+                        "elapsed_ms":round((perf_counter()-started)*1000)}
+
+
+def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
+                           access_token: str, model: str,
+                           expected_screen_label: str,
+                           local_field_candidates: list[dict] | None=None,
+                           total_seconds: float=30.0, client_factory=None,
+                           reasoning_effort: str="low") -> tuple[dict,dict]:
+    """Normal live tactical path: zero screenshots, one compact JSON call.
+
+    A screen classifier proves a menu KIND, not which Pokémon has HP or
+    which party entries are actually visible. The selected living bench is
+    treated as conditional until the game confirms it.
+    """
+    started=perf_counter()
+    current=state.get("our_active")
+    opponent=state.get("opponent_active")
+    if (expected_screen_label not in ("TURN_ACTION","SWITCH_SELECTION")
+            or not current or not opponent):
+        return deepcopy(state),{
+            "status":"BLOCKED","reason":"TEXT_DECISION_REQUIRES_KNOWN_ACTIVES",
+            "images_sent":0}
+    switch_only=expected_screen_label=="SWITCH_SELECTION"
+    bench=_bench_candidates(state)
+    own=_member_for(current,assets)
+    if own is None:
+        return deepcopy(state),{"status":"BLOCKED",
+                               "reason":"OWN_ACTIVE_NOT_IN_REGISTERED_TEAM",
+                               "images_sent":0}
+    from .battle_evidence import OBSERVATION_FACT_FIELDS
+    obs={name:"" for name in OBSERVATION_FACT_FIELDS}
+    obs.update({
+        "visual_ui":"PARTY_MENU" if switch_only else "COMMAND_MENU",
+        "our_six":[],"opponent_six":[],
+        "our_active":current,"opponent_active":opponent,
+        "visible_moves":[],"visible_party":[],"our_hp":"","opponent_hp":"",
+        "battlefield_weather":"","battlefield_terrain":"",
+        "battlefield_effects":"","messages":[],
+        "observed_event":"NONE","match_result":"UNKNOWN",
+        "uncertain_slots":[],
+        "_local_screen_only":True,
+    })
+    cached=state.get("prep") or {}
+    rows=cached.get("matchups_18") or cached.get("matchups_known") or []
+    pairs=[{
+        "our":r.get("our_pokemon"),"opp":r.get("opponent_pokemon"),
+        "cell":r.get("matrix_cell"),"source":r.get("source"),
+        "hint":str(r.get("ai_hint") or "")[:140],
+    } for r in rows if r.get("opponent_pokemon")==opponent][:3]
+    candidates=list(local_field_candidates or [])[-12:]
+    prompt={
+        "screen_kind":expected_screen_label,
+        "choice_kind":"SWITCH_ONLY" if switch_only else "MOVE_OR_SWITCH",
+        "selected_three":state.get("selected_three",[]),
+        "selected_bench_unconfirmed":bool(state.get("selection_assumed")),
+        "active_own":current,"active_opponent":opponent,
+        "our_registered_moves":[] if switch_only else [
+            own.get("move"+str(i),"") for i in range(1,5)],
+        "living_selected_bench_candidates":bench,
+        "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
+        "battle_evidence":state.get("battle_evidence") or {},
+        "battlefield":state.get("battlefield") or {},
+        "cached_current_opponent_pairs":pairs,
+        "recent_history":(state.get("history") or [])[-3:],
+        "ocr_candidates_unverified":candidates,
+        "no_visible_party_confirmation":switch_only,
+    }
+    if client_factory is None:
+        from openai import OpenAI
+        client_factory=OpenAI
+    try:
+        client=client_factory(api_key=access_token,
+                              base_url="https://api.openai.com/v1",
+                              timeout=total_seconds,max_retries=0)
+        answer=_stream_json(
+            client,model=model,schema=ACTION_SCHEMA,
+            name="champions_text_only_turn",
+            reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
+            instructions=(
+                "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
+                "No new visual evidence is available. Optimize all remaining "
+                "three Pokémon; preserve identified win conditions and respect "
+                "known fainting, statuses, choice locks, mega forms and first-"
+                "move priority. Use only registered moves and known living "
+                "selected bench. Do not infer other-game mechanics. "
+                "For SWITCH_ONLY return SWITCH with one living bench member "
+                "or NO_ACTION, NEVER MOVE/PIVOT. A switch-screen classifier "
+                "does not confirm which selected party entries are visible. "
+                "If materially uncertain use NO_ACTION; no invented data."
+            ),
+            content=[{"type":"input_text","text":json.dumps(
+                prompt,ensure_ascii=False,separators=(",",":"))}])
+        if switch_only and answer.get("action_kind") not in ("SWITCH","NO_ACTION"):
+            return deepcopy(state),{"status":"BLOCKED",
+                                    "reason":"SWITCH_ONLY_MOVE_REJECTED",
+                                    "images_sent":0}
+        updated,result=advance_observation(
+            state,assets,obs,
+            lambda *_args:answer,
+            elapsed_seconds=lambda:perf_counter()-started,
+            limit_seconds=max(total_seconds,perf_counter()-started+2))
+        result["transport"]="OCR_TEXT_ONLY"
+        result["images_sent"]=0
+        result["screen_label_hint"]=expected_screen_label
+        result["elapsed_ms"]=round((perf_counter()-started)*1000)
+        result["action_basis"]="SELECTED_BENCH_UNVERIFIED_VISIBILITY" if switch_only else "REGISTERED_MOVES"
+        return updated,result
+    except Exception as exc:
+        return deepcopy(state),{"status":"ERROR","reason":type(exc).__name__,
+                                "images_sent":0,
                                 "elapsed_ms":round((perf_counter()-started)*1000)}

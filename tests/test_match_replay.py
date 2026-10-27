@@ -10,7 +10,8 @@ import numpy as np
 from champions_assist.match_replay import (
     new_replay, advance_observation, confirm_actual_selection,
     assume_advised_selection, validate_battle_choice, run_replay_prep,
-    run_replay_image,
+    run_replay_image, run_replay_text_action, run_replay_text_result,
+    possible_result_message,
 )
 from champions_assist.preload import FrozenMatchAssets
 
@@ -495,6 +496,105 @@ class FullReplayTest(unittest.TestCase):
         self.state["phase"]="SELECTION"
         with self.assertRaisesRegex(ValueError,"相手6匹"):
             confirm_actual_selection(self.state,self.assets,list(OWN[:3]),OWN[0])
+
+
+class TextOnlyLivePathTests(unittest.TestCase):
+    def setUp(self):
+        self.assets=fixture_assets()
+        self.state=new_replay(self.assets)
+        self.state.update(
+            phase="BATTLE",our_active=OWN[0],opponent_active=OPP[0],
+            selected_three=list(OWN[:3]),lead=OWN[0],
+            opponent_six=list(OPP))
+
+    def test_text_only_turn_uses_zero_image_content_and_registered_moves(self):
+        observed=[]
+        def reply(_client, **kwargs):
+            observed.append(kwargs)
+            return {"action_kind":"MOVE","move":"10まんボルト",
+                    "switch_target":"","warning":""}
+        with patch("champions_assist.match_replay._stream_json",side_effect=reply):
+            updated,report=run_replay_text_action(
+                state=self.state,assets=self.assets,access_token="mock",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=[{"raw_text":"まひになった",
+                                         "certainty":"CANDIDATE"}],
+                client_factory=lambda **_:object())
+        self.assertEqual(report["images_sent"],0)
+        self.assertEqual(report["transport"],"OCR_TEXT_ONLY")
+        self.assertEqual(report["recommendation"],"10まんボルト。")
+        self.assertEqual(updated["phase"],"BATTLE")
+        self.assertEqual(observed[0]["name"],"champions_text_only_turn")
+        self.assertEqual([x["type"] for x in observed[0]["content"]],
+                         ["input_text"])
+        data=json.loads(observed[0]["content"][0]["text"])
+        self.assertEqual(data["active_own"],OWN[0])
+        self.assertEqual(data["active_opponent"],OPP[0])
+
+    def test_text_only_forced_switch_rejects_moves(self):
+        answer={"action_kind":"MOVE","move":"10まんボルト",
+                "switch_target":"","warning":""}
+        with patch("champions_assist.match_replay._stream_json",return_value=answer):
+            _,report=run_replay_text_action(
+                state=self.state,assets=self.assets,access_token="mock",
+                model="test",expected_screen_label="SWITCH_SELECTION",
+                client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"SWITCH_ONLY_MOVE_REJECTED")
+        self.assertEqual(report["images_sent"],0)
+
+    def test_text_only_forced_switch_uses_living_selected_bench(self):
+        self.state["awaiting_replacement"]=True
+        answer={"action_kind":"SWITCH","move":"",
+                "switch_target":OWN[1],"warning":""}
+        with patch("champions_assist.match_replay._stream_json",return_value=answer):
+            updated,report=run_replay_text_action(
+                state=self.state,assets=self.assets,access_token="mock",
+                model="test",expected_screen_label="SWITCH_SELECTION",
+                client_factory=lambda **_:object())
+        self.assertEqual(report["images_sent"],0)
+        self.assertEqual(report["action"]["kind"],"SWITCH")
+        self.assertEqual(report["action"]["target"],OWN[1])
+        self.assertIn("未確認",str(report.get("action_basis")).replace(
+            "UNVERIFIED","未確認"))
+        self.assertEqual(updated["phase"],"BATTLE")
+
+    def test_ocr_result_explicit_text_only_and_faint_is_not_result(self):
+        self.assertFalse(possible_result_message("ガブリアスは倒れた！"))
+        self.assertFalse(possible_result_message("勝負をしかけてきた"))
+        self.assertTrue(possible_result_message("対戦に勝利しました"))
+        with patch("champions_assist.match_replay._stream_json") as model:
+            state,unknown=run_replay_text_result(
+                state=self.state,messages=["ガブリアスは倒れた！"],
+                access_token="mock",model="test",
+                client_factory=lambda **_:object())
+        self.assertEqual(unknown["status"],"RESULT_UNCONFIRMED")
+        self.assertEqual(state["phase"],"BATTLE")
+        model.assert_not_called()
+        sent=[]
+        def reply(_client, **kwargs):
+            sent.extend(kwargs["content"])
+            return {"result":"WIN","evidence":"勝利しました"}
+        with patch("champions_assist.match_replay._stream_json",side_effect=reply):
+            ended,report=run_replay_text_result(
+                state=self.state,messages=["対戦に勝利しました"],
+                access_token="mock",model="test",
+                client_factory=lambda **_:object())
+        self.assertEqual(ended["phase"],"ENDED")
+        self.assertEqual(ended["result"],"WIN")
+        self.assertEqual(report["status"],"MATCH_END")
+        self.assertEqual(report["images_sent"],0)
+        self.assertEqual(sent[0]["type"],"input_text")
+
+    def test_ocr_result_model_without_grounded_exact_quote_is_not_accepted(self):
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value={"result":"LOSS","evidence":"負けました"}):
+            state,report=run_replay_text_result(
+                state=self.state,messages=["対戦に勝利しました"],
+                access_token="mock",model="test",
+                client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+        self.assertEqual(state["phase"],"BATTLE")
 
 if __name__=="__main__":
     unittest.main()

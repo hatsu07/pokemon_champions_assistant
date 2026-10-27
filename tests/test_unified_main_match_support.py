@@ -476,15 +476,16 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertTrue(panel.state["selection_assumed"])
-        self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
+        self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertIsNone(panel.state["prep"]["preserve"])
-        self.assertIn("選出：",self.window.recommendation_label.text())
+        self.assertIn("選出（提案）：",self.window.recommendation_label.text())
         self.assertIn("初手（提案）：",panel.selection_banner.text())
+        self.assertIn("実選出未確認",panel.selection_banner.text())
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as prep:
             panel._cleanup()
-        prep.assert_called_once_with()
+        prep.assert_not_called()
 
     def test_full_selection_auto_adopt_prefills_eighteen_and_starts_prep(self):
         from copy import deepcopy
@@ -516,7 +517,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertTrue(panel.state["selection_assumed"])
         self.assertEqual(panel.state["selected_three"],list(OWN[:3]))
-        self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
+        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
         self.assertEqual(panel.state["prep"]["cached_matchups"],18)
         self.assertIn("初手（提案）：",panel.selection_banner.text())
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
@@ -524,7 +525,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as start:
             panel._cleanup()
-            start.assert_called_once_with()
+            start.assert_not_called()
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
         self.assertTrue(any(e.get("event")=="AUTO_SELECTION_ASSUMED"
                             for e in getattr(panel,"_timing_trace",[]))
@@ -600,11 +601,13 @@ class UnifiedMainWindowTests(unittest.TestCase):
                 "selected_three":list(OWN[:3]),"lead":OWN[0],
                 "preserve":OWN[0],"stopper":"未登録", "closer":OWN[2]}
         panel._completed({"state":deepcopy(preview),"report":report})
-        self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
+        # Invalid win-role names are optional; they no longer cause 90s of
+        # tactical re-evaluation or a second AI request.
+        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
         self.assertIsNone(panel.state["prep"]["preserve"])
         with patch.object(panel,"_start_prep_auto") as rescue:
             panel._cleanup()
-        rescue.assert_called_once_with()
+        rescue.assert_not_called()
 
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
@@ -1286,7 +1289,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         with patch.object(panel,"_start_prep_auto") as start:
             panel._cleanup()
-            start.assert_called_once_with(provisional=True)
+            start.assert_not_called()
         self.assertEqual(panel.state["phase"],"SELECTION")
 
     def test_proposed_prep_is_not_promoted_before_actual_confirmation(self):
@@ -1400,6 +1403,68 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertEqual(panel.state["prep_status"],"STRUCTURE_COMPLETE")
         finally:
             panel._prep_thread=None
+
+    def test_prep_without_win_roles_does_not_send_network_or_spawn_thread(self):
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=chosen_state(assets)
+        with patch("champions_assist.match_replay_dialog._ReplayWorker") as worker:
+            panel._start_prep_auto()
+        worker.assert_not_called()
+        self.assertIsNone(panel._prep_thread)
+        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+        self.assertEqual(panel.state["prep"]["win_roles_status"],
+                         "OPTIONAL_NOT_REQUESTED")
+
+    def test_following_normal_switch_reuses_published_target(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel.state={"phase":"BATTLE","awaiting_replacement":False}
+        panel._turn_epoch=7
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        panel._last_advised_switch={"target":"ガブリアス","turn_epoch":7}
+        with patch.object(panel,"_send_pending") as send:
+            panel._queue_batch([np.zeros((12,20,3),dtype=np.uint8)],
+                               screen_label="SWITCH_SELECTION")
+        send.assert_not_called()
+        self.assertIn("ガブリアスに交代",panel.action_banner.text())
+        self.assertTrue(any(row["event"]=="PROPOSED_NORMAL_SWITCH_MENU_REUSED"
+                            for row in panel._timing_trace))
+        panel._auto_running=False
+
+    def test_fainted_switch_is_new_request_even_after_old_switch_proposal(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel.state={"phase":"BATTLE","awaiting_replacement":True}
+        panel._turn_epoch=7
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        panel._last_action_request_screen="TURN_ACTION"
+        panel._last_advised_switch={"target":"ガブリアス","turn_epoch":7}
+        with patch.object(panel,"_send_pending") as send:
+            panel._queue_batch([np.zeros((12,20,3),dtype=np.uint8)],
+                               screen_label="SWITCH_SELECTION")
+            send.assert_called_once()
+        self.assertEqual(panel._pending_screen_label,"SWITCH_SELECTION")
+        panel._pending_batch=None
+        panel._auto_running=False
+
+    def test_manual_match_result_triggers_ended_state_without_images(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","result":"UNKNOWN",
+                     "matrix_compatible":False}
+        with patch.object(QMessageBox,"question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            panel._finish_match_manually("WIN")
+        self.assertEqual(panel.state["phase"],"ENDED")
+        self.assertEqual(panel.state["result"],"WIN")
+        self.assertEqual(panel.entries[-1]["status"],"MATCH_END")
+        self.assertEqual(panel.entries[-1]["images_sent"],0)
 
     def test_local_classifier_triggers_on_two_stable_selection_frames(self):
         from champions_assist.screen_classifier import ScreenPrediction
