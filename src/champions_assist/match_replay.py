@@ -1562,7 +1562,22 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             for n in (own.get("move"+str(i),"") for i in range(1,5)) if n},
         "battle_evidence":state.get("battle_evidence") or {},
         "battlefield":state.get("battlefield") or {},
-        "cached_current_opponent_pairs":pairs,
+        "current_own_form":(state.get("battle_evidence") or {}).get(
+            "form_by_pokemon",{}).get("own",{}).get(current,"UNKNOWN"),
+        "current_own_type":(state.get("battle_evidence") or {}).get(
+            "current_type",{}).get("own",{}).get(current,"UNKNOWN"),
+        "current_own_base_speed":(state.get("battle_evidence") or {}).get(
+            "current_base_speed_by_pokemon",{}).get("own",{}).get(current,"UNKNOWN"),
+        "current_opponent_form":(state.get("battle_evidence") or {}).get(
+            "form_by_pokemon",{}).get("opponent",{}).get(opponent,"UNKNOWN"),
+        # Prior pair scores for a changed-form active may no longer apply.
+        "cached_current_opponent_pairs":(
+            [] if (state.get("battle_evidence") or {}).get(
+                "form_by_pokemon",{}).get("own",{}).get(current)
+            else pairs),
+        "cached_pairs_invalidated_for_form":bool(
+            (state.get("battle_evidence") or {}).get(
+                "form_by_pokemon",{}).get("own",{}).get(current)),
         "recent_history":(state.get("history") or [])[-3:],
         "ocr_candidates_unverified":candidates,
         "no_visible_party_confirmation":switch_only,
