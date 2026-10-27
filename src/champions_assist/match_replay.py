@@ -216,7 +216,11 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
     if member is None or not state["selected_three"]:
         return "REGISTERED_ACTUAL_SELECTION_REQUIRED", {}
     if kind in ("MOVE", "PIVOT"):
-        if state.get("awaiting_replacement"):
+        current_hp=(state.get("battle_evidence") or {}).get(
+            "hp_by_pokemon",{}).get("own",{}).get(own,"")
+        known_fainted=str(current_hp).strip().casefold() in (
+            "0","0hp","0%","ひんし","fainted") or str(current_hp).startswith(("0/","0 /"))
+        if state.get("awaiting_replacement") or known_fainted:
             return "OWN_FAINTED_REPLACEMENT_REQUIRED", {}
         if obs["visual_ui"] not in ("MOVE_MENU","COMMAND_MENU"):
             return "MOVE_INPUT_NOT_AVAILABLE", {}
