@@ -1259,6 +1259,9 @@ class MatchReplayDialog(QDialog):
         if self._turn_screen_seen_at is not None:
             return
         self._turn_epoch+=1
+        # Never render the preceding turn's action in a new decision window.
+        self._last_action_text=""
+        self._last_advised_switch=None
         self._turn_screen_seen_at=monotonic()
         self._turn_action_sent=False
         self._turn_event_after_action=False
@@ -1275,6 +1278,8 @@ class MatchReplayDialog(QDialog):
         if self._turn_action_sent and not self._turn_event_after_action:
             self._turn_event_after_action=True
             self._turn_screen_seen_at=None
+            self._last_action_text=""
+            self._last_advised_switch=None
             self._screen_gate.rearm_after_resolution()
             self._trace_event("TURN_RESOLUTION_OBSERVED",
                               frame_seq=self._last_capture_seq,
@@ -1293,7 +1298,9 @@ class MatchReplayDialog(QDialog):
                     and self._last_advised_switch
                     and not (self.state or {}).get("awaiting_replacement")
                     and not self._turn_event_after_action
-                    and self._last_advised_switch.get("turn_epoch")==self._turn_epoch):
+                    and self._last_advised_switch.get("turn_epoch")==self._turn_epoch
+                    and (self.state or {}).get("our_active")!=
+                        self._last_advised_switch.get("target")):
                 # The player is FOLLOWING an already displayed normal hard
                 # switch, not presenting another tactical decision.
                 self._trace_event("PROPOSED_NORMAL_SWITCH_MENU_REUSED",
@@ -2757,12 +2764,17 @@ class MatchReplayDialog(QDialog):
         if report.get("status") in ("MATCH_STARTED","RESET"):
             self._last_action_text=""
             self._last_selection_text=""
-        if (report.get("screen") in (
+        if report.get("status") in (
+                "NO_ACTION","BLOCKED","ERROR","CANCELLED","DEADLINE_EXCEEDED",
+                "SUPERSEDED","MATCH_END"):
+            # OCR text-only reports may omit screen. This must not resurrect
+            # a prior action when a fresh turn produced no legal advice.
+            self._last_action_text=""
+            self._last_advised_switch=None
+        elif (report.get("screen") in (
                 "COMMAND_MENU","PARTY_MENU","DETAIL_OVERLAY",
                 "ACTION_RESOLUTION","RESULT_SCREEN")
-                and report.get("status") in ("OBSERVED","MATCH_END","BLOCKED",
-                                              "NO_ACTION","DEADLINE_EXCEEDED",
-                                              "SUPERSEDED")):
+                and report.get("status")=="OBSERVED"):
             self._last_action_text=""
         self.selection_banner.setText(
             self._last_selection_text+"（実選出未確認）"
@@ -2774,6 +2786,8 @@ class MatchReplayDialog(QDialog):
             action_text=("交代先を判定中（倒れたポケモンの技は無効）"
                          if report.get("screen_label_hint")=="SWITCH_SELECTION"
                          else "現在の対面から技4つ・交代候補を比較中")
+        elif report.get("status") in ("BLOCKED","NO_ACTION","ERROR","CANCELLED"):
+            action_text="今回のAI提案なし（前ターンの指示は無効）"
         elif report.get("status")=="DEADLINE_EXCEEDED":
             action_text="AI表示最終期限超過：このターンの新しい提案なし"
         elif report.get("status")=="SUPERSEDED":
