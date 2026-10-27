@@ -21,12 +21,12 @@ _ALLOWED_TEXT = frozenset({
     "request_stage", "screen_label", "screen_label_hint", "transport",
     "screen_label_source", "live_reasoning_effort", "warning",
     "kind", "result", "model", "clock_source", "classifier_source",
-    "next_screen", "ocr_status",
+    "next_screen", "ocr_status", "ocr_error_code",
 })
 _ALLOWED_BOOL = frozenset({
     "recommendation_present", "selection_present", "matrix_compatible",
     "matrix_provisional", "superseded", "timer_ocr",
-    "gate_dispatched",
+    "gate_dispatched", "late_advice_presented",
 })
 _ALLOWED_NUMBER = frozenset({
     "elapsed_ms", "capture_and_auth_ms", "at_ms", "ai_request_attempt",
@@ -53,6 +53,8 @@ _ALLOWED_NUMBER = frozenset({
     "ocr_candidates_sent","ocr_queue_pending","ocr_results_pending",
     "ocr_last_latency_ms","ocr_max_latency_ms",
     "ocr_duplicates","ocr_conflicts",
+    "auth_ms","image_prepare_ms","api_total_ms",
+    "api_first_event_ms","api_first_output_ms","validation_ms",
 })
 _SAFE_CODE = re.compile(r"^[\w .:/+()\-]{1,100}$",re.UNICODE)
 _SAFE_SESSION = re.compile(r"^capture-[0-9a-f]{32}$")
