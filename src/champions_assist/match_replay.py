@@ -265,6 +265,10 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
         # Taunt/Encore with UNKNOWN move category or bound move stays in the
         # prompt as explicit uncertainty, never an invented legal option.
         lock = evidence.get("choice_lock", {})
+        spent=(evidence.get("item_state_by_pokemon",{}).get("own",{})
+               .get(own,{}))
+        if spent.get("state")=="SPENT_OR_LOST":
+            lock={}  # No continued choice lock after confirmed item loss.
         if (_canonical(lock.get("pokemon", "")) == _canonical(own)
                 and lock.get("move") and requested != move_key(lock["move"])):
             return "CHOICE_LOCK_VIOLATION", {}
