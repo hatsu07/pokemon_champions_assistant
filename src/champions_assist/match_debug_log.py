@@ -26,7 +26,7 @@ _ALLOWED_TEXT = frozenset({
 _ALLOWED_BOOL = frozenset({
     "recommendation_present", "selection_present", "matrix_compatible",
     "matrix_provisional", "superseded", "timer_ocr",
-    "gate_dispatched", "late_advice_presented",
+    "gate_dispatched", "late_advice_presented", "late_selection_presented",
 })
 _ALLOWED_NUMBER = frozenset({
     "elapsed_ms", "capture_and_auth_ms", "at_ms", "ai_request_attempt",
@@ -34,6 +34,7 @@ _ALLOWED_NUMBER = frozenset({
     "matchups_evaluated", "consecutive_failures", "queue_elapsed_ms",
     "timeout_budget_ms", "latency_ms",
     "visual_first_attempt_elapsed_ms", "visual_transport_retry_elapsed_ms",
+    "selection_visual_ms", "selection_tactical_ms",
     "visual_image_count",
     "visual_source_width","visual_source_height",
     "visual_crop_x","visual_crop_y","visual_crop_width","visual_crop_height",

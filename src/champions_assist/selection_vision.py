@@ -22,8 +22,8 @@ class SelectionDecision:
     status: str
     selected_three: tuple[str, ...] = ()
     lead: str | None = None
-    # Tactical selection call already covers the win route. Return these
-    # three roles *in the same answer*, no second GPT PREP required.
+    # Optional cached-role evidence from older callers; the live selection
+    # output does not wait for PREP win roles.
     preserve: str | None = None
     stopper: str | None = None
     closer: str | None = None
@@ -431,7 +431,7 @@ def decision_context(assets: FrozenMatchAssets, opponents: tuple[str, ...]) -> d
     }
 
 class SelectionPlanner:
-    """One tactical call after a separately validated visual observation."""
+    """Get the three + lead first; expensive win-role PREP is separate."""
     def __init__(self, *, clock: Callable[[], float] = perf_counter):
         self.clock = clock
 
@@ -540,10 +540,11 @@ class SelectionPlanner:
                     (name for name in chosen if raw_role==name
                      or _display_name(raw_role)==_display_name(name)),None)
                 roles.append(normalized)
+            # Once ChatGPT has supplied a COMPLETE, REGISTERED three + lead,
+            # keep the validated answer even if the local target expired during
+            # its last streamed tokens. The GUI checks whether this selection
+            # screen is still current before ever displaying the result.
             elapsed = round((self.clock()-started_at)*1000)
-            if elapsed > max_total_seconds*1000:
-                return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
-                                         **details)
             status = ("PARTIAL_ADVICE" if partial else
                       "OK" if compatible else
                       "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY")
@@ -625,16 +626,16 @@ VISION_SCHEMA = {
     },
     "required": ["visual_ui", "our_six", "opponent_six", "opponent_type_icons", "uncertain_slots"],
 }
+# Selection output is intentionally SHORT. Once three and lead are validated,
+# show them immediately. Preserve/stopper/closer are assessed in subsequent
+# PREP, while the player has time to enter the selection.
 CHOICE_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
         "selected_three": {"type": "array", "items": {"type": "string"}},
         "lead": {"type": "string"},
-        "preserve": {"type": "string"},
-        "stopper": {"type": "string"},
-        "closer": {"type": "string"},
     },
-    "required": ["selected_three", "lead", "preserve", "stopper", "closer"],
+    "required": ["selected_three", "lead"],
 }
 
 def _stream_json(client, *, model: str, instructions: str, content: list,

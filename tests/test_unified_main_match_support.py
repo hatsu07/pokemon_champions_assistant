@@ -136,7 +136,80 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertFalse(panel._automatic_probe.observe(image,"MATCHMAKING"))
         self.assertEqual(panel._automatic_probe.matchmaking_recheck,float("inf"))
 
-    def test_selection_result_survives_pending_battle_command(self):
+    def test_selection_display_precedes_prep_work(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        panel=self.window._match_panel
+        preview=chosen_state(assets)
+        preview.update(phase="SELECTION",selected_three=[],lead=None,
+                       prep=None,prep_status="NOT_STARTED")
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._cancel_event.clear()
+        panel._screen_model=object()
+        panel._last_local_class="TEAM_SELECTION"
+        order=[]
+        original_render=panel._render
+        original_prefill=panel._prefill_cached_prep
+        def render(report):
+            if report.get("status")=="PROVISIONAL_ADVICE":
+                order.append("SELECTION_DISPLAYED")
+            return original_render(report)
+        def prefill(*,roles=None):
+            order.append("PREP_STARTED")
+            return original_prefill(roles=roles)
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "recommendation":"選出： "+" / ".join(OWN[:3])}
+        with patch.object(panel,"_render",side_effect=render),patch.object(
+                panel,"_prefill_cached_prep",side_effect=prefill):
+            panel._completed({"state":deepcopy(preview),"report":report})
+        self.assertEqual(order[:2],["SELECTION_DISPLAYED","PREP_STARTED"])
+        self.assertEqual(panel.state["phase"],"PREP")
+        # The cached PREP rerender must not erase the unconfirmed status.
+        self.assertIn("初手（提案）：",panel.selection_banner.text())
+        self.assertIn("実選出未確認",panel.selection_banner.text())
+
+    def test_selection_reply_without_new_request_is_preserved_as_unconfirmed(self):
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        panel=self.window._match_panel
+        preview=chosen_state(assets)
+        preview.update(phase="MATCHMAKING",selected_three=[],lead=None)
+        panel.state=deepcopy(preview)
+        panel.assets=assets
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._cancel_event.clear()
+        panel._screen_model=object()
+        panel._last_local_class="OTHER"
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "recommendation":"選出： "+" / ".join(OWN[:3])}
+        result_state=deepcopy(preview)
+        result_state["phase"]="SELECTION"  # Real reducer completed vision.
+        with patch.object(panel,"_render") as render:
+            panel._completed({"state":result_state,"report":report})
+        displayed=render.call_args.args[0]
+        self.assertEqual(displayed["status"],"PROVISIONAL_ADVICE")
+        self.assertTrue(displayed["selection_screen_unconfirmed"])
+        self.assertIn("画面の継続未確認",displayed["recommendation"])
+        # The response is retained for review, not treated as a playable
+        # selection or used to start PREP on a departed screen.
+        self.assertEqual(panel.state["phase"],"SELECTION")
+        self.assertIsNone(panel._proposed_selection)
+        self.assertTrue(any(x["event"]=="SELECTION_RESULT_SCREEN_CHANGED"
+                            for x in panel._timing_trace))
+
+    def test_newer_action_request_supersedes_unanswered_selection(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
         from tests.test_match_replay import OWN
@@ -156,11 +229,11 @@ class UnifiedMainWindowTests(unittest.TestCase):
         report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
                 "selected_three":list(OWN[:3]),"lead":OWN[0]}
         panel._completed({"state":deepcopy(preview),"report":report})
-        self.assertEqual(panel.state["phase"],"PREP")
-        self.assertTrue(panel.state["selection_assumed"])
+        self.assertEqual(panel.state["phase"],"SELECTION")
+        self.assertIsNone(panel._proposed_selection)
         self.assertIsNotNone(panel._pending_batch)
         self.assertEqual(panel._pending_screen_label,"TURN_ACTION")
-        self.assertTrue(any(row.get("event")=="SELECTION_PRESERVED_FOR_BATTLE_TRANSITION"
+        self.assertTrue(any(row.get("event")=="STALE_SELECTION_ADVICE_DROPPED"
                             for row in panel._timing_trace))
 
     def test_turn_clock_starts_from_local_screen_not_model_completion(self):
@@ -426,6 +499,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["selected_three"],list(OWN[:3]))
         self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
         self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+        self.assertIn("初手（提案）：",panel.selection_banner.text())
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
         self.assertEqual(panel._automatic_probe._phase,"PREP")
         self.assertTrue(panel.confirm_button.isHidden())
