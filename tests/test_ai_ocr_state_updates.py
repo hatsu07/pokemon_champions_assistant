@@ -105,7 +105,7 @@ class AiOcrStateTests(unittest.TestCase):
                 local_field_candidates=readings(),
                 client_factory=lambda **kwargs:object())
         self.assertEqual(result["our_active"],"ガブリアス")
-        self.assertEqual(report["reason"],"AI_OCR_ACTIVE_STATE_UNVERIFIED")
+        self.assertEqual(report["reason"],"AI_OCR_OWN_ACTIVE_UNVERIFIED")
 
     def test_duplicate_event_is_idempotent(self):
         r,a=apply_ai_ocr_updates(self.state,[switch_event()],readings(),self.assets)
