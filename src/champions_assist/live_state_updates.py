@@ -143,10 +143,14 @@ def _event_for_message(text: str, own: dict, opponents: dict):
                         phrase+"からかいほうされた"):
                 return {"kind":"TEMP_END","side":side,"pokemon":name,
                         "effect":kind}
-        item=re.fullmatch(r"(.+?)を(?:消費した|なくした)",tail)
+        item=re.fullmatch(r"(.+?)を(?:消費した|なくした)!?",tail)
         if item:
             return {"kind":"ITEM_SPENT","side":side,"pokemon":name,
                     "item":item.group(1)}
+        if tail in ("もちものがいれかわった","もちものを交換した"):
+            return {"kind":"ITEM_EXCHANGED","side":side,"pokemon":name}
+        if tail in ("とくせいがかわった","特性が変わった"):
+            return {"kind":"ABILITY_CHANGED_UNKNOWN","side":side,"pokemon":name}
         # Exact activation phrase only; activation does not mean current
         # held item ownership or an ability remains active after replacement.
         ability=re.fullmatch(r"(?:とくせい|特性)(.+?)が(?:はたらいた|発動した)",tail)
@@ -512,6 +516,21 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                     if (registered and registered.get("item")==evt["item"]
                             and evidence.get("choice_lock",{}).get("pokemon")==name):
                         evidence["choice_lock"]={"pokemon":"","move":"","source":""}
+            elif kind=="ITEM_EXCHANGED":
+                items=evidence.setdefault("item_by_pokemon",{
+                    "own":{},"opponent":{}})[side]
+                old_item=items.pop(name,"")
+                evidence["item_state_by_pokemon"][side][name]={
+                    "previous_item":old_item,
+                    "item":"UNKNOWN","state":"CURRENT_UNKNOWN_AFTER_EXCHANGE"}
+                if side=="own":
+                    evidence["choice_lock"]={"pokemon":"","move":"","source":""}
+            elif kind=="ABILITY_CHANGED_UNKNOWN":
+                old_ability=evidence.setdefault("ability_by_pokemon",{
+                    "own":{},"opponent":{}})[side].pop(name,"")
+                evidence["ability_state_by_pokemon"][side][name]={
+                    "previous_ability":old_ability,
+                    "name":"UNKNOWN","active":False}
             elif kind=="ABILITY":
                 evidence.setdefault("ability_by_pokemon",{"own":{},"opponent":{}})[side][name]=evt["ability"]
                 evidence["ability_state_by_pokemon"][side][name]={"active":True,"name":evt["ability"]}
