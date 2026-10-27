@@ -97,7 +97,8 @@ def new_replay(assets: FrozenMatchAssets) -> dict:
         "selection_assumed": False, "observed_lead": None,
         "visual_unknown_opponents": [],
         "our_active": "", "opponent_active": "", "observed_hp": {},
-        "awaiting_replacement": False,
+        "awaiting_replacement": False, "_live_state_revision":0,
+        "_ocr_applied_event_ids":[],
         "observed_moves": [], "last_event": "NONE",
         "result": "UNKNOWN", "step_number": 0, "history": [],
         "image_observations_unverified": [], "prep_status": "NOT_STARTED",
@@ -235,7 +236,26 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
             visible = {move_key(name) for name in obs["visible_moves"]}
             if requested not in visible:
                 return "MOVE_NOT_VERIFIED", {}
-        lock = state.get("battle_evidence", {}).get("choice_lock", {})
+        evidence=state.get("battle_evidence", {})
+        known_pp=(evidence.get("pp_by_pokemon",{}).get("own",{})
+                  .get(own,{}).get(registered[requested]))
+        if known_pp == 0:
+            return "MOVE_OUT_OF_PP", {}
+        temporary=(evidence.get("temporary_effects",{}).get("own",{})
+                   .get(own,{}))
+        encore=temporary.get("encore",{})
+        last_move=(evidence.get("last_move_by_pokemon",{}).get("own",{})
+                   .get(own,""))
+        if (encore.get("active") and last_move
+                and requested!=move_key(last_move)):
+            return "ENCORE_LOCK_VIOLATION", {}
+        disabled=temporary.get("disable",{})
+        if (disabled.get("active") and disabled.get("move")
+                and requested==move_key(disabled["move"])):
+            return "DISABLED_MOVE_VIOLATION", {}
+        # Taunt/Encore with UNKNOWN move category or bound move stays in the
+        # prompt as explicit uncertainty, never an invented legal option.
+        lock = evidence.get("choice_lock", {})
         if (_canonical(lock.get("pokemon", "")) == _canonical(own)
                 and lock.get("move") and requested != move_key(lock["move"])):
             return "CHOICE_LOCK_VIOLATION", {}
