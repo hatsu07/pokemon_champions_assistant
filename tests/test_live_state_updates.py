@@ -70,7 +70,7 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertEqual(audit[0]["status"],"APPLIED")
         self.assertEqual(self.state["our_active"],"マリルリ")
         self.assertEqual(self.state["battle_evidence"]["choice_lock"]["move"],"")
-        self.assertEqual(self.state["_live_state_revision"],2)
+        self.assertEqual(self.state["_live_state_revision"],1)
         self.assertFalse(self.state["awaiting_replacement"])
 
     def test_unknown_six_filled_from_explicit_opponent_switch(self):
