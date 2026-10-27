@@ -24,6 +24,11 @@ _WEATHER = {"あめ":"あめ","すなあらし":"すなあらし",
             "ゆき":"ゆき","ひざし":"ひざし"}
 _TERRAIN = ("エレキフィールド","グラスフィールド",
             "サイコフィールド","ミストフィールド")
+# Type literals are validated against Pokémon Champions' fixed type domain.
+_TYPES = ("ノーマル","ほのお","みず","でんき","くさ","こおり",
+          "かくとう","どく","じめん","ひこう","エスパー",
+          "むし","いわ","ゴースト","ドラゴン","あく",
+          "はがね","フェアリー")
 
 
 def _flat(text: object) -> str:
@@ -95,6 +100,12 @@ def _event_for_message(text: str, own: dict, opponents: dict):
             return {"kind":"SWITCH","side":side,"pokemon":name}
     side,name,tail=_actor(msg,own,opponents)
     if side and name:
+        if re.fullmatch(r"(?:メガシンカした|メガ進化した)!?",tail):
+            return {"kind":"MEGA","side":side,"pokemon":name}
+        current_type=re.fullmatch(r"タイプが(.+?)になった!?",tail)
+        if current_type and current_type.group(1) in _TYPES:
+            return {"kind":"TYPE","side":side,"pokemon":name,
+                    "current_type":current_type.group(1)}
         if re.fullmatch(r"(?:たおれた|倒れた|ひんしになった)!?",tail):
             return {"kind":"FAINT","side":side,"pokemon":name}
         # Berry activation has the same つかった verb as a move.
@@ -169,6 +180,50 @@ def _event_for_message(text: str, own: dict, opponents: dict):
                 "effect":screen.group(2),
                 "active":screen.group(3) in ("はられた","しかれた")}
     return None
+
+
+
+def fill_unknown_preview(state: dict, assets, pokemon: str) -> bool:
+    """Complete exactly one unresolved opponent slot from OBSERVED species.
+
+    This never claims a matchup grade: only corresponding frozen cache rows
+    are reused. All other preview slots stay unchanged.
+    """
+    roster=state.get("opponent_six") or []
+    missing=[i for i,entry in enumerate(roster)
+             if str(entry).startswith("未判明相手")]
+    if (len(missing)!=1 or pokemon in roster
+            or pokemon not in getattr(assets,"matrix_index",{})):
+        return False
+    roster[missing[0]]=pokemon
+    state["visual_unknown_opponents"]=[]
+    state["matrix_rows_six"]=[
+        assets.matrix_index[entry] for entry in roster
+        if entry in assets.matrix_index]
+    prep=state.get("prep")
+    if isinstance(prep,dict):
+        prep["unknown_filled_during_match"]=pokemon
+        from .prep_cache import cached_pairs
+        selected=tuple(state.get("selected_three") or ())
+        lead=state.get("lead")
+        recovered=(cached_pairs(assets,selected,(pokemon,),lead)
+                   if len(selected)==3 and lead in selected and
+                   getattr(assets,"matchup_cache_index",{}) else [])
+        if len(recovered)==3:
+            pairs=prep.get("matchups_18") or prep.get("matchups_known") or []
+            keys={(p.get("our_pokemon"),p.get("opponent_pokemon"))
+                  for p in pairs}
+            for pair in recovered:
+                key=(pair["our_pokemon"],pair["opponent_pokemon"])
+                if key not in keys:
+                    pairs.append(pair)
+            prep["matchups_known"]=pairs
+            prep["cached_matchups"]=len(pairs)
+        else:
+            unresolved=prep.setdefault("unrated_new_opponents",[])
+            if pokemon not in unresolved:
+                unresolved.append(pokemon)
+    return True
 
 
 def _ensure(evidence: dict):
@@ -280,51 +335,16 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 # stale switch proposal; OCR message itself is execution proof.
                 if name and old:
                     evidence["boosts"][side].pop(old,None)
+                    for temporary in evidence["temporary_effects"][side].get(old,{}).values():
+                        if isinstance(temporary,dict):
+                            temporary["active"]=False
+                            temporary["requires_reconfirmation_after_switch"]=True
                 if side=="own":
                     evidence["choice_lock"]={"pokemon":"","move":"","source":""}
                     updated["awaiting_replacement"]=False
                 updated[key]=name
-                # If there is exactly ONE unresolved preview slot and this
-                # species is not already among the five, fill it without
-                # changing known slot assignments.
-                if side=="opponent" and name not in updated.get("opponent_six",[]):
-                    unknown=[i for i,n in enumerate(updated.get("opponent_six",[]))
-                             if str(n).startswith("未判明相手")]
-                    if len(unknown)==1:
-                        updated["opponent_six"][unknown[0]]=name
-                        updated["visual_unknown_opponents"]=[]
-                        if name in getattr(assets,"matrix_index",{}):
-                            updated["matrix_rows_six"]=[
-                                assets.matrix_index[n] for n in updated["opponent_six"]
-                                if n in assets.matrix_index]
-                        # cached PREP is old preview evidence, not proof for
-                        # the newly discovered opponent.
-                        if updated.get("prep"):
-                            prep=updated["prep"]
-                            prep["unknown_filled_during_match"]=name
-                            from .prep_cache import cached_pairs
-                            three=tuple(updated.get("selected_three") or ())
-                            lead=updated.get("lead")
-                            recovered=(cached_pairs(assets,three,(name,),lead)
-                                       if len(three)==3 and lead in three and
-                                       getattr(assets,"matchup_cache_index",{})
-                                       else [])
-                            if len(recovered)==3:
-                                existing=prep.get("matchups_18") or prep.get("matchups_known") or []
-                                seen_pairs={(p.get("our_pokemon"),p.get("opponent_pokemon"))
-                                            for p in existing}
-                                for row in recovered:
-                                    k=(row["our_pokemon"],row["opponent_pokemon"])
-                                    if k not in seen_pairs:
-                                        existing.append(row)
-                                prep["matchups_known"]=existing
-                                prep["cached_matchups"]=len(existing)
-                            else:
-                                # Missing cached matchup never becomes a
-                                # guessed guaranteed processor/safe switch.
-                                prep.setdefault("unrated_new_opponents",[])
-                                if name not in prep["unrated_new_opponents"]:
-                                    prep["unrated_new_opponents"].append(name)
+                if side=="opponent":
+                    fill_unknown_preview(updated,assets,name)
         elif kind=="PP":
             actor=updated.get("our_active")
             if not actor or actor!=name:
@@ -347,6 +367,22 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 if side=="own":
                     updated["awaiting_replacement"]=True
                     evidence["choice_lock"]={"pokemon":"","move":"","source":""}
+            elif kind=="MEGA":
+                # The player's registered form is reliable only if exactly
+                # one post-mega variant belongs to this registered Pokémon.
+                form="MEGA_EVOLVED_FORM_UNCONFIRMED"
+                if side=="own":
+                    candidates=[m["name"].split("→")[-1].strip()
+                                for m in assets.own_team
+                                if len(m["name"].split("→"))==2 and
+                                _pokemon(m["name"].split("→")[0])==name]
+                    if len(candidates)==1:
+                        form=candidates[0]
+                evidence.setdefault("form_by_pokemon",{
+                    "own":{},"opponent":{}})[side][name]=form
+            elif kind=="TYPE":
+                evidence.setdefault("current_type",{
+                    "own":{},"opponent":{}})[side][name]=evt["current_type"]
             elif kind=="MOVE":
                 moves=evidence["moves_by_pokemon"][side].setdefault(name,[])
                 if evt["move"] not in moves:
