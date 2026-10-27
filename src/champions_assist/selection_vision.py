@@ -540,10 +540,11 @@ class SelectionPlanner:
                     (name for name in chosen if raw_role==name
                      or _display_name(raw_role)==_display_name(name)),None)
                 roles.append(normalized)
+            # Once ChatGPT has supplied a COMPLETE, REGISTERED three + lead,
+            # keep the validated answer even if the local target expired during
+            # its last streamed tokens. The GUI checks whether this selection
+            # screen is still current before ever displaying the result.
             elapsed = round((self.clock()-started_at)*1000)
-            if elapsed > max_total_seconds*1000:
-                return SelectionDecision("DEADLINE_EXCEEDED", opponent_six=opponents, elapsed_ms=elapsed,
-                                         **details)
             status = ("PARTIAL_ADVICE" if partial else
                       "OK" if compatible else
                       "PROVISIONAL_ADVICE" if provisional else "TEST_ONLY")
