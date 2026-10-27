@@ -1659,6 +1659,22 @@ class MatchReplayDialog(QDialog):
             # its stale action, advance the match, or dispatch more captures.
             return
         report=payload["report"]
+        if (self._active_job=="batch"
+                and report.get("screen")=="TEAM_SELECTION"
+                and report.get("status") in (
+                    "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
+                and self._auto_running and self._screen_model is not None
+                and self._last_local_class not in (None,"TEAM_SELECTION","UNKNOWN")):
+            # A different screen label alone is NOT a newer AI request:
+            # preserve the finished selection as a historical suggestion.
+            # Never treat it as a selection the player can still enter.
+            report["selection_screen_unconfirmed"]=True
+            report["recommendation"]=(
+                "【選出画面の継続未確認・操作できるか要確認】"
+                +str(report.get("recommendation") or ""))
+            self._trace_event("SELECTION_RESULT_SCREEN_CHANGED",
+                              screen_label=self._last_local_class,
+                              ai_request_attempt=self._ai_request_attempts)
         if (self._active_job=="batch" and self._active_turn_epoch is not None
                 and (self._active_turn_epoch!=self._turn_epoch
                      or self._turn_event_after_action)):
@@ -1809,7 +1825,8 @@ class MatchReplayDialog(QDialog):
                 and report.get("status") in (
                     "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
                 and len(report.get("selected_three") or ())==3 and report.get("lead")
-                and not superseded):
+                and not superseded
+                and not report.get("selection_screen_unconfirmed")):
             self._proposed_selection=(tuple(report["selected_three"]),report["lead"])
             if self._selection_screen_started is None:
                 self._selection_screen_started=(
