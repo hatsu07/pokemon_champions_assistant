@@ -437,7 +437,12 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                                 _pokemon(m["name"].split("→")[0])==name]
                     if len(candidates)==1:
                         form=candidates[0]
-                # Use the frozen Champions matrix only. Unknown type stays unknown.
+                # Any Mega invalidates pre-form type and speed immediately.
+                evidence.setdefault("current_type",{
+                    "own":{},"opponent":{}})[side].pop(name,None)
+                evidence.setdefault("current_base_speed_by_pokemon",{
+                    "own":{},"opponent":{}})[side].pop(name,None)
+                # Use the frozen Champions matrix only. Unknown stays unknown.
                 if form!="MEGA_EVOLVED_FORM_UNCONFIRMED":
                     frozen=getattr(assets,"matrix_index",{}).get(form)
                     if isinstance(frozen,str):
