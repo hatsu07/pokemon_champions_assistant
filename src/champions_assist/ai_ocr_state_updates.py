@@ -5,7 +5,7 @@ import re
 from .battle_evidence import empty_battle_evidence, update_battle_evidence
 from .terminology import japanese_name
 
-_KINDS=("SWITCH","MOVE","FAINT","HP","STATUS","STATUS_CLEAR","BOOST",
+_KINDS=("SWITCH","SWITCH_OUT","MOVE","FAINT","HP","STATUS","STATUS_CLEAR","BOOST",
         "ITEM","ITEM_SPENT","ITEM_EXCHANGED","ABILITY",
         "ABILITY_CHANGED_UNKNOWN","TYPE","MEGA","WEATHER","TERRAIN",
         "TEMP_START","TEMP_END","SIDE_EFFECT")
@@ -58,7 +58,7 @@ def _proof(event,candidates):
               str(row.get("raw_text") or "") and
               type(row.get("confidence")) in (int,float) and
               0<=row["confidence"]<=1]
-        if event["kind"]=="SWITCH":
+        if event["kind"] in ("SWITCH","SWITCH_OUT"):
             rows=[row for row in rows if
                   str(row["field"]).endswith(switch_fields)]
             has_actor_text=has_actor_text or any(
@@ -72,15 +72,15 @@ def _proof(event,candidates):
         confidences.append(float(chosen["confidence"]))
         if type(chosen.get("observed_at")) in (int,float):
             captured.append(float(chosen["observed_at"]))
-    if event["kind"]=="SWITCH":
+    if event["kind"] in ("SWITCH","SWITCH_OUT"):
         if not has_actor_text:
             return "SWITCH_ACTOR_TEXT_REQUIRED"
         if len(frames)==1 and confidences[0]<0.80:
             return "SWITCH_NEEDS_SECOND_FRAME"
-        if min(confidences)<0.55 or max(confidences)<0.68:
+        if min(confidences)<0.45 or max(confidences)<0.68:
             return "WEAK_SWITCH_EVIDENCE"
         # If one OCR frame is weak, require a much stronger second reading.
-        if min(confidences)<0.60 and max(confidences)<0.78:
+        if min(confidences)<0.50 and max(confidences)<0.78:
             return "WEAK_SWITCH_EVIDENCE"
         if len(captured)==len(frames) and len(captured)>1:
             if max(captured)-min(captured)>45:
@@ -139,19 +139,29 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
             fail("ALREADY_APPLIED");continue
         key="our_active" if side=="own" else "opponent_active"
         current=_canon(result.get(key)) if side!="field" else ""
-        if kind=="SWITCH":
+        if kind=="SWITCH_OUT":
+            if not current or current!=name:
+                fail("SWITCH_OUT_ACTOR_NOT_CURRENT");continue
+        elif kind=="SWITCH":
+            if prior and not current and side=="opponent" and prior!=_canon(result.get("last_known_opponent")):
+                fail("STALE_FROM_ACTIVE");continue
             if prior and current and prior!=current:
                 fail("STALE_FROM_ACTIVE");continue
             if current==name:fail("SELF_SWITCH");continue
         elif kind not in ("WEATHER","TERRAIN","SIDE_EFFECT") and current!=name:
             fail("ACTOR_NOT_CURRENT");continue
         memory=result.setdefault("battle_evidence",empty_battle_evidence())
-        if kind=="SWITCH":
+        if kind=="SWITCH_OUT":
+            result["last_known_opponent" if side=="opponent" else "last_known_own"]=name
+            result[key]=""
+            result["opponent_active_unknown" if side=="opponent" else "our_active_unknown"]=True
+        elif kind=="SWITCH":
             update_battle_evidence(result,{
                 "our_active":name if side=="own" else result.get("our_active"),
                 "opponent_active":name if side=="opponent" else result.get("opponent_active"),
             },assets.own_team)
             result[key]=name
+            result["opponent_active_unknown" if side=="opponent" else "our_active_unknown"]=False
             if side=="own":
                 result["awaiting_replacement"]=False
                 memory["choice_lock"]={"pokemon":"","move":"","source":""}
