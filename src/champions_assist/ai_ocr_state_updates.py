@@ -40,7 +40,7 @@ def _proof(event,candidates):
     frame alone proves a switch. ChatGPT must still interpret both.
     """
     frames=event.get("evidence_frames")
-    if (not isinstance(frames,list) or not 1<=len(frames)<=4
+    if (not isinstance(frames,list) or not 1<=len(frames)
             or any(not isinstance(f,str) or not f for f in frames)
             or len(set(frames))!=len(frames)):
         return "EVIDENCE_FRAMES_INVALID"
@@ -105,7 +105,7 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
         list(result.get("opponent_six") or [])+
         list(getattr(assets,"matrix_index",{}))) if
         n and not str(n).startswith("未判明")}
-    for event in proposals[:12]:
+    for event in proposals:
         if not isinstance(event,dict):
             audit.append({"status":"REJECTED","reason":"INVALID_EVENT"});continue
         kind=event.get("kind")
@@ -249,11 +249,11 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
         elif kind in ("WEATHER","TERRAIN"):
             result.setdefault("battlefield",{})["weather" if kind=="WEATHER" else "terrain"]=value
         applied.add(identity)
-        result["_ai_ocr_update_keys"]=list(applied)[-100:]
+        result["_ai_ocr_update_keys"]=list(applied)
         result["_live_state_revision"]=result.get("_live_state_revision",0)+1
         audit.append({**item,"status":"APPLIED","reason":"AI_OCR_EVIDENCE_VERIFIED"})
         provenance=memory.setdefault("update_provenance",[])
         provenance.append({"kind":kind,"source":"AI_INTERPRETED_OCR",
-                           "frame_ids":event["evidence_frames"][:4]})
+                           "frame_ids":event["evidence_frames"]})
         del provenance[:-50]
     return result,audit
