@@ -1659,21 +1659,6 @@ class MatchReplayDialog(QDialog):
             # its stale action, advance the match, or dispatch more captures.
             return
         report=payload["report"]
-        if (self._active_job=="batch"
-                and report.get("screen")=="TEAM_SELECTION"
-                and report.get("status") in (
-                    "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
-                and self._auto_running
-                and self._screen_model is not None
-                and self._last_local_class not in (None,"TEAM_SELECTION")):
-            # Observed game-screen transition beats an otherwise valid late
-            # selection. The elapsed wall clock alone must not discard it.
-            report={**report,"status":"SUPERSEDED",
-                    "recommendation":"","selected_three":[],"lead":None,
-                    "warning":"TEAM_SELECTION_NO_LONGER_VISIBLE"}
-            self._trace_event("STALE_SELECTION_ADVICE_DROPPED",
-                              screen_label=self._last_local_class,
-                              ai_request_attempt=self._ai_request_attempts)
         if (self._active_job=="batch" and self._active_turn_epoch is not None
                 and (self._active_turn_epoch!=self._turn_epoch
                      or self._turn_event_after_action)):
@@ -1743,27 +1728,24 @@ class MatchReplayDialog(QDialog):
             self._pending_batch=None
             self._pending_screen_label=None
             self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
-        # Preserve selection advice even if a newer actionable battle frame
-        # arrives while the selection model is busy. Apply selection first;
-        # the pending battle frame is processed in the next phase.
-        selection_ready=(report.get("screen")=="TEAM_SELECTION"
-                         and report.get("status") in (
-                             "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
-                         and len(report.get("selected_three") or ())==3
-                         and bool(report.get("lead")))
-        preserve_newer_battle=(
-            selection_ready and self._active_job=="batch"
+        # A genuinely NEW decision request supersedes an unanswered older
+        # one. Duplicate preview images and local wall-clock expiry do NOT.
+        # No new request can be sent until the current QThread finishes, so
+        # a queued actionable frame is the preemption boundary.
+        newer_selection_request_pending = (
+            self._active_job=="batch"
+            and report.get("screen")=="TEAM_SELECTION"
             and self._pending_batch is not None
-            and self._pending_screen_label in (
-                "TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"))
-        if preserve_newer_battle:
-            self._trace_event("SELECTION_PRESERVED_FOR_BATTLE_TRANSITION",
-                              next_screen=self._pending_screen_label)
+            and self._pending_screen_label in ("TURN_ACTION","SWITCH_SELECTION"))
         superseded=(
-            not preserve_newer_battle
-            and self._active_job=="batch" and self._pending_batch is not None
-            and _supersedes_result(report,self._pending_screen_label))
-        if self._pending_batch is not None and not superseded and not preserve_newer_battle:
+            newer_selection_request_pending
+            or (self._active_job=="batch" and self._pending_batch is not None
+                and _supersedes_result(report,self._pending_screen_label)))
+        if newer_selection_request_pending:
+            self._trace_event("STALE_SELECTION_ADVICE_DROPPED",
+                              screen_label=self._pending_screen_label,
+                              ai_request_attempt=self._ai_request_attempts)
+        if self._pending_batch is not None and not superseded:
             # A reply beats another unclassified animation/duplicate. The
             # next new *observed* transition can still request a fresh action.
             self._trace_event("INFLIGHT_RESULT_PROTECTED",
@@ -1772,7 +1754,8 @@ class MatchReplayDialog(QDialog):
             self._pending_screen_label=None
         if superseded:
             report={**report,"status":"SUPERSEDED",
-                    "recommendation":"","warning":"NEWER_VERIFIED_SCREEN_PENDING"}
+                    "recommendation":"","selected_three":[],"lead":None,
+                    "warning":"NEWER_VERIFIED_SCREEN_PENDING"}
         if report.get("status") == "ERROR" and report.get("reason") == "AutoCaptureUnavailable":
             self._stop_auto()
         if (not superseded and payload.get("state", {}).get("phase")=="BATTLE"
