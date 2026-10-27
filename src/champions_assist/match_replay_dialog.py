@@ -1564,6 +1564,12 @@ class MatchReplayDialog(QDialog):
                 self.local_classifier_label.setText(self._local_classifier_message())
                 self._automatic_probe.reset()
             else:
+                if (prediction.label in _URGENT_SCREENS
+                        and prediction.confidence>=0.80
+                        and phase in ("PREP","BATTLE")):
+                    # Start OCR at first classifier observation, BEFORE the
+                    # screen gate needs stable frames. Remains nonblocking.
+                    self._offer_event_for_local_ocr(image,label=prediction.label)
                 if prediction.label!=self._last_local_class:
                     self._last_local_class=prediction.label
                     self._trace_event("SCREEN_CLASSIFIER_CHANGED",
@@ -1825,7 +1831,8 @@ class MatchReplayDialog(QDialog):
         if (self._active_job=="batch" and
                 self._active_state_revision is not None and
                 (self.state or {}).get("_live_state_revision",0)!=self._active_state_revision and
-                report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
+                report.get("status") not in ("MATCH_END","ERROR",
+                                            "CANCELLED","DEADLINE_EXCEEDED")):
             report={**report,"status":"SUPERSEDED","recommendation":"",
                     "warning":"OCR_BATTLE_STATE_CHANGED_WHILE_AI_WAS_DECIDING"}
             self._trace_event("OCR_NEW_STATE_INVALIDATED_OLD_AI",
