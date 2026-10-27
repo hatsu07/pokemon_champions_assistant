@@ -28,6 +28,17 @@ class FieldRegion:
     applicable_labels: tuple[str, ...]
 
 
+# Old user calibration files may still contain these regions. They are
+# intentionally NOT OCR targets. Selection/switch UIs use their existing
+# image-analysis path; the turn timer uses the local screen-detection clock.
+# The upper system notice about input not reaching the server is not tactical.
+IGNORED_OCR_ROIS = frozenset({
+    "system_message",
+    "selection_own_list", "selection_opponent_list",
+    "switch_party_list", "switch_detail_panel", "turn_command_timer",
+})
+
+
 # Pixel coordinates are derived from the *provided* 960x572 samples, not
 # inferred from other Pokémon games. They are intentionally preliminary.
 _SAMPLE_960 = (
@@ -38,12 +49,6 @@ _SAMPLE_960 = (
     FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT",)),
     FieldRegion("opponent_effect_popup", "MESSAGE", (754, 195, 941, 284), ("BATTLE_EVENT",)),
     FieldRegion("own_item_popup", "MESSAGE", (58, 194, 267, 279), ("BATTLE_EVENT",)),
-    FieldRegion("system_message", "MESSAGE", (317, 47, 667, 116), ("BATTLE_EVENT", "TURN_ACTION")),
-    FieldRegion("selection_own_list", "TEXT", (49, 89, 310, 474), ("TEAM_SELECTION",)),
-    FieldRegion("selection_opponent_list", "TEXT", (766, 88, 941, 477), ("TEAM_SELECTION",)),
-    FieldRegion("switch_party_list", "TEXT", (26, 123, 307, 500), ("SWITCH_SELECTION",)),
-    FieldRegion("switch_detail_panel", "TEXT", (320, 58, 729, 508), ("SWITCH_SELECTION",)),
-    FieldRegion("turn_command_timer", "TIMER", (790, 123, 946, 166), ("TURN_ACTION",)),
 )
 
 
@@ -200,6 +205,8 @@ def observe_screen_fields(
     candidates = []
     attempted = 0
     for region in profile.regions:
+        if region.name in IGNORED_OCR_ROIS:
+            continue
         if label == "HUD_UNCLASSIFIED":
             # No validated screen classifier: safely OCR *numbers only* in
             # stable HUD coordinates. Never infer a UI, legal action or
