@@ -79,11 +79,13 @@ class TesseractJapaneseOcr:
         self.config = config
         self.timeout_seconds = timeout_seconds
         runtime=discover_japanese_tesseract()
-        if runtime is None:
-            raise RuntimeError("JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE")
-        self.command,self.tessdata_dir=runtime
+        # Offline synthetic/labelled replay can construct the adapter without
+        # any native OCR executable. Only ACTUAL OCR requires the runtime.
+        self.command,self.tessdata_dir=runtime if runtime is not None else (None,None)
 
     def read(self, image: np.ndarray, *, roi_name: str) -> OcrRead:
+        if self.command is None or self.tessdata_dir is None:
+            raise RuntimeError("JAPANESE_TESSERACT_RUNTIME_UNAVAILABLE")
         import pytesseract
 
         pytesseract.pytesseract.tesseract_cmd=self.command
