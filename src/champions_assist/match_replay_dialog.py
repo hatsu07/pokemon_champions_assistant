@@ -330,6 +330,7 @@ class MatchReplayDialog(QDialog):
         self._last_local_ocr_status="NOT_RUNNING"
         self._local_event_reader=None
         self._local_battle_tracker=LocalBattleStateTracker()
+        self._ocr_capture_epochs={}
         self._active_state_revision=None
         self._pending_result_messages=None
         self._result_check_sent_keys=set()
@@ -611,6 +612,7 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self._stop_local_event_reader()
             self._local_battle_tracker.clear()
+            self._ocr_capture_epochs.clear()
             self._active_state_revision=None
             self._pending_result_messages=None
             self._result_check_sent_keys.clear()
@@ -728,6 +730,7 @@ class MatchReplayDialog(QDialog):
         self._field_profile=None
         self._stop_local_event_reader()
         self._local_battle_tracker.clear()
+        self._ocr_capture_epochs.clear()
         self._active_state_revision=None
         self._pending_result_messages=None
         self._result_check_sent_keys.clear()
@@ -1667,8 +1670,11 @@ class MatchReplayDialog(QDialog):
         # Drain is nonblocking and does not perform OCR or an API call.
         self._drain_event_candidates(include_snapshot=False)
         reader=self._local_event_reader
-        if reader.offer(image,label=label,
-                        frame_id=f"capture-{self._last_capture_seq}"):
+        capture_id=f"capture-{self._last_capture_seq}"
+        if reader.offer(image,label=label,frame_id=capture_id):
+            self._ocr_capture_epochs[capture_id]=self._turn_epoch
+            if len(self._ocr_capture_epochs)>128:
+                self._ocr_capture_epochs.pop(next(iter(self._ocr_capture_epochs)))
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
@@ -1678,6 +1684,11 @@ class MatchReplayDialog(QDialog):
         reader=self._local_event_reader
         if reader is not None:
             for result in reader.drain():
+                captured_frame=getattr(result,"frame_id",None)
+                if captured_frame is None and result.observations:
+                    captured_frame=result.observations[0].frame_id
+                capture_epoch=self._ocr_capture_epochs.pop(
+                    captured_frame,self._turn_epoch)
                 if result.error:
                     self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
@@ -1712,7 +1723,7 @@ class MatchReplayDialog(QDialog):
                                 "time":row.timestamp}
                     count,novel=self._local_battle_tracker.ingest(
                         result.observations,collect=True,
-                        turn_epoch=self._turn_epoch)
+                        turn_epoch=capture_epoch)
                     if (novel and self.state is not None and self.assets is not None
                             and self.state.get("phase")!="ENDED"):
                         changed,audit=apply_local_ocr(
