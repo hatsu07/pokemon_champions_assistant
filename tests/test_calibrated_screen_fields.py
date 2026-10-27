@@ -41,9 +41,48 @@ class SampleScreenFieldTests(unittest.TestCase):
         self.assertFalse(self.profile.compatible(np.zeros((540, 960, 3), dtype=np.uint8)))
         names = {r.name for r in self.profile.regions}
         for expected in ("own_hp_fraction", "opponent_hp_percent",
-                         "selection_opponent_list", "battle_message",
+                         "battle_message",
                          "opponent_effect_popup", "own_item_popup"):
             self.assertIn(expected, names)
+
+    def test_unused_screen_rois_are_not_ocrd_even_with_old_calibration(self):
+        excluded = {
+            "system_message", "selection_own_list", "selection_opponent_list",
+            "switch_party_list", "switch_detail_panel", "turn_command_timer",
+        }
+        self.assertTrue(excluded.isdisjoint(
+            {r.name for r in self.profile.regions}))
+        legacy_regions = (
+            FieldRegion("system_message", "MESSAGE", (317,47,667,116),
+                        ("BATTLE_EVENT", "TURN_ACTION")),
+            FieldRegion("selection_own_list", "TEXT", (49,89,310,474),
+                        ("TEAM_SELECTION",)),
+            FieldRegion("selection_opponent_list", "TEXT", (766,88,941,477),
+                        ("TEAM_SELECTION",)),
+            FieldRegion("switch_party_list", "TEXT", (26,123,307,500),
+                        ("SWITCH_SELECTION",)),
+            FieldRegion("switch_detail_panel", "TEXT", (320,58,729,508),
+                        ("SWITCH_SELECTION",)),
+            FieldRegion("turn_command_timer", "TIMER", (790,123,946,166),
+                        ("TURN_ACTION",)),
+        )
+        legacy = ScreenFieldProfile(
+            self.profile.reference_resolution,
+            self.profile.regions + legacy_regions,
+            "OLD_CALIBRATION",
+            False,
+        )
+        # A legacy profile can roundtrip without reviving disallowed OCR.
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"legacy.json"
+            path.write_text(json.dumps(legacy.as_dict()),encoding="utf-8")
+            legacy=ScreenFieldProfile.from_json(path)
+        engine=MappingOcrEngine.for_images([])
+        for label in ("TEAM_SELECTION","SWITCH_SELECTION","TURN_ACTION","BATTLE_EVENT"):
+            engine.calls.clear()
+            observe_screen_fields(self.image, label=label, frame_id="f",
+                                  ocr_engine=engine, profile=legacy)
+            self.assertTrue(excluded.isdisjoint(engine.calls))
 
     def test_scaled_full_frame_capture_has_compatible_ocr_crops(self):
         import cv2
@@ -57,14 +96,12 @@ class SampleScreenFieldTests(unittest.TestCase):
         self.assertFalse(self.profile.compatible(np.zeros((900,1600,3),
                                                           dtype=np.uint8)))
 
-    def test_fraction_percent_and_timer_remain_unconfirmed(self):
+    def test_fraction_and_percent_remain_unconfirmed(self):
         regions = {r.name: r for r in self.profile.regions}
         own = parse_field_text(regions["own_hp_fraction"], "117/131", frame_id="capture-12")
         opp = parse_field_text(regions["opponent_hp_percent"], "97%", frame_id="capture-12")
-        timer = parse_field_text(regions["turn_command_timer"], "COMMAND 45", frame_id="capture-12")
         self.assertEqual(own.value, {"current":117,"maximum":131})
         self.assertEqual(opp.value, {"percent_displayed":97})
-        self.assertEqual(timer.value, 45)
         self.assertEqual(own.certainty, "CANDIDATE")
         self.assertIsNone(parse_field_text(regions["own_hp_fraction"], "250/100", frame_id="x"))
         self.assertIsNone(parse_field_text(regions["opponent_hp_percent"], "128%", frame_id="x"))
