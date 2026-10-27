@@ -69,6 +69,18 @@ ACTION_SCHEMA = {
     },
     "required": ["action_kind", "move", "switch_target", "warning"],
 }
+from .ai_ocr_state_updates import UPDATE_SCHEMA, apply_ai_ocr_updates
+AI_OCR_TURN_SCHEMA={
+    "type":"object","additionalProperties":False,
+    "properties":{
+        "state_updates":{"type":"array","items":UPDATE_SCHEMA},
+        "interpreted_own_active":{"type":"string"},
+        "interpreted_opponent_active":{"type":"string"},
+        "action":ACTION_SCHEMA,
+    },
+    "required":["state_updates","interpreted_own_active",
+                "interpreted_opponent_active","action"],
+}
 _SELECTION_NAME = "champions_replay_selection"
 _OBSERVATION_NAME = "champions_replay_observation"
 _ACTION_NAME = "champions_replay_action"
