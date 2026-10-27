@@ -40,9 +40,10 @@ OBSERVATION_FACT_FIELDS = (
 
 
 _STAT_LABELS = {
-    "こうげき":"A", "ぼうぎょ":"B", "とくこう":"C",
-    "とくぼう":"D", "すばやさ":"S", "めいちゅう":"ACC",
-    "かいひ":"EVA",
+    "こうげき":"A", "攻撃":"A", "ぼうぎょ":"B", "防御":"B",
+    "とくこう":"C", "特攻":"C", "とくぼう":"D", "特防":"D",
+    "すばやさ":"S", "素早さ":"S", "めいちゅう":"ACC",
+    "命中":"ACC", "かいひ":"EVA", "回避":"EVA",
 }
 
 
@@ -55,7 +56,7 @@ def _visual_stages(raw: str) -> dict[str, int] | None:
     for part in parts:
         part=part.strip()
         match=re.fullmatch(
-            r"(こうげき|ぼうぎょ|とくこう|とくぼう|すばやさ|めいちゅう|かいひ|ACC|EVA|[ABCDS])\s*[:：]?\s*([+-]\d+)",part,
+            r"(こうげき|攻撃|ぼうぎょ|防御|とくこう|特攻|とくぼう|特防|すばやさ|素早さ|めいちゅう|命中|かいひ|回避|ACC|EVA|[ABCDS])\s*[:：]?\s*([+-]\d+)",part,
             re.IGNORECASE)
         if not match:
             return None
