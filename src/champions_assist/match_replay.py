@@ -865,15 +865,9 @@ def _run_cached_prep(*, state: dict, assets: FrozenMatchAssets,
              response.get("closer"))
     role_count = sum(isinstance(role, str) and role in selected for role in roles)
     elapsed = round((perf_counter()-started)*1000)
-    if elapsed > limit_seconds*1000:
-        updated["prep_status"] = "DEADLINE_EXCEEDED"
-        return updated, {
-            "status": "PREP_DEADLINE_EXCEEDED", "reason": "DEADLINE_EXCEEDED",
-            "request_stage": "CACHE_ROLE_MODEL", "elapsed_ms": elapsed,
-            "model_elapsed_ms": model_ms, "prompt_chars": len(encoded),
-            "cached_matchups": cached_count, "missing_matchups": missing_count,
-            "win_conditions": role_count,
-        }
+    # A local wall-clock target is advisory: never discard a fully returned,
+    # schema-valid role answer merely because the selection countdown ended.
+    overtime = elapsed > limit_seconds*1000
     if role_count != 3:
         updated["prep_status"] = "CACHE_ROLES_INCOMPLETE"
         return updated, {
@@ -914,6 +908,7 @@ def _run_cached_prep(*, state: dict, assets: FrozenMatchAssets,
                   "CACHED_EVIDENCE_GAPS",
         "request_stage": "CACHE_ROLE_VALIDATE",
         "elapsed_ms": elapsed, "model_elapsed_ms": model_ms,
+        "prep_soft_deadline_exceeded": overtime,
         "prompt_chars": len(encoded),
         "cached_matchups": count, "missing_matchups": missing_count,
         "matchups_evaluated": count, "win_conditions": role_count,
@@ -1095,11 +1090,9 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 known, unknown_slots, result)
             if partial else validate_prep_result(prep_input,result))
         elapsed=round((perf_counter()-started)*1000)
-        if elapsed>limit_seconds*1000:
-            updated["prep_status"]="DEADLINE_EXCEEDED"
-            return updated,{"status":"PREP_DEADLINE_EXCEEDED","elapsed_ms":elapsed,
-                            "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
-                            "prompt_chars":prompt_chars}
+        # Completed PREP output remains useful after the soft time target.
+        # The caller cancels it only when a newer AI request is dispatched.
+        overtime=elapsed>limit_seconds*1000
         updated["prep_status"]=(
             "PARTIAL_STRUCTURE_COMPLETE" if partial else "STRUCTURE_COMPLETE"
         ) if validation.complete else "INCOMPLETE"
@@ -1136,6 +1129,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "事前評価完了（構造検証）。"
         ) if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
+                        "prep_soft_deadline_exceeded":overtime,
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                         "prompt_chars":prompt_chars,
