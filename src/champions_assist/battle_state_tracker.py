@@ -21,8 +21,10 @@ class LocalBattleStateTracker:
         self.duplicates=0
         self.conflicts=0
 
-    def ingest(self, records: tuple[LocalFieldRead, ...]) -> int:
+    def ingest(self, records: tuple[LocalFieldRead, ...],
+               *, collect: bool=False):
         inserted=0
+        novel=[]
         for row in records:
             if row.status!="CANDIDATE":
                 continue
@@ -42,8 +44,9 @@ class LocalBattleStateTracker:
                 row=replace(row,status=status)
             self._events.append(row)
             self._latest[row.field]=row
+            novel.append(row)
             inserted+=1
-        return inserted
+        return (inserted,tuple(novel)) if collect else inserted
 
     def snapshot(self, *, at_or_before: float | None=None,
                  limit: int=12, own_active: str | None=None,
