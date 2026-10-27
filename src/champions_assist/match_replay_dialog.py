@@ -186,7 +186,12 @@ class _ReplayWorker(QObject):
                 auth_started=perf_counter()
                 token=auth.access_token()
                 auth_ms=round((perf_counter()-auth_started)*1000)
-                self.progress.emit("AI画像送信処理中（結果待ち）")
+                self.progress.emit(
+                    "OCRテキストによるAI判断中（結果待ち）"
+                    if self.screen_label in _URGENT_SCREENS
+                    and self.state.get("our_active")
+                    and self.state.get("opponent_active")
+                    else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
                     # Selection: shared 55s including auth and all model calls.
@@ -1377,6 +1382,10 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
+        text_only=(screen_label in _URGENT_SCREENS
+                   and bool(self.state.get("our_active"))
+                   and bool(self.state.get("opponent_active")))
+        planned_image_count=0 if text_only else len(frames)
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
         self._active_request_frame=frames[-1] if frames else None
@@ -1423,18 +1432,20 @@ class MatchReplayDialog(QDialog):
             ai_request_attempt=self._ai_request_attempts,
             frame_seq=self._last_capture_seq,
             turn_epoch=self._turn_epoch,
-            image_count=len(frames),
+            image_count=planned_image_count,
+            ai_transport="OCR_TEXT_ONLY" if text_only else "VISION_EXCEPTION",
             screen_label=screen_label or "UNCLASSIFIED",
             capture_to_enqueue_ms=(
                 max(0,int((monotonic()-self._turn_screen_seen_at)*1000))
                 if self._turn_screen_seen_at is not None
                 and screen_label in _URGENT_SCREENS else 0))
         self._set_ai_status(
-            f"AI処理を起動中 #{self._ai_request_attempts}（画像 {len(frames)} 枚・送信は未確認）")
+            f"AI処理を起動中 #{self._ai_request_attempts}（画像 {planned_image_count} 枚・送信は未確認）")
         request_report={
             "step":len(self.entries)+1, "status":"AI_REQUEST_QUEUED",
             "ai_request_attempt":self._ai_request_attempts,
-            "image_count":len(frames),
+            "image_count":planned_image_count,
+            "ai_transport":"OCR_TEXT_ONLY" if text_only else "VISION_EXCEPTION",
             "screen_label_hint":screen_label,
             "message":"AI処理を起動しました。送信成功はまだ確認できていません。"}
         self.entries.append(request_report)
@@ -1786,6 +1797,13 @@ class MatchReplayDialog(QDialog):
                 and report.get("status")!="MATCH_END"):
             # An earlier tactical answer may finish after a manual result.
             return
+        if (self._active_job=="batch" and self._pending_result_messages
+                and report.get("status") in (
+                    "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
+            report={**report,"status":"SUPERSEDED",
+                    "recommendation":"",
+                    "warning":"POSSIBLE_MATCH_RESULT_OCR_PENDING"}
+            self._trace_event("ACTION_WITH_RESULT_CHECK_PENDING_DROPPED")
         if (self._active_job=="batch"
                 and report.get("screen")=="TEAM_SELECTION"
                 and report.get("status") in (
@@ -2379,8 +2397,13 @@ class MatchReplayDialog(QDialog):
             # a stopped capture session.
             return
         if self._pending_result_messages is not None and self._auto_running:
-            self._request_result_from_ocr(self._pending_result_messages)
-        elif self._pending_batch is not None and not self._cancel_event.is_set():
+            messages=self._pending_result_messages
+            self._pending_result_messages=None
+            key=tuple(messages)
+            if key not in self._result_check_sent_keys:
+                self._request_result_from_ocr(messages)
+                return
+        if self._pending_batch is not None and not self._cancel_event.is_set():
             self._send_pending()
         elif self._deferred_fallback_batch is not None and self._auto_running:
             frames=self._deferred_fallback_batch
