@@ -69,6 +69,9 @@ class PaddleV6SmallGpuOcr:
             raise OcrExecutionError("GPU_OCR_INITIALIZATION_FAILED") from exc
         return self._pipeline
 
+    def warmup(self):
+        self._load()
+
     def read(self, image: np.ndarray, *, roi_name: str) -> OcrRead:
         if image.size==0 or image.ndim not in (2,3):
             raise OcrExecutionError("GPU_OCR_INVALID_IMAGE")
@@ -96,7 +99,7 @@ class PaddleV6SmallGpuOcr:
                 for i,word in enumerate(readings):
                     if str(word).strip():
                         words.append(str(word).strip())
-                        if i<len(confidences) and isinstance(confidences[i],(int,float)):
+                        if i<len(confidences) and isinstance(confidences[i],(int,float,np.number)):
                             scores.append(float(confidences[i]))
             return OcrRead(" ".join(words),sum(scores)/len(scores) if scores else None,ENGINE_NAME)
         except OcrExecutionError:
@@ -150,35 +153,45 @@ class PaddleGpuSidecar:
         self._reader=Thread(target=read_lines,daemon=True,name="ocr-gpu-stdio")
         self._reader.start()
 
+    def _exchange(self,message,timeout):
+        self._spawn()
+        req=uuid4().hex
+        message["request_id"]=req
+        try:
+            self._process.stdin.write(json.dumps(message)+"\\n")
+            self._process.stdin.flush()
+        except (OSError,BrokenPipeError) as exc:
+            self.stop()
+            raise OcrExecutionError("GPU_OCR_SIDECAR_DISCONNECTED") from exc
+        deadline=monotonic()+timeout
+        while monotonic()<deadline:
+            try:
+                reply=self._answers.get(timeout=max(.001,deadline-monotonic()))
+            except Empty:
+                break
+            if reply.get("request_id")!=req:
+                continue
+            if reply.get("error"):
+                raise OcrExecutionError(str(reply["error"]))
+            return reply
+        self.stop()
+        raise OcrExecutionError("GPU_OCR_SIDECAR_TIMEOUT")
+
+    def warmup(self):
+        self._exchange({"type":"warmup"},30.0)
+
     def read(self,image: np.ndarray,*,roi_name: str) -> OcrRead:
         self._spawn()
         ok,buf=cv2.imencode(".png",cv2.cvtColor(image,cv2.COLOR_RGB2BGR)
                             if image.ndim==3 and image.shape[2]==3 else image)
         if not ok:
             raise OcrExecutionError("GPU_OCR_PNG_FAILED")
-        req=uuid4().hex
-        try:
-            self._process.stdin.write(json.dumps({
-                "request_id":req,"roi":roi_name,
-                "image":base64.b64encode(buf.tobytes()).decode("ascii")})+"\n")
-            self._process.stdin.flush()
-        except (OSError,BrokenPipeError) as exc:
-            self.stop()
-            raise OcrExecutionError("GPU_OCR_SIDECAR_DISCONNECTED") from exc
-        deadline=monotonic()+self.timeout_seconds
-        while monotonic()<deadline:
-            try:
-                message=self._answers.get(timeout=max(.001,deadline-monotonic()))
-            except Empty:
-                break
-            if message.get("request_id")!=req:
-                continue
-            if message.get("error"):
-                raise OcrExecutionError(str(message["error"]))
-            return OcrRead(str(message.get("text") or ""),
-                           message.get("confidence"),ENGINE_NAME)
-        self.stop()
-        raise OcrExecutionError("GPU_OCR_SIDECAR_TIMEOUT")
+        message=self._exchange({
+            "type":"ocr","roi":roi_name,
+            "image":base64.b64encode(buf.tobytes()).decode("ascii")},
+            self.timeout_seconds)
+        return OcrRead(str(message.get("text") or ""),
+                       message.get("confidence"),ENGINE_NAME)
 
     def stop(self):
         process=self._process
