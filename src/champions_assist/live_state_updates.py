@@ -354,6 +354,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                           "reason":"LOW_CONFIDENCE_OR_CONFLICT","frame_id":ref[0]})
             continue
         kind,side=evt["kind"],evt.get("side")
+        state_delta=True
         name=evt.get("pokemon")
         old=updated.get("our_active" if side=="own" else "opponent_active")
         if kind in ("HP","PP"):
@@ -368,6 +369,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                               "reason":"ACTOR_HUD_NOT_ATTESTED","frame_id":ref[0]})
                 continue
         if kind in ("ACTIVE","SWITCH"):
+            state_delta=(name!=old)
             key="our_active" if side=="own" else "opponent_active"
             if name!=old:
                 # The same exact Pokémon-name ROI must be read after any
@@ -396,15 +398,21 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 audit.append({"kind":kind,"status":"CANDIDATE",
                               "reason":"ACTIVE_NOT_CONFIRMED","frame_id":ref[0]})
                 continue
-            evidence["pp_by_pokemon"]["own"].setdefault(actor,{})[evt["move"]]=evt["pp"]
+            pps=evidence["pp_by_pokemon"]["own"].setdefault(actor,{})
+            state_delta=pps.get(evt["move"])!=evt["pp"]
+            pps[evt["move"]]=evt["pp"]
         elif kind=="HP":
             actor=updated.get("our_active" if side=="own" else "opponent_active")
             if not actor or (side=="own" and updated.get("awaiting_replacement")):
                 audit.append({"kind":kind,"status":"CANDIDATE",
                               "reason":"ACTIVE_NOT_CONFIRMED","frame_id":ref[0]})
                 continue
-            evidence.setdefault("hp_by_pokemon",{"own":{},"opponent":{}})[side][actor]=evt["hp"]
-            updated.setdefault("observed_hp",{})[side]=evt["hp"]
+            hp=evidence.setdefault("hp_by_pokemon",{
+                "own":{},"opponent":{}})[side]
+            state_delta=(hp.get(actor)!=evt["hp"] or
+                         updated.setdefault("observed_hp",{}).get(side)!=evt["hp"])
+            hp[actor]=evt["hp"]
+            updated["observed_hp"][side]=evt["hp"]
         elif name is not None:
             if kind=="FAINT":
                 names_seen.pop(side,None)
@@ -506,6 +514,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 evidence["ability_state_by_pokemon"][side][name]={"active":True,"name":evt["ability"]}
         elif kind in ("WEATHER","TERRAIN"):
             key="weather" if kind=="WEATHER" else "terrain"
+            state_delta=battlefield.get(key)!=evt["value"]
             battlefield[key]=evt["value"]
             battlefield[key+"_state"]={
                 "active":bool(evt["value"]),
@@ -521,7 +530,8 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                 effects.pop(evt["effect"],None)
         else:
             continue
-        updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
+        if state_delta:
+            updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
         audit.append({"kind":kind,"status":"APPLIED","side":side or "",
                       "frame_id":ref[0],"revision":updated.get("_live_state_revision",0)})
         provenance=evidence["update_provenance"]
