@@ -5,6 +5,8 @@ different Pokémon game, nor treat a recommendation as an executed move.
 """
 from __future__ import annotations
 
+import re
+
 from .terminology import japanese_name
 
 
@@ -37,6 +39,34 @@ OBSERVATION_FACT_FIELDS = (
 )
 
 
+_STAT_LABELS = {
+    "こうげき":"A", "ぼうぎょ":"B", "とくこう":"C",
+    "とくぼう":"D", "すばやさ":"S", "めいちゅう":"ACC",
+    "かいひ":"EVA",
+}
+
+
+def _visual_stages(raw: str) -> dict[str, int] | None:
+    """Accept only unambiguous stage values; never turn unknown into +0."""
+    if not raw:
+        return None
+    parts=re.split(r"[,、/;]+",raw)
+    result={}
+    for part in parts:
+        part=part.strip()
+        match=re.fullmatch(
+            r"(こうげき|ぼうぎょ|とくこう|とくぼう|すばやさ|めいちゅう|かいひ|ACC|EVA|[ABCDS])\\s*[:：]?\\s*([+-]\\d+)",part,
+            re.IGNORECASE)
+        if not match:
+            return None
+        stat=_STAT_LABELS.get(match.group(1),match.group(1).upper())
+        value=int(match.group(2))
+        if stat in result or not -6<=value<=6:
+            return None
+        result[stat]=value
+    return result or None
+
+
 def empty_battle_evidence() -> dict:
     return {
         "hp_by_pokemon": {"own": {}, "opponent": {}},
@@ -45,6 +75,7 @@ def empty_battle_evidence() -> dict:
         "form_by_pokemon": {"own": {}, "opponent": {}},
         "status_by_pokemon": {"own": {}, "opponent": {}},
         "boosts": {"own": {}, "opponent": {}},
+        "boost_descriptions": {"own": {}, "opponent": {}},
         "choice_lock": {"pokemon": "", "move": "", "source": ""},
         "last_confirmed_our_move": "",
         "moves_by_pokemon":{"own":{},"opponent":{}},
@@ -73,8 +104,10 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
     if own and previous_own and _key(own) != _key(previous_own):
         memory["choice_lock"] = {"pokemon": "", "move": "", "source": ""}
         memory["boosts"]["own"].pop(previous_own, None)
+        memory.setdefault("boost_descriptions",{"own":{},"opponent":{}})["own"].pop(previous_own,None)
     if opponent and previous_opponent and _key(opponent) != _key(previous_opponent):
         memory["boosts"]["opponent"].pop(previous_opponent, None)
+        memory.setdefault("boost_descriptions",{"own":{},"opponent":{}})["opponent"].pop(previous_opponent,None)
     for team, active in (("own", own), ("opponent", opponent)):
         if not active:
             continue
@@ -94,6 +127,16 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
                 if field=="status_by_pokemon" and value in (
                         "なおった","かいふくした","状態異常がなおった"):
                     memory[field][team].pop(active,None)
+                elif field=="boosts":
+                    stages=_visual_stages(value)
+                    if stages is not None:
+                        memory[field][team][active]=stages
+                        memory.setdefault("boost_descriptions",{
+                            "own":{},"opponent":{}})[team].pop(active,None)
+                    else:
+                        memory.setdefault("boost_descriptions",{
+                            "own":{},"opponent":{}})[team][active]=value
+                        # Do not discard previous known numeric stages.
                 else:
                     memory[field][team][active] = value
     for side,actor,key in (("own",own,"our_used_move"),
@@ -134,7 +177,9 @@ def update_battle_evidence(state: dict, observation: dict, own_team: tuple[dict,
     if move and own and observation.get("visual_ui") == "ACTION_RESOLUTION":
         memory["last_confirmed_our_move"] = move
         member = next((m for m in own_team if _key(m.get("name", "")) == _key(own)), None)
-        if member and member.get("choice_lock") == "Y":
+        spent = memory.get("item_state_by_pokemon",{}).get("own",{}).get(own,{})
+        if (member and member.get("choice_lock") == "Y"
+                and spent.get("state")!="SPENT_OR_LOST"):
             revealed_item = memory["item_by_pokemon"]["own"].get(own, "")
             if not revealed_item or revealed_item == member.get("item"):
                 # Do not invent a lock on a move absent from the actual set.
