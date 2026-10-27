@@ -171,6 +171,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._completed({"state":deepcopy(preview),"report":report})
         self.assertEqual(order[:2],["SELECTION_DISPLAYED","PREP_STARTED"])
         self.assertEqual(panel.state["phase"],"PREP")
+        # The cached PREP rerender must not erase the unconfirmed status.
+        self.assertIn("初手（提案）：",panel.selection_banner.text())
+        self.assertIn("実選出未確認",panel.selection_banner.text())
 
     def test_selection_reply_without_new_request_is_preserved_as_unconfirmed(self):
         from copy import deepcopy
@@ -496,6 +499,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["selected_three"],list(OWN[:3]))
         self.assertEqual(panel.state["prep_status"],"CACHE_PREP_BASE_READY")
         self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+        self.assertIn("初手（提案）：",panel.selection_banner.text())
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
         self.assertEqual(panel._automatic_probe._phase,"PREP")
         self.assertTrue(panel.confirm_button.isHidden())
