@@ -18,8 +18,8 @@ class PortableJapaneseOcrTests(TestCase):
         reader.command="tesseract"
         reader.tessdata_dir="tessdata"
         sample=np.full((32,40,3),120,dtype=np.float32)[:,::2,0:1]
-        tsv="level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\\n"
-        tsv+="5\t1\t1\t1\t1\t1\t0\t0\t20\t32\t98\tHP\\n"
+        tsv="level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+        tsv+="5\t1\t1\t1\t1\t1\t0\t0\t20\t32\t98\tHP\n"
         with patch("champions_assist.ocr.subprocess.run",
                    return_value=SimpleNamespace(returncode=0,stdout=tsv,stderr="")) as cmd:
             result=reader.read(sample,roi_name="MESSAGE")
