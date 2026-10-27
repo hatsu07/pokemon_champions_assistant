@@ -1371,6 +1371,31 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
         obs=answer["observation"]
+        if (state.get("_active_identity_needs_confirmation")
+                and phase=="BATTLE"):
+            # An unverified switch may already have happened. Never issue a
+            # new action on the old active merely because local OCR missed it.
+            observed_actor=str(obs.get("our_active") or "")
+            if _member_for(observed_actor,assets) is None:
+                if diagnostic_sink is not None:
+                    diagnostic_sink("AI_VALIDATION",{
+                        "validation_code":"POST_SWITCH_ACTIVE_NOT_CONFIRMED",
+                        "status":"BLOCKED",
+                        "our_active":state.get("our_active"),
+                        "source":"CURRENT_MENU_IMAGE"})
+                return deepcopy(state),{
+                    "status":"BLOCKED","reason":"POST_SWITCH_ACTIVE_NOT_CONFIRMED",
+                    "screen":obs.get("visual_ui","UNKNOWN"),
+                    "recommendation":"","images_sent":len(images),
+                    "elapsed_ms":round((perf_counter()-started)*1000)}
+            # The same fresh image proves which registered actor is on screen.
+            # It can be the old actor if the suggested switch never happened.
+            state=deepcopy(state)
+            state["_active_identity_needs_confirmation"]=False
+            if diagnostic_sink is not None:
+                diagnostic_sink("ACTIVE_RECHECK_CONFIRMED",{
+                    "our_active":observed_actor,
+                    "source":"CURRENT_MENU_IMAGE","verified":True})
         if switch_only and obs.get("visual_ui")!="PARTY_MENU":
             return deepcopy(state),{"status":"BLOCKED",
                 "reason":"SWITCH_SCREEN_RECOGNITION_MISMATCH",
@@ -1530,6 +1555,14 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     treated as conditional until the game confirms it.
     """
     started=perf_counter()
+    if state.get("_active_identity_needs_confirmation"):
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_VALIDATION",{
+                "validation_code":"POST_SWITCH_ACTIVE_RECHECK_REQUIRED",
+                "status":"BLOCKED"})
+        return deepcopy(state),{
+            "status":"BLOCKED","reason":"POST_SWITCH_ACTIVE_RECHECK_REQUIRED",
+            "images_sent":0}
     current=state.get("our_active")
     opponent=state.get("opponent_active")
     if (expected_screen_label not in ("TURN_ACTION","SWITCH_SELECTION")
