@@ -15,6 +15,10 @@ from .terminology import japanese_name
 from .battle_evidence import _visual_stages
 
 _CONFIDENCE_MIN = 0.72
+# A weak OCR switch needs corroboration; other battle facts keep .72.
+_SWITCH_SECONDARY_MIN = 0.60
+_SWITCH_PEAK_MIN = 0.68
+_SWITCH_FRAME_WINDOW_SECONDS = 3.0
 _STATS = {"こうげき":"A","ぼうぎょ":"B","とくこう":"C",
           "とくぼう":"D","すばやさ":"S","めいちゅう":"ACC","かいひ":"EVA"}
 _STATUSES = {"まひ":"まひ","やけど":"やけど","どく":"どく",
@@ -87,6 +91,40 @@ def _actor(message: str, own: dict, opponents: dict):
     return side,name,m.group(3)
 
 
+def _one_ocr_edit_apart(a: str, b: str) -> bool:
+    """Exactly one insertion, deletion or substitution."""
+    if a==b or abs(len(a)-len(b))>1:
+        return False
+    if len(a)==len(b):
+        return sum(x!=y for x,y in zip(a,b))==1
+    short,long=sorted((a,b),key=len)
+    return any(short==long[:i]+long[i+1:] for i in range(len(long)))
+
+
+def _own_switch_ocr_candidate(text: str, own: dict):
+    """Explicit 'ゆけっ / NAME /' with OCR separators and stray UI marks.
+
+    Roster-based one-character correction yields a CANDIDATE only, never
+    confirmed execution without another independent captured reading.
+    """
+    msg=_flat(text)
+    matches=list(re.finditer(
+        r"(?<![ぁ-んァ-ヿ一-龯A-Za-z])ゆけっ[!/|:・]*([ぁ-んァ-ヿーA-Za-z0-9]+)",
+        msg))
+    if len(matches)!=1:
+        return None
+    raw=matches[0].group(1)
+    if raw in own:
+        return own[raw],True
+    if len(raw)<4:
+        return None
+    names={pokemon for key,pokemon in own.items()
+           if len(key)>=4 and _one_ocr_edit_apart(raw,key)}
+    if len(names)!=1:
+        return None
+    return names.pop(),False
+
+
 def _event_for_message(text: str, own: dict, opponents: dict):
     msg=_flat(text)
     # '相手はXをくりだした', 'ゆけっ!X!' and explicit named switch.
@@ -96,11 +134,9 @@ def _event_for_message(text: str, own: dict, opponents: dict):
                          explicit_opponent=True)
         if side:
             return {"kind":"SWITCH","side":side,"pokemon":name}
-    outgoing=re.fullmatch(r"ゆけっ!?(.+?)!?",msg)
-    if outgoing:
-        side,name=_owner(outgoing.group(1),own,opponents)
-        if side=="own":
-            return {"kind":"SWITCH","side":side,"pokemon":name}
+    own_send_out=_own_switch_ocr_candidate(text,own)
+    if own_send_out is not None and own_send_out[1]:
+        return {"kind":"SWITCH","side":"own","pokemon":own_send_out[0]}
     side,name,tail=_actor(msg,own,opponents)
     if side and name:
         if re.fullmatch(r"(?:メガシンカした|メガ進化した)!?",tail):
@@ -261,6 +297,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
     own,opponents=_names(assets,updated)
     seen=updated.setdefault("_ocr_applied_event_ids",[])
     seen_set=set(seen)
+    switch_attestations=updated.setdefault("_ocr_switch_attestations",[])
     # An HP HUD captured during switch animation may still show the outgoing
     # member. Only the same-frame name can attribute it to a new entrant.
     switching_frames=set()
@@ -290,7 +327,10 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         field=getattr(rec,"field","")
         event=(_event_for_message(str(getattr(rec,"text","")),own,opponents)
                if field.endswith("battle_message") else None)
-        priority=(0 if event and event.get("kind")=="SWITCH" else
+        priority=(0 if (event and event.get("kind")=="SWITCH") or (
+                     field.endswith("battle_message") and
+                     _own_switch_ocr_candidate(
+                         str(getattr(rec,"text","")),own) is not None) else
                   1 if field in ("screen_text.own_active_name",
                                  "screen_text.opponent_active_name") else 2)
         return float(getattr(rec,"timestamp",0)),priority
@@ -311,6 +351,9 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         trusted=(getattr(rec,"status","")=="CANDIDATE"
                  and isinstance(conf,(int,float)) and conf>=_CONFIDENCE_MIN)
         evt=None
+        own_switch=(_own_switch_ocr_candidate(text,own)
+                    if field.endswith("battle_message") else None)
+        switch_verification=""
         if field in ("screen_text.own_active_name","screen_text.opponent_active_name"):
             side="own" if "own_active" in field and not "opponent" in field else "opponent"
             corpus=own if side=="own" else opponents
@@ -340,6 +383,8 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         elif field.startswith("screen_text.") and any(
                 tag in field for tag in ("battle_message","effect_popup","item_popup")):
             evt=_event_for_message(text,own,opponents)
+            if evt is None and own_switch is not None:
+                evt={"kind":"SWITCH","side":"own","pokemon":own_switch[0]}
         if evt is None:
             continue
         if (evt["kind"] in ("ACTIVE","HP","PP") and
@@ -353,6 +398,43 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                           "reason":"SAME_FRAME_SWITCH_HUD_AMBIGUOUS",
                           "frame_id":ref[0]})
             continue
+        if (evt["kind"]=="SWITCH" and evt.get("side")=="own"
+                and own_switch is not None):
+            exact=own_switch[1]
+            if trusted and exact:
+                switch_verification="SINGLE_EXACT_HIGH_CONFIDENCE"
+            else:
+                # Use capture time, not OCR completion time. Separate frames,
+                # an unambiguous registered species, at least one exact
+                # spelling and sufficient peak confidence are mandatory.
+                switch_attestations[:]=[
+                    prev for prev in switch_attestations
+                    if 0<=observed_at-prev["timestamp"]<=_SWITCH_FRAME_WINDOW_SECONDS]
+                eligible=(getattr(rec,"status","")=="CANDIDATE"
+                          and isinstance(conf,(int,float))
+                          and conf>=_SWITCH_SECONDARY_MIN)
+                match=next((prev for prev in reversed(switch_attestations)
+                    if eligible and prev["pokemon"]==evt["pokemon"]
+                    and prev["frame_id"]!=ref[0]
+                    and 0<observed_at-prev["timestamp"]<=_SWITCH_FRAME_WINDOW_SECONDS
+                    and (exact or prev["exact"])
+                    and max(conf,prev["confidence"])>=_SWITCH_PEAK_MIN),None)
+                if match is None:
+                    if eligible:
+                        switch_attestations.append({
+                            "pokemon":evt["pokemon"],"frame_id":ref[0],
+                            "timestamp":observed_at,"confidence":conf,
+                            "exact":exact})
+                        del switch_attestations[:-8]
+                    audit.append({
+                        "kind":"SWITCH","status":"CANDIDATE",
+                        "reason":("SWITCH_SECOND_FRAME_REQUIRED" if eligible
+                                  else "LOW_CONFIDENCE_OR_CONFLICT"),
+                        "frame_id":ref[0]})
+                    continue
+                trusted=True
+                switch_verification="TWO_DISTINCT_OCR_FRAMES"
+            switch_attestations.clear()
         if not trusted:
             audit.append({"kind":evt["kind"],"status":"CANDIDATE",
                           "reason":"LOW_CONFIDENCE_OR_CONFLICT","frame_id":ref[0]})
@@ -575,7 +657,9 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         if state_delta:
             updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
         audit.append({"kind":kind,"status":"APPLIED","side":side or "",
-                      "frame_id":ref[0],"revision":updated.get("_live_state_revision",0)})
+                      "frame_id":ref[0],"revision":updated.get("_live_state_revision",0),
+                      **({"verification":switch_verification}
+                         if switch_verification else {})})
         provenance=evidence["update_provenance"]
         provenance.append({"kind":kind,"source":getattr(rec,"source","LOCAL_OCR"),
                            "frame_id":ref[0],"confidence":conf})
