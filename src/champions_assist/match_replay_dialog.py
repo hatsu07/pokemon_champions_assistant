@@ -1298,8 +1298,15 @@ class MatchReplayDialog(QDialog):
                 # switch, not presenting another tactical decision.
                 self._trace_event("PROPOSED_NORMAL_SWITCH_MENU_REUSED",
                                   turn_epoch=self._turn_epoch)
-                self.action_banner.setText(
-                    "次の行動："+str(self._last_advised_switch["target"])+"に交代。")
+                display="次の行動："+str(self._last_advised_switch["target"])+"に交代。"
+                self.action_banner.setText(display)
+                self._diagnostic("SWITCH_REUSED",{
+                    "target":self._last_advised_switch["target"],
+                    "original_turn":self._last_advised_switch["turn_epoch"],
+                    "display_turn":self._turn_epoch,
+                    "our_active":(self.state or {}).get("our_active"),
+                    "displayed":display,
+                    "display_source":"CACHED_SWITCH_PROPOSAL"})
                 return
             new_switch_window=(
                 screen_label=="SWITCH_SELECTION"
@@ -1426,6 +1433,23 @@ class MatchReplayDialog(QDialog):
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
         self._active_state_revision=self.state.get("_live_state_revision",0)
+        self._active_request_id="req-"+str(self._ai_request_attempts)
+        request_id=self._active_request_id
+        turn_epoch=self._turn_epoch
+        log=self._debug_log
+        revision=self._active_state_revision
+        def diagnostic_sink(event,detail):
+            if log is not None:
+                log.write_diagnostic(event,detail,request_id=request_id,
+                                     turn_epoch=turn_epoch,
+                                     state_revision=revision or 0)
+        self._diagnostic("ACTION_REQUEST",{
+            **current_state_digest(self.state),
+            "request_id":request_id,
+            "screen_kind":screen_label or "UNCLASSIFIED",
+            "transport":"OCR_TEXT_ONLY" if text_only else "VISION_EXCEPTION",
+            "ocr_candidate_count":len(local_candidates),
+        })
         self._trace_event("ACTION_STATE_SNAPSHOT",
                           own_known=bool(self.state.get("our_active")),
                           opponent_known=bool(self.state.get("opponent_active")),
@@ -1506,6 +1530,7 @@ class MatchReplayDialog(QDialog):
             screen_label=screen_label,
             field_profile=self._field_profile,
             local_field_candidates=local_candidates,
+            diagnostic_sink=diagnostic_sink,
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -2515,6 +2540,7 @@ class MatchReplayDialog(QDialog):
         self._active_request_frame=None
         self._active_turn_epoch=None
         self._active_state_revision=None
+        self._active_request_id=None
         self._thread=None
         self._worker=None
         self._active_job=None
@@ -2731,7 +2757,22 @@ class MatchReplayDialog(QDialog):
             action_text=self._last_action_text
         else:
             action_text="技・交代先の画像判定待ち（まだ行動提案なし）"
-        self.action_banner.setText("次の行動："+action_text)
+        displayed="次の行動："+action_text
+        self.action_banner.setText(displayed)
+        if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY",
+                                   "SUPERSEDED","NO_ACTION","BLOCKED",
+                                   "AI_REQUEST_QUEUED"):
+            self._diagnostic("GUI_DISPLAY",{
+                "displayed":displayed,
+                "recommendation":report.get("recommendation") or "",
+                "display_source":(
+                    "NEW_AI_RESPONSE" if report.get("status") in (
+                        "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
+                    else "QUEUE_OR_BLOCKED"),
+                "status":report.get("status"),
+                "our_active":state.get("our_active"),
+                "opponent_active":state.get("opponent_active"),
+                "state_revision":state.get("_live_state_revision",0)})
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"):
             self._trace_event("ACTION_GUI_RENDERED",
                 status=report.get("status"),
@@ -2791,4 +2832,6 @@ class MatchReplayDialog(QDialog):
         self._stop_auto()
         if self._debug_log is not None:
             self._debug_log.write("WINDOW_CLOSED")
+            self._debug_log.close()
+            self._debug_log=None
         super().closeEvent(event)
