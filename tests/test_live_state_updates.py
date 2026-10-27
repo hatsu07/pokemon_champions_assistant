@@ -102,8 +102,10 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertEqual(self.state["our_active"],"マリルリ")
 
     def test_confident_hp_faint_status_and_status_cure(self):
-        self.apply(read("own_hp_fraction","41/140",1,
+        self.apply(read("own_active_name","マスカーニャ",1),
+                   read("own_hp_fraction","41/140",1,
                         {"current":41,"maximum":140}),
+                   read("opponent_active_name","ガブリアス",2),
                    read("opponent_hp_percent","73%",2,
                         {"percent_displayed":73}))
         self.assertEqual(self.state["battle_evidence"]["hp_by_pokemon"]["own"]["マスカーニャ"],"41/140")
@@ -204,6 +206,119 @@ class LiveStateOcrTests(unittest.TestCase):
         memory=self.state["battle_evidence"]["moves_by_pokemon"]["opponent"]
         self.assertEqual(memory["ガブリアス"],["じしん"])
         self.assertEqual(len(memory["ガブリアス"]),1)
+
+
+    def test_identical_message_in_next_turn_is_not_dropped(self):
+        tracker=LocalBattleStateTracker()
+        message="マスカーニャのこうげきがあがった"
+        first=read("battle_message",message,1)
+        same_turn=read("battle_message",message,2)
+        next_turn=read("battle_message",message,3)
+        count,rows=tracker.ingest((first,),collect=True,turn_epoch=11)
+        self.assertEqual(count,1)
+        self.state,_=apply_local_ocr(self.state,rows,self.assets)
+        count,rows=tracker.ingest((same_turn,),collect=True,turn_epoch=11)
+        self.assertEqual((count,rows),(0,()))
+        count,rows=tracker.ingest((next_turn,),collect=True,turn_epoch=12)
+        self.assertEqual(count,1)
+        self.state,_=apply_local_ocr(self.state,rows,self.assets)
+        self.assertEqual(
+            self.state["battle_evidence"]["boosts"]["own"]["マスカーニャ"]["A"],2)
+
+    def test_hud_after_switch_waits_for_confirmed_name(self):
+        self.apply(read("own_active_name","マスカーニャ",1),
+                   read("own_hp_fraction","71/140",1,
+                        {"current":71,"maximum":140}))
+        self.apply(read("battle_message","ゆけっ!マリルリ!",3))
+        stale=self.apply(read("own_hp_fraction","44/140",2,
+                              {"current":44,"maximum":140}))
+        self.assertEqual(stale[-1]["reason"],"PRE_SWITCH_STALE_HUD")
+        uncertain=self.apply(read("own_pp_move1","0/20",4,
+                                 {"current":0,"maximum":20}))
+        self.assertEqual(uncertain[-1]["reason"],"ACTOR_HUD_NOT_ATTESTED")
+        self.apply(read("own_active_name","マリルリ",5),
+                   read("own_pp_move1","0/20",5,
+                        {"current":0,"maximum":20}),
+                   read("own_hp_fraction","80/150",5,
+                        {"current":80,"maximum":150}))
+        hp=self.state["battle_evidence"]["hp_by_pokemon"]["own"]
+        self.assertEqual(hp["マスカーニャ"],"71/140")
+        self.assertEqual(hp["マリルリ"],"80/150")
+        self.assertEqual(self.state["battle_evidence"]["pp_by_pokemon"][
+            "own"]["マリルリ"]["アクアジェット"],0)
+
+    def test_faint_prevents_pending_pp_from_old_actor(self):
+        self.apply(read("own_active_name","マスカーニャ",1))
+        self.apply(read("battle_message","マスカーニャはたおれた!",2))
+        candidate=self.apply(read("own_pp_move1","0/20",3,
+                                 {"current":0,"maximum":20}))
+        self.assertEqual(candidate[-1]["status"],"CANDIDATE")
+        self.assertNotIn("マスカーニャ",
+                         self.state["battle_evidence"]["pp_by_pokemon"]["own"])
+        self.apply(read("own_active_name","マリルリ",4),
+                   read("own_hp_fraction","149/150",4,
+                        {"current":149,"maximum":150}))
+        self.assertFalse(self.state["awaiting_replacement"])
+        self.assertEqual(self.state["observed_hp"]["own"],"149/150")
+
+    def test_visual_numeric_rank_then_ocr_delta_and_switch(self):
+        update_battle_evidence(self.state,{
+            "our_active":"マスカーニャ","opponent_active":"ガブリアス",
+            "our_stat_changes":"こうげき+2"},self.assets.own_team)
+        boosts=self.state["battle_evidence"]["boosts"]["own"]
+        self.assertEqual(boosts["マスカーニャ"]["A"],2)
+        self.apply(read("battle_message","マスカーニャのこうげきがさがった",1))
+        self.assertEqual(boosts["マスカーニャ"]["A"],2)  # detached state
+        self.assertEqual(self.state["battle_evidence"]["boosts"][
+            "own"]["マスカーニャ"]["A"],1)
+        self.apply(read("own_active_name","マリルリ",2))
+        self.assertNotIn("マスカーニャ",
+                         self.state["battle_evidence"]["boosts"]["own"])
+
+    def test_spent_choice_item_unblocks_lock_and_move_is_not_item(self):
+        evidence=self.state["battle_evidence"]
+        evidence["choice_lock"]={"pokemon":"マスカーニャ",
+                                 "move":"トリックフラワー","source":"OBSERVED"}
+        self.apply(read("battle_message",
+                        "マスカーニャはトリックフラワーをつかった",1))
+        self.assertNotIn("マスカーニャ",self.state["battle_evidence"][
+            "item_state_by_pokemon"]["own"])
+        self.apply(read("battle_message",
+                        "マスカーニャはこだわりスカーフをなくした",2))
+        memory=self.state["battle_evidence"]
+        self.assertEqual(memory["choice_lock"]["move"],"")
+        self.assertEqual(memory["item_state_by_pokemon"]["own"][
+            "マスカーニャ"]["state"],"SPENT_OR_LOST")
+        code,_=validate_battle_choice(
+            {"action_kind":"MOVE","move":"はたきおとす"},
+            {"visual_ui":"COMMAND_MENU","visible_moves":[]},
+            self.state,self.assets)
+        self.assertEqual(code,"OK")
+
+    def test_mega_form_uses_frozen_champions_type_only(self):
+        self.assets.own_team+=({
+            "name":"リザードン→メガリザードンX",
+            "move1":"フレアドライブ","move2":"ドラゴンクロー",
+            "move3":"じしん","move4":"りゅうのまい",
+            "item":"リザードナイトX","choice_lock":"N"},)
+        self.assets.matrix_index["メガリザードンX"]=(
+            "メガリザードンX|ほのお/ドラゴン|100|frozen")
+        self.state["selected_three"]=["リザードン","マスカーニャ","マリルリ"]
+        self.state["our_active"]="リザードン"
+        self.apply(read("battle_message","リザードンはメガシンカした",1))
+        self.assertEqual(self.state["our_current_form"],"メガリザードンX")
+        self.assertEqual(self.state["battle_evidence"]["current_type"][
+            "own"]["リザードン"],"ほのお/ドラゴン")
+        self.assertEqual(self.state["our_active"],"リザードン")
+
+    def test_unparsed_visual_rank_does_not_become_zero(self):
+        update_battle_evidence(self.state,{
+            "our_active":"マスカーニャ","our_stat_changes":"変化あり（詳細不明）"
+        },self.assets.own_team)
+        self.apply(read("battle_message","マスカーニャのこうげきがあがった",1))
+        entry=self.state["battle_evidence"]["boosts"]["own"]["マスカーニャ"]
+        self.assertTrue(entry["_prior_stage_uncertain"])
+        self.assertNotIn("A",entry)
 
 
 if __name__=="__main__":
