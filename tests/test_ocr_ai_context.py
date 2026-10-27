@@ -74,8 +74,8 @@ class OcrAiContextRegression(unittest.TestCase):
         frames=[r["frame_id"] for r in selected]
         for frame in ("capture-494","capture-496","capture-505","capture-546"):
             self.assertIn(frame,frames)
-        self.assertEqual(len(selected),36)
-        self.assertGreater(meta["dropped_count"],0)
+        self.assertEqual(len(selected),len(self.snapshot))
+        self.assertEqual(meta["dropped_count"],0)
         self.assertGreaterEqual(meta["battle_messages_sent"],4)
         self.assertEqual(frames,sorted(frames,
             key=lambda x:int(x.split("-")[-1])))
@@ -139,7 +139,7 @@ class OcrAiContextRegression(unittest.TestCase):
         sent=json.loads(seen[0]["content"][0]["text"])[
             "ocr_candidates_unverified"]
         frames={x["frame_id"] for x in sent}
-        self.assertLessEqual(len(sent),36)
+        self.assertEqual(len(sent),len(evidence))
         self.assertTrue({"capture-505","capture-546"}<=frames)
         self.assertEqual(report["images_sent"],0)
         self.assertEqual(state["our_active"],"ドドゲザン")
@@ -170,13 +170,82 @@ class OcrAiContextRegression(unittest.TestCase):
         self.assertNotEqual(report.get("reason"),
                             "AI_OCR_ACTIVE_STATE_UNVERIFIED")
 
-    def test_expired_observations_not_sent(self):
+    def test_more_than_144_observations_are_preserved_and_sent(self):
+        for frame in range(600,880):
+            reading=LocalFieldRead(
+                field="screen_text.battle_message",
+                value=f"文字列-{frame}",frame_id=f"capture-{frame}",
+                timestamp=919060+frame*.31,confidence=.90,
+                roi="battle_message",source="fixture",
+                text=f"文字列-{frame}")
+            self.tracker.ingest((reading,),turn_epoch=3)
+        all_rows=self.tracker.snapshot()["local_observations"]
+        selected,meta=select_ai_ocr_evidence(all_rows)
+        self.assertGreater(len(selected),144)
+        self.assertEqual(len(selected),len(all_rows))
+        self.assertEqual(meta["dropped_count"],0)
+        self.assertIn("capture-505",{r["frame_id"] for r in selected})
+        self.assertIn("capture-879",{r["frame_id"] for r in selected})
+
+    def test_only_ai_acknowledged_frames_stop_being_resent(self):
+        evidence,_=select_ai_ocr_evidence(self.snapshot)
+        response={
+            "state_updates":[switch()],
+            "interpreted_own_active":"ドドゲザン",
+            "interpreted_opponent_active":"マスカーニャ",
+            "processed_ocr_frames":["capture-505","capture-546",
+                                    "capture-not-sent"],
+            "action":{"action_kind":"NO_ACTION","switch_target":"",
+                      "move":"","warning":""},
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after,report=run_replay_text_action(
+                state=self.state,assets=self.assets,
+                access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=evidence,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(after["our_active"],"ドドゲザン")
+        self.assertEqual(set(after["_ai_ocr_ack_frames"]),
+                         {"capture-505","capture-546"})
+        later=self.tracker.snapshot(
+            acknowledged_frames=set(after["_ai_ocr_ack_frames"]))[
+                "local_observations"]
+        self.assertNotIn("capture-505",{r["frame_id"] for r in later})
+        self.assertIn("capture-494",{r["frame_id"] for r in later})
+
+    def test_rejected_or_uncertain_frames_cannot_be_acknowledged(self):
+        evidence,_=select_ai_ocr_evidence(self.snapshot)
+        incomplete=switch()
+        incomplete["certainty"]="UNCERTAIN"
+        response={
+            "state_updates":[incomplete],
+            "interpreted_own_active":"ゲンガー",
+            "interpreted_opponent_active":"マスカーニャ",
+            "processed_ocr_frames":["capture-505"],
+            "action":{"action_kind":"NO_ACTION","switch_target":"",
+                      "move":"","warning":""},
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            updated,report=run_replay_text_action(
+                state=self.state,assets=self.assets,
+                access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=evidence,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(updated["our_active"],"ゲンガー")
+        self.assertNotIn("capture-505",
+                         updated.get("_ai_ocr_ack_frames",[]))
+
+    def test_old_observations_are_not_discarded_by_age(self):
         evidence=self.snapshot+ [{
             "frame_id":"capture-old","field":"screen_text.battle_message",
             "raw_text":"old event","confidence":.99,
             "observed_at":818000}]
         selected,_=select_ai_ocr_evidence(evidence)
-        self.assertNotIn("capture-old",{x["frame_id"] for x in selected})
+        self.assertIn("capture-old",{x["frame_id"] for x in selected})
 
 
 if __name__=="__main__":
