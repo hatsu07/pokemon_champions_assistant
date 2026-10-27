@@ -276,14 +276,38 @@ class UnifiedMainWindowTests(unittest.TestCase):
         frame=np.zeros((80,160,3),dtype=np.uint8)
         with patch.object(panel,"_send_pending"):
             panel._queue_batch([frame],screen_label="TURN_ACTION")
-        panel._turn_screen_seen_at=monotonic()-22.0
+        panel._turn_screen_seen_at=monotonic()-33.0
         panel._send_pending()
         self.assertEqual(panel._last_action_text,"")
-        self.assertIn("保守的AI締切超過",panel.action_banner.text())
+        self.assertIn("AI表示最終期限超過",panel.action_banner.text())
         self.assertTrue(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
-                            and x.get("timeout_budget_ms")==20000
+                            and x.get("timeout_budget_ms")==32000
                             for x in panel._timing_trace))
         self.assertIsNone(panel._thread)
+
+    def test_30_second_target_allows_22_second_first_turn_advice(self):
+        from time import monotonic
+        from champions_assist.match_replay_dialog import (
+            _TARGET_AI_TURN_SECONDS,_CONSERVATIVE_AI_TURN_SECONDS)
+        self.assertEqual(_TARGET_AI_TURN_SECONDS,30.0)
+        self.assertEqual(_CONSERVATIVE_AI_TURN_SECONDS,32.0)
+        panel=self.window._match_panel
+        panel.state={"phase":"PREP"}
+        panel._auto_running=True
+        panel._active_job="batch"
+        panel._active_turn_epoch=1
+        panel._turn_epoch=1
+        panel._turn_screen_seen_at=monotonic()-22.8
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        with patch.object(panel,"_render") as render:
+            panel._completed({"state":{"phase":"BATTLE"},
+                              "report":{"status":"PROVISIONAL_ADVICE",
+                                        "recommendation":"じしん。",
+                                        "screen":"COMMAND_MENU"}})
+        self.assertNotEqual(render.call_args.args[0]["status"],
+                            "DEADLINE_EXCEEDED")
+        self.assertEqual(render.call_args.args[0]["recommendation"],"じしん。")
 
     def test_event_observed_before_ai_finishes_discards_stale_first_turn(self):
         panel=self.window._match_panel
