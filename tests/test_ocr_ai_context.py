@@ -170,6 +170,20 @@ class OcrAiContextRegression(unittest.TestCase):
         self.assertNotEqual(report.get("reason"),
                             "AI_OCR_ACTIVE_STATE_UNVERIFIED")
 
+    def test_identical_text_repeated_later_in_turn_is_not_lost(self):
+        tracker=LocalBattleStateTracker()
+        def row(frame,second):
+            return LocalFieldRead(
+                field="screen_text.battle_message",
+                value="同じメッセージ",frame_id=frame,
+                timestamp=second,confidence=.9,
+                roi="battle_message",source="fixture",
+                text="同じメッセージ")
+        self.assertEqual(tracker.ingest((row("f1",1.0),),turn_epoch=8),1)
+        self.assertEqual(tracker.ingest((row("f2",1.6),),turn_epoch=8),0)
+        self.assertEqual(tracker.ingest((row("f3",12.0),),turn_epoch=8),1)
+        self.assertEqual(len(tracker.snapshot()["local_observations"]),2)
+
     def test_completed_ocr_output_queue_does_not_discard_old_results(self):
         reader=AsyncBattleEventReader(None)
         for i in range(60):
