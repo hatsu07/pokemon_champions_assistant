@@ -20,18 +20,26 @@ class LocalBattleStateTracker:
         self._latest: dict[str,LocalFieldRead]={}
         self.duplicates=0
         self.conflicts=0
+        self._latest_epoch: dict[str, int | None]={}
 
     def ingest(self, records: tuple[LocalFieldRead, ...],
-               *, collect: bool=False):
+               *, collect: bool=False, turn_epoch: int | None=None):
         inserted=0
         novel=[]
         for row in records:
             if row.status!="CANDIDATE":
                 continue
-            # Identical text kept across consecutive frames is one event,
-            # but a later recurrence is allowed after a different text.
+            # A continuous ROI is a single event within a turn. Reoccurrence
+            # in a NEW turn is not a duplicate even with identical text.
+            # Offline callers without a turn ID use only a short time window.
             previous=self._latest.get(row.field)
-            if previous and previous.text==row.text and previous.value==row.value:
+            same_payload=(previous is not None and
+                          previous.text==row.text and previous.value==row.value)
+            same_epoch=(turn_epoch is not None and
+                        self._latest_epoch.get(row.field)==turn_epoch)
+            near_in_time=(turn_epoch is None and previous is not None and
+                          0 <= row.timestamp-previous.timestamp <= 1.5)
+            if same_payload and (same_epoch or near_in_time):
                 self.duplicates+=1
                 continue
             status="CANDIDATE"
@@ -44,6 +52,7 @@ class LocalBattleStateTracker:
                 row=replace(row,status=status)
             self._events.append(row)
             self._latest[row.field]=row
+            self._latest_epoch[row.field]=turn_epoch
             novel.append(row)
             inserted+=1
         return (inserted,tuple(novel)) if collect else inserted
@@ -93,5 +102,6 @@ class LocalBattleStateTracker:
     def clear(self) -> None:
         self._events.clear()
         self._latest.clear()
+        self._latest_epoch.clear()
         self.duplicates=0
         self.conflicts=0
