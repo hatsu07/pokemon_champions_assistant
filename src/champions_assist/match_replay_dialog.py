@@ -1809,7 +1809,6 @@ class MatchReplayDialog(QDialog):
         state=self.state or {}
         assets=self.assets
         snapshot=self._local_battle_tracker.snapshot(
-            limit=144,
             own_active=state.get("our_active"),
             opponent_active=state.get("opponent_active"),
             own_names=tuple(m["name"] for m in assets.own_team) if assets else (),
