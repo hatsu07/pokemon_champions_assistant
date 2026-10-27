@@ -221,7 +221,8 @@ class _ReplayWorker(QObject):
                     else:
                         if (self.screen_label in _URGENT_SCREENS
                                 and self.state.get("our_active")
-                                and self.state.get("opponent_active")):
+                                and self.state.get("opponent_active")
+                                and not self.state.get("_active_identity_needs_confirmation")):
                             next_state,report=run_replay_text_action(
                                 state=self.state,assets=self.assets,
                                 access_token=token,model=self.selected_model,
@@ -241,7 +242,10 @@ class _ReplayWorker(QObject):
                                 local_field_candidates=local_candidates,
                                 expected_screen_label=self.screen_label,
                                 diagnostic_sink=self.diagnostic_sink)
-                            report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
+                            report["image_exception_reason"]=(
+                                "POST_SWITCH_ACTIVE_RECHECK_REQUIRED"
+                                if self.state.get("_active_identity_needs_confirmation")
+                                else "ACTIVE_IDENTITY_MISSING")
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
@@ -1259,6 +1263,22 @@ class MatchReplayDialog(QDialog):
         if self._turn_screen_seen_at is not None:
             return
         self._turn_epoch+=1
+        # The previous SWITCH was only advice, not observed execution. On the
+        # following turn the old actor cannot be reused from text-only state.
+        # Reconfirm the current HUD on ONE fresh command image instead.
+        prior=self._last_advised_switch
+        if (screen_label=="TURN_ACTION" and self.state is not None
+                and prior and prior.get("turn_epoch",-1)<self._turn_epoch):
+            self.state["_active_identity_needs_confirmation"]=True
+            self._trace_event("POST_SWITCH_ACTIVE_RECHECK_REQUIRED",
+                              turn_epoch=self._turn_epoch,
+                              frame_seq=self._last_capture_seq)
+            self._diagnostic("ACTIVE_RECHECK_REQUIRED",{
+                "our_active":self.state.get("our_active"),
+                "target":prior.get("target"),
+                "previous":prior.get("turn_epoch"),
+                "current":self._turn_epoch,
+                "source":"PRIOR_SWITCH_ADVICE_NOT_EXECUTION"})
         self._turn_screen_seen_at=monotonic()
         self._turn_action_sent=False
         self._turn_event_after_action=False
@@ -1428,7 +1448,8 @@ class MatchReplayDialog(QDialog):
         self._turn_buffer.reset_turn()
         text_only=(screen_label in _URGENT_SCREENS
                    and bool(self.state.get("our_active"))
-                   and bool(self.state.get("opponent_active")))
+                   and bool(self.state.get("opponent_active"))
+                   and not self.state.get("_active_identity_needs_confirmation"))
         planned_image_count=0 if text_only else len(frames)
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
