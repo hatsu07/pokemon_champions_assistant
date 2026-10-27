@@ -614,6 +614,8 @@ class MatchReplayDialog(QDialog):
             self._active_state_revision=None
             self._pending_result_messages=None
             self._result_check_sent_keys.clear()
+            self._result_ocr_candidate=None
+            self._revision_retry_keys.clear()
             self._last_advised_switch=None
             self.match_id=new_id
             self._selection_screen_started=None
@@ -729,6 +731,8 @@ class MatchReplayDialog(QDialog):
         self._active_state_revision=None
         self._pending_result_messages=None
         self._result_check_sent_keys.clear()
+        self._result_ocr_candidate=None
+        self._revision_retry_keys.clear()
         self._last_advised_switch=None
         self.assets=None
         self.state=None
@@ -1860,7 +1864,7 @@ class MatchReplayDialog(QDialog):
                 old_revision=self._active_state_revision,
                 new_revision=self.state.get("_live_state_revision",0))
             self._turn_action_sent=False
-            self._turn_screen_seen_at=None
+            # OCR revision does not restart the game's real turn clock.
             self._screen_gate.rearm_after_resolution()
             # No dependency on a future classifier change: requeue the
             # actionable frame with the newly committed OCR revision.
