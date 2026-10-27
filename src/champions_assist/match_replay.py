@@ -1586,6 +1586,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "our_registered_moves":[] if switch_only else [
             own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
+        "registered_selected_moves":{m["name"]:[m.get("move"+str(i),"") for i in range(1,5)] for m in assets.own_team if m["name"] in (state.get("selected_three") or [])},
         "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
         "registered_move_categories":{
             n:getattr(assets,"move_class_index",{}).get(n,"UNKNOWN")
