@@ -333,6 +333,8 @@ class MatchReplayDialog(QDialog):
         self._active_state_revision=None
         self._pending_result_messages=None
         self._result_check_sent_keys=set()
+        self._result_ocr_candidate=None
+        self._revision_retry_keys=set()
         self._last_advised_switch=None
         self._automatic_probe=AutomaticVisualProbe(
             min_gap=8.0,matchmaking_recheck=float('inf'))
@@ -1679,15 +1681,34 @@ class MatchReplayDialog(QDialog):
                     # Battle messages are OCR candidates, not confirmed results.
                     # Request an independent text-only result judgment only
                     # for a narrow explicit match-result phrase.
-                    ending=[row.text for row in result.observations
-                            if row.field.startswith("screen_text.")
-                            and row.field.endswith(("battle_message",
-                                                    "system_message"))
-                            and possible_result_message(row.text)]
-                    if ending:
-                        self._request_result_from_ocr(ending)
+                    # Require two high-confidence readings from distinct
+                    # frames. A single OCR misread can NEVER start result AI.
+                    for row in result.observations:
+                        if (not row.field.endswith(("battle_message",
+                                                   "system_message"))
+                                or not row.field.startswith("screen_text.")):
+                            continue
+                        if (row.status!="CANDIDATE"
+                                or row.confidence is None
+                                or row.confidence<0.72):
+                            continue
+                        if not possible_result_message(row.text):
+                            continue
+                        from hashlib import sha256
+                        key=sha256("".join(row.text.split()).encode()).hexdigest()[:20]
+                        old=self._result_ocr_candidate
+                        if (old and old["key"]==key
+                                and old["frame"]!=row.frame_id
+                                and .15<=row.timestamp-old["time"]<=12.0):
+                            self._result_ocr_candidate=None
+                            self._request_result_from_ocr([row.text])
+                        else:
+                            self._result_ocr_candidate={
+                                "key":key,"frame":row.frame_id,
+                                "time":row.timestamp}
                     count,novel=self._local_battle_tracker.ingest(
-                        result.observations,collect=True)
+                        result.observations,collect=True,
+                        turn_epoch=self._turn_epoch)
                     if (novel and self.state is not None and self.assets is not None
                             and self.state.get("phase")!="ENDED"):
                         changed,audit=apply_local_ocr(
@@ -1841,6 +1862,21 @@ class MatchReplayDialog(QDialog):
             self._turn_action_sent=False
             self._turn_screen_seen_at=None
             self._screen_gate.rearm_after_resolution()
+            # No dependency on a future classifier change: requeue the
+            # actionable frame with the newly committed OCR revision.
+            if (self.state and self.state.get("phase")=="BATTLE"
+                    and self._auto_running
+                    and self._inflight_screen_label in _URGENT_SCREENS
+                    and self._active_request_frame is not None
+                    and not self._turn_event_after_action):
+                key=(self._turn_epoch,self.state["_live_state_revision"])
+                if key not in self._revision_retry_keys:
+                    self._revision_retry_keys.add(key)
+                    if self._pending_batch is None:
+                        self._pending_batch=[self._active_request_frame.copy()]
+                        self._pending_screen_label=self._inflight_screen_label
+                    self._trace_event("OCR_REVISION_RETRY_QUEUED",
+                        state_revision=key[1],turn_epoch=key[0])
         if (self._active_job=="result" and report.get("status")=="MATCH_END"):
             # Verified OCR match result outranks any pending turn-screen frame.
             self._pending_batch=None
@@ -1953,6 +1989,8 @@ class MatchReplayDialog(QDialog):
             and self._pending_screen_label in ("TURN_ACTION","SWITCH_SELECTION"))
         superseded=(
             newer_selection_request_pending
+            or (report.get("status")=="SUPERSEDED"
+                and self._pending_batch is not None)
             or (self._active_job=="batch" and self._pending_batch is not None
                 and _supersedes_result(report,self._pending_screen_label)))
         if newer_selection_request_pending:
