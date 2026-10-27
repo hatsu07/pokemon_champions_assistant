@@ -177,6 +177,11 @@ def _apply_observed_fields(state: dict, obs: dict, assets: FrozenMatchAssets) ->
             name = ""  # Unknown species is not promoted to a confirmed team state.
         if name:
             state[field] = name
+            if field=="opponent_active":
+                # ChatGPT visual observation and local OCR use exactly the
+                # same unknown-preview completion rules. No fabricated sixth.
+                from .live_state_updates import fill_unknown_preview
+                fill_unknown_preview(state,assets,name)
     for field, owner in (("our_hp", "own"), ("opponent_hp", "opponent")):
         hp = obs.get(field) or ""
         if hp:
