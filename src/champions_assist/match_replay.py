@@ -1679,8 +1679,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                                     "reason":"SWITCH_ONLY_MOVE_REJECTED",
                                     "images_sent":0}
         updated,result=advance_observation(
-            state,assets,obs,
-            lambda *_args:answer,
+            updated,assets,obs,
+            lambda *_args:action,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=max(total_seconds,perf_counter()-started+2))
         if diagnostic_sink is not None:
