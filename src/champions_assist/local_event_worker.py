@@ -1,8 +1,8 @@
-"""Event-time, bounded local OCR. This module makes NO network/API requests.
+"""Event-time, queued local OCR. This module makes NO network/API requests.
 
 The Qt capture thread only compares tiny ROI previews and queues frames. All
-OCR and interpretation run on a daemon worker. No turn command waits for OCR.
-A missing OCR executable, invalid viewport, full queue or stale generation
+OCR runs on a daemon worker; AI alone interprets its observations.
+A missing GPU runtime, invalid viewport, optional bounded queue or stale generation
 fails closed to labelled CANDIDATE data and optional existing image fallback.
 """
 from __future__ import annotations
@@ -70,14 +70,16 @@ class AsyncBattleEventReader:
     def __init__(self, profile: ScreenFieldProfile | None,
                  *, ocr_engine: OcrEngine | None = None,
                  lexicon: ScreenLexicon | None = None,
-                 max_pending: int = 4, max_results: int | None = None,
+                 max_pending: int | None = None, max_results: int | None = None,
                  change_threshold: float = 0.030):
-        if max_pending < 1 or (max_results is not None and max_results < 1):
+        if (max_pending is not None and max_pending < 1) or (max_results is not None and max_results < 1):
             raise ValueError("queue limits must be positive")
         self.profile=profile
         self.max_results=max_results
         self.change_threshold=change_threshold
-        self._queue: Queue[_Job | None]=Queue(maxsize=max_pending)
+        # Keep all acquired changed frames. OCR backlog is observable; no
+        # silent eviction at four pending jobs.
+        self._queue: Queue[_Job | None]=Queue(maxsize=max_pending or 0)
         self._out: Queue[_Result]=Queue(maxsize=max_results or 0)
         self._stop=Event()
         self._signatures: dict[str,np.ndarray]={}
@@ -91,6 +93,7 @@ class AsyncBattleEventReader:
         self.rois_parsed=0
         self.results_dropped=0
         self.last_latency_ms=0
+        self.last_queue_wait_ms=0
         self.max_latency_ms=0
         self.enabled=profile is not None and ocr_engine is not None
         self.reason="READY" if self.enabled else "OCR_NOT_CONFIGURED"
@@ -101,6 +104,23 @@ class AsyncBattleEventReader:
             self._thread=Thread(target=self._run,daemon=True,
                                 name="champions-local-event-ocr")
             self._thread.start()
+
+    @classmethod
+    def with_gpu_paddle(cls, profile: ScreenFieldProfile | None,
+                        *, lexicon: ScreenLexicon | None=None,
+                        ocr_engine: OcrEngine | None=None):
+        if profile is None:
+            return cls(None,lexicon=lexicon)
+        if ocr_engine is None:
+            from .ocr_gpu import make_gpu_ocr
+            from .ocr import OcrExecutionError
+            try:
+                ocr_engine=make_gpu_ocr()
+            except (OcrExecutionError,OSError) as exc:
+                instance=cls(profile,lexicon=lexicon)
+                instance.reason=getattr(exc,"code","GPU_OCR_RUNTIME_MISSING")
+                return instance
+        return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
 
     @classmethod
     def with_local_tesseract(cls, profile: ScreenFieldProfile | None,
@@ -157,6 +177,9 @@ class AsyncBattleEventReader:
             return False
         self._counter+=1
         event_id=frame_id or f"local-frame-{self._counter}"
+        # Messages precede HUD text within a frame; no semantic OCR parse.
+        crops.sort(key=lambda crop: 0 if crop[1]=="MESSAGE" or
+                   "message" in crop[0] else 1)
         job=_Job(event_id,monotonic() if timestamp is None else timestamp,
                  label,tuple(crops))
         try:
@@ -171,6 +194,19 @@ class AsyncBattleEventReader:
         return True
 
     def _run(self) -> None:
+        # Warm the model in the OCR worker, never on the Qt render thread.
+        try:
+            warmup=getattr(self._ocr,"warmup",None)
+            if warmup is not None:
+                warmup()
+                self.reason="GPU_OCR_READY"
+        except Exception as exc:
+            self.errors+=1
+            self.reason=getattr(exc,"code","GPU_OCR_INITIALIZATION_FAILED")
+            # Do not consume queued evidence with an unusable inference
+            # engine; report failure rather than inventing observations.
+            self.enabled=False
+            return
         while not self._stop.is_set():
             try:
                 job=self._queue.get(timeout=0.1)
@@ -180,6 +216,7 @@ class AsyncBattleEventReader:
                 break
             records=[]
             started=monotonic()
+            self.last_queue_wait_ms=max(0,int((started-job.timestamp)*1000))
             first_error=None
             first_error_code=None
             for name,kind,crop in job.crops:
@@ -251,6 +288,7 @@ class AsyncBattleEventReader:
             "ocr_results_pending":self._out.qsize(),
             "overflow":self.overflow,
             "ocr_last_latency_ms":self.last_latency_ms,
+            "ocr_last_queue_wait_ms":self.last_queue_wait_ms,
             "ocr_max_latency_ms":self.max_latency_ms,
         }
 
@@ -276,4 +314,8 @@ class AsyncBattleEventReader:
             self._queue.put_nowait(None)
         except Full:
             pass
+        ocr=self._ocr
+        if ocr is not None and hasattr(ocr,"stop"):
+            # Sidecar shutdown never blocks the render/turn thread.
+            ocr.stop()
         # Absolutely no join() on the GUI/turn thread.

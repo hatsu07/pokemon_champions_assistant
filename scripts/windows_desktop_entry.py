@@ -108,6 +108,17 @@ def probe_bundled_ocr_execution() -> dict[str, object]:
     }
 
 
+def probe_gpu_ocr_contract() -> dict[str, object]:
+    """CI can verify backend selection but cannot execute CUDA without GPU."""
+    from champions_assist.ocr_gpu import MODEL_DET,MODEL_REC,ENGINE_NAME
+    if (MODEL_DET,MODEL_REC)!=(
+            "PP-OCRv6_small_det","PP-OCRv6_small_rec"):
+        raise RuntimeError("GPU_OCR_MODEL_MISMATCH")
+    return {"gpu_ocr_backend":ENGINE_NAME,
+            "gpu_ocr_runtime":"EXTERNAL_GPU_ENV_REQUIRED",
+            "gpu_inference_tested":False}
+
+
 def run_smoke(report_path: Path) -> int:
     """Start the REAL desktop offline with an isolated profile, then close it."""
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -116,9 +127,9 @@ def run_smoke(report_path: Path) -> int:
     from champions_assist.__main__ import main as assistant_main
 
     master_dir = bundled_master_directory()
-    # A CLI invocation and parsed TSV are required; an incorrect numeric
-    # guess is reported but must not masquerade as a native execution crash.
-    ocr_probe=probe_bundled_ocr_execution()
+    # CI has no GPU. Verify configured backend without misreporting actual
+    # CUDA inference as having been tested on a GPU-free runner.
+    ocr_probe=probe_gpu_ocr_contract()
     app = ensure_application()
     with tempfile.TemporaryDirectory(prefix="champions-desktop-smoke-") as temporary:
         root = Path(temporary)
