@@ -310,6 +310,26 @@ class LiveStateOcrTests(unittest.TestCase):
         self.assertEqual(self.state["battle_evidence"]["current_type"][
             "own"]["リザードン"],"ほのお/ドラゴン")
         self.assertEqual(self.state["our_active"],"リザードン")
+        self.assertEqual(self.state["battle_evidence"][
+            "current_base_speed_by_pokemon"]["own"]["リザードン"],100)
+        code,_=validate_battle_choice(
+            {"action_kind":"MOVE","move":"ドラゴンクロー"},
+            {"visual_ui":"COMMAND_MENU","visible_moves":[]},
+            self.state,self.assets)
+        self.assertEqual(code,"OK")
+
+    def test_item_exchange_clears_stale_choice_lock_and_old_item(self):
+        memory=self.state["battle_evidence"]
+        memory["choice_lock"]={"pokemon":"マスカーニャ",
+                               "move":"トリックフラワー","source":"OBSERVED"}
+        memory["item_by_pokemon"]["own"]["マスカーニャ"]="こだわりスカーフ"
+        self.apply(read("battle_message",
+                        "マスカーニャはもちものを交換した",1))
+        memory=self.state["battle_evidence"]
+        self.assertEqual(memory["choice_lock"]["move"],"")
+        self.assertNotIn("マスカーニャ",memory["item_by_pokemon"]["own"])
+        self.assertEqual(memory["item_state_by_pokemon"][
+            "own"]["マスカーニャ"]["state"],"CURRENT_UNKNOWN_AFTER_EXCHANGE")
 
     def test_unparsed_visual_rank_does_not_become_zero(self):
         update_battle_evidence(self.state,{
