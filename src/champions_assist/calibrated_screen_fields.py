@@ -115,14 +115,24 @@ class ScreenFieldProfile:
         if not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
             return False
         width, height = self.reference_resolution
-        # Never apply an unverified ROI map to stretched, resized or cropped
-        # screenshots. Manual viewport recalibration is required.
-        return (image.shape[1], image.shape[0]) == (width, height)
+        # A uniformly resized full-frame capture shares normalized ROIs;
+        # reject different aspect ratios (letterboxing / viewport crops).
+        # Even compatible scaled screenshots remain UNVERIFIED OCR evidence
+        # until a real-game calibration profile is validated.
+        actual_width,actual_height=image.shape[1],image.shape[0]
+        aspect_error=abs((actual_width/actual_height)/(width/height)-1.0)
+        return actual_width>=width and actual_height>=height and aspect_error<=0.015
 
     def crop(self, image: np.ndarray, region: FieldRegion) -> np.ndarray:
         width, height = self.reference_resolution
         x0, y0, x1, y1 = region.bounds_px
-        return NormalizedROI(region.name, x0 / width, y0 / height, x1 / width, y1 / height).crop(image)
+        crop=NormalizedROI(region.name, x0 / width, y0 / height, x1 / width, y1 / height).crop(image)
+        if (image.shape[1],image.shape[0])!=(width,height):
+            # Bound Tesseract subprocess cost on 3343x2001 capture streams;
+            # retain near-reference font size for calibrated 960x572 ROIs.
+            import cv2
+            crop=cv2.resize(crop,(x1-x0,y1-y0),interpolation=cv2.INTER_AREA)
+        return crop
 
 
 _FRACTION_RE = re.compile(r"(?<![0-9])([0-9]{1,4})\s*/\s*([0-9]{1,4})(?![0-9])")
