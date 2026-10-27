@@ -1659,6 +1659,21 @@ class MatchReplayDialog(QDialog):
             # its stale action, advance the match, or dispatch more captures.
             return
         report=payload["report"]
+        if (self._active_job=="batch"
+                and report.get("screen")=="TEAM_SELECTION"
+                and report.get("status") in (
+                    "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
+                and self._auto_running
+                and self._screen_model is not None
+                and self._last_local_class not in (None,"TEAM_SELECTION")):
+            # Observed game-screen transition beats an otherwise valid late
+            # selection. The elapsed wall clock alone must not discard it.
+            report={**report,"status":"SUPERSEDED",
+                    "recommendation":"","selected_three":[],"lead":None,
+                    "warning":"TEAM_SELECTION_NO_LONGER_VISIBLE"}
+            self._trace_event("STALE_SELECTION_ADVICE_DROPPED",
+                              screen_label=self._last_local_class,
+                              ai_request_attempt=self._ai_request_attempts)
         if (self._active_job=="batch" and self._active_turn_epoch is not None
                 and (self._active_turn_epoch!=self._turn_epoch
                      or self._turn_event_after_action)):
@@ -1806,6 +1821,7 @@ class MatchReplayDialog(QDialog):
                               selection_present=bool(report.get("selected_three")))
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
+        prefill_selection_prep=False
         if (report.get("screen")=="TEAM_SELECTION"
                 and report.get("status") in (
                     "OK","PROVISIONAL_ADVICE","PARTIAL_ADVICE","TEST_ONLY")
@@ -1841,10 +1857,13 @@ class MatchReplayDialog(QDialog):
                 if self._active_request_frame is not None:
                     self._automatic_probe.acknowledge(
                         self._active_request_frame,"PREP")
-                self._prefill_cached_prep(
-                    roles={key:report.get(key) for key in (
-                        "preserve","stopper","closer")})
+                prefill_selection_prep=True
+        # Surface 3 + lead BEFORE even the local frozen-cache PREP step.
         self._render(entry)
+        if prefill_selection_prep:
+            self._prefill_cached_prep(
+                roles={key:report.get(key) for key in (
+                    "preserve","stopper","closer")})
         if self.state is not None and self.state.get("phase")=="ENDED":
             self._stop_auto()
 
