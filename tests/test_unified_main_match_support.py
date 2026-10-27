@@ -1551,6 +1551,33 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["prep_status"],"ERROR")
         self.assertEqual(panel.entries[-1]["status"],"PREP_ERROR")
 
+    def test_new_turn_after_switch_advice_requires_current_actor_recheck(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","our_active":"ガブリアス",
+                     "opponent_active":"マスカーニャ",
+                     "_live_state_revision":0}
+        panel._turn_epoch=1
+        panel._turn_screen_seen_at=None
+        panel._last_advised_switch={"target":"ドドゲザン","turn_epoch":1}
+        panel._begin_local_turn("TURN_ACTION")
+        self.assertEqual(panel._turn_epoch,2)
+        self.assertTrue(panel.state["_active_identity_needs_confirmation"])
+        # An already open current turn must not repeat the transition.
+        panel._begin_local_turn("TURN_ACTION")
+        self.assertEqual(panel._turn_epoch,2)
+        self.assertTrue(any(row["event"]=="POST_SWITCH_ACTIVE_RECHECK_REQUIRED"
+                            for row in panel._timing_trace))
+
+    def test_switch_party_menu_in_same_turn_does_not_trigger_actor_recheck(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","our_active":"ガブリアス",
+                     "opponent_active":"マスカーニャ"}
+        panel._turn_epoch=1
+        panel._turn_screen_seen_at=None
+        panel._last_advised_switch={"target":"ドドゲザン","turn_epoch":1}
+        panel._begin_local_turn("SWITCH_SELECTION")
+        self.assertFalse(panel.state.get("_active_identity_needs_confirmation",False))
+
     def test_superseded_api_response_does_not_revert_battle_state(self):
         panel=self.window._match_panel
         panel._auto_running=True
