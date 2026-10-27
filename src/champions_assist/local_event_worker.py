@@ -61,6 +61,7 @@ class _Result:
     timestamp: float
     observations: tuple[LocalFieldRead, ...]
     error: str | None = None
+    error_code: str | None = None
 
 
 class AsyncBattleEventReader:
@@ -201,8 +202,14 @@ class AsyncBattleEventReader:
                         detected_pokemon=parsed.detected_pokemon))
                 result=_Result(job.frame_id,job.timestamp,tuple(records))
             except Exception as exc:
+                # Never log raw Tesseract stderr (it can include local paths).
+                # Exit status and exception type are stable, safe diagnostics.
+                exit_status=getattr(exc,"status",None)
+                error_code=("TESSERACT_EXIT_"+str(exit_status)
+                            if type(exit_status) is int and 0<=exit_status<=255
+                            else type(exc).__name__)
                 result=_Result(job.frame_id,job.timestamp,(),
-                               error=type(exc).__name__)
+                               error=type(exc).__name__,error_code=error_code)
             latency=max(0,int((monotonic()-started)*1000))
             self.last_latency_ms=latency
             self.max_latency_ms=max(self.max_latency_ms,latency)
