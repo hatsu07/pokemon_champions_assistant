@@ -13,9 +13,11 @@ from .local_event_worker import LocalFieldRead
 
 
 class LocalBattleStateTracker:
-    def __init__(self, max_events: int=36):
-        if max_events<1:
+    def __init__(self, max_events: int | None=None):
+        if max_events is not None and max_events<1:
             raise ValueError("max_events must be positive")
+        # Production keeps all distinct OCR observations until explicitly
+        # acknowledged by a verified AI event or the match is reset.
         self._events: deque[LocalFieldRead]=deque(maxlen=max_events)
         self._latest: dict[str,LocalFieldRead]={}
         self.duplicates=0
@@ -37,9 +39,13 @@ class LocalBattleStateTracker:
                           previous.text==row.text and previous.value==row.value)
             same_epoch=(turn_epoch is not None and
                         self._latest_epoch.get(row.field)==turn_epoch)
-            near_in_time=(turn_epoch is None and previous is not None and
+            near_in_time=(previous is not None and
                           0 <= row.timestamp-previous.timestamp <= 1.5)
-            if same_payload and (same_epoch or near_in_time):
+            # Only one continuing OCR display is a duplicate. An identical
+            # battle message later in the SAME turn may represent a distinct
+            # event and must still reach ChatGPT.
+            if same_payload and near_in_time and (
+                    turn_epoch is None or same_epoch):
                 self.duplicates+=1
                 continue
             status="CANDIDATE"
@@ -58,20 +64,23 @@ class LocalBattleStateTracker:
         return (inserted,tuple(novel)) if collect else inserted
 
     def snapshot(self, *, at_or_before: float | None=None,
-                 limit: int=12, own_active: str | None=None,
+                 limit: int | None=None, own_active: str | None=None,
                  opponent_active: str | None=None,
                  own_names: tuple[str, ...]=(),
-                 opponent_names: tuple[str, ...]=()) -> dict:
+                 opponent_names: tuple[str, ...]=(),
+                 acknowledged_frames: set[str] | None=None) -> dict:
         """Associate OCR hints with known actors without certifying them.
 
         HP overlays belong to the active Pokémon previously verified by
         vision. A candidate does NOT prove that the actor is still active.
         """
         from .terminology import japanese_name
+        ack=acknowledged_frames or set()
         valid=[r for r in self._events
-               if at_or_before is None or r.timestamp<=at_or_before]
+               if (at_or_before is None or r.timestamp<=at_or_before)
+               and r.frame_id not in ack]
         payload=[]
-        for row in valid[-limit:]:
+        for row in (valid if limit is None else valid[-limit:]):
             item=row.as_dict()
             actor,side=None,None
             if row.field=="screen_text.own_hp_fraction":

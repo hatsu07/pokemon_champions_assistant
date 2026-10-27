@@ -132,7 +132,7 @@ class _ReplayWorker(QObject):
         self.frames=frames
         self.screen_label=screen_label
         self.field_profile=field_profile
-        self.local_field_candidates=list(local_field_candidates or [])[:12]
+        self.local_field_candidates=list(local_field_candidates or [])
         self.diagnostic_sink=diagnostic_sink
         self.app_root=app_root
         self.selected_model=selected_model
@@ -1809,7 +1809,7 @@ class MatchReplayDialog(QDialog):
         state=self.state or {}
         assets=self.assets
         snapshot=self._local_battle_tracker.snapshot(
-            limit=36,
+            acknowledged_frames=set(state.get("_ai_ocr_ack_frames") or ()),
             own_active=state.get("our_active"),
             opponent_active=state.get("opponent_active"),
             own_names=tuple(m["name"] for m in assets.own_team) if assets else (),
@@ -1821,6 +1821,9 @@ class MatchReplayDialog(QDialog):
         # Capture a completed-only snapshot before any tactical AI call.
         # Inflight OCR is cancelled without join(), preserving the 45s turn.
         records=self._drain_event_candidates()
+        from .ocr_ai_evidence import select_ai_ocr_evidence
+        records,selection=select_ai_ocr_evidence(records)
+        self._diagnostic("OCR_AI_SELECTION",selection)
         if screen_label in _URGENT_SCREENS:
             reader=self._local_event_reader
             stats=reader.diagnostic_counts() if reader is not None else {}

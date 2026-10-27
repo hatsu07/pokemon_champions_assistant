@@ -34,6 +34,8 @@ _FIELDS = frozenset((
     "observed_event","name","phase","selected_bench_unconfirmed",
     "selected_switch_options","verified","stale","display_turn","original_turn",
     "origin","raw_text","ocr_text","parsed","outcome",
+    "source_count","eligible_count","sent_count","dropped_count",
+    "battle_messages_sent","selected_frames","dropped_frames",
     "state_updates","evidence_frames","certainty","from_pokemon","value",
     "interpreted_own_active","interpreted_opponent_active",
 ))
