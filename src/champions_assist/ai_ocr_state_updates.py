@@ -6,7 +6,9 @@ from .battle_evidence import empty_battle_evidence, update_battle_evidence
 from .terminology import japanese_name
 
 _KINDS=("SWITCH","MOVE","FAINT","HP","STATUS","STATUS_CLEAR","BOOST",
-        "ITEM","ABILITY","TYPE","MEGA","WEATHER","TERRAIN")
+        "ITEM","ITEM_SPENT","ITEM_EXCHANGED","ABILITY",
+        "ABILITY_CHANGED_UNKNOWN","TYPE","MEGA","WEATHER","TERRAIN",
+        "TEMP_START","TEMP_END","SIDE_EFFECT")
 _TYPES=("ノーマル","ほのお","みず","でんき","くさ","こおり","かくとう",
         "どく","じめん","ひこう","エスパー","むし","いわ","ゴースト",
         "ドラゴン","あく","はがね","フェアリー")
@@ -162,6 +164,48 @@ def apply_ai_ocr_updates(state,proposals,candidates,assets):
             memory.setdefault("form_by_pokemon",{"own":{},"opponent":{}})[side][name]="MEGA_EVOLVED_FORM_UNCONFIRMED"
             memory.setdefault("current_type",{"own":{},"opponent":{}})[side].pop(name,None)
             memory.setdefault("current_base_speed_by_pokemon",{"own":{},"opponent":{}})[side].pop(name,None)
+        elif kind=="ITEM_SPENT":
+            if not value:
+                fail("ITEM_NAME_REQUIRED");continue
+            memory["item_state_by_pokemon"][side][name]={
+                "item":value,"state":"SPENT_OR_LOST"}
+            memory["item_by_pokemon"][side].pop(name,None)
+            if side=="own" and memory["choice_lock"].get("pokemon")==name:
+                memory["choice_lock"]={"pokemon":"","move":"","source":""}
+        elif kind=="ITEM_EXCHANGED":
+            memory["item_by_pokemon"][side].pop(name,None)
+            memory["item_state_by_pokemon"][side][name]={
+                "item":"UNKNOWN","state":"CURRENT_UNKNOWN_AFTER_EXCHANGE"}
+            if side=="own":
+                memory["choice_lock"]={"pokemon":"","move":"","source":""}
+        elif kind=="ABILITY_CHANGED_UNKNOWN":
+            memory["ability_by_pokemon"][side].pop(name,None)
+            memory.setdefault("ability_state_by_pokemon",{
+                "own":{},"opponent":{}})[side][name]={
+                "name":"UNKNOWN","active":False}
+        elif kind in ("TEMP_START","TEMP_END"):
+            if value not in ("encore","taunt","disable","substitute"):
+                fail("UNKNOWN_TEMPORARY_EFFECT");continue
+            active=memory["temporary_effects"][side].setdefault(name,{})
+            if kind=="TEMP_START":
+                active[value]={"active":True,"remaining_turns":None,
+                               "source":"AI_INTERPRETED_OCR"}
+            else:
+                active.pop(value,None)
+        elif kind=="SIDE_EFFECT":
+            if value not in ("リフレクター","ひかりのかべ","ステルスロック",
+                             "まきびし","どくびし","ねばねばネット"):
+                fail("UNKNOWN_SIDE_EFFECT");continue
+            delta=event.get("delta")
+            if type(delta)!=int or delta not in (-1,1):
+                fail("SIDE_EFFECT_DIRECTION_REQUIRED");continue
+            effects=result.setdefault("battlefield",{}).setdefault(
+                "effects_by_side",{"own":{},"opponent":{}})[side]
+            if delta==1:
+                effects[value]={"active":True,"turns_remaining":None,
+                                "source":"AI_INTERPRETED_OCR"}
+            else:
+                effects.pop(value,None)
         elif kind in ("WEATHER","TERRAIN"):
             result.setdefault("battlefield",{})["weather" if kind=="WEATHER" else "terrain"]=value
         applied.add(identity)
