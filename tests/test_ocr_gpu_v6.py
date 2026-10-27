@@ -70,6 +70,30 @@ class GpuContract(unittest.TestCase):
                 reader.stop()
 
 
+class NoStaleAdviceGuiRegression(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
+        from champions_assist.desktop import ensure_application
+        cls.app=ensure_application()
+
+    def test_blocked_text_reply_cannot_show_last_switch(self):
+        from tempfile import TemporaryDirectory
+        from champions_assist.match_replay_dialog import MatchReplayDialog
+        with TemporaryDirectory() as tmp:
+            gui=MatchReplayDialog(model="mock",master_directory=tmp,
+                                  team_path=tmp,store_root=tmp)
+            try:
+                gui.state=fixture_state(fixture_assets())
+                gui.state["our_active"]="ドドゲザン"
+                gui._last_action_text="ドドゲザンに交代。"
+                gui._render({"status":"BLOCKED","reason":"test"})
+                self.assertNotIn("ドドゲザンに交代",gui.action_banner.text())
+                self.assertEqual(gui._last_action_text,"")
+            finally:
+                gui.close()
+
 class UnknownOpponentRegression(unittest.TestCase):
     def setUp(self):
         self.assets=fixture_assets()
