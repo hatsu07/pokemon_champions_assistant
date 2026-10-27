@@ -472,6 +472,29 @@ class SelectionVisionTest(unittest.TestCase):
         result=SelectionPlanner(clock=lambda:10.0).choose(obs,assets(),lambda *_:None,started_at=10.0)
         self.assertEqual(result.reason,"OPPONENT_SIX_INCOMPLETE")
 
+    def test_verified_selection_survives_local_deadline_overrun(self):
+        now=[10.0]
+        def chooser(context,remaining):
+            self.assertGreater(remaining,0)
+            # Simulates a slow but fully validated tactical model response.
+            now[0]=61.0
+            return {"selected_three":list(OWN[:3]),"lead":OWN[0]}
+        choice=SelectionPlanner(clock=lambda:now[0]).choose(
+            observation(),assets(),chooser,started_at=0.0,
+            max_total_seconds=55.0)
+        self.assertEqual(choice.status,"OK")
+        self.assertEqual(choice.selected_three,OWN[:3])
+        self.assertEqual(choice.lead,OWN[0])
+        self.assertEqual(choice.preserve,None)
+        self.assertGreater(choice.elapsed_ms,55000)
+
+    def test_live_selection_schema_does_not_require_prep_roles(self):
+        from champions_assist.selection_vision import CHOICE_SCHEMA
+        self.assertEqual(CHOICE_SCHEMA["required"],["selected_three","lead"])
+        self.assertNotIn("preserve",CHOICE_SCHEMA["properties"])
+        self.assertNotIn("stopper",CHOICE_SCHEMA["properties"])
+        self.assertNotIn("closer",CHOICE_SCHEMA["properties"])
+
     def test_deadline_and_invalid_recommendation_block(self):
         obs=observation()
         bad=SelectionPlanner(clock=lambda:45.0).choose(obs,assets(),lambda *_:None,started_at=0.0)
