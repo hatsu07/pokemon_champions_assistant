@@ -56,7 +56,7 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         profile,image,engine=fixture()
         reader=AsyncBattleEventReader(profile,ocr_engine=engine)
         try:
-            self.assertFalse(reader.offer(image,label="TURN_ACTION"))
+            # Action-screen OCR is now asynchronous; test events here.
             self.assertFalse(reader.offer(image,label="UNKNOWN"))
             self.assertTrue(reader.offer(image,label="BATTLE_EVENT"))
             results=completed(reader)
@@ -67,7 +67,7 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
             self.assertIn("battle_message",engine.calls)
             self.assertIn("own_hp_fraction",engine.calls)
             self.assertNotIn("turn_command_timer",engine.calls)
-            self.assertNotIn("own_active_name",engine.calls)
+            self.assertIn("own_active_name",engine.calls)
             self.assertEqual(items[0].status,"CANDIDATE")
             self.assertFalse(items[0].as_dict()["game_validated"])
             self.assertFalse(reader.offer(image,label="BATTLE_EVENT"))
@@ -127,7 +127,7 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
             counters=reader.diagnostic_counts()
             self.assertEqual(counters["ocr_jobs_enqueued"],1)
             self.assertEqual(counters["ocr_jobs_completed"],1)
-            self.assertEqual(counters["ocr_rois_attempted"],2)
+            self.assertEqual(counters["ocr_rois_attempted"],3)
             self.assertEqual(counters["ocr_rois_parsed"],2)
             self.assertGreaterEqual(counters["ocr_last_latency_ms"],0)
             self.assertEqual(counters["ocr_queue_pending"],0)
