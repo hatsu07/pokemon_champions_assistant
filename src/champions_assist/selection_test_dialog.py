@@ -983,6 +983,8 @@ class SelectionTestDialog(QDialog):
         self.event_run_button.setEnabled(
             self.prep_attempted and self.test_state is not None
             and self.event_image is not None)
+        self.event_ocr_button.setEnabled(
+            self.event_image is not None and self.ocr_thread is None)
 
     def closeEvent(self,event):
         self._close_after_workers=True
@@ -992,7 +994,7 @@ class SelectionTestDialog(QDialog):
         if self.live_panel is not None:
             if not self.live_panel._shutdown_ready:
                 self.live_panel.request_shutdown("close")
-        if (self.thread is not None or
+        if (self.thread is not None or self.ocr_thread is not None or
                 (self.live_panel is not None and (
                  self.live_panel._thread is not None or
                  self.live_panel._prep_thread is not None))):
