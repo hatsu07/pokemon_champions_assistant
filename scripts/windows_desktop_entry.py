@@ -88,6 +88,19 @@ def run_smoke(report_path: Path) -> int:
     from champions_assist.__main__ import main as assistant_main
 
     master_dir = bundled_master_directory()
+    # Exercise the ACTUAL PyInstaller-bundled binary, language models, PNG
+    # encoder, subprocess and TSV parser. --list-langs alone cannot catch
+    # the TESSERACT_EXIT_1 failures seen in user sessions.
+    import cv2
+    import numpy as np
+    from champions_assist.ocr import TesseractJapaneseOcr
+    sample=np.full((150,800,3),255,dtype=np.uint8)
+    cv2.putText(sample,"HP 117/131",(25,106),
+                cv2.FONT_HERSHEY_SIMPLEX,2.1,(0,0,0),3,cv2.LINE_AA)
+    reading=TesseractJapaneseOcr(timeout_seconds=5.0).read(
+        sample,roi_name="CI_NATIVE_OCR_SMOKE")
+    if not reading.text.strip() or not any(c.isdigit() for c in reading.text):
+        raise RuntimeError("BUNDLED_OCR_RECOGNITION_EMPTY")
     app = ensure_application()
     with tempfile.TemporaryDirectory(prefix="champions-desktop-smoke-") as temporary:
         root = Path(temporary)
@@ -106,6 +119,7 @@ def run_smoke(report_path: Path) -> int:
                 "network": "NOT_USED",
                 "openai_api": "DISABLED_BY_ENTRYPOINT",
                 "bundled_master_files": len(REQUIRED_BUNDLED_MASTERS),
+                "bundled_native_ocr": "OCR_NATIVE_SMOKE_OK",
             },
             ensure_ascii=False,
             indent=2,
