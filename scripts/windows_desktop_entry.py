@@ -94,13 +94,16 @@ def run_smoke(report_path: Path) -> int:
     import cv2
     import numpy as np
     from champions_assist.ocr import TesseractJapaneseOcr
+    # Smoke the actual runtime's numeric HUD pathway with a legible
+    # synthetic 97% crop. Japanese glyph recognition is NOT certified by
+    # an ASCII synthetic fixture; real capture remains a separate E2E gate.
     sample=np.full((150,800,3),255,dtype=np.uint8)
-    cv2.putText(sample,"HP 117/131",(25,106),
+    cv2.putText(sample,"97%",(25,106),
                 cv2.FONT_HERSHEY_SIMPLEX,2.1,(0,0,0),3,cv2.LINE_AA)
     reading=TesseractJapaneseOcr(timeout_seconds=5.0).read(
-        sample,roi_name="CI_NATIVE_OCR_SMOKE")
-    if not reading.text.strip() or not any(c.isdigit() for c in reading.text):
-        raise RuntimeError("BUNDLED_OCR_RECOGNITION_EMPTY")
+        sample,roi_name="opponent_hp_percent")
+    if "97" not in reading.text:
+        raise RuntimeError("BUNDLED_OCR_NUMERIC_RECOGNITION_FAILED")
     app = ensure_application()
     with tempfile.TemporaryDirectory(prefix="champions-desktop-smoke-") as temporary:
         root = Path(temporary)
