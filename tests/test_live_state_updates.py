@@ -297,6 +297,35 @@ class LiveStateOcrTests(unittest.TestCase):
             self.state,self.assets)
         self.assertEqual(code,"OK")
 
+    def test_ocr_confirmed_choice_move_is_locked_until_switch(self):
+        self.apply(read("battle_message",
+                        "マスカーニャはトリックフラワーをつかった",1))
+        evidence=self.state["battle_evidence"]
+        self.assertEqual(evidence["choice_lock"]["move"],"トリックフラワー")
+        code,_=validate_battle_choice(
+            {"action_kind":"MOVE","move":"はたきおとす"},
+            {"visual_ui":"COMMAND_MENU","visible_moves":[]},
+            self.state,self.assets)
+        self.assertEqual(code,"CHOICE_LOCK_VIOLATION")
+        self.apply(read("battle_message","ゆけっ!マリルリ!",2))
+        self.assertEqual(self.state["battle_evidence"]["choice_lock"]["move"],"")
+
+    def test_ocr_move_does_not_guess_pp_from_old_hud(self):
+        self.apply(read("own_active_name","マスカーニャ",1),
+                   read("own_pp_move1","11/20",1,
+                        {"current":11,"maximum":20}))
+        self.apply(read("battle_message",
+                        "マスカーニャはトリックフラワーをつかった",2))
+        self.assertEqual(self.state["battle_evidence"]["pp_by_pokemon"][
+            "own"]["マスカーニャ"]["トリックフラワー"],11)
+
+    def test_exchange_does_not_relock_on_next_ocr_move(self):
+        self.apply(read("battle_message",
+                        "マスカーニャはもちものを交換した",1))
+        self.apply(read("battle_message",
+                        "マスカーニャはトリックフラワーをつかった",2))
+        self.assertEqual(self.state["battle_evidence"]["choice_lock"]["move"],"")
+
     def test_mega_form_uses_frozen_champions_type_only(self):
         self.assets.own_team+=({
             "name":"リザードン→メガリザードンX",
