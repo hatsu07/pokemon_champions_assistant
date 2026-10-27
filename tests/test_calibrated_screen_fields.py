@@ -91,8 +91,12 @@ class SampleScreenFieldTests(unittest.TestCase):
         self.assertTrue(self.profile.compatible(large))
         roi=next(r for r in self.profile.regions if r.name=="battle_message")
         scaled=self.profile.crop(large,roi)
-        self.assertEqual(scaled.shape[:2],(roi.bounds_px[3]-roi.bounds_px[1],
-                                           roi.bounds_px[2]-roi.bounds_px[0]))
+        # Preserve twice the sample-region detail (capped for bounded OCR)
+        # instead of downsizing the native game capture to 960x572 glyphs.
+        sample_h=roi.bounds_px[3]-roi.bounds_px[1]
+        sample_w=roi.bounds_px[2]-roi.bounds_px[0]
+        self.assertEqual(scaled.shape[:2],(2*sample_h,2*sample_w))
+        self.assertGreater(float(scaled.mean()),0.0)
         self.assertFalse(self.profile.compatible(np.zeros((900,1600,3),
                                                           dtype=np.uint8)))
 
