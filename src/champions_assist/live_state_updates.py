@@ -192,6 +192,21 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
     own,opponents=_names(assets,updated)
     seen=updated.setdefault("_ocr_applied_event_ids",[])
     seen_set=set(seen)
+    # An HP HUD captured during switch animation may still show the outgoing
+    # member. Only the same-frame name can attribute it to a new entrant.
+    switching_frames=set()
+    named_frames=set()
+    for record in records:
+        field=getattr(record,"field","")
+        frame=str(getattr(record,"frame_id",""))
+        if field in ("screen_text.own_active_name",
+                     "screen_text.opponent_active_name"):
+            named_frames.add((frame,"own" if field=="screen_text.own_active_name"
+                              else "opponent"))
+        elif field.endswith("battle_message"):
+            event=_event_for_message(str(getattr(record,"text","")),own,opponents)
+            if event and event.get("kind")=="SWITCH":
+                switching_frames.add((frame,event.get("side")))
     for rec in records:
         text=str(getattr(rec,"text","") or "")
         field=getattr(rec,"field","")
@@ -236,6 +251,12 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
             evt=_event_for_message(text,own,opponents)
         if evt is None:
             continue
+        if evt["kind"]=="HP" and (ref[0],evt.get("side")) in switching_frames and (
+                ref[0],evt.get("side")) not in named_frames:
+            audit.append({"kind":"HP","status":"CANDIDATE",
+                          "reason":"SAME_FRAME_SWITCH_HUD_AMBIGUOUS",
+                          "frame_id":ref[0]})
+            continue
         if not trusted:
             audit.append({"kind":evt["kind"],"status":"CANDIDATE",
                           "reason":"LOW_CONFIDENCE_OR_CONFLICT","frame_id":ref[0]})
@@ -277,7 +298,6 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
                             updated["prep"].setdefault("unrated_new_opponents",[])
                             if name not in updated["prep"]["unrated_new_opponents"]:
                                 updated["prep"]["unrated_new_opponents"].append(name)
-                updated["_live_state_revision"]=updated.get("_live_state_revision",0)+1
         elif kind=="PP":
             actor=updated.get("our_active")
             if not actor or actor!=name:
@@ -354,7 +374,7 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         audit.append({"kind":kind,"status":"APPLIED","side":side or "",
                       "frame_id":ref[0],"revision":updated.get("_live_state_revision",0)})
         provenance=evidence["update_provenance"]
-        provenance.append({"kind":kind,"source":"LOCAL_OCR",
+        provenance.append({"kind":kind,"source":getattr(rec,"source","LOCAL_OCR"),
                            "frame_id":ref[0],"confidence":conf})
         del provenance[:-50]
     return updated,audit
