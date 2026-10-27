@@ -1742,6 +1742,18 @@ class MatchReplayDialog(QDialog):
                     self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
                 if result.observations:
+                    for row in result.observations:
+                        self._diagnostic("OCR_RAW",{
+                            "field":row.field,"roi":row.roi,
+                            "frame_id":row.frame_id,
+                            "raw_text":row.text,"confidence":row.confidence,
+                            "captured_at":row.timestamp,
+                            "processed_at":monotonic(),
+                            "capture_epoch":capture_epoch,
+                            "status":row.status,
+                            "parsed":row.value if isinstance(row.value,dict)
+                                     else {"evidence":str(row.value)[:160]},
+                        })
                     # Battle messages are OCR candidates, not confirmed results.
                     # Request an independent text-only result judgment only
                     # for a narrow explicit match-result phrase.
@@ -1773,10 +1785,39 @@ class MatchReplayDialog(QDialog):
                     count,novel=self._local_battle_tracker.ingest(
                         result.observations,collect=True,
                         turn_epoch=capture_epoch)
+                    if len(novel)<len(result.observations):
+                        self._diagnostic("OCR_DEDUP",{
+                            "dedup":len(result.observations)-len(novel),
+                            "capture_epoch":capture_epoch,
+                            "reason":"SAME_TURN_OR_NEAR_FRAME"})
                     if (novel and self.state is not None and self.assets is not None
                             and self.state.get("phase")!="ENDED"):
+                        before=current_state_digest(self.state)
                         changed,audit=apply_local_ocr(
                             self.state,novel,self.assets)
+                        for event in audit:
+                            self._diagnostic("OCR_DECISION",{
+                                "kind":event.get("kind"),
+                                "status":event.get("status"),
+                                "reason":event.get("reason"),
+                                "frame_id":event.get("frame_id"),
+                                "source":"LOCAL_OCR",
+                                "state_revision":changed.get("_live_state_revision",0)})
+                        if any(e["status"]=="APPLIED" for e in audit):
+                            self._diagnostic("OCR_STATE_UPDATE",{
+                                "before":before,
+                                "after":current_state_digest(changed),
+                                "source":"LOCAL_OCR"})
+                            for side in ("our_active","opponent_active"):
+                                if before.get(side)!=changed.get(side):
+                                    self._diagnostic("ACTIVE_TRANSITION",{
+                                        "side":"own" if side=="our_active" else "opponent",
+                                        "previous":before.get(side),
+                                        "current":changed.get(side),
+                                        "source":"LOCAL_OCR",
+                                        "verified":True,
+                                        "last_confirmed_turn":capture_epoch,
+                                        "last_confirmed_frame":str(result.frame_id)})
                         if any(e["status"]=="APPLIED" for e in audit):
                             self.state=changed
                             self._trace_event("LOCAL_OCR_STATE_APPLIED",
@@ -2081,6 +2122,22 @@ class MatchReplayDialog(QDialog):
             self._interrupt_prep()
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
+            before=current_state_digest(self.state)
+            after=current_state_digest(payload["state"])
+            if before!=after:
+                self._diagnostic("AI_STATE_UPDATE",{
+                    "before":before,"after":after,
+                    "source":"AI_IMAGE_OBSERVATION" if report.get(
+                        "transport")!="OCR_TEXT_ONLY" else "TEXT_NO_NEW_IMAGE"})
+                for side in ("our_active","opponent_active"):
+                    if before.get(side)!=after.get(side):
+                        self._diagnostic("ACTIVE_TRANSITION",{
+                            "side":"own" if side=="our_active" else "opponent",
+                            "previous":before.get(side),"current":after.get(side),
+                            "source":"AI_IMAGE_OBSERVATION" if report.get(
+                                "transport")!="OCR_TEXT_ONLY" else "TEXT_NO_NEW_IMAGE",
+                            "verified":report.get("transport")!="OCR_TEXT_ONLY",
+                            "last_confirmed_turn":self._turn_epoch})
             self.state=payload["state"]
             observed=report.get("screen")
             if observed and observed!="UNKNOWN":
