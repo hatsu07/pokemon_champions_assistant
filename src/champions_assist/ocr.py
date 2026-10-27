@@ -140,8 +140,11 @@ class TesseractJapaneseOcr:
                 process=subprocess.run(
                     [self.command,str(path),"stdout","-l",self.languages,
                      "--tessdata-dir",self.tessdata_dir,*self.config.split(),"tsv"],
-                    capture_output=True,text=True,errors="replace",
-                    env=environment,timeout=self.timeout_seconds,check=False)
+                    capture_output=True,text=True,encoding="utf-8",
+                    errors="replace",env=environment,
+                    creationflags=(getattr(subprocess,"CREATE_NO_WINDOW",0)
+                                   if sys.platform=="win32" else 0),
+                    timeout=self.timeout_seconds,check=False)
             except subprocess.TimeoutExpired as exc:
                 raise OcrExecutionError("OCR_PROCESS_TIMEOUT") from exc
             except OSError as exc:
