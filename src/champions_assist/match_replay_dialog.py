@@ -60,12 +60,12 @@ def prep_budget_before_battle(selection_started_at: float | None, *,
 # unclassified animation is not grounds to erase a completed turn decision.
 _URGENT_SCREENS = frozenset(("TURN_ACTION", "SWITCH_SELECTION"))
 # The in-game clock may start ~10 s before the first actionable classifier
-# frame. Aim to finish within 20 s, but do not throw away a useful answer
-# at 20.1 s: it may still leave actual user input time. The 28 s hard limit
-# leaves a provisional 7 s for input (45 - 10 lag - 28 processing).
-# Neither limit is a measured in-game countdown.
-_TARGET_AI_TURN_SECONDS = 20.0
-_CONSERVATIVE_AI_TURN_SECONDS = 28.0
+# frame. Aim to finish within 30 s. Do not throw away a valid response just
+# for missing this target: allow up to 32 s for the final usable proposal.
+# 45 s nominal - ~10 s possible onset lag - 32 s = ~3 s for manual input.
+# Neither limit is a measured in-game countdown; real testing is essential.
+_TARGET_AI_TURN_SECONDS = 30.0
+_CONSERVATIVE_AI_TURN_SECONDS = 32.0
 _SCREEN_PRIORITY = {
     "TEAM_SELECTION": 1, "BATTLE_EVENT": 2,
     "TURN_ACTION": 3, "SWITCH_SELECTION": 3,
@@ -2187,7 +2187,7 @@ class MatchReplayDialog(QDialog):
                 remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
                                      (monotonic()-self._turn_screen_seen_at)))
                 clock=(f"操作画面初回検知からAI表示最終期限まで約{remaining}秒"
-                       "／目標20秒・ゲーム内時計は未取得・遅延約10秒を仮定")
+                       "／目標30秒・ゲーム内時計は未取得・遅延約10秒を仮定")
             else:
                 remaining=max(0,int(55-elapsed))
                 clock=f"AI処理開始から {elapsed:.1f}秒／目標残り約{remaining}秒"
@@ -2210,7 +2210,7 @@ class MatchReplayDialog(QDialog):
                     and not self._turn_event_after_action):
                 remaining=max(0,int(_CONSERVATIVE_AI_TURN_SECONDS-
                                      (monotonic()-self._turn_screen_seen_at)))
-                clock=f"AI表示最終期限まで約{remaining}秒（目標20秒／ゲーム内時計未取得）"
+                clock=f"AI表示最終期限まで約{remaining}秒（目標30秒／ゲーム内時計未取得）"
             else:
                 clock="次の画面の認識待ち／ゲーム内の残り時間は未取得"
         if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
