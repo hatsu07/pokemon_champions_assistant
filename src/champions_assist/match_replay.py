@@ -1664,6 +1664,23 @@ def select_screen_result_evidence(rows: list[dict], *,
     return candidates[-10:]
 
 
+def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
+    """Fail closed on an explicit opposite outcome; never infer a result.
+
+    Only an independent GPT decision can end the match. This check merely
+    rejects contradictory grounded quotations (e.g. WIN citing 敗北).
+    Ambiguous or two-sided messages require human confirmation.
+    """
+    phrase=" ".join(evidence.casefold().split())
+    win_cues=("勝利","勝った","勝ちました","you win","相手が降参","相手が投了")
+    loss_cues=("敗北","負けた","負けました","you lose","自分が降参")
+    matches_win=any(cue in phrase for cue in win_cues)
+    matches_loss=any(cue in phrase for cue in loss_cues)
+    if matches_win==matches_loss:
+        return False
+    return matches_win if result=="WIN" else matches_loss if result=="LOSS" else False
+
+
 def run_replay_screen_result(*, state: dict,
                              screen_frame: str, screen_time: float,
                              local_field_candidates: list[dict],
@@ -1729,7 +1746,8 @@ def run_replay_screen_result(*, state: dict,
                           and evidence in row["raw_text"]
                           and possible_result_message(evidence)
                           for row in recent))
-        if result not in ("WIN","LOSS") or not grounded:
+        if (result not in ("WIN","LOSS") or not grounded
+                or not _result_quote_direction_consistent(result,evidence)):
             return updated,{"status":"RESULT_UNCONFIRMED",
                             "reason":"NO_GROUNDED_FINAL_MATCH_RESULT",
                             "images_sent":0,
