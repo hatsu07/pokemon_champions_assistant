@@ -52,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_selection_detail_crops tests.test_selection_image_diagnostics tests.test_match_debug_and_selection_ui tests.test_match_replay tests.test_live_timing_test tests.test_team_live_assets tests.test_team_ai_matrix tests.test_team_matchup_v2 tests.test_matchup_learning_store tests.test_sqlite_primary_migration tests.test_team_ai_analysis tests.test_team_auto_analysis tests.test_team_provisional_advice tests.test_ai_review_workflow tests.test_matchup_evidence tests.test_real_battle_validation tests.test_web_mechanics_research tests.test_battle_evidence tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_local_event_worker tests.test_local_event_image_policy tests.test_ocr_portable_runtime tests.test_ocr_gpu_v6 tests.test_ocr_onnx tests.test_crash_diagnostics tests.test_gpu_stress_diagnostics tests.test_gpu_multiprocess_diagnostics tests.test_calibrated_screen_fields tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
+          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_selection_detail_crops tests.test_selection_image_diagnostics tests.test_match_debug_and_selection_ui tests.test_match_replay tests.test_live_timing_test tests.test_team_live_assets tests.test_team_ai_matrix tests.test_team_matchup_v2 tests.test_matchup_learning_store tests.test_sqlite_primary_migration tests.test_team_ai_analysis tests.test_team_auto_analysis tests.test_team_provisional_advice tests.test_ai_review_workflow tests.test_matchup_evidence tests.test_real_battle_validation tests.test_web_mechanics_research tests.test_battle_evidence tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_local_event_worker tests.test_local_event_image_policy tests.test_ocr_portable_runtime tests.test_ocr_gpu_v6 tests.test_ocr_onnx tests.test_crash_diagnostics tests.test_gpu_stress_diagnostics tests.test_gpu_multiprocess_diagnostics tests.test_ocr_sidecar tests.test_calibrated_screen_fields tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
           Write-Host "offline core unittest process exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
           # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
@@ -189,6 +189,23 @@ jobs:
               $data.network -ne "NOT_USED" -or $data.gpu_inference_tested -ne $false -or
               @($data.modes).Count -ne 5) {
             throw "Frozen GPU diagnostic smoke report invalid"
+          }
+      - name: Smoke frozen persistent OCR child via CPU-only pipe roundtrip
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path ".\\dist\\PokemonChampionsAssistant\\PokemonChampionsAssistant.exe").Path
+          $report = Join-Path $env:RUNNER_TEMP "ocr-sidecar-cpu-smoke.json"
+          python scripts/smoke_ocr_sidecar_exe.py "$exe" "$report"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $report)) {
+            throw "Frozen OCR sidecar CPU IPC smoke failed"
+          }
+          $data = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($data.status -ne "FROZEN_OCR_SIDECAR_SMOKE_OK" -or
+              $data.provider -ne "CPUExecutionProvider" -or
+              $data.gpu_inference_tested -ne $false -or
+              $data.network -ne "NOT_USED" -or
+              $data.game_capture -ne "NOT_USED") {
+            throw "Frozen OCR sidecar IPC smoke report invalid"
           }
       - name: Smoke dataset collector GUI offline (no actual screen access)
         shell: pwsh

@@ -110,15 +110,20 @@ class AsyncBattleEventReader:
     def with_onnx_ocr(cls, profile: ScreenFieldProfile | None,
                       *, lexicon: ScreenLexicon | None=None,
                       ocr_engine: OcrEngine | None=None,
-                      device: str="auto", gpu_id: int=0):
-        """Use the screen classifier's ONNX Runtime; prefer GPU DirectML."""
+                      device: str="auto", gpu_id: int=0,
+                      isolate_process: bool=False):
+        """Route Windows GPU OCR through an independent, persistent child."""
         if profile is None:
             return cls(None,lexicon=lexicon)
         if ocr_engine is None:
-            from .ocr_onnx import make_onnx_ocr
             from .ocr import OcrExecutionError
             try:
-                ocr_engine=make_onnx_ocr(device=device,gpu_id=gpu_id)
+                if isolate_process and device != "cpu":
+                    from .ocr_sidecar import OcrSidecarClient
+                    ocr_engine=OcrSidecarClient(device=device,gpu_id=gpu_id)
+                else:
+                    from .ocr_onnx import make_onnx_ocr
+                    ocr_engine=make_onnx_ocr(device=device,gpu_id=gpu_id)
             except (OcrExecutionError,OSError,ValueError) as exc:
                 instance=cls(profile,lexicon=lexicon)
                 instance.reason=getattr(exc,"code","ONNX_OCR_INITIALIZATION_FAILED")
@@ -239,7 +244,7 @@ class AsyncBattleEventReader:
             first_error=None
             first_error_code=None
             for name,kind,crop in job.crops:
-                if self._stop.is_set():
+                if self._stop.is_set() or not self.enabled:
                     break
                 region=next((r for r in self.profile.regions
                              if r.name==name),None)
@@ -268,6 +273,16 @@ class AsyncBattleEventReader:
                     # One failing ROI never discards another successfully
                     # recognized HP/message in the same battle-event frame.
                     self.errors+=1
+                    # Child-process failure must not silently leave OCR marked
+                    # READY, nor keep submitting work to an exited process.
+                    error_code=getattr(exc,"code","")
+                    if (isinstance(error_code,str)
+                            and error_code.startswith("OCR_SIDECAR_")
+                            and error_code not in ("OCR_SIDECAR_INVALID_IMAGE",
+                                                   "OCR_SIDECAR_IMAGE_TOO_LARGE")):
+                        self.reason=error_code
+                        self.enabled=False
+                        self._ocr.stop()
                     if first_error is None:
                         first_error=type(exc).__name__
                         status=getattr(exc,"status",None)
@@ -293,6 +308,8 @@ class AsyncBattleEventReader:
                     except Empty:
                         pass
                     self._out.put_nowait(result)
+            if not self.enabled:
+                return
 
     def diagnostic_counts(self) -> dict[str,int]:
         """Cheap bounded, non-blocking aggregate metrics; no OCR text or ROI."""

@@ -169,6 +169,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="PokemonChampionsAssistant")
     parser.add_argument("--config", type=Path, help="optional local non-secret settings.json path")
     parser.add_argument("--smoke", type=Path, metavar="REPORT_JSON", help="offline headless GUI smoke test")
+    parser.add_argument("--ocr-sidecar", action="store_true",
+                        help="internal persistent ONNX OCR child over private pipes")
+    parser.add_argument("--ocr-device", default="auto")
+    parser.add_argument("--ocr-gpu-id", type=int, default=0)
     parser.add_argument("--gpu-diagnostics", action="store_true",
                         help="isolate five offline DirectML stress cases, including cross-process")
     parser.add_argument("--gpu-diagnostic-child",
@@ -209,6 +213,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         record_event("BUILD_REVISION_UNAVAILABLE")
     rc = 1
     try:
+        if args.ocr_sidecar:
+            from champions_assist.ocr_sidecar import serve
+            rc = serve(device=args.ocr_device, gpu_id=args.ocr_gpu_id)
+            return rc
         if args.gpu_diagnostic_smoke is not None:
             from champions_assist.gpu_stress_diagnostics import smoke
             rc = smoke(args.gpu_diagnostic_smoke)
@@ -266,7 +274,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return rc
     except Exception as exc:
         log_path = _record_startup_failure(exc)
-        if args.smoke is None:
+        if args.smoke is None and not args.ocr_sidecar:
             _show_startup_failure(log_path)
         return 1
     finally:
