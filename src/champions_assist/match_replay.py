@@ -254,7 +254,9 @@ def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenM
     if not opponent or len(selected)!=3 or any(_member_for(n,assets) is None for n in selected):
         return False
     if own:
-        return bool(_member_for(own,assets) and _bench_candidates(state))
+        return bool(_member_for(own,assets)
+                    and any(_canonical(own)==_canonical(x) for x in selected)
+                    and _bench_candidates(state))
     if not state.get("awaiting_replacement"):
         return False
     hp=(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}).get("own",{})
@@ -1468,7 +1470,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=total_seconds,
         )
-        if result.get("status")!="BLOCKED" and state.get("phase") in ("PREP","BATTLE"):
+        if (result.get("status")!="BLOCKED"
+                and expected_screen_label in ("TURN_ACTION","SWITCH_SELECTION")
+                and state.get("phase") in ("PREP","BATTLE")):
             # Image interpretation may assist the tactic, but it does not
             # independently prove that any OCR frame was validated. Preserve
             # the GPT-selected carryover and do not auto-ACK raw OCR here.
