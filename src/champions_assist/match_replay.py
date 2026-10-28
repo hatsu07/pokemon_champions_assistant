@@ -1314,9 +1314,20 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         if local_field_candidates:
             # Local ROI OCR is non-authoritative and may be wrong: attach it
             # separately, never merge into the verified battle snapshot.
-            from .ocr_ai_evidence import select_ai_ocr_evidence
-            selected_ocr,_=select_ai_ocr_evidence(local_field_candidates)
+            from .ocr_turn_context import build_ocr_turn_context
+            selected_ocr,pending_ocr,stats=build_ocr_turn_context(
+                state,local_field_candidates)
             prompt["local_field_candidates_unverified"] = selected_ocr
+            prompt["ocr_pending_questions_unverified"] = pending_ocr
+            prompt["ocr_deferred_rows_local_only"] = stats["rows_deferred"]
+            if diagnostic_sink is not None:
+                diagnostic_sink("OCR_TURN_COMPACTION",{
+                    "ledger_rows_available":stats["ledger_rows_available"],
+                    "api_rows_sent":stats["api_rows_sent"],
+                    "rows_deferred":stats["rows_deferred"],
+                    "ocr_json_bytes_before":stats["ledger_json_bytes"],
+                    "ocr_json_bytes_sent":stats["api_json_bytes"],
+                    "transport":"VISION_EXCEPTION"})
         if phase in ("MATCHMAKING","SELECTION"):
             # Only registered-team derived rows; never include old-team tactics.
             opp=tuple(state.get("opponent_six") or ())
