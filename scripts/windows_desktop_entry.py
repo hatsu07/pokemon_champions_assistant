@@ -109,14 +109,19 @@ def probe_bundled_ocr_execution() -> dict[str, object]:
 
 
 def probe_gpu_ocr_contract() -> dict[str, object]:
-    """CI can verify backend selection but cannot execute CUDA without GPU."""
-    from champions_assist.ocr_gpu import MODEL_DET,MODEL_REC,ENGINE_NAME
-    if (MODEL_DET,MODEL_REC)!=(
-            "PP-OCRv6_small_det","PP-OCRv6_small_rec"):
-        raise RuntimeError("GPU_OCR_MODEL_MISMATCH")
-    return {"gpu_ocr_backend":ENGINE_NAME,
-            "gpu_ocr_runtime":"EXTERNAL_GPU_ENV_REQUIRED",
-            "gpu_inference_tested":False}
+    """Validate bundled source bytes and actual recognition from frozen EXE."""
+    from champions_assist.ocr_onnx import (
+        MODEL_DET, MODEL_REC, ENGINE_NAME)
+    from champions_assist.ocr_smoke import verify_real_cpu_ocr
+
+    if (MODEL_DET, MODEL_REC) != (
+            "PP-OCRv6_small_det", "PP-OCRv6_small_rec"):
+        raise RuntimeError("ONNX_OCR_MODEL_MISMATCH")
+    reading = verify_real_cpu_ocr()
+    return {"gpu_ocr_backend": ENGINE_NAME,
+            "gpu_ocr_runtime": "BUNDLED_ONNX_RUNTIME",
+            "gpu_inference_tested": False,
+            **reading}
 
 
 def run_smoke(report_path: Path) -> int:

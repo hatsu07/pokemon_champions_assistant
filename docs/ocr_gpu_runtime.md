@@ -1,62 +1,58 @@
-# Pokémon Champions: PP-OCRv6 small + GPU OCR
+# PP-OCRv6 small ONNX Runtime — Windows desktop bundle
 
-The live OCR backend is **PP-OCRv6_small_det + PP-OCRv6_small_rec**,
-using NVIDIA GPU device `gpu:0`. It runs locally; OCR content never
-leaves the device until the normal user-authorized tactical AI request.
-The app never derives game mechanics from OCR text.
+The Windows desktop ZIP embeds official PP-OCRv6 small detection/recognition
+ONNX models and their **model-matched official CTC vocabulary** under
+`_internal/ocr-v6`. No separate Python/Paddle/CUDA installation or runtime
+OCR download is required. OCR text is untrusted evidence and does not directly
+overwrite battle state; AI-proposed changes are verified by the application.
 
-## Windows packaged EXE
+## Reproducible build and validation
 
-A GPU-free Windows Actions runner can validate the GUI, transport, and
-mocked OCR, but **cannot verify live GPU inference**. The EXE does not
-bundle multi-GB Paddle/CUDA libraries. Configure a persistent local
-Python GPU worker once before playing:
+1. `python scripts/stage_ocr_onnx.py --output build/ocr-v6` is the **only**
+   model download/staging route. It pins full upstream Hugging Face revisions
+   and verifies the detector and recognizer against known SHA-256 digests.
+   Recognition characters come from the pinned recognizer's `inference.yml`.
+   An Apache-2.0 license is downloaded from a fixed PaddleOCR commit.
+2. A manifest records SHA-256 digests for both model weights, dictionary,
+   recognition config and license. Every runtime initialization verifies
+   the bundle bytes before loading either model.
+3. `python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6`
+   performs real CPU detection **and** recognition of a self-generated
+   synthetic `97%` image and rejects empty/wrong text. Windows CI runs this
+   before packaging.
+4. Exactly one `--add-data "build\\ocr-v6;ocr-v6"` entry embeds the staged
+   files in PyInstaller. The frozen GUI startup smoke re-verifies the identical
+   bundled manifest and real `97` recognition; the report includes
+   `ocr_cpu_provider` and `ocr_text_verified`.
+5. Neither CI gate makes a claim about Japanese Pokémon Champions captures
+   or GPU inference performance; real ROI fixtures and user hardware tests
+   remain necessary.
 
-1. Install Python 3.12, an appropriate NVIDIA GPU driver, and verify
-   `nvidia-smi` works.
-2. From the repository checkout, run
-   `powershell -ExecutionPolicy Bypass -File scripts/setup_windows_gpu_ocr.ps1`
-   (default CUDA 12.6 wheel, driver >= 550.54.14).
-   If an older supported driver is used, pass `-CudaIndex cu118`.
-3. The setup installs the GPU wheel and `paddleocr>=3.7` into an isolated
-   user-local venv and **preloads both small models**. It configures the
-   `CHAMPIONS_OCR_PYTHON` user environment variable to its Python binary.
-4. Restart the Windows GUI. The match reader starts a persistent child
-   process (`python -m champions_assist.ocr_gpu_worker`). The child only
-   exchanges PNG ROI crops and OCR candidate text over local stdio.
-   No HTTP/server port and no ChatGPT call from the child.
-5. The GUI reports `GPU_OCR_PYTHON_NOT_CONFIGURED`,
-   `GPU_OCR_CUDA_UNAVAILABLE`, `GPU_OCR_INITIALIZATION_FAILED`, or
-   `GPU_OCR_SIDECAR_TIMEOUT` explicitly; it **never silently falls
-   back to CPU or Tesseract**. Without GPU, OCR cannot run.
+## GPU and CPU behavior
 
-When launched from source, install the same GPU runtime and package in
-the current Python environment (the `[gpu-ocr]` extra installs
-PaddleOCR; install PaddlePaddle GPU from its dedicated CUDA index
-separately). The OCR engine initializes on the OCR worker thread.
+OCR reads the **same configured provider policy and GPU index** as the screen
+classifier: `cpu`, `auto`, `gpu`, `directml` or `cuda`, with GPU IDs 0–7.
+Sessions are separate but share the same installed ONNX Runtime. `auto` can
+fall back to CPU (including when an attached provider fails its warm-up
+inference). Explicit `gpu`, `directml` and `cuda` requests fail with a
+visible `ONNX_OCR_*` reason rather than quietly switching to CPU.
 
-**Note:** Official PaddlePaddle documentation has special Windows
-wheels and limitations for NVIDIA RTX 50-series GPUs. Check their
-version-specific installation guidance rather than assuming the
-standard CUDA wheel works for every card.
+OCR startup events include the requested device/GPU index; subsequent provider
+events report the effective attached provider and readiness or error reason.
+A provider listed by ONNX Runtime is **not** proof that every operator
+executed on the GPU. DirectML execution, CPU operator fallback and p50/p95
+latency need hardware tracing and GPU tests. Input event ordering, bounded
+reaction deadlines and AI verification of state changes remain unchanged.
 
-## Timing, safety and validation
+## Remaining accuracy tests
 
-- The GPU model is loaded once, not once per frame or ROI.
-- Every changed source frame is queued by default without a fixed
-  4-frame eviction limit; message ROIs are read before HUD ROIs.
-- The action dispatcher may wait up to 1.5 seconds for outstanding OCR
-  if the local 32-second AI deadline retains at least five seconds.
-- It then sends ALL processed but unacknowledged OCR candidates to a
-  single tactical AI request. If OCR is not ready it sends the known
-  facts + explicit uncertainty, not a guessed opponent.
-- Rejected/unverified AI state changes are recorded; only verified
-  changes mutate the state. In particular an own actor disagreement
-  blocks an illegal command, but an unknown opponent alone does not.
-- Automated Windows CI tests with mocked GPU output are not evidence of
-  in-game 45s viability. Confirm hardware startup time, OCR p50/p95,
-  capture-to-OCR delay and real Pokémon-name correctness on the user's
-  actual GPU before claiming production readiness.
+Collect consented/anonymized game ROIs for `battle_message` and
+`system_message`, including multiple Japanese lines, distinct Pokémon names
+and messages near ROI boundaries. Record expected transcriptions and line
+ordering; measure character error rate and latency before calling the
+application match-ready. Do not infer match-readiness from the synthetic
+CPU-only smoke.
 
-References: https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/pipeline_usage/OCR.en.md
-and https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/paddlepaddle_installation.en.md
+Official models:
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx

@@ -40,12 +40,19 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python -m pip install --upgrade pip pyinstaller .
+        run: python -m pip install --upgrade pip pyinstaller pyyaml .
+      - name: Stage and verify pinned PP-OCRv6 small ONNX bundle
+        shell: pwsh
+        run: |
+          python scripts/stage_ocr_onnx.py --output build/ocr-v6
+          if ($LASTEXITCODE -ne 0) { throw "Official OCR bundle staging failed" }
+          python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6
+          if ($LASTEXITCODE -ne 0) { throw "Real OCR string validation failed" }
       - name: Run offline battle and settings tests on Windows
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_selection_detail_crops tests.test_selection_image_diagnostics tests.test_match_debug_and_selection_ui tests.test_match_replay tests.test_live_timing_test tests.test_team_live_assets tests.test_team_ai_matrix tests.test_team_matchup_v2 tests.test_matchup_learning_store tests.test_sqlite_primary_migration tests.test_team_ai_analysis tests.test_team_auto_analysis tests.test_team_provisional_advice tests.test_ai_review_workflow tests.test_matchup_evidence tests.test_real_battle_validation tests.test_web_mechanics_research tests.test_battle_evidence tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_local_event_worker tests.test_local_event_image_policy tests.test_ocr_portable_runtime tests.test_ocr_gpu_v6 tests.test_calibrated_screen_fields tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
+          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_selection_detail_crops tests.test_selection_image_diagnostics tests.test_match_debug_and_selection_ui tests.test_match_replay tests.test_live_timing_test tests.test_team_live_assets tests.test_team_ai_matrix tests.test_team_matchup_v2 tests.test_matchup_learning_store tests.test_sqlite_primary_migration tests.test_team_ai_analysis tests.test_team_auto_analysis tests.test_team_provisional_advice tests.test_ai_review_workflow tests.test_matchup_evidence tests.test_real_battle_validation tests.test_web_mechanics_research tests.test_battle_evidence tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_local_event_worker tests.test_local_event_image_policy tests.test_ocr_portable_runtime tests.test_ocr_gpu_v6 tests.test_ocr_onnx tests.test_calibrated_screen_fields tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
           Write-Host "offline core unittest process exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
           # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
@@ -107,8 +114,25 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name PokemonChampionsAssistant --paths src
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
-          --add-data "build\\desktop-assets\\masters;masters"
+          --add-data "build\\desktop-assets\\masters;masters" --add-data "build\\ocr-v6;ocr-v6"
           scripts/windows_desktop_entry.py
+      - name: Confirm bundled OCR bytes match validated staging files
+        shell: pwsh
+        run: |
+          $source = "build/ocr-v6"
+          $frozen = "dist/PokemonChampionsAssistant/_internal/ocr-v6"
+          foreach ($item in Get-ChildItem -LiteralPath $source -File) {
+            $dest = Join-Path $frozen $item.Name
+            if (-not (Test-Path -LiteralPath $dest)) {
+              throw "Packaged OCR file missing: $($item.Name)"
+            }
+            $want = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+            $actual = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
+            if ($want -ne $actual) {
+              throw "Packaged OCR byte mismatch: $($item.Name)"
+            }
+          }
+          Write-Host "OCR_BUNDLE_PACKAGED_BYTES_IDENTICAL"
       - name: Build standalone local dataset collector GUI
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
@@ -138,7 +162,9 @@ jobs:
           }
           if (-not (Test-Path -LiteralPath $report)) { throw "missing desktop startup smoke report" }
           $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-          if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED") {
+          if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED" -or
+              $result.gpu_ocr_backend -ne "pp-ocrv6-small-onnx" -or
+              $result.ocr_cpu_provider -ne "CPUExecutionProvider") {
             throw "desktop GUI startup smoke returned unexpected report"
           }
           Remove-Item Env:QT_QPA_PLATFORM

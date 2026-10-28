@@ -1734,10 +1734,13 @@ class MatchReplayDialog(QDialog):
         self._stop_local_event_reader()
         lexicon=ScreenLexicon.from_frozen_assets(
             self.assets,opponent_names=tuple(getattr(self.assets,"matrix_index",{}).keys()))
-        self._local_event_reader=AsyncBattleEventReader.with_gpu_paddle(
-            self._field_profile,lexicon=lexicon)
+        device,gpu_id=self._screen_gpu_settings()
+        self._local_event_reader=AsyncBattleEventReader.with_onnx_ocr(
+            self._field_profile,lexicon=lexicon,device=device,gpu_id=gpu_id)
+        self._last_ocr_reported_status=self._local_event_reader.reason
         self._trace_event("LOCAL_OCR_STARTED",
                           status=self._local_event_reader.reason,
+                          requested_device=device,requested_gpu_id=gpu_id,
                           timer_ocr=False)
 
     def _stop_local_event_reader(self):
@@ -1764,6 +1767,15 @@ class MatchReplayDialog(QDialog):
         """Persist completed OCR only; never wait in the command-menu path."""
         reader=self._local_event_reader
         if reader is not None:
+            status=getattr(reader,"reason",None)
+            if status is not None and status!=getattr(self,"_last_ocr_reported_status",None):
+                self._last_ocr_reported_status=status
+                backend=getattr(reader,"_ocr",None)
+                self._trace_event("LOCAL_OCR_PROVIDER",
+                                  status=status,
+                                  provider=getattr(backend,"provider","NOT_INITIALIZED"),
+                                  requested_device=getattr(backend,"device","unknown"),
+                                  requested_gpu_id=getattr(backend,"gpu_id",None))
             for result in reader.drain():
                 captured_frame=getattr(result,"frame_id",None)
                 if captured_frame is None and result.observations:
@@ -1867,12 +1879,12 @@ class MatchReplayDialog(QDialog):
             reader=self._local_event_reader
             stats=reader.diagnostic_counts() if reader is not None else {}
             self._last_local_ocr_stats=dict(stats)
-            self._last_local_ocr_status=reader.reason if reader else "NOT_RUNNING"
+            self._last_local_ocr_status=getattr(reader,"reason","UNKNOWN") if reader else "NOT_RUNNING"
             # Once per actionable menu, rather than logging every ROI / frame.
             self._trace_event("LOCAL_OCR_TURN_SUMMARY",
                               frame_seq=self._last_capture_seq,
                               turn_epoch=self._turn_epoch,
-                              ocr_status=(reader.reason if reader else "NOT_RUNNING"),
+                              ocr_status=(getattr(reader,"reason","UNKNOWN") if reader else "NOT_RUNNING"),
                               ocr_candidates_sent=len(records),
                               ocr_duplicates=self._local_battle_tracker.duplicates,
                               ocr_conflicts=self._local_battle_tracker.conflicts,

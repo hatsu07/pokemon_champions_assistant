@@ -19,8 +19,6 @@ dependencies = [
     "PySide6-Essentials>=6.8,<7",
 ]
 
-[project.optional-dependencies]
-gpu-ocr = ["paddleocr>=3.7,<4"]
 
 [project.scripts]
 champions-assist = "champions_assist.__main__:main"
@@ -32,4 +30,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-champions_assist = ["data/*.json", "data/*.onnx"]
+champions_assist = ["data/*.json", "data/*.onnx", "data/ocr-v6/*.onnx", "data/ocr-v6/*.txt"]
