@@ -1155,6 +1155,8 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._pending_result_messages=None
+        self._result_screen_candidate=None
+        self._result_screen_sent=False
         self._latest_image=None
         self._automatic_probe.reset()
         self._screen_gate.reset()
@@ -1760,22 +1762,24 @@ class MatchReplayDialog(QDialog):
                 if classified=="RESULT_SCREEN":
                     if getattr(self._screen_model,"experimental",False):
                         self._trace_event("RESULT_SCREEN_TRIAL_REQUIRES_MANUAL_CONFIRMATION")
-                    elif not self._result_screen_sent and phase=="BATTLE":
-                        # The stable-screen capture is the authoritative OCR
-                        # job. Force its one message ROI even if the preceding
-                        # classifier frame had identical pixels.
+                    elif (not self._result_screen_sent
+                          and self._result_screen_candidate is None
+                          and phase=="BATTLE"):
+                        # RESULT_SCREEN is a trigger, NOT an OCR target.
+                        # Final battle messages were offered to the asynchronous
+                        # reader during BATTLE_EVENT. Freeze exactly the jobs
+                        # which were outstanding when this screen appeared.
+                        # Later animation/reclassification cannot replace this
+                        # candidate or indefinitely extend its pending set.
                         observed_at=monotonic()
                         frame=f"capture-{self._last_capture_seq}"
+                        pending=tuple(self._ocr_capture_epochs)
                         self._result_screen_candidate={
                             "frame":frame,"time":observed_at,
-                            "ocr_status":"QUEUED","ocr_rows":[]}
-                        queued=self._offer_event_for_local_ocr(
-                            image,label="RESULT_SCREEN",force_result_screen=True)
-                        if not queued:
-                            self._result_screen_candidate["ocr_status"]="UNAVAILABLE"
+                            "pending_ocr_frames":pending}
                         self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
                             frame_id=frame,stable_frames=2,
-                            ocr_queued=queued)
+                            pending_prior_ocr=len(pending))
                         QTimer.singleShot(0,self._attempt_result_screen_verification)
                     classified=None
                 if (prediction.label=="BATTLE_EVENT"
@@ -1837,8 +1841,7 @@ class MatchReplayDialog(QDialog):
         if reader is not None:
             reader.stop()
 
-    def _offer_event_for_local_ocr(
-            self,image,*,label="BATTLE_EVENT",force_result_screen=False):
+    def _offer_event_for_local_ocr(self,image,*,label="BATTLE_EVENT"):
         if self._local_event_reader is None:
             self._start_local_event_reader()
         # Persist already-finished OCR immediately DURING event animations.
@@ -1846,15 +1849,12 @@ class MatchReplayDialog(QDialog):
         self._drain_event_candidates(include_snapshot=False)
         reader=self._local_event_reader
         capture_id=f"capture-{self._last_capture_seq}"
-        offered=reader.offer(
-            image,label=label,frame_id=capture_id,
-            force_result_screen=force_result_screen)
-        if offered:
+        if reader is not None and reader.offer(
+                image,label=label,frame_id=capture_id):
             self._ocr_capture_epochs[capture_id]=self._turn_epoch
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
-        return offered
 
     def _drain_event_candidates(self,*,include_snapshot=True):
         """Persist completed OCR only; never wait in the command-menu path."""
@@ -1877,19 +1877,15 @@ class MatchReplayDialog(QDialog):
                     captured_frame,self._turn_epoch)
                 candidate=self._result_screen_candidate
                 if (candidate is not None
-                        and captured_frame==candidate["frame"]
-                        and candidate["ocr_status"]=="QUEUED"):
-                    # Completion is signalled even for zero recognized words
-                    # or an OCR error. Neither is evidence of a victory.
-                    candidate["ocr_rows"]=[
-                        row.as_dict() for row in result.observations]
-                    candidate["ocr_status"]=(
-                        "FAILED" if result.error else "COMPLETE")
+                        and captured_frame in candidate["pending_ocr_frames"]):
+                    # Historical BATTLE_EVENT OCR may complete after the
+                    # result screen appeared. Never infer a match result from
+                    # a completed job with empty/unrecognized text.
                     self._trace_event(
-                        "RESULT_SCREEN_OCR_COMPLETED",
+                        "PRE_RESULT_BATTLE_OCR_COMPLETED",
                         frame_id=captured_frame,
-                        status=candidate["ocr_status"],
-                        recognized_rows=len(result.observations))
+                        recognized_rows=len(result.observations),
+                        had_error=bool(result.error))
                 if (self._active_request_started is not None and
                         result.timestamp<=self._active_request_started):
                     self._trace_event("OCR_COMPLETED_AFTER_AI_INPUT_FREEZE",
