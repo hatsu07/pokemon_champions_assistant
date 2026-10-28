@@ -7,6 +7,8 @@ battle-state interpretation is involved. The caller owns threading/lifecycle.
 from __future__ import annotations
 
 import sys
+from hashlib import sha256
+import json
 from pathlib import Path
 
 import cv2
@@ -34,11 +36,35 @@ def bundled_model_directory() -> Path:
     raise OcrExecutionError("ONNX_OCR_MODELS_MISSING")
 
 
-def _new_session(path: Path, *, factory, available, device: str) -> tuple[object, str]:
-    if device not in ("auto", "gpu", "cpu"):
+def _verify_bundle(root: Path) -> None:
+    """Verify the exact build-time staged bytes before executing model code."""
+    try:
+        manifest = json.loads((root / "model_manifest.json").read_text(encoding="utf-8"))
+        hashes = manifest["sha256"]
+        required = {_DET_FILE, _REC_FILE, _DICT_FILE, "config.json", "PP-OCRv6-LICENSE.txt"}
+        if (manifest.get("schema") != 1 or not isinstance(hashes, dict)
+                or set(hashes) != required):
+            raise ValueError("invalid manifest schema")
+        for filename, expected in hashes.items():
+            if (not isinstance(expected, str) or len(expected) != 64
+                    or sha256((root / filename).read_bytes()).hexdigest() != expected):
+                raise ValueError("bundle checksum mismatch")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise OcrExecutionError("ONNX_OCR_BUNDLE_INTEGRITY_FAILED") from exc
+
+
+def _new_session(path: Path, *, factory, available, device: str,
+                 gpu_id: int = 0) -> tuple[object, str]:
+    if device not in ("auto", "gpu", "cpu", "directml", "cuda"):
         raise OcrExecutionError("ONNX_OCR_DEVICE_INVALID")
+    if type(gpu_id) is not int or not 0 <= gpu_id <= 7:
+        raise OcrExecutionError("ONNX_OCR_GPU_INDEX_INVALID")
     if device == "cpu":
         order = ["CPUExecutionProvider"]
+    elif device == "directml":
+        order = ["DmlExecutionProvider"]
+    elif device == "cuda":
+        order = ["CUDAExecutionProvider"]
     else:
         order = ["DmlExecutionProvider", "CUDAExecutionProvider"]
         if device == "auto":
@@ -53,7 +79,7 @@ def _new_session(path: Path, *, factory, available, device: str) -> tuple[object
             options = ort.SessionOptions()
             options.enable_mem_pattern = False
             options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        providers = ([provider, "CPUExecutionProvider"] if
+        providers = ([(provider, {"device_id": gpu_id}), "CPUExecutionProvider"] if
                      provider != "CPUExecutionProvider" else [provider])
         try:
             kwargs = {"providers": providers}
@@ -67,7 +93,7 @@ def _new_session(path: Path, *, factory, available, device: str) -> tuple[object
             return session, provider
         except (RuntimeError, ValueError, OSError, TypeError) as exc:
             last = type(exc).__name__
-    if device == "gpu":
+    if device in ("gpu", "directml", "cuda"):
         raise OcrExecutionError("ONNX_OCR_GPU_UNAVAILABLE")
     raise OcrExecutionError("ONNX_OCR_SESSION_FAILED")
 
@@ -168,15 +194,18 @@ class PPocrV6SmallOnnx:
     engine_name = ENGINE_NAME
 
     def __init__(self, *, model_dir: str | Path | None = None,
-                 device: str = "auto", session_factory=None,
-                 available_providers=None):
+                 device: str = "auto", gpu_id: int = 0,
+                 session_factory=None, available_providers=None):
         self.model_dir = Path(model_dir) if model_dir is not None else None
         self.device = device
+        self.gpu_id = gpu_id
         self._session_factory = session_factory
         self._available = available_providers
         self._det = None
         self._rec = None
         self.provider = "NOT_INITIALIZED"
+        self.det_provider = "NOT_INITIALIZED"
+        self.rec_provider = "NOT_INITIALIZED"
         self._characters = []
 
     def warmup(self):
@@ -186,6 +215,7 @@ class PPocrV6SmallOnnx:
         for name in (_DET_FILE, _REC_FILE, _DICT_FILE):
             if not (root / name).is_file():
                 raise OcrExecutionError("ONNX_OCR_MODELS_MISSING")
+        _verify_bundle(root)
         characters = (root / _DICT_FILE).read_text(encoding="utf-8-sig").splitlines()
         if len(characters) < 1000:
             raise OcrExecutionError("ONNX_OCR_DICTIONARY_INVALID")
@@ -197,7 +227,7 @@ class PPocrV6SmallOnnx:
             factory = self._session_factory or ort.InferenceSession
             available = set(self._available or ort.get_available_providers())
             det, det_provider = _new_session(
-                root / _DET_FILE, factory=factory, available=available, device=self.device)
+                root / _DET_FILE, factory=factory, available=available, device=self.device, gpu_id=self.gpu_id)
             rec, rec_provider = _new_session(
                 root / _REC_FILE, factory=factory, available=available, device=self.device)
 
@@ -220,10 +250,12 @@ class PPocrV6SmallOnnx:
                 # DML can attach but fail to execute an unsupported operator.
                 # Fall back to the CPU *before* reporting readiness to the GUI.
                 det, det_provider = _new_session(
-                    root / _DET_FILE, factory=factory, available=available, device="cpu")
+                    root / _DET_FILE, factory=factory, available=available, device="cpu", gpu_id=self.gpu_id)
                 rec, rec_provider = _new_session(
                     root / _REC_FILE, factory=factory, available=available, device="cpu")
                 inference_probe(det, rec)
+            self.det_provider = det_provider
+            self.rec_provider = rec_provider
             self.provider = (det_provider if det_provider == rec_provider else
                              "MIXED:" + det_provider + "/" + rec_provider)
             self._det, self._rec, self._characters = det, rec, characters
@@ -269,5 +301,5 @@ class PPocrV6SmallOnnx:
             raise OcrExecutionError("ONNX_OCR_INFERENCE_FAILED") from exc
 
 
-def make_onnx_ocr(*, device: str = "auto") -> PPocrV6SmallOnnx:
-    return PPocrV6SmallOnnx(device=device)
+def make_onnx_ocr(*, device: str = "auto", gpu_id: int = 0) -> PPocrV6SmallOnnx:
+    return PPocrV6SmallOnnx(device=device, gpu_id=gpu_id)
