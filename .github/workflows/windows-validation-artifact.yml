@@ -42,22 +42,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Stage official PP-OCRv6 small ONNX models (build-time only)
-        run: python scripts/stage_ocr_onnx.py --output src/champions_assist/data/ocr-v6
       - name: Install dependencies
         run: python -m pip install --upgrade pip pyinstaller pyyaml .
-      - name: Verify real OCR model on Windows CPU
+      - name: Stage and verify pinned PP-OCRv6 small ONNX bundle
         shell: pwsh
         run: |
-          python -c "import numpy as np; from champions_assist.ocr_onnx import PPocrV6SmallOnnx; p=PPocrV6SmallOnnx(device='cpu'); a=p.read(np.full((64,224,3),255,dtype=np.uint8),roi_name='battle_message'); print('OCR_CPU_READY',p.provider,a.engine)"
-          if ($LASTEXITCODE -ne 0) { throw "Bundled OCR models failed Windows CPU inference" }
-      - name: Stage pinned official PP-OCRv6 small ONNX models
-        shell: pwsh
-        run: |
-          python scripts/stage_ppocrv6_onnx.py --output build/ocr-v6
-          if ($LASTEXITCODE -ne 0) { throw "Official ONNX OCR models could not be staged" }
+          python scripts/stage_ocr_onnx.py --output build/ocr-v6
+          if ($LASTEXITCODE -ne 0) { throw "Official OCR bundle staging failed" }
           python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6
-          if ($LASTEXITCODE -ne 0) { throw "ONNX OCR bundle did not initialize and infer on CPU" }
+          if ($LASTEXITCODE -ne 0) { throw "Real OCR string validation failed" }
       - name: Run offline battle and settings tests on Windows
         shell: pwsh
         run: |
@@ -124,7 +117,6 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name PokemonChampionsAssistant --paths src
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
-          --add-data "src\\champions_assist\\data\\ocr-v6;ocr-v6"
           --add-data "build\\desktop-assets\\masters;masters" --add-data "build\\ocr-v6;ocr-v6"
           scripts/windows_desktop_entry.py
       - name: Build standalone local dataset collector GUI
