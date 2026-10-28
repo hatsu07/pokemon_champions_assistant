@@ -1832,6 +1832,8 @@ class MatchReplayDialog(QDialog):
         profile=self._field_profile
         if (row.roi!="system_message" or profile is None
                 or not profile.validated_on_game_capture
+                or not any(region.name=="system_message" and region.bounds_normalized
+                           for region in profile.regions)
                 or not confirmed_auto_move_notice(row.text,row.confidence,
                     calibrated=True)
                 or capture_epoch!=self._turn_epoch
