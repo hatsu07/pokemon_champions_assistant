@@ -1,8 +1,8 @@
 @echo off
 setlocal
 echo Pokemon Champions - offline GPU stability diagnostics
-echo Running 4 cases (OCR recognizer / classifier / serial / parallel).
-echo Each case runs in an isolated process using DirectML GPU 0.
+echo Running 5 cases (OCR / classifier / serial / threaded / separate processes).
+echo Each A-D trial runs in an isolated EXE. E runs TWO synchronized child EXEs on DirectML GPU 0.
 echo No game capture or ChatGPT API traffic is used.
 echo WARNING: Native NVIDIA/DirectML crashes are expected during diagnosis.
 echo Save other work before proceeding.
