@@ -1,5 +1,13 @@
 # Pokémon Champions 画面分類モデル — 未ラベル画像の連続収集と人手ラベル付け
 
+> **Issue #102/A（現行6分類）:** 従来の5分類説明と旧7分類移行の記述は
+> 過去の利用手順を含みます。現行学習ラベルは
+> `TEAM_SELECTION / TURN_ACTION / SWITCH_SELECTION / BATTLE_EVENT / RESULT_SCREEN / OTHER`、
+> schema v3です。既存の結果画像を再収集せずに安全にコピーする手順と、
+> 6分類の学習・勝敗判定条件は
+> [6分類移行・結果画面手順](ISSUE_102_SIX_CLASS_RESULT_SCREEN.md)を優先してください。
+
+
 このWindows GUIは、実スマホミラーリング画面から**選出・技選択・交代・演出などの学習データを作る開発用ツール**です。ゲーム操作・ChatGPT送信・自動ラベル推定は行いません。
 
 ## AI対戦支援と同時にバックグラウンド収集（開発版）
