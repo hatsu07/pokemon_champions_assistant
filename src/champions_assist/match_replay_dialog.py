@@ -2522,52 +2522,61 @@ class MatchReplayDialog(QDialog):
 
 
     def _attempt_result_screen_verification(self):
-        """Wait for the actual result-frame OCR job, not a turn-clock timeout.
+        """After RESULT_SCREEN, await earlier BATTLE_EVENT OCR before GPT.
 
-        This callback only polls an asynchronous local worker. GUI interaction,
-        manual result confirmation, and Stop/Reset remain responsive.
+        No OCR of the result image is required. OCR work submitted before
+        the stable result detection is already running asynchronously; wait
+        for those specific jobs (not a wall-clock limit). No synchronous OCR,
+        blocking join, or extra GPT call on the Qt thread.
         """
         candidate=self._result_screen_candidate
         if (candidate is None or self._result_screen_sent
                 or self.state is None or self.state.get("phase")=="ENDED"
                 or not self._auto_running or self._shutdown_intent is not None):
             return
-        evidence=self._drain_event_candidates(include_snapshot=True)
-        status=candidate["ocr_status"]
-        if status=="QUEUED":
+        # Drain ALL completed earlier OCR, including completions which
+        # arrived after the RESULT_SCREEN classification. Original capture
+        # timestamps keep the past-message boundary exact.
+        self._drain_event_candidates(include_snapshot=False)
+        pending=[frame for frame in candidate["pending_ocr_frames"]
+                 if frame in self._ocr_capture_epochs]
+        if pending:
             reader=self._local_event_reader
             if reader is None or not reader.enabled:
-                candidate["ocr_status"]="FAILED"
-                status="FAILED"
-            else:
-                # No game-turn deadline here. Completion of this exact OCR
-                # frame, not elapsed wall time, unlocks result verification.
-                QTimer.singleShot(250,self._attempt_result_screen_verification)
+                # The OCR engine stopped before its queued work completed.
+                # Never silently present a partial result as fully reviewed.
+                if not candidate.get("error_reported"):
+                    candidate["error_reported"]=True
+                    self._trace_event("PRE_RESULT_BATTLE_OCR_UNAVAILABLE",
+                                      pending_count=len(pending))
+                    self._set_ai_status(
+                        "終了前のバトルメッセージOCRが未完了のまま停止しました。"
+                        "ゲーム内の勝敗を確認して手動で確定してください。")
                 return
-        if status in ("FAILED","UNAVAILABLE"):
-            if not candidate.get("error_reported"):
-                candidate["error_reported"]=True
-                self._trace_event("RESULT_SCREEN_OCR_FAILED",
-                                  frame_id=candidate["frame"],reason=status)
-                self._set_ai_status(
-                    "結果画面OCRに失敗しました。画面の勝敗を確認して手動で確定してください。")
+            # Battle has ended: do not impose a 45-second action deadline or
+            # a fabricated 1.5/3-second OCR cutoff. UI stays responsive.
+            QTimer.singleShot(250,self._attempt_result_screen_verification)
             return
-        if status!="COMPLETE":
-            return
-        # Completion with no recognized characters is still completion:
-        # prior battle OCR may be useful, but cannot become a confirmed
-        # match result without explicit final-outcome evidence.
-        evidence=evidence+list(candidate.get("ocr_rows") or ())
+        assets=self.assets
+        evidence=self._local_battle_tracker.snapshot(
+            at_or_before=candidate["time"],
+            acknowledged_frames=set(),
+            own_active=self.state.get("our_active"),
+            opponent_active=self.state.get("opponent_active"),
+            own_names=tuple(m["name"] for m in assets.own_team) if assets else (),
+            opponent_names=tuple(self.state.get("opponent_six") or ()),
+        )["local_observations"]
         if not evidence:
             self._result_screen_sent=True
-            self._trace_event("RESULT_SCREEN_OCR_EMPTY",
+            self._trace_event("PRE_RESULT_BATTLE_OCR_EMPTY",
                               frame_id=candidate["frame"])
             self._set_ai_status(
-                "結果画面OCRは完了しましたが文字がありません。手動で勝敗を確定してください。")
+                "結果画面は検出しましたが、直前のバトルメッセージOCRがありません。"
+                "手動で勝敗を確定してください。")
             return
         if self._thread is not None:
-            # Existing tactical request finishes first. Cleanup retries this
-            # completed result evidence without repeating OCR.
+            # Existing tactical call must finish first. Cleanup returns to
+            # this already-completed OCR, without requesting fresh images.
             return
         self._result_screen_sent=True
         self._pending_result_messages=None
@@ -2577,7 +2586,8 @@ class MatchReplayDialog(QDialog):
         self._active_request_started=monotonic()
         self._trace_event("RESULT_SCREEN_GPT_REQUEST",images_sent=0,
                           frame_id=candidate["frame"],
-                          ocr_candidate_count=len(evidence),ocr_completed=True)
+                          ocr_candidate_count=len(evidence),
+                          pending_prior_ocr=0)
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
             app_root=self.store_root,selected_model=self.model,
@@ -2590,7 +2600,7 @@ class MatchReplayDialog(QDialog):
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._completed)
         self._worker.finished.connect(self._thread.quit)
-        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self._worker.deleteLater)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.finished.connect(self._cleanup)
         self._thread.start()
