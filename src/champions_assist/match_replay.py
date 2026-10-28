@@ -1749,7 +1749,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                     unverified_frames.update(event.get("evidence_frames") or ())
             ack=set(updated.get("_ai_ocr_ack_frames") or ())
             proposed_questions=answer.get("pending_ocr_questions") or []
-            from .ocr_turn_context import sanitize_pending_questions
+            from .ocr_ai_evidence import select_ai_ocr_evidence
             all_ledger,_=select_ai_ocr_evidence(local_field_candidates)
             all_frames={row.get("frame_id") for row in all_ledger}
             next_questions=sanitize_pending_questions(
