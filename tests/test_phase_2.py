@@ -143,7 +143,7 @@ class Phase2TestCase(unittest.TestCase):
         # Observed human selection remains loggable even after the model deadline.
         session.record_actual_selection(TEAM[:3], TEAM[0], now_ms=102, actual_ui_remaining_ms=100)
         self.assertEqual(session.enforce_deadlines(now_ms=202), ("PREP",))
-        self.assertFalse(session.prep_validation.complete)
+        self.assertIsNone(session.prep_validation)  # Deadline alone never decides PREP.
 
     def test_prep_requires_all_eighteen_and_win_conditions(self) -> None:
         session = self.controller.start_match("match-1", now_ms=0)
