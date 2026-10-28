@@ -25,9 +25,11 @@ class GPUStressTests(unittest.TestCase):
             return SimpleNamespace(returncode=(
                 -1073741819 if command[2] == "rec" else 0))
         with TemporaryDirectory() as tmp:
+            fake_model=Path(tmp)/"selected_screen.onnx"
+            fake_model.write_bytes(b"mock file existence; runner never loads this")
             folder, summary = gpu.supervisor(
                 "assistant.exe", modes=gpu.MODES, iterations=20, trials=2,
-                gpu_id=0, app_root=Path(tmp), runner=runner)
+                gpu_id=0, app_root=Path(tmp), model=str(fake_model), runner=runner)
             data=json.loads((folder/"summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary,data)
             self.assertEqual(len(seen),8)
@@ -39,6 +41,21 @@ class GPUStressTests(unittest.TestCase):
             self.assertEqual(data["cases"][0]["status"],"ACCESS_VIOLATION")
             self.assertEqual(data["cases"][-1]["mode"],"parallel")
             self.assertEqual(data["network"],"NOT_USED")
+
+    def test_missing_real_classifier_is_skipped_not_faked(self):
+        calls=[]
+        def runner(command, **kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=0)
+        with TemporaryDirectory() as tmp:
+            _, summary=gpu.supervisor(
+                "assistant.exe", modes=gpu.MODES, iterations=2, trials=1,
+                gpu_id=0, app_root=Path(tmp),
+                model=str(Path(tmp)/"model-not-installed.onnx"), runner=runner)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(summary["skipped_count"],3)
+        self.assertFalse(summary["screen_model_available"])
+        self.assertEqual(summary["cases"][1]["status"],"SKIPPED_NO_SCREEN_MODEL")
 
     def test_timeout_and_launch_failure_are_not_misreported_as_success(self):
         count=[0]
