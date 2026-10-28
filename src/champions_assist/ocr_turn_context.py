@@ -124,21 +124,21 @@ def apply_model_ocr_carryover(
     known_to_model = presented_frames | {
         frame for question in pending for frame in question["source_frames"]}
     proposed = model_answer.get("pending_ocr_questions")
-    # Older test doubles/providers may omit the field; never silently erase a
-    # previous question when the model did not return an explicit decision.
-    if proposed is None:
-        questions = list(pending)
-    else:
-        questions = sanitize_pending_questions(proposed, known_to_model)
+    # The model must explicitly return a relevance decision (even []) before
+    # any OCR is considered *presented*. An older/malformed reply that omits
+    # the field has NOT evaluated whether old evidence can be omitted.
+    relevance_decided = isinstance(proposed, list)
+    questions=(sanitize_pending_questions(proposed, known_to_model)
+               if relevance_decided else list(pending))
     updated["_ai_ocr_unresolved"] = questions
     retained = {frame for item in questions for frame in item["source_frames"]}
-    if commit_presentation:
+    if commit_presentation and relevance_decided:
         seen = set(updated.get("_ai_ocr_presented_keys") or ())
         seen.update(_row_key(row) for row in selected_rows)
         updated["_ai_ocr_presented_keys"] = sorted(seen)
     forbidden = set(rejected_frames) | retained
     ack = set(updated.get("_ai_ocr_ack_frames") or ())
-    if not block_ack:
+    if not block_ack and relevance_decided:
         for frame in model_answer.get("processed_ocr_frames") or ():
             # Only accept a frame the model actually received in this call;
             # confirmation still depends on separate state-update validation.
