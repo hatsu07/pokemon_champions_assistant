@@ -31,8 +31,8 @@ class ConfigurationError(ValueError):
 @dataclass(frozen=True)
 class CaptureConfiguration:
     backend: str = "WINDOWS_NATIVE"
-    preferred_process: str = "HD-Player.exe"
-    preferred_title: str = "BlueStacks"
+    preferred_process: str = ""
+    preferred_title: str = ""
     selected_window_identity: dict[str, Any] | None = None
     game_viewport_normalized: tuple[float, float, float, float] | None = None
     adb_path: str | None = None
@@ -71,8 +71,8 @@ class CaptureConfiguration:
             raise ConfigurationError("selected_window_identity must be an object or null")
         return cls(
             backend=str(value.get("backend", "WINDOWS_NATIVE")),
-            preferred_process=str(value.get("preferred_process", "HD-Player.exe")),
-            preferred_title=str(value.get("preferred_title", "BlueStacks")),
+            preferred_process=str(value.get("preferred_process", "")),
+            preferred_title=str(value.get("preferred_title", "")),
             selected_window_identity=None if identity is None else dict(identity),
             game_viewport_normalized=viewport_tuple,
             adb_path=None if value.get("adb_path") in (None, "") else str(value["adb_path"]),
