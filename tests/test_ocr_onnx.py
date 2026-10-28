@@ -38,6 +38,40 @@ class OnnxCoreTests(unittest.TestCase):
                          device="directml",gpu_id=3)
         self.assertEqual(ctx.exception.code,"ONNX_OCR_GPU_UNAVAILABLE")
 
+    def test_warmup_uses_same_gpu_index_for_detection_and_recognition(self):
+        """Both ONNX sessions must honor the screen classifier's GPU index."""
+        class FakeSession:
+            def __init__(self, name):
+                self.name=name
+            def get_inputs(self):
+                return [SimpleNamespace(name="input")]
+            def run(self, *_args, **_kwargs):
+                if self.name == "rec":
+                    return [np.zeros((1, 4, 1003), np.float32)]
+                return [np.zeros((1, 1, 8, 8), np.float32)]
+
+        session_calls=[]
+        def new_session(path, **kwargs):
+            name="rec" if "rec" in path.name else "det"
+            session_calls.append((name,kwargs["device"],kwargs["gpu_id"]))
+            return FakeSession(name),"DmlExecutionProvider"
+
+        fake_ort=SimpleNamespace(InferenceSession=object,
+                                 get_available_providers=lambda: ["DmlExecutionProvider"])
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for name in ("pp-ocrv6-small-det.onnx","pp-ocrv6-small-rec.onnx"):
+                (root/name).write_bytes(b"fixture")
+            (root/"ppocrv6_dict.txt").write_text(
+                "\n".join(f"char{i}" for i in range(1001)),encoding="utf-8")
+            with patch("champions_assist.ocr_onnx._verify_bundle"), \
+                    patch("champions_assist.ocr_onnx._new_session",side_effect=new_session), \
+                    patch.dict("sys.modules",{"onnxruntime":fake_ort}):
+                reader=PPocrV6SmallOnnx(model_dir=root,device="directml",gpu_id=3)
+                reader.warmup()
+        self.assertEqual(session_calls,[("det","directml",3),("rec","directml",3)])
+        self.assertEqual(reader.provider,"DmlExecutionProvider")
+
     def test_gpu_id_validation_fails_closed(self):
         with self.assertRaises(OcrExecutionError) as ctx:
             _new_session(Path("any.onnx"),factory=lambda *_a,**_k:None,
