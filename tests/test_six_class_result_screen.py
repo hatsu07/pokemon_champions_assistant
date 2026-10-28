@@ -172,6 +172,15 @@ class ScreenResultEvidenceTests(unittest.TestCase):
         self.assertEqual(report["reason"],"NO_RESULT_OCR_EVIDENCE")
         model.assert_not_called()
 
+    def test_low_confidence_result_ocr_does_not_auto_end(self):
+        row=self.row("capture-201","対戦に勝利しました",19.)
+        row["confidence"]=0.40
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"勝利しました",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
     def test_result_screen_only_never_confirms_without_result_phrase(self):
         changed,report,_=self.call(
             {"result":"WIN","evidence":"ゲンガー",
