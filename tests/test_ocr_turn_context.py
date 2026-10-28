@@ -99,6 +99,41 @@ class BoundedOcrTurnContextTests(unittest.TestCase):
         self.assertIn("capture-0364",{r["frame_id"] for r in batch})
         self.assertLessEqual(stats["api_rows_sent"],MAX_TURN_OCR_ROWS)
 
+    def test_own_actor_mismatch_keeps_unresolved_evidence(self):
+        assets=fixture_assets()
+        state=new_replay(assets)
+        state.update(phase="BATTLE",our_active="ゲンガー",
+                     opponent_active="マスカーニャ",
+                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
+                     lead="ゲンガー",selection_assumed=False)
+        ledger=rows(14)
+        proof=ledger[-1]["frame_id"]
+        def answer(_client,**_kwargs):
+            return {
+                "state_updates":[],
+                "interpreted_own_active":"ドドゲザン",
+                "interpreted_opponent_active":"マスカーニャ",
+                "processed_ocr_frames":[proof],
+                "pending_ocr_questions":[{
+                    "source_frames":[proof],"question":"自軍交代は未確認",
+                    "importance":"CRITICAL",
+                    "recheck_when":"次の自軍表示",
+                }],
+                "action":{"action_kind":"NO_ACTION","move":"",
+                          "switch_target":"","warning":""},
+            }
+        with patch("champions_assist.match_replay._stream_json",side_effect=answer):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=ledger,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["reason"],"AI_OCR_OWN_ACTIVE_UNVERIFIED")
+        self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
+        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(after["_ai_ocr_unresolved"][0]["source_frames"],[proof])
+        self.assertEqual(after["our_active"],"ゲンガー")
+
     def test_partial_frame_never_acknowledged(self):
         assets=fixture_assets()
         state=new_replay(assets)
