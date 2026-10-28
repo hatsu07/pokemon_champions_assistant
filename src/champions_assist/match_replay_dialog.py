@@ -242,7 +242,7 @@ class _ReplayWorker(QObject):
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
-                    "FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label
+                    "SIX_CLASS_OR_USER_CALIBRATED" if self.screen_label
                     else "UNKNOWN"
                 )
                 self.finished.emit({"state":next_state,"report":report})
@@ -927,11 +927,11 @@ class MatchReplayDialog(QDialog):
                 "MODEL_LOAD_FAILED_SCREEN_MODEL_CHECKSUM_MISMATCH":
                     "ONNXとJSONのSHA-256が一致しません。正しいペアを選んでください。",
                 "MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_LABELS":
-                    "5分類のラベルと順序が現行仕様に対応していません。",
+                    "6分類のラベルと順序が現行仕様に対応していません。",
                 "MODEL_LOAD_FAILED_INVALID_SCREEN_MODEL_MANIFEST":
-                    "JSONまたは内蔵メタデータのschema_versionが2ではありません。",
+                    "JSONまたは内蔵メタデータのschema_versionが3ではありません。",
                 "MODEL_LOAD_FAILED_SCREEN_MODEL_METADATA_MISSING":
-                    "対応するJSONもONNX内部の5分類メタデータもありません。",
+                    "対応するJSONもONNX内部の6分類メタデータもありません。",
                 "MODEL_NOT_BUNDLED":"ONNXファイルが見つかりません。",
                 "MODEL_PATH_NOT_ONNX":"ONNXファイル（.onnx）を選択してください。",
             }
@@ -945,7 +945,7 @@ class MatchReplayDialog(QDialog):
         if trial:
             response=QMessageBox.warning(
                 self,"未検証モデル：試験利用の確認",
-                "このONNXは5分類に対応していますが、実機精度の検証基準を"
+                "このONNXは6分類に対応していますが、実機精度の検証基準を"
                 "満たしていません。\n誤判定による不要なAI通信・行動判断の"
                 "遅れが生じる可能性があります。\n未検証のまま試験利用しますか？",
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
