@@ -1292,7 +1292,7 @@ class ScreenDatasetCollector(QMainWindow):
             return
         data_dir=data_dir.strip()
         if (not data_dir.startswith("/") or data_dir=="/" or
-                "\\x00" in data_dir or "\\n" in data_dir):
+                "\x00" in data_dir or "\n" in data_dir):
             self.gpu_log.appendPlainText("6分類学習画像のWSL絶対パスが必要です")
             return
         yes=QMessageBox.question(
