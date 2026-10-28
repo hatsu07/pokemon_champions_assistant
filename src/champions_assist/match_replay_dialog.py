@@ -1770,7 +1770,8 @@ class MatchReplayDialog(QDialog):
         from .crash_diagnostics import record_event
         record_event("LOCAL_OCR_READER_START", device=device, gpu_id=gpu_id)
         self._local_event_reader=AsyncBattleEventReader.with_onnx_ocr(
-            self._field_profile,lexicon=lexicon,device=device,gpu_id=gpu_id)
+            self._field_profile,lexicon=lexicon,device=device,gpu_id=gpu_id,
+            isolate_process=(sys.platform=="win32" and device!="cpu"))
         self._last_ocr_reported_status=self._local_event_reader.reason
         record_event("LOCAL_OCR_READER_CREATED", component="MATCH_REPLAY")
         self._trace_event("LOCAL_OCR_STARTED",
