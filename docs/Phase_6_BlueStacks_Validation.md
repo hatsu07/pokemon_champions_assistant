@@ -1,5 +1,7 @@
 # Phase 6 — BlueStacks 5 validation procedure
 
+> **履歴資料（現行の必須手順ではありません）:** 過去のBlueStacks/ADBを使った検証記録です。現在BlueStacksではPokémon Championsを起動できず、利用していません。現行の実機受入れはユーザーが実際に使用するゲーム映像から行い、撮影方式は未確定のまま扱います。
+
 This procedure validates a local, observer-only capture path. It does not automate any game input, start or stop BlueStacks, send screenshots/logs externally, call OpenAI, or establish that third-party terms allow the intended use. Check the applicable game and platform terms before using the harness.
 
 ## Evidence boundary
