@@ -104,6 +104,8 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             _pending_screen_label=None,
             _active_job=None,
             _active_request_started=None,
+            _completed=MagicMock(),
+            _cleanup=MagicMock(),
         )
         panel._attempt_result_screen_verification=lambda: (
             MatchReplayDialog._attempt_result_screen_verification(panel))
