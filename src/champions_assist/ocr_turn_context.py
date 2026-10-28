@@ -99,3 +99,46 @@ def build_ocr_turn_context(state: dict, local_rows) -> tuple[list[dict], list[di
         "ledger_frames": sorted(f for f in available if f),
         "presented_keys": [_row_key(r) for r in selected],
     }
+
+
+def apply_model_ocr_carryover(
+    state: dict, model_answer: dict, local_rows, selected_rows, pending,
+    *, rejected_frames=(), block_ack=False, commit_presentation=True,
+) -> dict:
+    """Apply *one* tactical reply's transport bookkeeping to a detached state.
+
+    Both text-only and image fallback use this same rule. This updates no
+    battle facts: verified state changes still go through their existing
+    independent validator. Merely showing a frame never means validating it.
+    """
+    from copy import deepcopy
+
+    updated = deepcopy(state)
+    all_rows, _ = select_ai_ocr_evidence(local_rows)
+    all_frames = {row.get("frame_id") for row in all_rows}
+    presented_frames = {row.get("frame_id") for row in selected_rows}
+    known_to_model = presented_frames | {
+        frame for question in pending for frame in question["source_frames"]}
+    proposed = model_answer.get("pending_ocr_questions")
+    # Older test doubles/providers may omit the field; never silently erase a
+    # previous question when the model did not return an explicit decision.
+    if proposed is None:
+        questions = list(pending)
+    else:
+        questions = sanitize_pending_questions(proposed, known_to_model)
+    updated["_ai_ocr_unresolved"] = questions
+    retained = {frame for item in questions for frame in item["source_frames"]}
+    if commit_presentation:
+        seen = set(updated.get("_ai_ocr_presented_keys") or ())
+        seen.update(_row_key(row) for row in selected_rows)
+        updated["_ai_ocr_presented_keys"] = sorted(seen)
+    forbidden = set(rejected_frames) | retained
+    ack = set(updated.get("_ai_ocr_ack_frames") or ())
+    if not block_ack:
+        for frame in model_answer.get("processed_ocr_frames") or ():
+            # Only accept a frame the model actually received in this call;
+            # confirmation still depends on separate state-update validation.
+            if isinstance(frame, str) and frame in presented_frames and frame not in forbidden:
+                ack.add(frame)
+    updated["_ai_ocr_ack_frames"] = sorted(ack)
+    return updated
