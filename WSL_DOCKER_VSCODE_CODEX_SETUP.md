@@ -2,7 +2,7 @@
 
 ## 目的・境界
 
-- **Windows**: BlueStacks 5 / Docker Desktop / VS Code。必要なら Windows 用 ADB 接続確認を実施。
+- **Windows**: Docker Desktop / VS Code とユーザーが使用する任意のゲーム実行・キャプチャ環境。BlueStacks/ADBは任意の旧互換経路であり必須ではない。
 - **WSL2 (Ubuntu)**: プロジェクトコード (例 `~/projects/pokemon-champions`)、Git、VS Code Remote-WSL、Codex IDE 拡張 (推奨)。
 - **Docker Linux コンテナ**: Python 3.12、検証テスト、OCR (Tesseract 日本語)、ADB クライアント等、今後の OpenCV と OpenAI ランタイム。
 - 戦術判断は **OpenAI API のみ**。Codex はアプリを開発するエージェントであり、ランクマの判断モデルとは別。
@@ -14,7 +14,7 @@
 2. Docker Desktop をインストールし、Settings > General > **Use WSL 2 based engine** を選択。Settings > Resources > **WSL Integration** で開発する Ubuntu を有効にする。
 3. Windows版 VS Code をインストールし、拡張 **WSL** (`ms-vscode-remote.remote-wsl`) と **Dev Containers** (`ms-vscode-remote.remote-containers`) を追加する。
 4. VS Codeの **Codex – OpenAI's coding agent** (`OpenAI.chatgpt`) を使用する。拡張機能が実際にどの実行環境へインストールされるかを確認する。
-5. BlueStacks 5 は引き続きWindows側で動作させる。コンテナがWindows GUIに直接アクセスできるとは仮定しない。
+5. ゲーム実行・キャプチャアプリはユーザーの実際のWindows環境で動作させる。コンテナがWindows GUIに直接アクセスできるとは仮定しない。
 
 ## ZIPからの開始 (Ubuntu/WSLターミナル)
 
@@ -89,7 +89,9 @@ docker compose down
 - 初回の配布は署名、ライセンス、クリーンなWindows VMでのインストール・アップグレード・アンインストール試験が済んだ後に限定。
 - ZIP同梱ファイルは**開発スターターであって完成MSIではありません**。
 
-## BlueStacks接続は別途実機検証
+## 旧BlueStacks/ADB接続手順（互換用、通常は不要）
+
+> これはBlueStacksを利用していた過去の検証方法です。現在のゲーム実行方式は未確認です。ADBを利用しない場合は実施しないでください。
 
 BlueStacks 5 設定 > 詳細設定 > Android Debug Bridge を有効化できる（BlueStacks公式）。最初に **Windows側で接続先・ポートを確かめる**。ポート番号を固定値と決めつけない。
 
