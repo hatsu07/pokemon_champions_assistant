@@ -271,7 +271,8 @@ def validate_battle_choice(answer: dict, obs: dict, state: dict,
                            assets: FrozenMatchAssets) -> tuple[str, dict]:
     kind = answer.get("action_kind")
     own = state.get("our_active")
-    replacement_without_actor = (kind == "SWITCH" and obs.get("visual_ui") == "PARTY_MENU"
+    replacement_without_actor = (kind in ("SWITCH","NO_ACTION")
+                                 and obs.get("visual_ui") == "PARTY_MENU"
                                  and state.get("awaiting_replacement")
                                  and not own)
     if not own and not replacement_without_actor:
