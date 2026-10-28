@@ -106,21 +106,31 @@ class AsyncBattleEventReader:
             self._thread.start()
 
     @classmethod
-    def with_gpu_paddle(cls, profile: ScreenFieldProfile | None,
-                        *, lexicon: ScreenLexicon | None=None,
-                        ocr_engine: OcrEngine | None=None):
+    def with_onnx_ocr(cls, profile: ScreenFieldProfile | None,
+                      *, lexicon: ScreenLexicon | None=None,
+                      ocr_engine: OcrEngine | None=None,
+                      device: str="auto"):
+        """Use the screen classifier's ONNX Runtime; prefer GPU DirectML."""
         if profile is None:
             return cls(None,lexicon=lexicon)
         if ocr_engine is None:
-            from .ocr_gpu import make_gpu_ocr
+            from .ocr_onnx import make_onnx_ocr
             from .ocr import OcrExecutionError
             try:
-                ocr_engine=make_gpu_ocr()
+                ocr_engine=make_onnx_ocr(device=device)
             except (OcrExecutionError,OSError) as exc:
                 instance=cls(profile,lexicon=lexicon)
-                instance.reason=getattr(exc,"code","GPU_OCR_RUNTIME_MISSING")
+                instance.reason=getattr(exc,"code","ONNX_OCR_RUNTIME_MISSING")
                 return instance
         return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
+
+    @classmethod
+    def with_gpu_paddle(cls, profile: ScreenFieldProfile | None,
+                        *, lexicon: ScreenLexicon | None=None,
+                        ocr_engine: OcrEngine | None=None):
+        """Compatibility alias; the live backend is now ONNX Runtime."""
+        return cls.with_onnx_ocr(profile,lexicon=lexicon,
+                                 ocr_engine=ocr_engine)
 
     @classmethod
     def with_local_tesseract(cls, profile: ScreenFieldProfile | None,
@@ -199,7 +209,11 @@ class AsyncBattleEventReader:
             warmup=getattr(self._ocr,"warmup",None)
             if warmup is not None:
                 warmup()
-                self.reason="GPU_OCR_READY"
+                provider=getattr(self._ocr,"provider","UNKNOWN")
+                self.reason=("ONNX_OCR_READY_GPU" if provider in
+                             ("DmlExecutionProvider","CUDAExecutionProvider")
+                             else "ONNX_OCR_READY_CPU" if provider=="CPUExecutionProvider"
+                             else "ONNX_OCR_READY_UNVERIFIED")
         except Exception as exc:
             self.errors+=1
             self.reason=getattr(exc,"code","GPU_OCR_INITIALIZATION_FAILED")
