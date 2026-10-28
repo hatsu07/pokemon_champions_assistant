@@ -21,7 +21,6 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
         self.assertEqual(first.zip_names, (
             "PokemonChampionsAssistant-v0.1.0-dev.17-windows-x64.zip",
             "PokemonChampionsScreenDataCollector-v0.1.0-dev.17-windows-x64.zip",
-            "PokemonChampionsGPUDiagnostics-v0.1.0-dev.17-windows-x64.zip",
         ))
         self.assertEqual(first, subject.resolve(ROOT / "VERSION", 17))
 
@@ -74,7 +73,12 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
         self.assertIn('$tag = "development-windows-$ReleaseVersion"', publisher)
         self.assertIn('$title = "Windows DEVELOPMENT $ReleaseVersion"', publisher)
         self.assertIn('"PokemonChampionsAssistant-$ReleaseVersion-windows-x64.zip"', publisher)
-        self.assertIn('"PokemonChampionsGPUDiagnostics-$ReleaseVersion-windows-x64.zip"', publisher)
+        self.assertIn('"PokemonChampionsScreenDataCollector-$ReleaseVersion-windows-x64.zip"', publisher)
+        self.assertNotIn("PokemonChampionsGPUDiagnostics",publisher)
+        self.assertNotIn("Package standalone GPU-debug ZIP",yaml)
+        self.assertNotIn("windows_qt_test_runner.py",yaml)
+        self.assertIn("desktop-windows-validation",yaml)
+        self.assertIn("Master contents differ from validated PR HEAD",yaml)
         self.assertNotIn('development-windows-$ExpectedSha', publisher)
         self.assertNotIn('DEVELOPMENT-windows-x64.zip', publisher)
         self.assertIn('$Release.target_commitish -ne $ExpectedSha', publisher)
