@@ -1624,11 +1624,11 @@ _SCREEN_RESULT_SCHEMA = {
 def select_screen_result_evidence(rows: list[dict], *,
                                   screen_frame: str,
                                   screen_time: float) -> list[dict]:
-    """At most ten *recent* OCR readings observed no later than the result screen.
+    """Last ten message OCR readings captured strictly BEFORE RESULT_SCREEN.
 
-    GPT may select proof from a prior battle event or from an OCR reading
-    of this precise result frame. Unrelated future messages are never proof.
-    Sorting and source IDs preserve the original, unverified provenance.
+    The classifier is a review trigger, not an instruction to OCR the result
+    frame. Preserve the original pre-result event text and its source IDs;
+    late OCR completion does not change when the frame was captured.
     """
     candidates=[]
     for row in rows:
@@ -1648,9 +1648,9 @@ def select_screen_result_evidence(rows: list[dict], *,
                 or not isinstance(raw,str) or not raw.strip()
                 or not isinstance(observed,(float,int))):
             continue
-        # Late-arriving OCR from the result frame is allowed; readings from
-        # other future frames are not considered prior battle context.
-        if observed>screen_time and frame!=screen_frame:
+        # Input is the existing battle-event OCR timeline only. The result
+        # screen itself is NOT submitted for new OCR or GPT-image analysis.
+        if observed>=screen_time or frame==screen_frame:
             continue
         confidence=row.get("confidence")
         candidates.append({
@@ -1687,11 +1687,10 @@ def run_replay_screen_result(*, state: dict,
                              access_token: str, model: str,
                              total_seconds: float=20.0, client_factory=None,
                              reasoning_effort: str="low") -> tuple[dict,dict]:
-    """One OCR-only result verification after two stable RESULT_SCREEN hits.
+    """One GPT verdict from completed PRE-result battle OCR.
 
-    A classifier gives ONLY the screen category. It never determines the
-    winner. Only exact OCR evidence from the current/prior event can support
-    the GPT decision; uncertainty leaves the match open.
+    A stable RESULT_SCREEN classification only triggers the evaluation;
+    it does not provide a new OCR reading or prove who won.
     """
     started=perf_counter()
     updated=deepcopy(state)
@@ -1714,7 +1713,7 @@ def run_replay_screen_result(*, state: dict,
         "verified_screen_kind":"RESULT_SCREEN",
         "result_screen_frame":screen_frame,
         "result_screen_observed_at":screen_time,
-        "recent_event_ocr_in_time_order":recent,
+        "pre_result_battle_message_ocr_in_time_order":recent,
         "recognition_source":"LOCAL_OCR_UNVERIFIED",
         "task":"whole Pokémon Champions match result, not a Pokémon faint"
     },ensure_ascii=False,separators=(",",":"))
@@ -1729,8 +1728,9 @@ def run_replay_screen_result(*, state: dict,
             instructions=(
                 "The high-confidence RESULT_SCREEN category has been confirmed "
                 "on two consecutive frames, but this does not prove WIN or LOSS. "
-                "Read up to ten chronological, unverified local OCR observations "
-                "from before the result and the current result frame. Return "
+                "Read up to ten chronological, unverified BATTLE_EVENT OCR "
+                "messages captured BEFORE the result screen. Do not assume "
+                "the result screen itself has been OCR-read. Return "
                 "WIN or LOSS ONLY if one cited OCR phrase explicitly identifies "
                 "the HUMAN player's final MATCH outcome. A Pokemon fainting, "
                 "a partial turn, an opponent's move, or a vague win phrase is "
