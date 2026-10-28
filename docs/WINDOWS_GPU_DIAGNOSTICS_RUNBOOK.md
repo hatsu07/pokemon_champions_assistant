@@ -23,7 +23,7 @@ battle recognition accuracy test or a permanent workaround.
 The test does not send screenshots, prompts or API calls. Inputs are
 deterministic synthetic arrays. No screen capture is performed.
 
-## The four conditions
+## The five conditions
 
 A: rec — PP-OCRv6 small recognizer model alone, one DirectML session.
 B: classifier — selected five-class ONNX screen classifier alone.
@@ -31,6 +31,12 @@ C: serial — both sessions initialized; recognizer then classifier with
    no overlapping Run() calls.
 D: parallel — both distinct sessions initialized, two dedicated threads,
    synchronized per iteration; parallel Run() calls on DIFFERENT sessions.
+E: multiprocess — two independent EXE processes, OCR recognizer in one and
+   screen classifier in the other. Both use DirectML GPU 0, each with its OWN
+   ONNX Runtime process state and session. A filesystem barrier aligns every
+   inference round; both workers log monotonic run start/end. The report
+   includes measured_iterations, overlap_iterations and overlap_ms.
+   NO_MEASURED_OVERLAP is NOT a successful concurrent test.
 
 The OCR recognizer uses the production resize/preprocessing on a synthetic
 64x128 white BGR image. The screen classifier uses its production predict()
@@ -51,7 +57,7 @@ The --screen-model override still requires validation.
 Advanced example (from the extracted folder):
 Run-GPU-Diagnostics.cmd --gpu-id 0 --iterations 100 --trials 5
 
-Keep the same GPU, driver, model, and input in all four cases. Do not
+Keep the same GPU, driver, model, and input in all five cases. Do not
 immediately raise the trial count if the system repeatedly crashes.
 This is opt-in stress testing and can expose driver instability.
 
