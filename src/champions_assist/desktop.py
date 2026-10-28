@@ -699,6 +699,7 @@ class DesktopMainWindow(QMainWindow):
         self._unified_team_sha = ""
         self._postmatch_worker = None
         self._postmatch_match_id = None
+        self._postmatch_waiting_match_id = None
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
         self._build_ui()
@@ -1128,6 +1129,10 @@ class DesktopMainWindow(QMainWindow):
                         self._set_postmatch_status("対戦記録済み",panel.match_id)
                     if self._postmatch_worker is None:
                         self._start_postmatch_review(panel.match_id)
+                    elif getattr(self._postmatch_worker, "match_id", None) != panel.match_id:
+                        self._postmatch_waiting_match_id=panel.match_id
+                        self._set_postmatch_status(
+                            "レビュー起動待ち（別試合のAI処理中）",panel.match_id)
                 else:
                     self._set_postmatch_status(
                         "未実行（終了記録なし・再試行不可）",panel.match_id)
@@ -1149,8 +1154,11 @@ class DesktopMainWindow(QMainWindow):
         self._postmatch_match_id=match_id
         self.postmatch_status_label.setText(message)
         self.postmatch_match_label.setText("試合ID：" + match_id)
-        self.postmatch_storage_label.setText(
-            "保存先：" + str(self._postmatch_store().db_path))
+        try:
+            storage_path=str(self._postmatch_store().db_path)
+        except (OSError,ValueError,RuntimeError):
+            storage_path="SQLiteにアクセスできません"
+        self.postmatch_storage_label.setText("保存先：" + storage_path)
         if reason:
             self.postmatch_detail.setPlainText("理由：" + reason)
         try:
@@ -1218,6 +1226,11 @@ class DesktopMainWindow(QMainWindow):
         worker=self._postmatch_worker
         match_id=str(result.get("match_id") or (
             worker.match_id if worker is not None else self._postmatch_match_id or ""))
+        if (self._postmatch_waiting_match_id
+                and self._postmatch_waiting_match_id != match_id):
+            # The older review was stored/failed in SQLite, but do not
+            # replace the newer match's pending status in the UI.
+            return
         if result.get("status")=="STORED_UNVERIFIED_REVIEW":
             try:
                 self._show_saved_postmatch_review(match_id)
@@ -1237,6 +1250,10 @@ class DesktopMainWindow(QMainWindow):
         self._postmatch_worker=None
         if worker is not None:
             worker.deleteLater()
+        if self._postmatch_waiting_match_id:
+            waiting=self._postmatch_waiting_match_id
+            self._postmatch_waiting_match_id=None
+            self._set_postmatch_status("レビュー起動待ち（前試合の処理終了）",waiting)
         if self._postmatch_match_id:
             try:
                 pending=self._postmatch_store().pending_match(self._postmatch_match_id)
