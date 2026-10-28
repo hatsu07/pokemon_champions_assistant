@@ -132,7 +132,7 @@ class GPUStressTests(unittest.TestCase):
             self.assertEqual(gpu.smoke(target),0)
             status=json.loads(target.read_text())
             self.assertEqual(status["status"],"GPU_DIAGNOSTIC_CLI_SMOKE_OK")
-            self.assertEqual(status["modes"],list(gpu.MODES))
+            self.assertEqual(status["modes"],list(gpu.COMPARISON_MODES))
             self.assertIs(status["gpu_inference_tested"],False)
 
 
