@@ -772,8 +772,8 @@ class SelectionTestDialog(QDialog):
                         else f"{result['confidence']:.2f}")
             details=QLabel(
                 f"{result['name']} ({result['kind']}) / "
-                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\\n"
-                f"認識: {result['text'] or '（空）'}\\n"
+                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\n"
+                f"認識: {result['text'] or '（空）'}\n"
                 f"解析: {str(result['parsed']) if result['parsed'] is not None else '未確定'}"
                 f" / エラー: {result['error'] or 'なし'}")
             details.setWordWrap(True)
