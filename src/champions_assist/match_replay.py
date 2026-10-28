@@ -1597,7 +1597,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     if diagnostic_sink is not None:
         diagnostic_sink("OCR_TURN_COMPACTION",{
             key:value for key,value in context_stats.items()
-            if key not in ("presented_keys","partial_frames")}
+            if key not in ("presented_keys","partial_frames","ledger_frames")}
             | {"partial_frame_count":len(context_stats["partial_frames"])})
     prompt={
         "screen_kind":expected_screen_label,
@@ -1752,11 +1752,12 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                     unverified_frames.update(event.get("evidence_frames") or ())
             ack=set(updated.get("_ai_ocr_ack_frames") or ())
             proposed_questions=answer.get("pending_ocr_questions") or []
-            from .ocr_ai_evidence import select_ai_ocr_evidence
-            all_ledger,_=select_ai_ocr_evidence(local_field_candidates)
-            all_frames={row.get("frame_id") for row in all_ledger}
+            all_frames=set(context_stats["ledger_frames"])
+            cited_frames=known_frames | {
+                frame for item in pending_ocr
+                for frame in item["source_frames"]}
             next_questions=sanitize_pending_questions(
-                proposed_questions,all_frames)
+                proposed_questions,cited_frames)
             pending_proof={frame for q in next_questions
                            for frame in q["source_frames"]}
             ack.update(frame for frame in answer["processed_ocr_frames"]
