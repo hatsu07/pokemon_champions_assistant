@@ -274,7 +274,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return rc
     except Exception as exc:
         log_path = _record_startup_failure(exc)
-        if args.smoke is None:
+        if args.smoke is None and not args.ocr_sidecar:
             _show_startup_failure(log_path)
         return 1
     finally:
