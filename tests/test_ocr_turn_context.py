@@ -428,6 +428,38 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertEqual(len(selected),12)
         self.assertEqual(report["status"],"NO_ACTION")
 
+    def test_legacy_ack_is_independent_from_relevance_compression(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        raw=rows(4)
+        response={
+            "state_updates":[],
+            "interpreted_own_active":"ゲンガー",
+            "interpreted_opponent_active":"マスカーニャ",
+            "processed_ocr_frames":[raw[0]["frame_id"]],
+            "action":{"action_kind":"NO_ACTION","move":"",
+                      "switch_target":"","warning":""},
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after,_=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=raw,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(after["_ai_ocr_ack_frames"],[raw[0]["frame_id"]])
+        self.assertEqual(len(raw),4)
+
+    def test_turn_action_with_unknown_opponent_remains_text_eligible(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        state["opponent_active"]=""
+        state["opponent_active_unknown"]=True
+        self.assertTrue(_text_action_eligible("TURN_ACTION",state,assets))
+        state["our_active"]=""
+        self.assertFalse(_text_action_eligible("TURN_ACTION",state,assets))
+
     def test_processed_frame_cannot_ack_gpt_retained_uncertainty(self):
         assets=fixture_assets()
         raw=rows(3)
