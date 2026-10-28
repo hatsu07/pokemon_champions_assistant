@@ -146,6 +146,20 @@ class Phase8SettingsTestCase(unittest.TestCase):
         finally:
             dialog.close()
 
+    def test_generic_capture_defaults_and_legacy_saved_bluestacks_are_preserved(self) -> None:
+        config=CaptureConfiguration()
+        self.assertEqual(config.backend,"WINDOWS_NATIVE")
+        self.assertEqual(config.preferred_process,"")
+        self.assertEqual(config.preferred_title,"")
+        previous=CaptureConfiguration.from_dict({
+            "backend":"WINDOWS_NATIVE","preferred_process":"HD-Player.exe",
+            "preferred_title":"BlueStacks","selected_window_identity":None,
+            "game_viewport_normalized":None,"adb_path":None,"adb_serial":None,
+        })
+        self.assertEqual(previous.preferred_process,"HD-Player.exe")
+        self.assertEqual(previous.preferred_title,"BlueStacks")
+        self.assertEqual(CaptureConfiguration.from_dict(config.as_dict()),config)
+
     def test_windows_default_path_round_trip_and_corruption_recovers_last_good_nonsecret_config(self) -> None:
         self.assertEqual(
             default_app_root(platform="win32", environ={"LOCALAPPDATA": r"C:\\Users\\tester\\AppData\\Local"}),
