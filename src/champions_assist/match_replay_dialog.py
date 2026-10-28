@@ -2448,10 +2448,8 @@ class MatchReplayDialog(QDialog):
         role_count=3 if role_ready else sum(
             isinstance(value,str) and value in selected for value in role_values)
         all_cached=evaluated==len(pairs)
-        # Cached matchups are the entire PREP deliverable. Win roles, when
-        # already available from selection, are OPTIONAL; never call AI just
-        # to fill preserve/stopper/closer before the player's first turn.
-        ready=all_cached
+        # Full PREP needs all 18 evaluated matchups AND the three win roles.
+        ready=all_cached and role_ready and not partial and len(pairs)==18
         status=("PREP_CACHE_KNOWN_ONLY" if partial and ready else
                 "PREP_CACHE_REUSED" if ready else
                 "PREP_CACHE_INCOMPLETE")
@@ -2464,7 +2462,7 @@ class MatchReplayDialog(QDialog):
             "preserve":role_values[0] if role_ready else None,
             "stopper":role_values[1] if role_ready else None,
             "closer":role_values[2] if role_ready else None,
-            "win_roles_status":"SELECTION_REUSED" if role_ready else "OPTIONAL_NOT_REQUESTED",
+            "win_roles_status":"SELECTION_REUSED" if role_ready else "REQUIRED_NOT_EVALUATED",
             "cached_matchups":evaluated,"missing_matchups":len(pairs)-evaluated,
             "unknown_opponent_slots":list(self.state.get("visual_unknown_opponents") or []),
             "unknown_pairs":[
@@ -2472,8 +2470,7 @@ class MatchReplayDialog(QDialog):
                 for member in selected
                 for opponent in (self.state.get("visual_unknown_opponents") or [])
             ],
-            "note":"凍結済み対面評価を即時利用。勝ち筋3点の追加AI通信は行わない。"
-                    "温存・切り返し・締めは実際の残り3匹に基づき各ターン判断。",
+            "note":"対面18件と勝ち筋3点が揃って初めて完成。欠損は未評価。",
         }
         self.state["prep_status"]=state_status
         self._trace_event("PREP_CACHE_BASE_READY",
@@ -2492,10 +2489,10 @@ class MatchReplayDialog(QDialog):
                       "win_conditions":role_count,
                       "message":(
                           f"事前対面{evaluated}/{len(pairs)}を即時利用。"
-                          "追加AI通信なし。勝ち筋は各ターン判断。"
+                          "勝ち筋3点を含め完成。"
                           if ready else
                           f"事前対面{evaluated}/{len(pairs)}を保持。"
-                          "欠損箇所は未評価として保持。追加AI通信なし。")})
+                          "欠損や勝ち筋不足は補完待ち。")})
 
 
     def _note_stable_result_screen(self):
@@ -2659,11 +2656,11 @@ class MatchReplayDialog(QDialog):
         self._stop_auto()
 
     def _start_prep_auto(self, *, provisional=False):
-        # No authentication, QThread, or API request for PREP. The six frozen
-        # LIVE rows supply all available pairs. Missing cells stay unknown.
+        # Use frozen pairs instantly; request required roles when missing.
         if not provisional and self.state is not None and self.state.get("phase")=="PREP":
             self._prefill_cached_prep()
-            return
+            if self.state.get("prep_status")=="CACHE_STRUCTURE_COMPLETE":
+                return
         if provisional:
             return
         if (self.state is None or self._prep_thread is not None
@@ -2850,7 +2847,7 @@ class MatchReplayDialog(QDialog):
             self._trace_event("FALLBACK_DEFERRED_DISPATCH")
             self._queue_batch(frames)
         elif (self.state is not None and self.state.get("phase")=="PREP"
-              and self.state.get("prep_status")=="PENDING"
+              and self.state.get("prep_status") in ("PENDING","CACHE_INCOMPLETE","CACHE_KNOWN_ONLY")
               and self._prep_thread is None):
             # An auto-adopted selection immediately starts PREP once its
             # selection-image QThread has really finished.
@@ -2871,13 +2868,12 @@ class MatchReplayDialog(QDialog):
             isinstance(prep.get(k),str)
             and prep.get(k) in (state.get("selected_three") or ())
             for k in ("preserve","stopper","closer"))
-        progress=(f"対面 {done}/{expected}・役割 {roles}/3（任意）"
-                  if roles else f"対面 {done}/{expected}・役割は各ターンで判断")
+        progress=f"対面 {done}/18・役割 {roles}/3（必須）"
         complete_statuses={
-            "CACHE_STRUCTURE_COMPLETE","STRUCTURE_COMPLETE",
-            "CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE"}
+            "CACHE_STRUCTURE_COMPLETE","STRUCTURE_COMPLETE"}
         incomplete_statuses={
-            "CACHE_INCOMPLETE","INCOMPLETE","UNAVAILABLE_MATRIX_MISMATCH",
+            "CACHE_INCOMPLETE","CACHE_KNOWN_ONLY","PARTIAL_STRUCTURE_COMPLETE",
+            "INCOMPLETE","UNAVAILABLE_MATRIX_MISMATCH",
             "DEADLINE_EXCEEDED","ERROR","INTERRUPTED_BY_NEW_BATTLE_SCREEN"}
         if self._prep_thread is not None and not self._prep_cancel_event.is_set():
             prep_text="PREP：処理中（AI評価実行中）／"+progress
