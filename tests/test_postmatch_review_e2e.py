@@ -1,6 +1,8 @@
 """Issue #102/B synthetic postmatch E2E and production MATCH_END wiring tests."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -53,6 +55,7 @@ class IsolatedReviewE2ETest(TestCase):
     def test_offline_does_not_change_production_sqlite(self):
         with TemporaryDirectory() as temp:
             production = MatchupLearningStore(temp)
+            self.assertIsNone(production.pending_match("not-a-match"))
             before = production.db_path.read_bytes()
             result = run_postmatch_review_e2e(model="unused", use_api=False)
             self.assertEqual(result["status"], "PASS")
@@ -137,7 +140,7 @@ class ProductionMatchEndWiringTest(TestCase):
         self.environment.record_finished_match.assert_called_once()
         self.window._start_postmatch_review.assert_called_once_with(self.match_id)
         self.assertIsNotNone(self.store.pending_match(self.match_id))
-        with sqlite3.connect(self.store.db_path) as db:
+        with closing(sqlite3.connect(self.store.db_path)) as db:
             saved = db.execute(
                 "SELECT result,source FROM match_history WHERE match_id=?",
                 (self.match_id,)).fetchone()
@@ -150,7 +153,7 @@ class ProductionMatchEndWiringTest(TestCase):
         self.window._postmatch_worker=object()
         DesktopMainWindow._on_unified_state(self.window, state, report)
         self.window._start_postmatch_review.assert_called_once()
-        with sqlite3.connect(self.store.db_path) as db:
+        with closing(sqlite3.connect(self.store.db_path)) as db:
             count = db.execute(
                 "SELECT COUNT(*) FROM match_history WHERE match_id=?",
                 (self.match_id,)).fetchone()[0]
