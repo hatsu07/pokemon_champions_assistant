@@ -32,7 +32,6 @@ jobs:
           $sha = (git rev-parse HEAD).Trim()
           if ($sha -ne $env:GITHUB_SHA) { throw "Checked-out SHA does not match triggered master commit" }
           Write-Host "Publishing DEVELOPMENT builds from master commit $sha"
-
       - name: Verify master content matches the validated PR
         shell: pwsh
         env:
