@@ -16,7 +16,7 @@
 
 - リポジトリ：`hatsu07/pokemon_champions_assistant`（**privateのまま維持**）。
 - `.github/workflows/windows-validation-artifact.yml`：Ready PR最新HEADのWindowsオフラインテスト、Assistant/Collector両Windows PyInstallerビルドと起動スモーク。**PRではActions Artifactsをアップロードしない**。workflow名とファイル名は歴史的名称のまま。
-- `.github/workflows/windows-development-release.yml`：masterへのpush後、Windowsで再テスト・再ビルド・スモークし、`PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`と`PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip`を**GitHub ReleasesのDEVELOPMENTプレリリース**として公開。初回のRelease公開処理を修正したのはPR #33。
+- `.github/workflows/windows-development-release.yml`：masterへのpush後、検証済みPRとmasterの内容一致を確認し、重複テストを再実行せずWindowsで再ビルド・最小スモークし、`PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`と`PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip`を**GitHub ReleasesのDEVELOPMENTプレリリース**として公開。初回のRelease公開処理を修正したのはPR #33。
 - `.github/workflows/windows-development-release-cleanup.yml`：14日以上経過し**新しい3件から外れた**特定のDEVELOPMENTプレリリースと対応タグだけを毎日削除。通常Release、保護されたRelease、Draft、他のタグを削除しない。`scripts/prune_development_releases.py` はドライランがデフォルト。
 - 旧`scripts/prune_actions_artifacts.sh`は過去のActions Artifactsだけの履歴整理用。新しいDEVELOPMENT ZIPには使用しない。
 
@@ -33,13 +33,13 @@
 
 ## 収集アプリのUIと学習データの注意点
 
-- 画面分類は `TEAM_SELECTION`, `TURN_ACTION`, `SWITCH_SELECTION`, `BATTLE_EVENT`, `RESULT_SCREEN`, `OTHER` の6クラス。モデルマニフェストschema_version=3、旧7クラスONNXは読み込み拒否。実際の教師PNGは新ルートへ非破壊コピーし、旧BATTLE_EVENT/UNKNOWNは人間が再確認する。BATTLE_EVENT判定だけで技名などを確定しない。
+- 画面分類は `TEAM_SELECTION`, `TURN_ACTION`, `SWITCH_SELECTION`, `BATTLE_EVENT`, `RESULT_SCREEN`, `OTHER` の6クラス。モデルマニフェストschema_version=3、旧7クラスONNXは読み込み拒否。実際の教師PNGは新ルートへ非破壊コピーし、旧BATTLE_EVENT/UNKNOWNは人間が再確認する。既存5分類データ全体の6分類移行は必須ではない。BATTLE_EVENT判定だけで技名などを確定しない。
 
 - Windowsの画面収集UIは`src/champions_assist/screen_dataset_collector.py`。テストは`tests/test_screen_dataset_collector.py`。全ファイル`screens/_UNLABELLED`は人間がラベルを付けて保存するまで学習データにしない。
 - 画面幅変更でプレビューと操作ボタンをレスポンシブに配置し、横方向にはみ出さないようにする。
 - グループ一覧のCtrl/Shift複数選択に対して、訂正ラベルを選び**「選択グループのラベルを一括訂正」**でまとめて仮訂正。**訂正時点ではPNGを保存しない**。画像単位の個別訂正と除外を優先して保持。グループのPNG保存は**「選択グループをPNG保存」1ボタンだけ**（旧AI候補承認・訂正して保存ボタンは廃止）。選択した1件以上を最後にグループ別ラベル・枚数で1回確認し、Noなら保存しない。
 - AIの予測が不正解の場合があるので、**ラベル未確定画像、全画像除外、重複画像は保存前にブロック**。画像単位の訂正/除外を優先。成功したJPEGだけをPNGに変換し、未保存画像や他セッションの画像を保持。
-- PNG、元の実画面、秘密情報、ゲーム内ログをGitHub・CI・Releaseに送らない。オフラインQt GUIテストと実機のBlueStacks上の挙動は区別する。
+- PNG、元の実画面、秘密情報、ゲーム内ログをGitHub・CI・Releaseに送らない。オフラインQt GUIテストとユーザーが選ぶ実ゲーム画面での動作を区別する。BlueStacksは現行の必須実行環境ではない。
 
 ## 新チャットでの最初の依頼文
 

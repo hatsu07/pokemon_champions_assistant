@@ -146,6 +146,20 @@ class Phase8SettingsTestCase(unittest.TestCase):
         finally:
             dialog.close()
 
+    def test_generic_capture_defaults_and_legacy_saved_bluestacks_are_preserved(self) -> None:
+        config=CaptureConfiguration()
+        self.assertEqual(config.backend,"WINDOWS_NATIVE")
+        self.assertEqual(config.preferred_process,"")
+        self.assertEqual(config.preferred_title,"")
+        previous=CaptureConfiguration.from_dict({
+            "backend":"WINDOWS_NATIVE","preferred_process":"HD-Player.exe",
+            "preferred_title":"BlueStacks","selected_window_identity":None,
+            "game_viewport_normalized":None,"adb_path":None,"adb_serial":None,
+        })
+        self.assertEqual(previous.preferred_process,"HD-Player.exe")
+        self.assertEqual(previous.preferred_title,"BlueStacks")
+        self.assertEqual(CaptureConfiguration.from_dict(config.as_dict()),config)
+
     def test_windows_default_path_round_trip_and_corruption_recovers_last_good_nonsecret_config(self) -> None:
         self.assertEqual(
             default_app_root(platform="win32", environ={"LOCALAPPDATA": r"C:\\Users\\tester\\AppData\\Local"}),
@@ -181,6 +195,21 @@ class Phase8SettingsTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "empty"):
             migrate_data_directory(source, occupied)
         self.assertEqual((occupied / "do-not-replace").read_text(encoding="utf-8"), "keep")
+
+    def test_capture_window_requires_explicit_selection(self) -> None:
+        selected=WindowCandidate(97,98,"MirrorApp.exe","Game Mirror",(1,2,31,22),96,False)
+        service=CapturePreviewService(window_enumerator=lambda:(selected,))
+        dialog=SettingsDialog(
+            self.service,match_active=lambda:False,preview_service=service)
+        try:
+            self.assertIsNone(dialog.window_box.currentData())
+            self.assertEqual(dialog.window_box.count(),2)
+            self.assertIsNone(dialog._capture_config().selected_window_identity)
+            dialog.window_box.setCurrentIndex(1)
+            self.assertEqual(dialog._capture_config().selected_window_identity,
+                             selected.identity())
+        finally:
+            dialog.close()
 
     def test_mock_window_selection_preview_and_stale_identity_are_read_only(self) -> None:
         candidate = WindowCandidate(77, 88, "HD-Player.exe", "BlueStacks App Player", (1, 2, 31, 22), 192, False)

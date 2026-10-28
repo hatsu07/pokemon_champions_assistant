@@ -24,8 +24,7 @@ $title = "Windows DEVELOPMENT $ReleaseVersion"
 # run_number; reruns retain their original release identity and SHA.
 $names = @(
     "PokemonChampionsAssistant-$ReleaseVersion-windows-x64.zip",
-    "PokemonChampionsScreenDataCollector-$ReleaseVersion-windows-x64.zip",
-    "PokemonChampionsGPUDiagnostics-$ReleaseVersion-windows-x64.zip"
+    "PokemonChampionsScreenDataCollector-$ReleaseVersion-windows-x64.zip"
 )
 $paths = @()
 foreach ($filename in $names) {
@@ -59,6 +58,9 @@ function Assert-DevRelease {
         throw "Release metadata does not match trusted DEVELOPMENT master revision."
     }
     if ($RequireComplete) {
+        if (@($Release.assets).Count -ne $names.Count) {
+            throw "Release must contain exactly two approved ZIP assets."
+        }
         for ($i = 0; $i -lt $names.Count; $i++) {
             $found = @($Release.assets | Where-Object { $_.name -eq $names[$i] })
             if ($found.Count -ne 1 -or [int64]$found[0].size -le 0) {
@@ -86,7 +88,7 @@ if ($null -eq $release) {
         "workflow_run_id=$env:GITHUB_RUN_ID",
         'release_kind=windows-development-only',
         '',
-        'Three ZIPs: desktop GUI, dataset collector, and opt-in GPU crash diagnostics.',
+        'Two ZIPs: desktop GUI and dataset collector. GPU diagnostics remain integrated in the assistant.',
         'Only offline GUI smoke tests were performed.',
         'No raw screenshots, private battle logs or credentials are included.',
         'Trained screen-model accuracy, device capture and live battles are NOT validated.'
@@ -97,7 +99,7 @@ if ($null -eq $release) {
     # A draft is not visible through GET /releases/tags/<tag> until published.
     # NEVER create an empty draft and then try to fetch it via the tag API.
     $arguments = @('release', 'create', $tag,
-        $paths[0], $paths[1], $paths[2],
+        $paths[0], $paths[1],
         '--repo', $env:GITHUB_REPOSITORY,
         '--target', $ExpectedSha,
         '--title', $title,
@@ -108,7 +110,7 @@ if ($null -eq $release) {
         throw 'GitHub CLI did not complete all asset uploads and publish the prerelease.'
     }
 }
-# Re-fetch the PUBLISHED prerelease by tag and verify both actual assets.
+# Re-fetch the PUBLISHED prerelease by tag and verify exactly two assets.
 $release = Get-DevRelease
 Assert-DevRelease -Release $release -RequireComplete $true
 if ($release.draft -ne $false) { throw 'Release still draft after GitHub CLI publish.' }

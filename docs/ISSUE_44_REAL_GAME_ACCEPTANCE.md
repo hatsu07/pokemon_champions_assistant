@@ -1,4 +1,6 @@
-# Issue #44 – Real Windows/BlueStacks evidence and independent tactical roles
+# Issue #44 – Historical real-game evidence and independent tactical roles
+
+> **履歴補足:** 本書の `WINDOWS_BLUESTACKS` は当時の記録形式です。現在はBlueStacksを必須とせず、`WINDOWS_REAL_CAPTURE` を新しい汎用実機証拠ラベルとして扱います。実際の映像取得方式はユーザーの確認まで未確定であり、合成・リプレイは実戦証拠に昇格しません。
 
 This stage implements an **offline evidence validator**, not an automated battle player or an actual device test. Synthetic Windows CI passing must never be represented as a successful real ranked match. Issue #44 remains open until real evidence and Champions mechanic verification exist.
 

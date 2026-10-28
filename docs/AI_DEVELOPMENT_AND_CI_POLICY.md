@@ -27,7 +27,7 @@ CI中に修正が必要になった場合：
 
 PR #30をCI全体がFailure（GitHub Actions Artifact容量超過）のままmasterへマージしたのは誤り。**これ以降、必須CI全体が最新SHAで`completed/success`以外なら理由を問わずマージ禁止。** ユーザーの最新判断により有料GitHubのBranch protectionは不要。サーバー側のマージ禁止設定をCI検証の前提にせず、最新SHAに対するCI workflow全体・必須ジョブのSuccessを厳守する。GitHubが`mergeable=true`でもCI未成功なら例外を認めない。
 
-ユーザーの最新方針は **GitHub Actions ＋ GitHub Releases**。Ready PRのWindows CIはテスト・両GUIビルド・起動スモークを実行し、Actions ArtifactsにはZIPを保存しない。masterへのマージ後、別のmaster専用workflowがWindowsの再ビルド・起動スモークとGitHub ReleasesのDEVELOPMENT_ONLYプレリリースへの2ZIP公開を行う。14日超で最新3件から外れた専用開発リリースだけを毎日整理する。詳細は`docs/WINDOWS_DEVELOPMENT_RELEASES.md`。PR最新HEADのCI全体Successは引き続きマージ必須条件。masterの配布結果は独立に確認する。
+ユーザーの最新方針は **GitHub Actions ＋ GitHub Releases**。Ready PRのWindows CIはテスト・両GUIビルド・起動スモークを実行し、Actions ArtifactsにはZIPを保存しない。masterへのマージ後、別のmaster専用workflowが検証済みPRの内容一致を確認し、全テストを重複実行せずWindowsの再ビルド・起動スモークとGitHub ReleasesのDEVELOPMENT_ONLYプレリリースへの2ZIP公開を行う。14日超で最新3件から外れた専用開発リリースだけを毎日整理する。詳細は`docs/WINDOWS_DEVELOPMENT_RELEASES.md`。PR最新HEADのCI全体Successは引き続きマージ必須条件。masterの配布結果は独立に確認する。
 
 GitHub privateリポジトリの`master.protected=false`は既知の制約で、ユーザーは有料プランや物理的マージ保護を希望しない。**GitHub側の自動マージ拒否はない**。エージェントが最新PR HEAD・CI全体・必須Windowsジョブの`completed/success`を毎回確認する。詳細・新チャット引継ぎは`docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`。
 
@@ -46,7 +46,7 @@ PR CIはPRの`head.sha`をチェックアウトし、Windowsビルド・起動�
 - 対戦中の推奨はユーザーの現行構築・固定マスター・LIVE マトリクスを優先する。Champions にない他作品の仕様で補完しない。自動キャプチャと API の最適化は **勝率・締切・クレジット/トークン消費**の実測で評価する。
 - LIVE 中の4ファイル再読込・Web検索は禁止。選出時は6行一括取得、PREPは独立40秒ではなく選出開始から87秒以内の表示完了（ゲーム操作用3秒確保）を期限とし、18対面と勝ち筋3点を満たす。対戦中の行動選択と戦術判断は AI が行い、ローカルロジックが勝手な戦術フォールバックを作らない。
 - スクリーンショットの収集、API送信、キャンセル、タイムアウト、古い結果の表示には安全策を設ける。ユーザーの明示的同意のないゲーム操作・秘密情報の書き出しはしない。
-- Windows CI の synthetic/offscreen テスト、BlueStacks 実機キャプチャ、ChatGPT接続実測、ランクマの戦術精度は **異なる検証段階**であり、相互に代用できない。
+- Windows CI の synthetic/offscreen テスト、ユーザーが実際に使用する環境のゲーム画面キャプチャ、ChatGPT接続実測、ランクマの戦術精度は **異なる検証段階**であり、相互に代用できない。
 - リスクのある変更は別コミット/PRで切り分け、既存の動作保証やプライバシー方針を維持する。未確認の機能は未確認と報告する。
 
 ## 完了報告の必須項目

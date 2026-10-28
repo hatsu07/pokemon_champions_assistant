@@ -13,6 +13,8 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
+  pull-requests: read
 
 jobs:
   windows-development-release:
@@ -30,6 +32,35 @@ jobs:
           $sha = (git rev-parse HEAD).Trim()
           if ($sha -ne $env:GITHUB_SHA) { throw "Checked-out SHA does not match triggered master commit" }
           Write-Host "Publishing DEVELOPMENT builds from master commit $sha"
+      - name: Verify master derives from a successful PR
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = $env:GITHUB_REPOSITORY
+          $sha = $env:GITHUB_SHA
+          function Api([string]$p) {
+            $raw = & gh api "repos/$repo/$p"
+            if ($LASTEXITCODE -ne 0 -or -not $raw) { throw "No API proof: $p" }
+            return (($raw -join [Environment]::NewLine) | ConvertFrom-Json)
+          }
+          $merged = @(Api "commits/$sha/pulls" | Where-Object { $_.merged_at -and $_.merge_commit_sha -eq $sha -and $_.base.ref -eq 'master' })
+          if ($merged.Count -ne 1) { throw 'No unique merged PR' }
+          $head = [string]$merged[0].head.sha
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify master tree' }
+          $prCommit = Api "commits/$head"
+          if ($tree -ne [string]$prCommit.commit.tree.sha) { throw 'Unverified master file tree' }
+          $runs = (Api "actions/runs?event=pull_request&head_sha=$head&per_page=100").workflow_runs
+          $valid = @($runs | Where-Object { $_.head_sha -eq $head -and $_.event -eq 'pull_request' -and $_.path -eq '.github/workflows/windows-validation-artifact.yml' } | Sort-Object created_at,id -Descending)
+          if ($valid.Count -lt 1) { throw 'No PR CI run for tested HEAD' }
+          $run = $valid[0]
+          if ($run.status -ne 'completed' -or $run.conclusion -ne 'success') { throw 'PR CI not successful' }
+          $jobs = @((Api "actions/runs/$($run.id)/jobs?per_page=100").jobs)
+          $required = @($jobs | Where-Object { $_.name -eq 'desktop-windows-validation' -and $_.status -eq 'completed' -and $_.conclusion -eq 'success' })
+          if ($required.Count -ne 1 -or $jobs.Count -lt 1 -or @($jobs | Where-Object { $_.status -ne 'completed' -or $_.conclusion -ne 'success' }).Count -gt 0) { throw 'PR Windows CI jobs not all successful' }
+          Write-Host "Verified PR #$($merged[0].number) head=$head CI=$($run.id) master=$sha tree=$tree"
       - name: Resolve monotonic semantic development version
         id: release_version
         shell: pwsh
@@ -48,41 +79,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Official OCR bundle staging failed" }
           python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6
           if ($LASTEXITCODE -ne 0) { throw "Real OCR string validation failed" }
-      - name: Run offline battle and settings tests on Windows
-        shell: pwsh
-        run: |
-          $env:QT_QPA_PLATFORM = "offscreen"
-          python scripts/windows_qt_test_runner.py tests.test_phase_6 tests.test_phase_8_settings tests.test_phase_6r_calibration tests.test_vision_api_benchmark tests.test_api_credentials tests.test_siwc_auth tests.test_selection_vision tests.test_selection_detail_crops tests.test_selection_image_diagnostics tests.test_match_debug_and_selection_ui tests.test_match_replay tests.test_live_timing_test tests.test_team_live_assets tests.test_team_ai_matrix tests.test_team_matchup_v2 tests.test_matchup_learning_store tests.test_postmatch_review_e2e tests.test_sqlite_primary_migration tests.test_team_ai_analysis tests.test_team_auto_analysis tests.test_team_provisional_advice tests.test_ai_review_workflow tests.test_matchup_evidence tests.test_real_battle_validation tests.test_web_mechanics_research tests.test_battle_evidence tests.test_auto_match_capture tests.test_turn_capture_and_reasoning tests.test_screen_classifier tests.test_screen_model_manifest_v2 tests.test_five_class_screen_migration tests.test_six_class_result_screen tests.test_ocr_turn_context tests.test_local_event_worker tests.test_local_event_image_policy tests.test_ocr_portable_runtime tests.test_ocr_gpu_v6 tests.test_ocr_onnx tests.test_crash_diagnostics tests.test_gpu_stress_diagnostics tests.test_gpu_multiprocess_diagnostics tests.test_ocr_sidecar tests.test_calibrated_screen_fields tests.test_screen_auto_label tests.test_verify_merge_ready tests.test_terminology tests.test_phase_2
-          Write-Host "offline core unittest process exit code: $LASTEXITCODE"
-          if ($LASTEXITCODE -ne 0) { throw "battle and non-GUI screen classifier suites failed" }
-          # A separate Python/Qt process prevents nondeterministic Qt/ML DLL
-          # finalization after mixing unrelated test lifecycles.
-          python scripts/windows_qt_test_runner.py tests.test_chatgpt_settings_inline tests.test_unified_main_match_support
-          if ($LASTEXITCODE -ne 0) { throw "inline GUI regression suites failed" }
-          python scripts/windows_qt_test_runner.py
-          if ($LASTEXITCODE -ne 0) { throw "Qt UI test runner failed" }
-          python scripts/windows_qt_test_runner.py tests.test_screen_dataset_collector
-          Write-Host "Private dataset collector Python process exit code: $LASTEXITCODE"
-          if ($LASTEXITCODE -ne 0) { throw "private dataset collector tests failed" }
-      - name: Test release lifecycle scripts without GitHub mutations
-        shell: pwsh
-        run: |
-          python -m unittest tests.test_prune_development_releases tests.test_development_release_version -v
-          if ($LASTEXITCODE -ne 0) { throw "release lifecycle tests failed" }
-      - name: Validate PowerShell prerelease publisher syntax
-        shell: pwsh
-        run: |
-          $tokens = $null
-          $syntaxErrors = $null
-          $source = (Resolve-Path './scripts/publish_windows_development_release.ps1').Path
-          $null = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$syntaxErrors)
-          if ($syntaxErrors.Count -gt 0) {
-            $syntaxErrors | ForEach-Object { Write-Host $_.ToString() }
-            throw 'Versioned DEVELOPMENT release publisher has invalid PowerShell syntax'
-          }
-      - name: Test legacy Actions artifact cleanup script offline
-        shell: bash
-        run: bash tests/test_prune_actions_artifacts.sh
       - name: Check whether a validated screen model is available
         shell: pwsh
         run: |
@@ -289,24 +285,6 @@ jobs:
             if ((Get-Item $zipPath).Length -ge 2GB) { throw "GitHub Release asset exceeds 2GiB limit" }
             Write-Host "Verified: $name"
           }
-      - name: Package standalone GPU-debug ZIP from verified desktop bytes
-        shell: pwsh
-        run: |
-          $version = "${{ steps.release_version.outputs.version }}"
-          $source = "dist/PokemonChampionsAssistant"
-          $filename = "PokemonChampionsGPUDiagnostics-$version-windows-x64.zip"
-          $target = Join-Path "release-zips" $filename
-          Compress-Archive -Path (Join-Path $source "*") -DestinationPath $target -CompressionLevel Optimal
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $target).Path)
-          try {
-            $members = @($zip.Entries | ForEach-Object FullName)
-            foreach ($required in @("PokemonChampionsAssistant.exe", "Run-GPU-Diagnostics.cmd", "BUILD_REVISION.txt")) {
-              if ($required -notin $members) { throw "GPU-debug ZIP missing $required" }
-            }
-          }
-          finally { $zip.Dispose() }
-          if ((Get-Item -LiteralPath $target).Length -ge 2GB) { throw "GPU-debug ZIP exceeds 2GiB" }
       - name: Publish verified DEVELOPMENT prerelease (no Actions Artifacts)
         shell: pwsh
         env:

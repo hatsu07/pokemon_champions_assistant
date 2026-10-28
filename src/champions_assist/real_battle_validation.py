@@ -1,4 +1,4 @@
-"""Offline, reproducible Windows/BlueStacks real-battle timing evidence gate.
+"""Offline, reproducible user-confirmed real-game capture timing evidence gate.
 
 This module never captures a game, predicts a tactic or tests on behalf of
 the user. It validates separately supplied *device evidence* after play.
@@ -76,8 +76,11 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
         raise ConfigurationError("実戦記録の構築指紋が一致しません")
     if packet.get("regulation") != regulation:
         raise ConfigurationError("実戦記録のレギュレーションが一致しません")
-    if packet.get("platform") != "WINDOWS_BLUESTACKS":
-        raise ConfigurationError("Windows/BlueStacks実機以外の結果を混入できません")
+    # The actual game environment/capture route is user-selected, not
+    # hardcoded to an emulator. Preserve historically recorded evidence.
+    platform=packet.get("platform")
+    if platform not in ("WINDOWS_REAL_CAPTURE","WINDOWS_BLUESTACKS"):
+        raise ConfigurationError("確認済みの実ゲーム映像に由来する収集環境が必要です")
     if packet.get("human_reviewed") is not True:
         raise ConfigurationError("実戦ログの人間確認が必要です")
     records=packet.get("matches")
@@ -149,6 +152,7 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
     return {
         "schema":SCHEMA,"team_id":team_id,
         "team_fingerprint":team_fingerprint,"regulation":regulation,
+        "capture_platform":platform,
         "matches":normalized,"match_count":len(normalized),
         "min_matches":MIN_MATCHES,"all_deadlines_met":all_deadlines,
         "no_screen_or_stale_advice_errors":no_tracking_errors,

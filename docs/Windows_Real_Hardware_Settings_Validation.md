@@ -1,6 +1,6 @@
 # Windows 実機: GUI設定・読取プレビュー検証
 
-これは既存の **Pokémon Champions Assistant** の設定画面を、Windows開発用Pythonを入れずに実機で確認するための手順です。Phase 7のMSIや配布版ではありません。実行できても、BlueStacksの連続観測、OCR、対戦状態同期、実API、ゲーム規約適合性は検証済みになりません。
+これは既存の **Pokémon Champions Assistant** の設定画面を、Windows開発用Pythonを入れずに実機で確認するための手順です。Phase 7のMSIや配布版ではありません。実行できても、ユーザーが現在使用する実ゲーム映像の連続観測、OCR、対戦状態同期、実API、ゲーム規約適合性は検証済みになりません。
 
 この成果物には個人の構築CSV、SQLite、ログ、キャプチャ、対戦履歴を含めません。構築検証用の固定カタログだけを同梱します。ゲーム操作（クリック、キー入力、ADB input）は実装していません。ポータブル設定検証モードでは「次戦を開始」とAPI送信も無効です。
 
@@ -35,11 +35,11 @@ if ($LASTEXITCODE -ne 0) { throw "Settings validation version check failed" }
 if ($LASTEXITCODE -ne 0) { throw "Settings GUI smoke failed" }
 ```
 
-`GUI_SETTINGS_VALIDATION_SMOKE_OK` はPySide6と同梱固定カタログを初期化できたことだけを示します。BlueStacks検出や画面取得の成功ではありません。
+`GUI_SETTINGS_VALIDATION_SMOKE_OK` はPySide6と同梱固定カタログを初期化できたことだけを示します。ユーザーが選んだゲームウィンドウの検出や画面取得の成功ではありません。
 
-## 2. BlueStacksの1フレームを設定GUIから確認する
+## 2. ユーザーが選択した実ゲームウィンドウの1フレームを設定GUIから確認する
 
-1. BlueStacksとPokémon Championsを手動で起動します。対象ウィンドウは表示中・非最小化にします。ほかのアプリが上に重なっていても構いません。
+1. ユーザーの実ゲーム実行環境でPokémon Championsの映像を手動で表示します。対象ウィンドウは表示中・非最小化にします。ほかのアプリが上に重なっていても構いません。
 2. 次で、通常プロファイルと混ざらない実機検証専用設定を指定して起動します。
 
 ```powershell
@@ -47,9 +47,9 @@ $Config = Join-Path $Root "config\settings.json"
 & $SettingsGui --config $Config
 ```
 
-3. 初回は「初回設定」が自動で開きます。`画面キャプチャ`で`ウィンドウを検索`を押し、`[BlueStacks候補]`の表示から、タイトル・PID・HWNDが対象と分かる項目を選びます。これはウィンドウの前面化、移動、サイズ変更を行いません。
+3. 初回は「初回設定」が自動で開きます。`画面キャプチャ`で`ウィンドウを検索`を押し、候補のタイトル・PID・HWNDを確認し、ユーザーが利用中のゲーム映像と一致する項目を**明示的に選びます**。これはウィンドウの前面化、移動、サイズ変更を行いません。
 4. 画面下部の`動作確認`を押します。`CAPTURED_READ_ONLY_UNVERIFIED_CONTENT / WIN32_PRINTWINDOW_CLIENT / (幅, 高さ) px / DPI ... / ... ms` が表示された場合のみ、読取専用の1フレームが得られています。プレビュー内容を目視し、Pokémon Championsが写っていることを確認してください。別ウィンドウの重なりを取り込まないため、ネイティブ方式は対象クライアントの`PrintWindow`を使います。
-5. 正しい画面を目視確認した後にだけ、プレビュー上をドラッグしてゲーム領域のROIを指定します。これは正規化ROIとして保存されるため、DPI・モニター・BlueStacksサイズを変えたら再較正してください。
+5. 正しい画面を目視確認した後にだけ、プレビュー上をドラッグしてゲーム領域のROIを指定します。これは正規化ROIとして保存されるため、DPI・モニター・選択した映像ウィンドウのサイズを変えたら再較正してください。
 6. `保存先`では既定の`$Root\data`と`$Root\captures`を使うか、書込み可能なローカルフォルダーを選択します。`テスト撮影を保存（明示操作のみ）`を押すと、上書きを拒否してキャプチャフォルダーへPNGを保存します。画像・設定・SQLiteはローカルにだけ残し、GitHub Actionsへアップロードしません。
 7. `保存`で終了し、同じ`--config $Config`を指定して再度起動します。対象ウィンドウIDとROI、保存先が復元されることを確認します。ウィンドウが再生成・最小化・消失していた場合は警告になり、古いHWNDへの黙った再利用は行いません。
 
@@ -57,7 +57,7 @@ $Config = Join-Path $Root "config\settings.json"
 
 ## 3. ネイティブ取得に失敗した場合のADB代替
 
-`WINDOW_IDENTITY_UNAVAILABLE`、`WINDOW_MINIMIZED`、`CAPTURE_FAILED`、または目視で誤ったプレビューの場合はROIを保存しません。Phase 6の[読取専用ADB手順](Phase_6_BlueStacks_Validation.md#read-only-capture-probes)に従い、ローカル/私有の`HD-Adb.exe`または`adb.exe`と確認済みserialを用意します。
+`WINDOW_IDENTITY_UNAVAILABLE`、`WINDOW_MINIMIZED`、`CAPTURE_FAILED`、または目視で誤ったプレビューの場合はROIを保存しません。ユーザーがADBキャプチャを**明示的に選んだ場合に限り**、[歴史的なADB手順](Phase_6_BlueStacks_Validation.md#read-only-capture-probes)を参考に接続先の権限とserialを確認します。ADBを使わない環境では必要ありません。
 
 設定画面で`ADB（代替）`を選び、ADB実行ファイルとserialを明示入力してから`動作確認`を押します。実装するADB操作は`get-state`と`exec-out screencap -p`だけです。`adb connect`、`forward`、`input`、`tap`、`keyevent`は使いません。ADB画像にはWin32ウィンドウ領域・DPIの測定値がありません。ネイティブ測定とは混ぜず、別の結果として記録してください。
 
@@ -72,7 +72,7 @@ $Config = Join-Path $Root "config\settings.json"
 次を利用者が報告するまで、GUI設定のWindows実機検証は未完了です。
 
 - `--smoke`の終了コードと出力status
-- 選択したBlueStacks候補の表示（タイトル/PID/HWNDは必要なら一部伏せてよい）
+- 選択した実ゲーム映像ウィンドウの表示（タイトル/PID/HWNDは必要なら一部伏せてよい）
 - ネイティブまたはADBのstatus、方式、画像実寸、DPI（ネイティブのみ）、取得時間
 - 保存PNGを目視してPokémon Championsであることを確認したか
 - ROI・保存先・再起動後の設定復元の成否

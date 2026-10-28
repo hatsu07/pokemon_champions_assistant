@@ -1,15 +1,15 @@
-# Windows GPU stress diagnostic — development debug prerelease
+# Windows GPU stress diagnostic — optional assistant-side diagnostic
 
-This offline diagnostic compares PP-OCRv6 recognition and the five-class
+This offline diagnostic compares PP-OCRv6 recognition and the six-class
 screen classifier on the affected NVIDIA DirectML machine. It is not a
 battle recognition accuracy test or a permanent workaround.
 
-## Run from the dedicated Windows debug ZIP
+## Run from the Assistant ZIP (no standalone GPU diagnostic ZIP)
 
-1. Download PokemonChampionsGPUDiagnostics-v0.1.0-dev.N-windows-x64.zip
-   from the Windows DEVELOPMENT prerelease created after the feature is
-   merged and all Windows CI checks pass. Old dev57 does NOT include it.
-2. Extract the entire ZIP to a new folder. Check BUILD_REVISION.txt.
+1. Download `PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`
+   from the Windows DEVELOPMENT prerelease created after the required CI passes.
+   Historical releases may still contain a separate GPU diagnostic ZIP; new releases do not.
+2. Extract the Assistant ZIP to a new folder. Check `BUILD_REVISION.txt`.
 3. Save other work and stop the live match monitor. Native GPU failures
    can terminate the diagnostic process or disturb the driver.
 4. Double-click Run-GPU-Diagnostics.cmd. This Phase-1 launcher defaults to
@@ -28,7 +28,7 @@ deterministic synthetic arrays. No screen capture is performed.
 ## The five conditions
 
 A: rec — PP-OCRv6 small recognizer model alone, one DirectML session.
-B: classifier — selected five-class ONNX screen classifier alone.
+B: classifier — selected six-class ONNX screen classifier alone.
 C: serial — both sessions initialized; recognizer then classifier with
    no overlapping Run() calls.
 D: parallel — both distinct sessions initialized, two dedicated threads,

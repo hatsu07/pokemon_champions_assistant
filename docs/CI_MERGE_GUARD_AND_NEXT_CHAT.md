@@ -11,9 +11,9 @@ master.protected=falseは既知の制約。GitHubのMergeボタンは自動的�
 ## Required PR CIとmaster限定GitHub Releases配布
 
 Ready PRのWindows CIは、オフラインテスト、両Windows PyInstallerビルド、両GUI起動スモーク、最新PR HEADの検証をすべて実施する。必須job名は `desktop-windows-validation`。**PR CIでActions Artifactsをアップロードせず、Releaseを公開しない。** PR HEAD/CI HEAD/checkout一致と全体Successがマージ条件。
-masterへのマージ後、別の`.github/workflows/windows-development-release.yml`がWindows再ビルド・再スモーク・2ZIP生成・master SHA確認を行い、GitHub Releasesの**開発用プレリリース**へ公開する。masterのリリースworkflowで両ZIPの実在・同梱SHAと結果を別途確認。PR検証SuccessをRelease公開Successと言い換えない。
+masterへのマージ後、別の`.github/workflows/windows-development-release.yml`が検証済みPRとmasterのファイル内容・Windows CI成功を照合後、単体/統合/GUIテストをスキップしてWindows再ビルド・最小スモーク・2ZIP生成・master SHA確認を行い、GitHub Releasesの**開発用プレリリース**へ公開する。masterのリリースworkflowで両ZIPの実在・同梱SHAと結果を別途確認。PR検証SuccessをRelease公開Successと言い換えない。
 `.github/workflows/windows-development-release-cleanup.yml`が毎日、**14日以上かつ新しい3件以外**のコミットタグ付き開発プレリリースと対応タグのみ整理。stable Release・一般タグ・Draftを消さない。詳細は`docs/WINDOWS_DEVELOPMENT_RELEASES.md`。WSLの`scripts/prune_actions_artifacts.sh`は過去Actions Artifactsの履歴整理専用。
-BlueStacks実機確認・画面分類精度・正式MSIは別工程。
+ユーザーが実際に利用するゲーム映像による検証・画面分類精度・正式MSIは別工程。BlueStacksは必須前提ではない。
 
 ## 手動・AIエージェントによる例外なしマージ判定
 
