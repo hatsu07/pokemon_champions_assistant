@@ -17,10 +17,13 @@
 
 - `PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`
 - `PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip`
+- `PokemonChampionsGPUDiagnostics-v0.1.0-dev.N-windows-x64.zip`（追加の独立GPU再現試験ZIP。Run-GPU-Diagnostics.cmdで明示起動。通常のバトル操作では走らない）
 
 `VERSION` に保存された開発ライン `0.1.0` と、GitHub Actionsの**リリースワークフロー実行番号**から `v0.1.0-dev.N`（例：`v0.1.0-dev.42`）を自動生成。タグは `development-windows-v0.1.0-dev.42`、リリース名は `Windows DEVELOPMENT v0.1.0-dev.42`。毎回番号が増え、再実行のみ同じ番号を再利用する。開発ライン `0.1.0` を変更する場合は `VERSION` をPRで変更し、同じCI/レビューゲートを通す。
 
 **最新の判別**：GitHub Releasesの上から順に新しいリリース。**最上段の最大開発版番号**を選ぶ。GitHubはプレリリースに通常の `Latest` バッジを付けないため、無理に正式版へ昇格させない。コミットSHAは非表示にせず、配布物の `BUILD_REVISION.txt` およびRelease説明に監査用として残す。過去の `development-windows-<40桁SHA>` リリースはリンク互換性のため残し、期限到来後に既存の厳格なcleanupで整理する。
+
+GPUデバッグZIPは同じ検証済みDesktop EXEの内容を専用名で再梱包し、オプトインのDirectML単独・直列・並列診断を実行する。Windows CIではGPU推論を試験せず、実機での再現実験は別。手順は `docs/WINDOWS_GPU_DIAGNOSTICS_RUNBOOK.md`。
 
 いずれも**DEVELOPMENT_ONLY**。正式MSI、実対戦検証済み、学習済みONNXモデル搭載を意味しない。ZIP内にはEXE、`_internal`、`BUILD_REVISION.txt`があり、二重ZIPにはしない。実画像・認証情報・個人ログを含めない。
 
