@@ -13,6 +13,7 @@ from .calibrated_screen_fields import (
 )
 from .ocr import OcrEngine
 from .ocr_onnx import make_onnx_ocr
+from .crash_diagnostics import record_exception
 
 
 def inspect_battle_event_image(
@@ -37,6 +38,8 @@ def inspect_battle_event_image(
                        text=reading.text, confidence=reading.confidence,
                        parsed=parsed.value if parsed else None, error="")
         except Exception as exc:
+            record_exception("OCR_DIAGNOSTIC_ROI_ERROR", exc,
+                             stage="OCR_DIAGNOSTIC")
             row = dict(name=region.name, kind=region.kind, crop=crop,
                        text="", confidence=None, parsed=None,
                        error=getattr(exc, "code", type(exc).__name__))
