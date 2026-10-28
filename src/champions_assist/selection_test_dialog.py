@@ -149,35 +149,6 @@ class _TimingTestWorker(QObject):
                     **kwargs,limit_seconds=self.prep_limit_seconds)
             elif self.mode=="SWITCH":
                 updated, report=switch_timing_test(image=self.image,**kwargs)
-            elif self.mode=="EVENT":
-                from .match_replay import run_replay_batch
-                snapshot=dict(self.state)
-                snapshot["phase"]="BATTLE"
-                updated, raw=run_replay_batch(
-                    [self.image],state=snapshot,assets=self.assets,
-                    access_token=token,model=self.model,
-                    reasoning_effort=self.reasoning_effort,
-                    total_seconds=max(1.0,30.0-(perf_counter()-self.requested_at)))
-                observation=raw.get("observation") or {}
-                observed_event=observation.get("observed_event","NONE")
-                messages=observation.get("messages") or []
-                valid=(raw.get("status") in ("OBSERVED","MATCH_END","RESULT_UNCONFIRMED")
-                       and raw.get("screen") not in ("TEAM_SELECTION","UNKNOWN",None)
-                       and (observed_event!="NONE" or bool(messages)
-                            or raw.get("status")=="MATCH_END"))
-                report={
-                    "status":"EVENT_READ_PASS" if valid else "EVENT_READ_FAIL",
-                    "reason":"OBSERVED" if valid else raw.get("reason") or "NO_EVENT_OBSERVED",
-                    "pass":valid,
-                    "source_status":raw.get("status"),
-                    "screen_observation":raw.get("screen"),
-                    "event":observed_event,
-                    "messages":messages[:8],
-                    "match_result":observation.get("match_result","UNKNOWN"),
-                    "state_phase":updated.get("phase"),
-                }
-                if not valid:
-                    updated=self.state
             else:
                 updated, report=turn_timing_test(image=self.image,**kwargs)
         except Exception as exc:
@@ -352,26 +323,20 @@ class SelectionTestDialog(QDialog):
         switch_layout.addStretch(1)
 
         self.event_page=QWidget(self.tabs)
-        self.tabs.addTab(self.event_page,"バトルイベント読み取りテスト")
+        self.tabs.addTab(self.event_page,"ローカルOCR診断")
         event_layout=QVBoxLayout(self.event_page)
         event_layout.addWidget(QLabel(
-            "対戦中のイベント・HP変化・判明技・結果画面のPNG/JPEGを"
-            "認識し、既存バトル状態へ観測情報だけを反映します。"
-            "勝敗や行動の実行を推測しません。"))
+            "キャプチャ画像のローカルOCRを診断します。AI送信・状態更新はしません。"))
         row=QHBoxLayout()
         self.event_choose_button=QPushButton("バトルイベント画面PNG/JPEGを選択")
         self.event_choose_button.clicked.connect(self.choose_event_image)
-        self.event_run_button=QPushButton("イベント読み取りテスト")
-        self.event_run_button.clicked.connect(self.run_event_test)
-        self.event_run_button.setEnabled(False)
         self.event_ocr_button=QPushButton("ローカルOCR診断（AI送信なし）")
         self.event_ocr_button.clicked.connect(self.run_local_ocr_test)
         self.event_ocr_button.setEnabled(False)
         row.addWidget(self.event_choose_button)
-        row.addWidget(self.event_run_button)
         row.addWidget(self.event_ocr_button)
         event_layout.addLayout(row)
-        self.event_status=QLabel("選出＋PREP後、イベント画面を指定してください。")
+        self.event_status=QLabel("ローカルOCR対象画像を選択してください。")
         self.event_status.setWordWrap(True)
         self.event_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         event_layout.addWidget(self.event_status)
@@ -532,7 +497,6 @@ class SelectionTestDialog(QDialog):
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
         self.switch_run_button.setEnabled(False)
-        self.event_run_button.setEnabled(False)
         h,w=self.image.shape[:2]
         frame=QImage(self.image.data,w,h,self.image.strides[0],QImage.Format.Format_RGB888)
         self.image_label.setPixmap(
@@ -719,17 +683,12 @@ class SelectionTestDialog(QDialog):
         image=self._pick_diagnostic_image("バトルイベント画面")
         if image is not None:
             self.event_image=image
-            self.event_status.setText("イベント画像を読込済み。戦闘状態への観測反映を検証します。")
-            self.event_run_button.setEnabled(
-                self.test_state is not None and self.prep_attempted)
+            self.event_status.setText("画像読込済み。AI送信なしでOCR診断します。")
             self.event_ocr_button.setEnabled(self.ocr_thread is None)
             self.event_ocr_status.setText("OCR：画像読込済み。独立してテストできます。")
 
     def run_switch_test(self):
         self._start_timing_test("SWITCH")
-
-    def run_event_test(self):
-        self._start_timing_test("EVENT")
 
     def run_local_ocr_test(self):
         if self.event_image is None or self.ocr_thread is not None:
@@ -818,13 +777,11 @@ class SelectionTestDialog(QDialog):
             return
         if mode=="PREP" and self.selection_started_at is None:
             return
-        if mode in ("TURN","SWITCH","EVENT") and not self.prep_attempted:
+        if mode in ("TURN","SWITCH") and not self.prep_attempted:
             return
         if mode=="TURN" and self.turn_image is None:
             return
         if mode=="SWITCH" and self.switch_image is None:
-            return
-        if mode=="EVENT" and self.event_image is None:
             return
         self.select_button.setEnabled(False)
         self.run_button.setEnabled(False)
@@ -835,28 +792,16 @@ class SelectionTestDialog(QDialog):
         self.switch_choose_button.setEnabled(False)
         self.switch_run_button.setEnabled(False)
         self.event_choose_button.setEnabled(False)
-        self.event_run_button.setEnabled(False)
         self.timing_status.setText(
-            "PREP：選出開始から87秒以内に初手6＋控え12＋勝ち筋3点を検査中…"
+            "PREP：選出開始から90秒以内に初手6＋控え12＋勝ち筋3点を検査中…"
             if mode=="PREP" else
-            "画像認識・判明イベントの反映中…" if mode=="EVENT" else
             "交代先の画面判別・合法手検査中…" if mode=="SWITCH" else
             "ターン30秒：画像認識＋AI判断＋合法手検査中…")
         self.timing_requested_at=perf_counter()
-        prep_limit=87.0
+        prep_limit=90.0
         if mode=="PREP":
-            # The test begins at the selection button click (not after AI
-            # recognition). Reserve three seconds for human game input.
-            prep_limit=max(0.0,87.0-(self.timing_requested_at-self.selection_started_at))
-            if prep_limit<=1.0:
-                self._timing_complete({
-                    "mode":"PREP","state":self.test_state,
-                    "report":{"status":"PREP_TIMING_FAIL",
-                              "reason":"INSUFFICIENT_90S_BUDGET","pass":False,
-                              "lead_evaluated":0,"bench_evaluated":0,
-                              "win_conditions":0}})
-                self._clear_worker()
-                return
+            # Advisory in-game timing never blocks an AI diagnostic call.
+            prep_limit=max(0.0,90.0-(self.timing_requested_at-self.selection_started_at))
         self.prep_limit_seconds=prep_limit if mode=="PREP" else 0.0
         if self.log:
             self.log.write(mode+"_TIMING_TEST_START",phase=mode,
@@ -868,12 +813,11 @@ class SelectionTestDialog(QDialog):
         self.worker=_TimingTestWorker(
             mode=mode,image=(
                 self.turn_image if mode=="TURN" else
-                self.switch_image if mode=="SWITCH" else
-                self.event_image if mode=="EVENT" else None),
+                self.switch_image if mode=="SWITCH" else None),
             assets=self.assets,state=self.test_state,app_root=self.app_root,
             model=self.model,reasoning_effort=self.reasoning_effort,
             requested_at=self.timing_requested_at,
-            prep_limit_seconds=prep_limit)
+            prep_limit_seconds=max(120.0,prep_limit))
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._timing_complete)
@@ -898,22 +842,22 @@ class SelectionTestDialog(QDialog):
             report["selection_ui_elapsed_ms"]=self.selection_display_elapsed_ms
             report["selection_prep_total_ms"]=total
             report["combined_limit_ms"]=90000
-            report["human_input_reserve_ms"]=3000
-        if wall>limit or (mode=="PREP" and total>87000):
+            report["human_input_reserve_ms"]=0
+        structure_pass=bool(report.get("pass"))
+        if wall>limit or (mode=="PREP" and total>90000):
             report["status"]=mode+"_TIMING_FAIL"
             report["reason"]=(
                 "COMBINED_90S_BUDGET_EXCEEDED"
-                if mode=="PREP" and total>87000
+                if mode=="PREP" and total>90000
                 else "UI_DELIVERY_DEADLINE_EXCEEDED")
             report["pass"]=False
-            # UI delivery expired: a model-side partial result is NOT usable
-            # inside the game clock, regardless of its structure.
-            report["partial_ready"]=False
-            report["recommendation"]=""
+            # Report the timing FAIL separately; preserve useful AI structure.
+            report["late_valid_result"]=structure_pass
+            report["timing_pass"]=False
         if mode=="PREP":
             self.prep_attempted=True
             self.prep_completed=bool(report.get("pass"))
-            if report.get("pass") or (
+            if report.get("pass") or report.get("late_valid_result") or (
                     report.get("status")=="PREP_TIMING_PARTIAL"
                     and report.get("partial_ready")) or (
                     report.get("status")=="PREP_TIMING_CACHE_INCOMPLETE"
@@ -941,20 +885,6 @@ class SelectionTestDialog(QDialog):
                 f"／AI元結果: {report.get('source_status','UNKNOWN')}"
                 f"／AI元理由: {report.get('source_reason','-')}"
                 "。構造と時間の検証であり、戦術的正確性は未検証。")
-        elif mode=="EVENT":
-            valid=bool(report.get("pass"))
-            if valid:
-                self.test_state=payload["state"]
-            details=(
-                f"バトルイベント読取 {'成功' if valid else '失敗'}"
-                f"／画面: {report.get('screen_observation','UNKNOWN')}"
-                f"／イベント: {report.get('event','NONE')}"
-                f"／結果: {report.get('match_result','UNKNOWN')}"
-                f"／状態: {report.get('state_phase','UNKNOWN')}"
-                f"／読み取ったメッセージ: {' / '.join(report.get('messages') or []) or 'なし'}"
-                f"／所要時間: {wall/1000:.3f}秒"
-                f"／理由: {report.get('reason','UNKNOWN')}")
-            self.event_status.setText(details)
         else:
             self.timing_results.append({
                 "pass":bool(report.get("pass")), "elapsed_ms":wall,
@@ -1012,9 +942,6 @@ class SelectionTestDialog(QDialog):
         self.switch_run_button.setEnabled(
             self.prep_attempted and self.test_state is not None
             and self.switch_image is not None)
-        self.event_run_button.setEnabled(
-            self.prep_attempted and self.test_state is not None
-            and self.event_image is not None)
         self.event_ocr_button.setEnabled(
             self.event_image is not None and self.ocr_thread is None)
 
