@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,19 @@ from typing import Callable
 
 MODES = ("rec", "classifier", "serial", "parallel")
 WINDOWS_ACCESS_VIOLATION = 0xC0000005
+_SAFE_ERROR = re.compile(r"^[A-Z0-9_]{1,100}$")
+
+
+class DiagnosticFailure(RuntimeError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def _error_code(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, str) and _SAFE_ERROR.fullmatch(code) else "UNSPECIFIED"
+
 
 
 def _utc() -> str:
@@ -76,9 +90,9 @@ def _create_screen(model_file: Path, allow_trial: bool, gpu_id: int):
         allow_unvalidated_for_trial=allow_trial,
     )
     if classifier is None:
-        raise RuntimeError("SCREEN_MODEL_NOT_READY_" + status)
+        raise DiagnosticFailure("SCREEN_MODEL_NOT_READY_" + status)
     if classifier.provider != "DmlExecutionProvider":
-        raise RuntimeError("SCREEN_NOT_ON_DIRECTML")
+        raise DiagnosticFailure("SCREEN_NOT_ON_DIRECTML")
     import numpy as np
     frame = np.full((240, 400, 3), 127, np.uint8)
     def run():
@@ -128,6 +142,10 @@ def child(mode: str, iterations: int, gpu_id: int, progress: Path,
         if mode in ("classifier", "serial", "parallel"):
             checkpoint.add("SCREEN_SESSION_INIT_BEGIN")
             model_path, allow_trial = _choose_screen_model(model, app_root)
+            from hashlib import sha256
+            checkpoint.add("SCREEN_MODEL_ID",
+                           model_sha256=sha256(model_path.read_bytes()).hexdigest(),
+                           trial_opt_in=bool(trial or allow_trial))
             screen = _create_screen(model_path, trial or allow_trial, gpu_id)
             checkpoint.add("SCREEN_SESSION_INIT_COMPLETE", provider="DmlExecutionProvider")
         checkpoint.add("SESSIONS_READY")
@@ -150,7 +168,8 @@ def child(mode: str, iterations: int, gpu_id: int, progress: Path,
                     except Exception as exc:
                         failures.append(_code(exc))
                         checkpoint.add("RUN_ERROR", iteration=iteration,
-                                       component=name, error_type=_code(exc))
+                                       component=name, error_type=_code(exc),
+                                       error_code=_error_code(exc))
                 first = Thread(target=worker, args=("rec", rec), name="stress-rec")
                 second = Thread(target=worker, args=("screen", screen), name="stress-screen")
                 first.start()
@@ -173,7 +192,8 @@ def child(mode: str, iterations: int, gpu_id: int, progress: Path,
                         action()
                     except Exception as exc:
                         checkpoint.add("RUN_ERROR", iteration=iteration,
-                                       component=name, error_type=_code(exc))
+                                       component=name, error_type=_code(exc),
+                                       error_code=_error_code(exc))
                         return 3
                     checkpoint.add("RUN_COMPLETE", iteration=iteration, component=name)
             checkpoint.add("ITERATION_COMPLETE", iteration=iteration,
@@ -181,7 +201,8 @@ def child(mode: str, iterations: int, gpu_id: int, progress: Path,
         checkpoint.add("CHILD_SUCCESS", iterations=iterations)
         return 0
     except Exception as exc:
-        checkpoint.add("CHILD_ERROR", error_type=_code(exc))
+        checkpoint.add("CHILD_ERROR", error_type=_code(exc),
+                       error_code=_error_code(exc))
         return 3
     finally:
         checkpoint.close()
