@@ -478,7 +478,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertTrue(panel.state["selection_assumed"])
-        self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertIsNone(panel.state["prep"]["preserve"])
         self.assertIn("選出（提案）：",self.window.recommendation_label.text())
@@ -487,7 +487,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as prep:
             panel._cleanup()
-        prep.assert_not_called()
+        prep.assert_called_once()
 
     def test_full_selection_auto_adopt_prefills_eighteen_and_starts_prep(self):
         from copy import deepcopy
@@ -1466,21 +1466,24 @@ class UnifiedMainWindowTests(unittest.TestCase):
         finally:
             panel._prep_thread=None
 
-    def test_prep_without_win_roles_does_not_send_network_or_spawn_thread(self):
+    def test_prep_without_win_roles_starts_role_completion_only(self):
         from tests.test_prep_cache import loaded_assets, chosen_state
         temp,assets=loaded_assets()
         self.addCleanup(temp.cleanup)
         panel=self.window._match_panel
         panel.assets=assets
         panel.state=chosen_state(assets)
-        with patch("champions_assist.match_replay_dialog._ReplayWorker") as worker:
+        with patch("champions_assist.match_replay_dialog._ReplayWorker") as worker,patch(
+                "champions_assist.match_replay_dialog.QThread") as thread:
             panel._start_prep_auto()
-        worker.assert_not_called()
-        self.assertIsNone(panel._prep_thread)
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
-        self.assertEqual(panel.state["prep"]["cached_matchups"],18)
-        self.assertEqual(panel.state["prep"]["win_roles_status"],
-                         "OPTIONAL_NOT_REQUESTED")
+            worker.assert_called_once()
+            thread.return_value.start.assert_called_once()
+            self.assertEqual(panel.state["prep_status"],"RUNNING")
+            self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+            self.assertEqual(panel.state["prep"]["win_roles_status"],"REQUIRED_NOT_EVALUATED")
+            panel._prep_timer.stop()
+            panel._prep_thread=None
+            panel._prep_worker=None
 
     def test_following_normal_switch_reuses_published_target(self):
         panel=self.window._match_panel
