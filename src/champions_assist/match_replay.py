@@ -1760,11 +1760,11 @@ def run_replay_screen_result(*, state: dict,
         updated.setdefault("history",[]).append({
             "step":updated.get("step_number",0)+1,
             "ui":"RESULT_SCREEN","result":"MATCH_END",
-            "evidence_source":"AI_GROUNDED_RESULT_SCREEN_OCR"})
+            "evidence_source":"AI_GROUNDED_PRE_RESULT_BATTLE_OCR"})
         updated["step_number"]=updated.get("step_number",0)+1
         return updated,{"status":"MATCH_END","screen":"RESULT_SCREEN",
                         "recommendation":"勝利。" if result=="WIN" else "敗北。",
-                        "result_source":"AI_GROUNDED_RESULT_SCREEN_OCR",
+                        "result_source":"AI_GROUNDED_PRE_RESULT_BATTLE_OCR",
                         "evidence_frame_id":source,
                         "evidence_frame_count":len(recent),
                         "images_sent":0,
