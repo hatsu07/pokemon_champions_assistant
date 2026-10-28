@@ -1251,7 +1251,12 @@ class ScreenDatasetCollector(QMainWindow):
 
     def _show_retrain_instructions(self):
         if self._thread is not None or self._auto_thread is not None or self._gpu_process is not None:return
-        command="bash ./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained --archive-output"
+        command=('TRAINING_DATA_DIR="/absolute/wsl/path/to/screens-six-v3" '
+                 'bash ./scripts/train_screen_classifier_docker.sh '
+                 '--validate-only\n'
+                 'TRAINING_DATA_DIR="/absolute/wsl/path/to/screens-six-v3" '
+                 'bash ./scripts/train_screen_classifier_docker.sh '
+                 '--gpu --epochs 12 --pretrained --archive-output')
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(command)
         QMessageBox.information(
@@ -1279,6 +1284,17 @@ class ScreenDatasetCollector(QMainWindow):
         if not repo.startswith("/") or "\x00" in repo or "\n" in repo:
             self.gpu_log.appendPlainText("WSLの絶対パスが必要です")
             return
+        data_dir,accepted_data=QInputDialog.getText(
+            self,"6分類のローカル学習画像",
+            "新規作成した6分類データのWSL絶対パス（screens-six-v3）",
+            text=getattr(self,"_gpu_training_data_dir",""))
+        if not accepted_data:
+            return
+        data_dir=data_dir.strip()
+        if (not data_dir.startswith("/") or data_dir=="/" or
+                "\\x00" in data_dir or "\\n" in data_dir):
+            self.gpu_log.appendPlainText("6分類学習画像のWSL絶対パスが必要です")
+            return
         yes=QMessageBox.question(
             self,"GPUで再学習しますか？",
             "人間が承認したPNGでGPU学習します（ImageNet事前学習済み重み使用）。"
@@ -1288,12 +1304,14 @@ class ScreenDatasetCollector(QMainWindow):
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
         if yes!=QMessageBox.StandardButton.Yes:return
         self._gpu_repo=repo
+        self._gpu_training_data_dir=data_dir
         self.gpu_log.clear()
         self.gpu_log.appendPlainText("GPU学習を起動します / WSL: "+repo)
         proc=QProcess(self)
         proc.setProgram("wsl.exe")
         proc.setArguments([
-            "--cd",repo,"--exec","bash","./scripts/train_screen_classifier_docker.sh",
+            "--cd",repo,"--exec","/usr/bin/env","TRAINING_DATA_DIR="+data_dir,
+            "bash","./scripts/train_screen_classifier_docker.sh",
             "--gpu","--epochs","12","--pretrained","--archive-output"])
         proc.readyReadStandardOutput.connect(
             lambda:self._append_gpu_output(bytes(proc.readAllStandardOutput())))
