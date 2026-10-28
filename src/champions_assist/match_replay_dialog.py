@@ -29,7 +29,7 @@ from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
 from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, run_replay_screen_result, possible_result_message, _text_action_eligible)
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
-from .calibrated_screen_fields import ScreenFieldProfile
+from .calibrated_screen_fields import ScreenFieldProfile, confirmed_auto_move_notice
 from .local_event_worker import AsyncBattleEventReader
 from .battle_state_tracker import LocalBattleStateTracker
 from .live_state_updates import apply_local_ocr
@@ -322,6 +322,7 @@ class MatchReplayDialog(QDialog):
         self._local_event_reader=None
         self._local_battle_tracker=LocalBattleStateTracker()
         self._ocr_capture_epochs={}
+        self._auto_move_epochs=set()
         self._active_state_revision=None
         self._active_request_id=None
         self._pending_result_messages=None
@@ -610,6 +611,7 @@ class MatchReplayDialog(QDialog):
             self._stop_local_event_reader()
             self._local_battle_tracker.clear()
             self._ocr_capture_epochs.clear()
+        self._auto_move_epochs.clear()
             self._active_state_revision=None
             self._active_request_id=None
             self._pending_result_messages=None
@@ -731,6 +733,7 @@ class MatchReplayDialog(QDialog):
         self._stop_local_event_reader()
         self._local_battle_tracker.clear()
         self._ocr_capture_epochs.clear()
+        self._auto_move_epochs.clear()
         self._active_state_revision=None
         self._active_request_id=None
         self._pending_result_messages=None
@@ -1834,6 +1837,38 @@ class MatchReplayDialog(QDialog):
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
 
+    def _observe_auto_move_notice(self,row,capture_epoch):
+        """A confirmed server-input notice voids advice for this same turn.
+
+        It does not identify the move chosen or prove the game timer expired.
+        A tentative ROI/confidence must not invalidate anything.
+        """
+        profile=self._field_profile
+        if (row.roi!="system_message" or profile is None
+                or not profile.validated_on_game_capture
+                or not confirmed_auto_move_notice(row.text,row.confidence,
+                    calibrated=True)
+                or capture_epoch!=self._turn_epoch
+                or capture_epoch in self._auto_move_epochs
+                or self.state is None or self.state.get("phase")!="BATTLE"):
+            return
+        self._auto_move_epochs.add(capture_epoch)
+        old_request=self._active_request_id
+        self._trace_event("AUTO_MOVE_SELECTED_INPUT_NOT_DELIVERED",
+                          turn_epoch=capture_epoch,
+                          confidence=row.confidence,source="VERIFIED_SYSTEM_NOTICE_ROI",
+                          request_id=old_request or "",actual_move="UNKNOWN")
+        if self._active_job=="batch" and self._active_turn_epoch==capture_epoch:
+            self._retire_active_worker("AUTO_MOVE_SELECTED_INPUT_NOT_DELIVERED")
+        if self._pending_screen_label in _URGENT_SCREENS:
+            self._pending_batch=None
+            self._pending_screen_label=None
+        self._turn_action_sent=True
+        self._last_action_text=""
+        self._last_advised_switch=None
+        self._render({"status":"AUTO_MOVE_NOTICE","screen":"ACTION_RESOLUTION",
+                      "message":"入力未到達のため技が自動選択されました。実際の技は未確認。"})
+
     def _drain_event_candidates(self,*,include_snapshot=True):
         """Persist completed OCR only; never wait in the command-menu path."""
         reader=self._local_event_reader
@@ -1876,10 +1911,12 @@ class MatchReplayDialog(QDialog):
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
                 if result.observations:
                     for row in result.observations:
+                        self._observe_auto_move_notice(row,capture_epoch)
                         self._diagnostic("OCR_RAW",{
                             "field":row.field,"roi":row.roi,
                             "frame_id":row.frame_id,
-                            "raw_text":row.text,"confidence":row.confidence,
+                            "raw_text":("[SYSTEM_NOTICE_REDACTED]" if row.roi=="system_message"
+                                        else row.text),"confidence":row.confidence,
                             "captured_at":row.timestamp,
                             "processed_at":monotonic(),
                             "capture_epoch":capture_epoch,
@@ -3031,6 +3068,8 @@ class MatchReplayDialog(QDialog):
             action_text="AI表示最終期限超過：このターンの新しい提案なし"
         elif report.get("status")=="SUPERSEDED":
             action_text="前ターンの提案を破棄（新しい画面を確認中）"
+        elif report.get("status")=="AUTO_MOVE_NOTICE":
+            action_text="サーバー未到達で技が自動選択（実行技は未確認・旧提案は無効）"
         elif report.get("screen")=="COMMAND_MENU" and (
                 report.get("status") not in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
             action_text="技4つ・交代先の判定未成立（AIによる提案なし）"
