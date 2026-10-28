@@ -235,7 +235,7 @@ class TimingCoreTest(unittest.TestCase):
     def test_turn_requires_input_ready_action_before_30(self):
         self.clock.now=0
         def runner(**kwargs):
-            self.assertLessEqual(kwargs["total_seconds"],30)
+            self.assertGreaterEqual(kwargs["total_seconds"],120)
             self.clock.now=19.4
             return kwargs["state"],{
                 "status":"PROVISIONAL_ADVICE","screen":"MOVE_MENU",
@@ -267,7 +267,11 @@ class TimingCoreTest(unittest.TestCase):
                 image=None,state=self.state,assets=self.assets,access_token="x",
                 model="mock",clock=self.clock,started_at=0,turn_runner=runner)
             self.assertFalse(report["pass"])
-            self.assertEqual(report["recommendation"],"")
+            if sec>30 and status=="PROVISIONAL_ADVICE":
+                self.assertTrue(report["late_valid_result"])
+                self.assertEqual(report["recommendation"],"10まんボルト。")
+            else:
+                self.assertEqual(report["recommendation"],"")
 
     def test_no_prep_after_invalid_selection(self):
         for invalid in ({"status":"ERROR"},{
