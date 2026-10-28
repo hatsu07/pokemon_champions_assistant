@@ -39,7 +39,8 @@ SCREEN_LABELS={
     "TURN_ACTION":"各ターンの行動・技を選ぶ画面",
     "SWITCH_SELECTION":"交代先を選択する画面",
     "BATTLE_EVENT":"技・特性・持ち物・交代・メガ等の重要な変化",
-    "OTHER":"それ以外の画面（待機・結果・演出を含む）",
+    "RESULT_SCREEN":"対戦終了・勝敗表示の結果画面",
+    "OTHER":"それ以外の画面（待機・演出・戦闘途中の非操作画面）",
 }
 PAGE_SIZE=100
 
