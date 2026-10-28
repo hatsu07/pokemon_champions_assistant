@@ -730,13 +730,16 @@ class SettingsDialog(QDialog):
         current = self.service.settings.capture.selected_window_identity
         self._candidates = self.preview_service.list_windows()
         self.window_box.clear()
+        # Never silently choose the first unrelated window when the default
+        # capture backend is WINDOWS_NATIVE and no prior target was selected.
+        self.window_box.addItem("実ゲームの対象ウィンドウを選択してください", None)
         for candidate in self._candidates:
             self.window_box.addItem(candidate.display_name(), candidate.identity())
         if not self._candidates:
             self.window_box.addItem("検出対象なし（Windows実機でのみ列挙可能）", None)
         for index, candidate in enumerate(self._candidates):
             if candidate.identity() == current:
-                self.window_box.setCurrentIndex(index)
+                self.window_box.setCurrentIndex(index+1)
                 break
 
     def _capture_config(self) -> CaptureConfiguration:
