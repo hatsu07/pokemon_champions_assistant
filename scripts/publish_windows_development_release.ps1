@@ -73,7 +73,7 @@ function Assert-DevRelease {
 $release = Get-DevRelease
 if ($null -ne $release -and $release.draft -eq $false) {
     Assert-DevRelease -Release $release -RequireComplete $true
-    Write-Host "Already published, both assets verified: $tag"
+    Write-Host "Already published, all assets verified: $tag"
     exit 0
 }
 if ($null -eq $release) {
