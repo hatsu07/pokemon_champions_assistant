@@ -1841,6 +1841,14 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             lambda *_args:action,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=max(total_seconds,perf_counter()-started+2))
+        if result.get("status")=="BLOCKED":
+            # A rejected action is not a successful tactical review of the
+            # evidence. Preserve proven state updates but let the next model
+            # retry the raw OCR instead of silently retiring it.
+            updated["_ai_ocr_presented_keys"]=list(
+                state.get("_ai_ocr_presented_keys") or ())
+            updated["_ai_ocr_ack_frames"]=list(
+                state.get("_ai_ocr_ack_frames") or ())
         if diagnostic_sink is not None:
             diagnostic_sink("AI_VALIDATION",{
                 "validation_code":result.get("reason") or result.get("status"),
