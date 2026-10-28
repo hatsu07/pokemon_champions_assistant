@@ -1394,7 +1394,6 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             ),
             content=content,
         )
-        ai_elapsed_ms=round((perf_counter()-api_started)*1000)
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
@@ -1694,6 +1693,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             ),
             content=[{"type":"input_text","text":json.dumps(
                 prompt,ensure_ascii=False,separators=(",",":"))}])
+        ai_elapsed_ms=round((perf_counter()-api_started)*1000)
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
