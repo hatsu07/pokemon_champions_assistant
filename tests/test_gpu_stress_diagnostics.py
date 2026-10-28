@@ -102,6 +102,30 @@ class GPUStressTests(unittest.TestCase):
                 gpu.supervisor("exe",modes=("fake",),iterations=20,
                                trials=1,gpu_id=0,app_root=Path(tmp))
 
+    def test_screen_model_choice_preserves_explicit_trial_consent(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            model=root/"selected.onnx"
+            model.write_bytes(b"not an actual model")
+            (root/"screen_classifier_choice.json").write_text(
+                json.dumps({"model_path":str(model),"trial_opt_in":True}),
+                encoding="utf-8")
+            chosen,opted_in=gpu._choose_screen_model(None,root)
+            self.assertEqual(chosen,model)
+            self.assertTrue(opted_in)
+            selected,opted_in_override=gpu._choose_screen_model(str(model),root)
+            self.assertEqual(selected,model)
+            self.assertFalse(opted_in_override)
+
+    def test_explicit_gpu_provider_is_required_without_cpu_fallback(self):
+        class StubClassifier:
+            provider="CPUExecutionProvider"
+        with patch("champions_assist.screen_classifier.load_bundled_classifier",
+                   return_value=(StubClassifier(),"MODEL_READY_CPU")):
+            with self.assertRaisesRegex(gpu.DiagnosticFailure,
+                                        "SCREEN_NOT_ON_DIRECTML"):
+                gpu._create_screen(Path("fake.onnx"),False,0)
+
     def test_frozen_cli_smoke_is_gpu_free(self):
         with TemporaryDirectory() as tmp:
             target=Path(tmp)/"smoke.json"
