@@ -110,7 +110,7 @@ class GroupingTests(unittest.TestCase):
             model.write_bytes(b"dummy bytes; synthetic session mock")
             manifest=folder/"champions_screen_classifier.json"
             manifest.write_text(json.dumps({
-                "schema_version":2,
+                "schema_version":3,
                 "validated":False,
                 "labels":list(LABELS),
                 "input_size":[160,160],
@@ -125,7 +125,7 @@ class GroupingTests(unittest.TestCase):
                 def get_inputs(self):
                     return [SimpleNamespace(name="rgb")]
                 def run(self,unused,feed):
-                    return [np.array([[1.0,0,0,0,0]],dtype=np.float32)]
+                    return [np.array([[1.0]+[0]*(len(LABELS)-1)],dtype=np.float32)]
 
             with self.assertRaisesRegex(ScreenClassifierError,"SCREEN_MODEL_NOT_VALIDATED"):
                 ScreenClassifier(model,manifest,session_factory=FakeSession)
