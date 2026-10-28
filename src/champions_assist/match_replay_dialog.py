@@ -7,6 +7,7 @@ The four frozen match assets are loaded once, never re-read during battle.
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import sys
 from dataclasses import replace as dataclass_replace
 from datetime import datetime
@@ -1473,6 +1474,8 @@ class MatchReplayDialog(QDialog):
         self._active_request_id="req-"+str(self._ai_request_attempts)
         request_id=self._active_request_id
         turn_epoch=self._turn_epoch
+        state_signature=sha256(json.dumps(current_state_digest(self.state),
+            ensure_ascii=False,sort_keys=True,default=str).encode("utf8")).hexdigest()[:16]
         log=self._debug_log
         revision=self._active_state_revision
         def diagnostic_sink(event,detail):
@@ -1483,6 +1486,8 @@ class MatchReplayDialog(QDialog):
         self._diagnostic("ACTION_REQUEST",{
             **current_state_digest(self.state),
             "request_id":request_id,
+            "match_id":self.match_id or "",
+            "state_signature":state_signature,
             "screen_kind":screen_label or "UNCLASSIFIED",
             "transport":"OCR_TEXT_ONLY" if text_only else "VISION_EXCEPTION",
             "ocr_candidate_count":len(local_candidates),
@@ -1513,6 +1518,10 @@ class MatchReplayDialog(QDialog):
                               ai_request_attempt=self._ai_request_attempts)
         self._trace_event(
             "AI_REQUEST_DISPATCH",
+            request_id=request_id,match_id=self.match_id or "",
+            state_revision=self._active_state_revision,
+            state_signature=state_signature,
+            decision_window_id=f"turn-{self._turn_epoch}" if screen_label in _URGENT_SCREENS else "selection",
             ai_request_attempt=self._ai_request_attempts,
             frame_seq=self._last_capture_seq,
             turn_epoch=self._turn_epoch,
@@ -2220,6 +2229,16 @@ class MatchReplayDialog(QDialog):
                               elapsed_ms=round(elapsed*1000),
                               target_budget_ms=int(_TARGET_AI_TURN_SECONDS*1000),
                               timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000))
+        if (self._active_job=="batch" and report.get("screen")=="TEAM_SELECTION"
+                and self._selection_screen_started is not None):
+            elapsed_preview=monotonic()-self._selection_screen_started
+            if elapsed_preview>90.0:
+                report["late_selection_presented"]=True
+                report["warning"]=(str(report.get("warning") or "")+
+                    " 【選出画面90秒超過：現在も操作可能か確認してください】")
+                self._trace_event("LATE_SELECTION_ADVICE_PRESENTED",
+                    request_id=self._active_request_id or "",
+                    elapsed_ms=round(elapsed_preview*1000),timing_pass=False)
         if self._active_request_started is not None:
             report["queue_elapsed_ms"]=round((monotonic()-self._active_request_started)*1000)
             self._trace_event("AI_WORKER_FINISHED",queue_elapsed_ms=report["queue_elapsed_ms"],status=report.get("status","UNKNOWN"),api_total_ms=report.get("api_total_ms",0),api_first_output_ms=report.get("api_first_output_ms",0),image_prepare_ms=report.get("image_prepare_ms",0),validation_ms=report.get("validation_ms",0),auth_ms=report.get("auth_ms",0))
@@ -2326,6 +2345,9 @@ class MatchReplayDialog(QDialog):
             self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}"+speed_note)
         if not superseded:
             self._trace_event("AI_RESULT_DISPLAYED",
+                              request_id=self._active_request_id or "",
+                              match_id=self.match_id or "",
+                              state_revision=self._active_state_revision,
                               status=report.get("status","UNKNOWN"),
                               ui=report.get("screen","UNKNOWN"),
                               ai_request_attempt=self._ai_request_attempts,
