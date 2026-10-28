@@ -850,12 +850,13 @@ class SelectionTestDialog(QDialog):
             report["pass"]=False
             # Report the timing FAIL separately; preserve useful AI structure.
             report["late_valid_result"]=structure_pass
+            report["late_partial_ready"]=bool(report.get("partial_ready"))
             report["partial_ready"]=False  # timing PASS and partial timing PASS differ
             report["timing_pass"]=False
         if mode=="PREP":
             self.prep_attempted=True
             self.prep_completed=bool(report.get("pass"))
-            if report.get("pass") or report.get("late_valid_result") or (
+            if report.get("pass") or report.get("late_valid_result") or report.get("late_partial_ready") or (
                     report.get("status")=="PREP_TIMING_PARTIAL"
                     and report.get("partial_ready")) or (
                     report.get("status")=="PREP_TIMING_CACHE_INCOMPLETE"
