@@ -168,7 +168,7 @@ class AsyncBattleEventReader:
         crops=[]
         updated={}
         for region in profile.regions:
-            if region.name in IGNORED_OCR_ROIS:
+            if not live_ocr_region_enabled(profile,region):
                 continue
             # Optional calibrated PP fields are read only on action screens.
             # Unknown scene/timer is deliberately never interpreted.
