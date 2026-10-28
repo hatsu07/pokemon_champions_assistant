@@ -1734,7 +1734,7 @@ class MatchReplayDialog(QDialog):
         self._stop_local_event_reader()
         lexicon=ScreenLexicon.from_frozen_assets(
             self.assets,opponent_names=tuple(getattr(self.assets,"matrix_index",{}).keys()))
-        self._local_event_reader=AsyncBattleEventReader.with_gpu_paddle(
+        self._local_event_reader=AsyncBattleEventReader.with_onnx_ocr(
             self._field_profile,lexicon=lexicon)
         self._trace_event("LOCAL_OCR_STARTED",
                           status=self._local_event_reader.reason,
