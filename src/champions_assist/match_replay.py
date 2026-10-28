@@ -1769,8 +1769,13 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             carry=[q for q in pending_ocr if
                    not all(f in ack for f in q["source_frames"])]
             from .ocr_turn_context import MAX_PENDING_QUESTIONS
+            # Do not let 16 new LOW questions evict a carried critical
+            # threat. Provenance remains local; priority comes from the AI.
+            priorities={"CRITICAL":0,"IMPORTANT":1,"LOW":2}
             unresolved=sanitize_pending_questions(
-                next_questions+carry,all_frames)
+                sorted(carry+next_questions,
+                       key=lambda q:priorities.get(q["importance"],1)),
+                all_frames)
             updated["_ai_ocr_unresolved"]=unresolved[:MAX_PENDING_QUESTIONS]
         obs["our_active"]=updated.get("our_active","")
         obs["opponent_active"]=updated.get("opponent_active","")
