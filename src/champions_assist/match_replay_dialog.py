@@ -423,6 +423,7 @@ class MatchReplayDialog(QDialog):
         self._restart_prep_after_cleanup=False
         self._thread=None
         self._worker=None
+        self._retired_workers={}  # old request IDs retain Qt workers until finished
         self._active_job=None
         self._inflight_screen_label=None
         self._prep_thread=None
@@ -721,7 +722,7 @@ class MatchReplayDialog(QDialog):
     def _maybe_finish_shutdown(self):
         if self._shutdown_intent is None:
             return
-        if self._thread is not None or self._prep_thread is not None:
+        if self._thread is not None or self._prep_thread is not None or self._retired_workers:
             return
         intent=self._shutdown_intent
         self._shutdown_intent=None
@@ -1417,7 +1418,7 @@ class MatchReplayDialog(QDialog):
         self._send_pending()
 
     def _send_pending(self):
-        if (self._shutdown_intent is not None or self._thread is not None
+        if (self._shutdown_intent is not None
                 or self._pending_batch is None):
             return
         if self.state is None or self.state.get("phase")=="ENDED":
@@ -1479,10 +1480,9 @@ class MatchReplayDialog(QDialog):
             # current screen carries useful event context at much lower
             # latency than repeatedly shipping four high-detail images.
             frames=frames[-2:]
+        # Supersede only at a real outgoing AI request, not at a soft clock.
         if self._thread is not None:
-            # OCR found a possible result while snapshotting candidates;
-            # verify the match result BEFORE sending another action.
-            return
+            self._retire_active_worker("NEW_AI_REQUEST_DISPATCH")
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
@@ -1595,12 +1595,50 @@ class MatchReplayDialog(QDialog):
         self._worker.moveToThread(self._thread)
         self._worker.progress.connect(self._on_ai_progress)
         self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._completed)
-        self._worker.finished.connect(self._thread.quit)
-        self._thread.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(self._cleanup)
+        self._connect_active_worker(request_id)
         self._thread.start()
+
+    def _connect_active_worker(self,request_id):
+        """Capture identity for Qt callbacks; old replies never touch new state."""
+        worker,thread=self._worker,self._thread
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda payload,rid=request_id:
+                                self._completed_for_request(rid,payload))
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda rid=request_id:self._cleanup_for_request(rid))
+
+    def _retire_active_worker(self,reason):
+        if self._thread is None:
+            return
+        rid=self._active_request_id
+        self._retired_workers[rid]=(self._thread,self._worker)
+        self._trace_event("AI_REQUEST_LOGICALLY_CANCELLED",request_id=rid,
+                          reason=reason,turn_epoch=self._active_turn_epoch)
+        self._thread=None
+        self._worker=None
+        self._active_job=None
+        self._active_request_started=None
+        self._active_request_frame=None
+        self._active_state_revision=None
+        self._active_turn_epoch=None
+        self._active_request_id=None
+        self._inflight_screen_label=None
+
+    def _completed_for_request(self,request_id,payload):
+        if request_id!=self._active_request_id:
+            self._trace_event("STALE_AI_RESPONSE_DROPPED",
+                              request_id=request_id,reason="SUPERSEDED_BY_NEW_REQUEST")
+            return
+        self._completed(payload)
+
+    def _cleanup_for_request(self,request_id):
+        if request_id!=self._active_request_id:
+            self._retired_workers.pop(request_id,None)
+            self._maybe_finish_shutdown()
+            return
+        self._cleanup()
 
     @Slot(str)
     def _on_ai_progress(self, progress: str) -> None:
@@ -2217,8 +2255,7 @@ class MatchReplayDialog(QDialog):
             self._trace_event("SELECTION_RESULT_PROTECTED_FROM_DUPLICATE")
         # A genuinely NEW decision request supersedes an unanswered older
         # one. Duplicate preview images and local wall-clock expiry do NOT.
-        # No new request can be sent until the current QThread finishes, so
-        # a queued actionable frame is the preemption boundary.
+        # Pending screens only become superseding when the new request dispatches.
         newer_selection_request_pending = (
             self._active_job=="batch"
             and report.get("screen")=="TEAM_SELECTION"
@@ -2578,15 +2615,15 @@ class MatchReplayDialog(QDialog):
                 "手動で勝敗を確定してください。")
             return
         if self._thread is not None:
-            # Existing tactical call must finish first. Cleanup returns to
-            # this already-completed OCR, without requesting fresh images.
-            return
+            self._retire_active_worker("RESULT_SCREEN_VERIFICATION")
         self._result_screen_sent=True
         self._pending_result_messages=None
         self._pending_batch=None
         self._pending_screen_label=None
         self._active_job="result_screen"
         self._active_request_started=monotonic()
+        self._ai_request_attempts+=1
+        self._active_request_id="req-"+str(self._ai_request_attempts)
         self._trace_event("RESULT_SCREEN_GPT_REQUEST",images_sent=0,
                           frame_id=candidate["frame"],
                           ocr_candidate_count=len(evidence),
@@ -2601,11 +2638,7 @@ class MatchReplayDialog(QDialog):
             cancel_event=self._cancel_event,battle_seconds=120.0)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._completed)
-        self._worker.finished.connect(self._thread.quit)
-        self._thread.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(self._cleanup)
+        self._connect_active_worker(self._active_request_id)
         self._thread.start()
 
     def _request_result_from_ocr(self,messages):
@@ -2620,13 +2653,13 @@ class MatchReplayDialog(QDialog):
             self._pending_result_messages=None
             return
         if self._thread is not None:
-            self._pending_result_messages=messages
-            self._trace_event("OCR_MATCH_RESULT_QUEUED_AFTER_INFLIGHT")
-            return
+            self._retire_active_worker("OCR_RESULT_VERIFICATION")
         self._pending_result_messages=None
         self._result_check_sent_keys.add(key)
         self._active_job="result"
         self._active_request_started=monotonic()
+        self._ai_request_attempts+=1
+        self._active_request_id="req-"+str(self._ai_request_attempts)
         self._trace_event("OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0,
                           message_count=len(messages))
         self._thread=QThread(self)
@@ -2638,11 +2671,7 @@ class MatchReplayDialog(QDialog):
             battle_seconds=30.0)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._completed)
-        self._worker.finished.connect(self._thread.quit)
-        self._thread.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(self._cleanup)
+        self._connect_active_worker(self._active_request_id)
         self._thread.start()
 
     def _finish_match_manually(self, result):
