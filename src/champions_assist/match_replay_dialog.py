@@ -1767,8 +1767,8 @@ class MatchReplayDialog(QDialog):
         """Persist completed OCR only; never wait in the command-menu path."""
         reader=self._local_event_reader
         if reader is not None:
-            status=reader.reason
-            if status!=getattr(self,"_last_ocr_reported_status",None):
+            status=getattr(reader,"reason",None)
+            if status is not None and status!=getattr(self,"_last_ocr_reported_status",None):
                 self._last_ocr_reported_status=status
                 backend=getattr(reader,"_ocr",None)
                 self._trace_event("LOCAL_OCR_PROVIDER",
@@ -1879,12 +1879,12 @@ class MatchReplayDialog(QDialog):
             reader=self._local_event_reader
             stats=reader.diagnostic_counts() if reader is not None else {}
             self._last_local_ocr_stats=dict(stats)
-            self._last_local_ocr_status=reader.reason if reader else "NOT_RUNNING"
+            self._last_local_ocr_status=getattr(reader,"reason","UNKNOWN") if reader else "NOT_RUNNING"
             # Once per actionable menu, rather than logging every ROI / frame.
             self._trace_event("LOCAL_OCR_TURN_SUMMARY",
                               frame_seq=self._last_capture_seq,
                               turn_epoch=self._turn_epoch,
-                              ocr_status=(reader.reason if reader else "NOT_RUNNING"),
+                              ocr_status=(getattr(reader,"reason","UNKNOWN") if reader else "NOT_RUNNING"),
                               ocr_candidates_sent=len(records),
                               ocr_duplicates=self._local_battle_tracker.duplicates,
                               ocr_conflicts=self._local_battle_tracker.conflicts,
