@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
-from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, possible_result_message, _text_action_eligible)
+from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, run_replay_screen_result, possible_result_message, _text_action_eligible)
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile
@@ -127,7 +127,7 @@ class _ReplayWorker(QObject):
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
                  local_field_candidates=None,diagnostic_sink=None,
                  selection_seconds=55.0, prep_seconds=40.0,battle_seconds=30.0,
-                 result_messages=None):
+                 result_messages=None, result_screen=None):
         super().__init__()
         self.job=job
         self.frames=frames
@@ -142,6 +142,7 @@ class _ReplayWorker(QObject):
         self.prep_seconds=float(prep_seconds)
         self.battle_seconds=float(battle_seconds)
         self.result_messages=list(result_messages or [])
+        self.result_screen=dict(result_screen or {})
         self.capture_config=capture_config
         self.capture_gate=capture_gate
         self.capture_function=capture_function
@@ -173,6 +174,19 @@ class _ReplayWorker(QObject):
                 next_state,report=run_replay_text_result(
                     state=self.state,messages=self.result_messages,
                     access_token=token,model=self.selected_model,
+                    reasoning_effort=self.reasoning_effort,
+                    total_seconds=min(30.0,self.battle_seconds))
+                self.finished.emit({"state":next_state,"report":report})
+                return
+            elif self.job=="result_screen":
+                # No additional pixels: screen class was independently stable,
+                # the ten most recent local OCR readings have source frame IDs.
+                next_state,report=run_replay_screen_result(
+                    state=self.state,
+                    screen_frame=self.result_screen["frame"],
+                    screen_time=self.result_screen["time"],
+                    local_field_candidates=self.local_field_candidates,
+                    access_token=auth.access_token(),model=self.selected_model,
                     reasoning_effort=self.reasoning_effort,
                     total_seconds=min(30.0,self.battle_seconds))
                 self.finished.emit({"state":next_state,"report":report})
@@ -1724,7 +1738,25 @@ class MatchReplayDialog(QDialog):
                         and (not self._turn_action_sent
                              or self._turn_event_after_action)):
                     self._begin_local_turn(prediction.label)
+                # RESULT_SCREEN is a gate for one OCR-grounded result check,
+                # NEVER a direct WIN/LOSS determination or a new tactical call.
+                if (prediction.label=="RESULT_SCREEN"
+                        and prediction.confidence>=0.95
+                        and prediction.margin>=0.50
+                        and phase=="BATTLE"
+                        and not self._result_screen_sent):
+                    self._offer_event_for_local_ocr(image,label="RESULT_SCREEN")
                 classified=self._screen_gate.observe(prediction,phase)
+                if classified=="RESULT_SCREEN":
+                    if not self._result_screen_sent and phase=="BATTLE":
+                        self._result_screen_candidate={
+                            "frame":f"capture-{self._last_capture_seq}",
+                            "time":monotonic(),"detected_at":monotonic()}
+                        self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
+                            frame_id=self._result_screen_candidate["frame"],
+                            stable_frames=2)
+                        QTimer.singleShot(750,self._attempt_result_screen_verification)
+                    classified=None
                 if (prediction.label=="BATTLE_EVENT"
                         and prediction.confidence>=0.80
                         and phase in ("PREP","BATTLE")):
@@ -1855,6 +1887,9 @@ class MatchReplayDialog(QDialog):
                         if (row.status!="CANDIDATE"
                                 or row.confidence is None
                                 or row.confidence<0.72):
+                            continue
+                        if self._screen_model is not None:
+                            # Six-class RESULT_SCREEN gate owns result checks.
                             continue
                         if not possible_result_message(row.text):
                             continue
@@ -2052,7 +2087,8 @@ class MatchReplayDialog(QDialog):
                 and report.get("status")!="MATCH_END"):
             # An earlier tactical answer may finish after a manual result.
             return
-        if (self._active_job=="batch" and self._pending_result_messages
+        if (self._active_job=="batch" and (
+                self._pending_result_messages or self._result_screen_candidate)
                 and report.get("status") in (
                     "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")):
             report={**report,"status":"SUPERSEDED",
@@ -2433,6 +2469,55 @@ class MatchReplayDialog(QDialog):
                           "欠損箇所は未評価として保持。追加AI通信なし。")})
 
 
+    def _attempt_result_screen_verification(self):
+        """Only high-confidence, two-frame RESULT_SCREEN triggers this call.
+
+        Wait a bounded time for already-queued asynchronous OCR; do not
+        capture another image or run a second interpretation request.
+        """
+        candidate=self._result_screen_candidate
+        if (candidate is None or self._result_screen_sent
+                or self.state is None or self.state.get("phase")=="ENDED"
+                or not self._auto_running or self._shutdown_intent is not None):
+            return
+        # An older action request cannot supersede a verified final screen.
+        # _cleanup will prioritize the result over any pending action.
+        if self._thread is not None:
+            return
+        evidence=self._drain_event_candidates(include_snapshot=True)
+        if not evidence:
+            if monotonic()-candidate["detected_at"]<3.0:
+                QTimer.singleShot(200,self._attempt_result_screen_verification)
+            else:
+                self._trace_event("RESULT_SCREEN_OCR_MISSING",
+                                  frame_id=candidate["frame"])
+            return
+        self._result_screen_sent=True
+        self._pending_result_messages=None
+        self._pending_batch=None
+        self._pending_screen_label=None
+        self._active_job="result_screen"
+        self._active_request_started=monotonic()
+        self._trace_event("RESULT_SCREEN_GPT_REQUEST",images_sent=0,
+                          frame_id=candidate["frame"],
+                          ocr_candidate_count=len(evidence))
+        self._thread=QThread(self)
+        self._worker=_ReplayWorker(
+            app_root=self.store_root,selected_model=self.model,
+            reasoning_effort=self.reasoning_effort,
+            assets=self.assets,state=self.state,job="result_screen",
+            result_screen=candidate,
+            local_field_candidates=evidence,
+            cancel_event=self._cancel_event,battle_seconds=30.0)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._completed)
+        self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self._cleanup)
+        self._thread.start()
+
     def _request_result_from_ocr(self,messages):
         """Post-animation result check; image-free, one request per OCR phrase."""
         if self.state is None or self.state.get("phase")=="ENDED":
@@ -2671,6 +2756,11 @@ class MatchReplayDialog(QDialog):
             # Stop alone cancels the pending batch. Never restart PREP after
             # a stopped capture session.
             return
+        if (self._result_screen_candidate is not None
+                and not self._result_screen_sent and self._auto_running):
+            self._attempt_result_screen_verification()
+            if self._thread is not None:
+                return
         if self._pending_result_messages is not None and self._auto_running:
             messages=self._pending_result_messages
             self._pending_result_messages=None
