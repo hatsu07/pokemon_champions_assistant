@@ -219,7 +219,11 @@ def observe_screen_fields(
             if region.kind not in {"HP_FRACTION", "HP_PERCENT"}:
                 continue
         elif label not in region.applicable_labels:
-            continue
+            # A private pre-v3 calibration need not be overwritten just to
+            # recognize RESULT_SCREEN. Reuse only its message crop.
+            if not (label=="RESULT_SCREEN" and region.name=="battle_message"
+                    and region.kind=="MESSAGE"):
+                continue
         if attempted >= max_rois:
             break
         attempted += 1
