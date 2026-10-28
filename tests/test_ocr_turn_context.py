@@ -79,7 +79,7 @@ class BoundedOcrTurnContextTests(unittest.TestCase):
 
     def test_old_conflict_cannot_disappear_behind_newer_ocr(self):
         ledger=rows()
-        ledger[38]["status"]="CONFLICT"
+        ledger[38]["certainty"]="CONFLICT"
         batch,_,stats=build_ocr_turn_context({},ledger)
         self.assertIn(ledger[38]["frame_id"],
                       {r["frame_id"] for r in batch})
@@ -98,6 +98,38 @@ class BoundedOcrTurnContextTests(unittest.TestCase):
         self.assertEqual(len(pending_questions),16)
         self.assertIn("capture-0364",{r["frame_id"] for r in batch})
         self.assertLessEqual(stats["api_rows_sent"],MAX_TURN_OCR_ROWS)
+
+    def test_partial_frame_never_acknowledged(self):
+        assets=fixture_assets()
+        state=new_replay(assets)
+        state.update(phase="BATTLE",our_active="ゲンガー",
+                     opponent_active="マスカーニャ",
+                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
+                     lead="ゲンガー",selection_assumed=False)
+        frame="capture-big-frame"
+        ledger=[{
+            "frame_id":frame,"field":"screen_text.battle_message",
+            "raw_text":f"message {i}", "confidence":.9,
+            "observed_at":1000+i*.01}
+            for i in range(113)]
+        def answer(_client,**_kwargs):
+            return {
+                "state_updates":[],
+                "interpreted_own_active":"ゲンガー",
+                "interpreted_opponent_active":"マスカーニャ",
+                "processed_ocr_frames":[frame],
+                "pending_ocr_questions":[],
+                "action":{"action_kind":"NO_ACTION","move":"",
+                          "switch_target":"","warning":""},
+            }
+        with patch("champions_assist.match_replay._stream_json",side_effect=answer):
+            after,_report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=ledger,
+                client_factory=lambda **kwargs:object())
+        self.assertNotIn(frame,after.get("_ai_ocr_ack_frames",[]))
+        self.assertEqual(len(ledger),113)
 
     def test_pending_cannot_fabricate_source_or_confirm_state(self):
         known={"capture-1"}
