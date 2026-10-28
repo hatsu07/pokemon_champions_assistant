@@ -359,23 +359,25 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(any(r.get("event")=="SWITCH_NEW_DECISION_WINDOW"
                             for r in panel._timing_trace))
 
-    def test_expired_conservative_turn_blocks_ai_dispatch_and_clears_advice(self):
+    def test_soft_32s_turn_target_does_not_skip_new_ai_dispatch(self):
         from time import monotonic
+        from tests.test_match_replay import fixture_assets
         panel=self.window._match_panel
-        panel.state={"phase":"BATTLE"}
+        panel.state={"phase":"BATTLE","_live_state_revision":0}
+        panel.assets=fixture_assets()
         panel._auto_running=True
         panel._last_action_text="じしん。"
         frame=np.zeros((80,160,3),dtype=np.uint8)
         with patch.object(panel,"_send_pending"):
             panel._queue_batch([frame],screen_label="TURN_ACTION")
         panel._turn_screen_seen_at=monotonic()-33.0
-        panel._send_pending()
-        self.assertEqual(panel._last_action_text,"")
-        self.assertIn("AI表示最終期限超過",panel.action_banner.text())
-        self.assertTrue(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
-                            and x.get("timeout_budget_ms")==32000
-                            for x in panel._timing_trace))
-        self.assertIsNone(panel._thread)
+        with patch("champions_assist.match_replay_dialog.QThread"),patch(
+                "champions_assist.match_replay_dialog._ReplayWorker"):
+            panel._send_pending()
+        self.assertIsNotNone(panel._active_request_id)
+        self.assertFalse(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
+                             for x in panel._timing_trace))
+        panel._thread=None
 
     def test_30_second_target_allows_22_second_first_turn_advice(self):
         from time import monotonic
@@ -517,7 +519,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertTrue(panel.state["selection_assumed"])
         self.assertEqual(panel.state["selected_three"],list(OWN[:3]))
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(panel.state["prep"]["cached_matchups"],18)
         self.assertIn("初手（提案）：",panel.selection_banner.text())
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
@@ -525,7 +527,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as start:
             panel._cleanup()
-            start.assert_not_called()
+            start.assert_called_once()
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
         self.assertTrue(any(e.get("event")=="AUTO_SELECTION_ASSUMED"
                             for e in getattr(panel,"_timing_trace",[]))
@@ -601,13 +603,12 @@ class UnifiedMainWindowTests(unittest.TestCase):
                 "selected_three":list(OWN[:3]),"lead":OWN[0],
                 "preserve":OWN[0],"stopper":"未登録", "closer":OWN[2]}
         panel._completed({"state":deepcopy(preview),"report":report})
-        # Invalid win-role names are optional; they no longer cause 90s of
-        # tactical re-evaluation or a second AI request.
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        # Missing/invalid win roles MUST NOT complete a cached PREP.
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertIsNone(panel.state["prep"]["preserve"])
         with patch.object(panel,"_start_prep_auto") as rescue:
             panel._cleanup()
-        rescue.assert_not_called()
+        rescue.assert_called_once()
 
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
@@ -1275,11 +1276,12 @@ class UnifiedMainWindowTests(unittest.TestCase):
 
     def test_90s_preview_allows_55s_selection_then_32s_prep(self):
         from champions_assist.match_replay_dialog import prep_budget_before_battle
-        self.assertEqual(prep_budget_before_battle(100.0,now=100.0),40)
-        self.assertEqual(prep_budget_before_battle(100.0,now=155.0),32)
-        self.assertEqual(prep_budget_before_battle(100.0,now=160.0),27)
-        self.assertEqual(prep_budget_before_battle(100.0,now=188.0),0)
-        self.assertEqual(prep_budget_before_battle(None,now=900.0),40)
+        self.assertEqual(prep_budget_before_battle(100.0,now=100.0),90)
+        self.assertEqual(prep_budget_before_battle(100.0,now=155.0),35)
+        self.assertEqual(prep_budget_before_battle(100.0,now=160.0),30)
+        self.assertEqual(prep_budget_before_battle(100.0,now=188.0),2)
+        self.assertEqual(prep_budget_before_battle(100.0,now=195.0),0)
+        self.assertEqual(prep_budget_before_battle(None,now=900.0),90)
 
     def test_early_prep_launches_while_actual_selection_is_not_yet_confirmed(self):
         panel=self.window._match_panel
