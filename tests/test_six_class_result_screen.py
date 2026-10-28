@@ -73,6 +73,95 @@ class SixClassMigrationTests(unittest.TestCase):
         self.assertIsNone(gate.observe(clear,"SELECTION"))
 
 
+class ResultScreenAsyncGateTests(unittest.TestCase):
+    def fixture(self, *, status="QUEUED", previous=None):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from champions_assist.match_replay_dialog import MatchReplayDialog
+        candidate={
+            "frame":"capture-stable","time":20.0,
+            "ocr_status":status,"ocr_rows":previous or [],
+            "detected_at":-99999.0,
+        }
+        panel=SimpleNamespace(
+            _result_screen_candidate=candidate,
+            _result_screen_sent=False,
+            state={"phase":"BATTLE"},
+            _auto_running=True,
+            _shutdown_intent=None,
+            _local_event_reader=SimpleNamespace(enabled=True),
+            _drain_event_candidates=MagicMock(return_value=[]),
+            _thread=None,
+            _trace_event=MagicMock(),
+            _set_ai_status=MagicMock(),
+            store_root=Path("."),
+            model="test",
+            reasoning_effort="low",
+            assets=None,
+            _cancel_event=None,
+            _pending_result_messages=None,
+            _pending_batch=None,
+            _pending_screen_label=None,
+            _active_job=None,
+            _active_request_started=None,
+        )
+        panel._attempt_result_screen_verification=lambda: (
+            MatchReplayDialog._attempt_result_screen_verification(panel))
+        return panel
+
+    def test_no_elapsed_timeout_and_no_gpt_before_ocr_completion(self):
+        from unittest.mock import patch
+        panel=self.fixture()
+        # An arbitrarily old result-screen candidate must NOT cause the
+        # post-battle OCR to be skipped for having exceeded 1.5 or 3 seconds.
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \
+             patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
+            panel._attempt_result_screen_verification()
+            self.assertFalse(panel._result_screen_sent)
+            self.assertIsNone(panel._thread)
+            timer.assert_called_once()
+            self.assertEqual(timer.call_args.args[0],250)
+            model.assert_not_called()
+        row={"frame_id":"capture-stable","raw_text":"対戦に勝利しました",
+             "field":"screen_text.battle_message",
+             "observed_at":20.1,"confidence":.95}
+        panel._result_screen_candidate["ocr_status"]="COMPLETE"
+        panel._result_screen_candidate["ocr_rows"]=[row]
+        with patch("champions_assist.match_replay_dialog.QThread") as thread, \
+             patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
+            panel._attempt_result_screen_verification()
+            self.assertTrue(panel._result_screen_sent)
+            self.assertEqual(model.call_count,1)
+            self.assertEqual(model.call_args.kwargs["job"],"result_screen")
+            self.assertEqual(model.call_args.kwargs["local_field_candidates"],[row])
+            self.assertEqual(model.call_args.kwargs["battle_seconds"],120.0)
+            thread.return_value.start.assert_called_once()
+
+    def test_ocr_completed_with_no_words_does_not_call_gpt(self):
+        from unittest.mock import patch
+        panel=self.fixture(status="COMPLETE")
+        with patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
+            panel._attempt_result_screen_verification()
+            model.assert_not_called()
+        self.assertTrue(panel._result_screen_sent)
+        panel._set_ai_status.assert_called_once()
+        self.assertTrue(any(
+            call.args[0]=="RESULT_SCREEN_OCR_EMPTY"
+            for call in panel._trace_event.call_args_list))
+
+    def test_worker_failure_allows_manual_confirmation_without_timer(self):
+        from unittest.mock import patch
+        panel=self.fixture(status="QUEUED")
+        panel._local_event_reader.enabled=False
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \
+             patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
+            panel._attempt_result_screen_verification()
+            self.assertEqual(panel._result_screen_candidate["ocr_status"],"FAILED")
+            timer.assert_not_called()
+            model.assert_not_called()
+        panel._set_ai_status.assert_called_once()
+
+
 class ScreenResultEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.state={"phase":"BATTLE","our_active":"ゲンガー",
