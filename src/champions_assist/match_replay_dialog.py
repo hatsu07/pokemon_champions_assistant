@@ -1762,25 +1762,8 @@ class MatchReplayDialog(QDialog):
                 if classified=="RESULT_SCREEN":
                     if getattr(self._screen_model,"experimental",False):
                         self._trace_event("RESULT_SCREEN_TRIAL_REQUIRES_MANUAL_CONFIRMATION")
-                    elif (not self._result_screen_sent
-                          and self._result_screen_candidate is None
-                          and phase=="BATTLE"):
-                        # RESULT_SCREEN is a trigger, NOT an OCR target.
-                        # Final battle messages were offered to the asynchronous
-                        # reader during BATTLE_EVENT. Freeze exactly the jobs
-                        # which were outstanding when this screen appeared.
-                        # Later animation/reclassification cannot replace this
-                        # candidate or indefinitely extend its pending set.
-                        observed_at=monotonic()
-                        frame=f"capture-{self._last_capture_seq}"
-                        pending=tuple(self._ocr_capture_epochs)
-                        self._result_screen_candidate={
-                            "frame":frame,"time":observed_at,
-                            "pending_ocr_frames":pending}
-                        self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
-                            frame_id=frame,stable_frames=2,
-                            pending_prior_ocr=len(pending))
-                        QTimer.singleShot(0,self._attempt_result_screen_verification)
+                    elif phase=="BATTLE":
+                        self._note_stable_result_screen()
                     classified=None
                 if (prediction.label=="BATTLE_EVENT"
                         and prediction.confidence>=0.80
@@ -2520,6 +2503,26 @@ class MatchReplayDialog(QDialog):
                           f"事前対面{evaluated}/{len(pairs)}を保持。"
                           "欠損箇所は未評価として保持。追加AI通信なし。")})
 
+
+    def _note_stable_result_screen(self):
+        """Freeze preceding OCR work once; never OCR the result screen.
+
+        Multiple stable RESULT_SCREEN classifications caused by lighting or
+        animation jitter must not replace the pending pre-result OCR barrier.
+        Only a genuinely new action screen or reset discards this candidate.
+        """
+        if self._result_screen_sent or self._result_screen_candidate is not None:
+            return
+        observed_at=monotonic()
+        frame=f"capture-{self._last_capture_seq}"
+        pending=tuple(self._ocr_capture_epochs)
+        self._result_screen_candidate={
+            "frame":frame,"time":observed_at,
+            "pending_ocr_frames":pending}
+        self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
+                          frame_id=frame,stable_frames=2,
+                          pending_prior_ocr=len(pending))
+        QTimer.singleShot(0,self._attempt_result_screen_verification)
 
     def _attempt_result_screen_verification(self):
         """After RESULT_SCREEN, await earlier BATTLE_EVENT OCR before GPT.
