@@ -533,6 +533,64 @@ class UnifiedMainWindowTests(unittest.TestCase):
                             for e in getattr(panel,"_timing_trace",[]))
                         or panel.state["selection_assumed"])
 
+    def test_confirmed_auto_move_notice_retires_same_turn_ai_without_guessing_move(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","_live_state_revision":0}
+        panel._field_profile=replace(ScreenFieldProfile.from_user_samples_960x572(),
+                                     validated_on_game_capture=True)
+        panel._turn_epoch=4
+        panel._active_turn_epoch=4
+        panel._active_job="batch"
+        panel._active_request_id="req-notice"
+        old_worker=object()
+        panel._thread=object()
+        panel._worker=old_worker
+        panel._last_action_text="じしん。"
+        notice="サーバーに入力が届かなかったため\n技が自動で選ばれました"
+        try:
+            panel._observe_auto_move_notice(
+                SimpleNamespace(roi="system_message",text=notice,confidence=.96),4)
+            self.assertIn("req-notice",panel._retired_workers)
+            self.assertIsNone(panel._active_request_id)
+            self.assertTrue(panel._turn_action_sent)
+            self.assertEqual(panel._last_action_text,"")
+            self.assertIn(4,panel._auto_move_epochs)
+            self.assertTrue(any(e["event"]=="AUTO_MOVE_SELECTED_INPUT_NOT_DELIVERED"
+                                for e in panel._timing_trace))
+        finally:
+            panel._retired_workers.clear()
+            panel._thread=None
+            panel._worker=None
+            panel._auto_move_epochs.clear()
+
+    def test_low_confidence_auto_move_notice_does_not_retire_ai(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._field_profile=replace(ScreenFieldProfile.from_user_samples_960x572(),
+                                     validated_on_game_capture=True)
+        panel._turn_epoch=3
+        panel._active_turn_epoch=3
+        panel._active_job="batch"
+        panel._active_request_id="req-still-valid"
+        panel._thread=object()
+        panel._worker=object()
+        try:
+            panel._observe_auto_move_notice(SimpleNamespace(
+                roi="system_message",text="サーバーに入力が届かなかったため\n技が自動で選ばれました",
+                confidence=.72),3)
+            self.assertEqual(panel._active_request_id,"req-still-valid")
+            self.assertFalse(panel._auto_move_epochs)
+        finally:
+            panel._thread=None
+            panel._worker=None
+            panel._active_request_id=None
+
     def test_selection_roles_complete_full_prep_without_second_api_call(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
