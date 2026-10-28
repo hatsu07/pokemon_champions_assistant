@@ -1,5 +1,11 @@
 # Pokémon Champions 画面分類：5分類仕様と旧7分類データ移行
 
+> **履歴資料（schema v2 / 5分類）:** ここに記載した旧結果画面の
+> `RESULT → OTHER` 変換はIssue #102/A以降の現行学習には使いません。
+> 現行の6分類（schema v3）では`RESULT → RESULT_SCREEN`とし、
+> [6分類・勝敗確認の手順](ISSUE_102_SIX_CLASS_RESULT_SCREEN.md)を優先します。
+
+
 2026-10-24採用。対象は**対戦支援に必要な画面の検出**。画面分類器のラベルだけで技名・特性・持ち物等の事実を確定してはいけない。旧7分類のPNGやONNXを**自動削除・変更しない**。
 
 ## 分類の正本（モデルschema_version=2）

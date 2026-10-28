@@ -1609,6 +1609,173 @@ def run_replay_text_result(*, state: dict, messages: list[str],
                         "elapsed_ms":round((perf_counter()-started)*1000)}
 
 
+
+_SCREEN_RESULT_SCHEMA = {
+    "type":"object","additionalProperties":False,
+    "properties":{
+        "result":{"type":"string","enum":["WIN","LOSS","UNKNOWN"]},
+        "evidence":{"type":"string"},
+        "evidence_frame_id":{"type":"string"},
+    },
+    "required":["result","evidence","evidence_frame_id"],
+}
+
+
+def select_screen_result_evidence(rows: list[dict], *,
+                                  screen_frame: str,
+                                  screen_time: float) -> list[dict]:
+    """Last ten message OCR readings captured strictly BEFORE RESULT_SCREEN.
+
+    The classifier is a review trigger, not an instruction to OCR the result
+    frame. Preserve the original pre-result event text and its source IDs;
+    late OCR completion does not change when the frame was captured.
+    """
+    candidates=[]
+    for row in rows:
+        if not isinstance(row,dict):
+            continue
+        frame=row.get("frame_id")
+        field=str(row.get("field") or "")
+        # Only the battle/system/result message ROI can support match-end
+        # confirmation. Repeated HP overlay OCR must not crowd out events.
+        if not (field.startswith("screen_text.") and
+                field.endswith(("battle_message","system_message",
+                                 "result_message"))):
+            continue
+        raw=row.get("raw_text",row.get("text",""))
+        observed=row.get("observed_at",row.get("captured_at",row.get("timestamp")))
+        if (not isinstance(frame,str) or not frame
+                or not isinstance(raw,str) or not raw.strip()
+                or not isinstance(observed,(float,int))):
+            continue
+        # Input is the existing battle-event OCR timeline only. The result
+        # screen itself is NOT submitted for new OCR or GPT-image analysis.
+        if observed>=screen_time or frame==screen_frame:
+            continue
+        confidence=row.get("confidence")
+        candidates.append({
+            "frame_id":frame,
+            "observed_at":float(observed),
+            "field":str(row.get("field") or "")[:100],
+            "raw_text":raw.strip()[:200],
+            "confidence":confidence if isinstance(confidence,(int,float)) else None,
+        })
+    candidates.sort(key=lambda x:x["observed_at"])
+    return candidates[-10:]
+
+
+def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
+    """Fail closed on an explicit opposite outcome; never infer a result.
+
+    Only an independent GPT decision can end the match. This check merely
+    rejects contradictory grounded quotations (e.g. WIN citing 敗北).
+    Ambiguous or two-sided messages require human confirmation.
+    """
+    phrase=" ".join(evidence.casefold().split())
+    win_cues=("勝利","勝った","勝ちました","you win","相手が降参","相手が投了")
+    loss_cues=("敗北","負けた","負けました","you lose","自分が降参")
+    matches_win=any(cue in phrase for cue in win_cues)
+    matches_loss=any(cue in phrase for cue in loss_cues)
+    if matches_win==matches_loss:
+        return False
+    return matches_win if result=="WIN" else matches_loss if result=="LOSS" else False
+
+
+def run_replay_screen_result(*, state: dict,
+                             screen_frame: str, screen_time: float,
+                             local_field_candidates: list[dict],
+                             access_token: str, model: str,
+                             total_seconds: float=20.0, client_factory=None,
+                             reasoning_effort: str="low") -> tuple[dict,dict]:
+    """One GPT verdict from completed PRE-result battle OCR.
+
+    A stable RESULT_SCREEN classification only triggers the evaluation;
+    it does not provide a new OCR reading or prove who won.
+    """
+    started=perf_counter()
+    updated=deepcopy(state)
+    if updated.get("phase")=="ENDED":
+        return updated,{"status":"BLOCKED","reason":"MATCH_ALREADY_ENDED"}
+    if updated.get("phase") not in ("BATTLE","PREP"):
+        return updated,{"status":"RESULT_UNCONFIRMED","reason":"NOT_IN_BATTLE"}
+    if not screen_frame or not isinstance(screen_time,(float,int)):
+        return updated,{"status":"RESULT_UNCONFIRMED","reason":"RESULT_SCREEN_NOT_GROUNDED"}
+    recent=select_screen_result_evidence(
+        local_field_candidates,screen_frame=screen_frame,
+        screen_time=float(screen_time))
+    if not recent:
+        return updated,{"status":"RESULT_UNCONFIRMED",
+                        "reason":"NO_RESULT_OCR_EVIDENCE","images_sent":0}
+    if client_factory is None:
+        from openai import OpenAI
+        client_factory=OpenAI
+    prompt=json.dumps({
+        "verified_screen_kind":"RESULT_SCREEN",
+        "result_screen_frame":screen_frame,
+        "result_screen_observed_at":screen_time,
+        "pre_result_battle_message_ocr_in_time_order":recent,
+        "recognition_source":"LOCAL_OCR_UNVERIFIED",
+        "task":"whole Pokémon Champions match result, not a Pokémon faint"
+    },ensure_ascii=False,separators=(",",":"))
+    try:
+        client=client_factory(api_key=access_token,
+                              base_url="https://api.openai.com/v1",
+                              timeout=total_seconds,max_retries=0)
+        answer=_stream_json(
+            client,model=model,schema=_SCREEN_RESULT_SCHEMA,
+            name="champions_six_class_result_ocr",
+            reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
+            instructions=(
+                "The high-confidence RESULT_SCREEN category has been confirmed "
+                "on two consecutive frames, but this does not prove WIN or LOSS. "
+                "Read up to ten chronological, unverified BATTLE_EVENT OCR "
+                "messages captured BEFORE the result screen. Do not assume "
+                "the result screen itself has been OCR-read. Return "
+                "WIN or LOSS ONLY if one cited OCR phrase explicitly identifies "
+                "the HUMAN player's final MATCH outcome. A Pokemon fainting, "
+                "a partial turn, an opponent's move, or a vague win phrase is "
+                "NOT enough. If contradictory, missing, or uncertain, return "
+                "UNKNOWN. Quote an exact OCR substring as evidence and its "
+                "real input frame_id. Do not invent proof or infer from HP."),
+            content=[{"type":"input_text","text":prompt}])
+        result=answer.get("result","UNKNOWN")
+        evidence=str(answer.get("evidence") or "").strip()
+        source=answer.get("evidence_frame_id")
+        grounded=(isinstance(source,str) and bool(evidence)
+                  and any(row["frame_id"]==source
+                          and evidence in row["raw_text"]
+                          and row["confidence"] is not None
+                          and row["confidence"]>=0.72
+                          and possible_result_message(evidence)
+                          for row in recent))
+        if (result not in ("WIN","LOSS") or not grounded
+                or not _result_quote_direction_consistent(result,evidence)):
+            return updated,{"status":"RESULT_UNCONFIRMED",
+                            "reason":"NO_GROUNDED_FINAL_MATCH_RESULT",
+                            "images_sent":0,
+                            "evidence_frame_count":len(recent)}
+        updated["phase"]="ENDED"
+        updated["result"]=result
+        updated["last_event"]="SIX_CLASS_OCR_MATCH_RESULT"
+        updated.setdefault("history",[]).append({
+            "step":updated.get("step_number",0)+1,
+            "ui":"RESULT_SCREEN","result":"MATCH_END",
+            "evidence_source":"AI_GROUNDED_PRE_RESULT_BATTLE_OCR"})
+        updated["step_number"]=updated.get("step_number",0)+1
+        return updated,{"status":"MATCH_END","screen":"RESULT_SCREEN",
+                        "recommendation":"勝利。" if result=="WIN" else "敗北。",
+                        "result_source":"AI_GROUNDED_PRE_RESULT_BATTLE_OCR",
+                        "evidence_frame_id":source,
+                        "evidence_frame_count":len(recent),
+                        "images_sent":0,
+                        "evidence_confirmed_by_user":False,
+                        "elapsed_ms":round((perf_counter()-started)*1000)}
+    except Exception as exc:
+        return updated,{"status":"RESULT_UNCONFIRMED",
+                        "reason":type(exc).__name__,"images_sent":0,
+                        "elapsed_ms":round((perf_counter()-started)*1000)}
+
+
 def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                            access_token: str, model: str,
                            expected_screen_label: str,

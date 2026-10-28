@@ -17,14 +17,14 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-LABELS=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","OTHER")
+LABELS=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","RESULT_SCREEN","OTHER")
 # UNKNOWN is a low-confidence inference sentinel, never a training class.
 UNDETERMINED="UNKNOWN"
-LABEL_SCHEMA_VERSION=2
+LABEL_SCHEMA_VERSION=3
 MODEL_DIR=Path(__file__).resolve().parent / "data"
 MODEL_FILE="champions_screen_classifier.onnx"
 MANIFEST_FILE="champions_screen_classifier.json"
-EMBEDDED_MANIFEST_KEY="pokemon_champions.screen_classifier.manifest_v2"
+EMBEDDED_MANIFEST_KEY="pokemon_champions.screen_classifier.manifest_v3"
 
 
 @dataclass(frozen=True)
@@ -137,8 +137,9 @@ class ScreenClassifier:
             raise ScreenClassifierError("SCREEN_MODEL_NOT_VALIDATED")
         self.experimental=info.get("validated") is not True
         labels=info.get("labels")
-        if (not isinstance(labels,list) or len(labels)!=len(LABELS)
-                or set(labels)!=set(LABELS) or len(set(labels))!=len(labels)):
+        if (not isinstance(labels,list) or tuple(labels)!=LABELS):
+            # A manifest with swapped output indices is a different model
+            # contract, even when it lists all six class names.
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_LABELS")
         input_size=info.get("input_size")
         if (not isinstance(input_size,list) or len(input_size)!=2
@@ -294,7 +295,7 @@ class ClassifiedMenuGate:
                  # pending; keep the newer candidate for deferred dispatch.
                  "SELECTION":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
                  "PREP":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
-                 "BATTLE":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"}}.get(phase,set())
+                 "BATTLE":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","RESULT_SCREEN"}}.get(phase,set())
         kind=prediction.label if prediction.label in allowed else None
         if kind is None:
             self.misses+=1
@@ -313,6 +314,12 @@ class ClassifiedMenuGate:
         # Event and action categories can follow one another directly.
         # Deduplicate steady frames of one category until the kind changes
         # or two unrelated frames permit the same category again.
+        # Result screens require two HIGH-CONFIDENCE consecutive readings;
+        # low-confidence classification never triggers match-end verification.
+        if kind=="RESULT_SCREEN" and (prediction.confidence<0.95 or prediction.margin<0.50):
+            self.candidate=None
+            self.streak=0
+            return None
         # Time-critical menus are dispatched on their FIRST high-confidence
         # classifier frame. Selection and uncertain predictions retain the
         # normal debounce. The local classifier never chooses a move.
