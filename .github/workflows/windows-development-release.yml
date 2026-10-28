@@ -116,6 +116,23 @@ jobs:
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
           --add-data "build\\desktop-assets\\masters;masters" --add-data "build\\ocr-v6;ocr-v6"
           scripts/windows_desktop_entry.py
+      - name: Confirm bundled OCR bytes match validated staging files
+        shell: pwsh
+        run: |
+          $source = "build/ocr-v6"
+          $frozen = "dist/PokemonChampionsAssistant/_internal/ocr-v6"
+          foreach ($item in Get-ChildItem -LiteralPath $source -File) {
+            $dest = Join-Path $frozen $item.Name
+            if (-not (Test-Path -LiteralPath $dest)) {
+              throw "Packaged OCR file missing: $($item.Name)"
+            }
+            $want = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+            $actual = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
+            if ($want -ne $actual) {
+              throw "Packaged OCR byte mismatch: $($item.Name)"
+            }
+          }
+          Write-Host "OCR_BUNDLE_PACKAGED_BYTES_IDENTICAL"
       - name: Build standalone local dataset collector GUI
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
