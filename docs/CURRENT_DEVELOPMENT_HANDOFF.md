@@ -8,7 +8,7 @@
 2. `docs/AI_DEVELOPMENT_AND_CI_POLICY.md`：Draft PR、CI検証、古いHEAD成功による誤マージ防止。
 3. `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md`：マージ直前の厳格な最新SHA照合、引継ぎ初回コマンド。
 4. `docs/WINDOWS_DEVELOPMENT_RELEASES.md`：**ActionsでWindowsビルド、ZIP配布はGitHub Releases**。開発用プレリリースの扱い。
-5. `docs/screen_dataset_collection.md` と `docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md`：5分類ラベル、旧7分類データの読み取り専用移行、旧ONNX非互換、収集/訂正/PNG承認の安全性。
+5. `docs/screen_dataset_collection.md` と `docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md`：6分類ラベル（RESULT_SCREEN追加）、旧7/5分類データの読み取り専用移行、旧ONNX非互換、収集/訂正/PNG承認の安全性。
 6. `docs/Pokemon_Champions_WSL_Docker_Windows_MSI_Design_v2_6.md`：WSL+Dockerの開発とWindowsビルド・実行の分離。MSIは別作業。
 7. `README.md`, `CODEX_START_PROMPT.md`：新規参加時の開発入口（古い日付の記述より正本とGitHub現況を優先）。
 
@@ -33,7 +33,7 @@
 
 ## 収集アプリのUIと学習データの注意点
 
-- 画面分類は `TEAM_SELECTION`, `TURN_ACTION`, `SWITCH_SELECTION`, `BATTLE_EVENT`, `OTHER` の5クラス。モデルマニフェストschema_version=2、旧7クラスONNXは読み込み拒否。実際の教師PNGは新ルートへ非破壊コピーし、旧BATTLE_EVENT/UNKNOWNは人間が再確認する。BATTLE_EVENT判定だけで技名などを確定しない。
+- 画面分類は `TEAM_SELECTION`, `TURN_ACTION`, `SWITCH_SELECTION`, `BATTLE_EVENT`, `RESULT_SCREEN`, `OTHER` の6クラス。モデルマニフェストschema_version=3、旧7クラスONNXは読み込み拒否。実際の教師PNGは新ルートへ非破壊コピーし、旧BATTLE_EVENT/UNKNOWNは人間が再確認する。BATTLE_EVENT判定だけで技名などを確定しない。
 
 - Windowsの画面収集UIは`src/champions_assist/screen_dataset_collector.py`。テストは`tests/test_screen_dataset_collector.py`。全ファイル`screens/_UNLABELLED`は人間がラベルを付けて保存するまで学習データにしない。
 - 画面幅変更でプレビューと操作ボタンをレスポンシブに配置し、横方向にはみ出さないようにする。
