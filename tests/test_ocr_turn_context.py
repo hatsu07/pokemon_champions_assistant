@@ -288,6 +288,26 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertEqual(following["_ai_ocr_unresolved"][0]["source_frames"],[keep])
         self.assertEqual(report["images_sent"],1)
 
+    def test_rejected_tactical_action_does_not_retire_ocr_evidence(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        proof=rows(7)
+        response=model_reply([])
+        response["action"]={"action_kind":"MOVE","move":"技候補に存在しない技",
+                            "switch_target":"","warning":""}
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=proof,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
+        reattempt,_,_=build_ocr_turn_context(after,proof)
+        self.assertEqual(len(reattempt),7)
+
     def test_forced_switch_can_use_text_when_own_actor_unknown_but_fainted_known(self):
         assets=fixture_assets()
         state=battle_state(assets)
