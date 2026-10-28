@@ -77,10 +77,21 @@ AI_OCR_TURN_SCHEMA={
         "interpreted_own_active":{"type":"string"},
         "interpreted_opponent_active":{"type":"string"},
         "processed_ocr_frames":{"type":"array","items":{"type":"string"}},
+        "pending_ocr_questions":{"type":"array","items":{
+            "type":"object","additionalProperties":False,
+            "properties":{
+                "source_frames":{"type":"array","items":{"type":"string"}},
+                "question":{"type":"string"},
+                "importance":{"type":"string","enum":["CRITICAL","IMPORTANT","LOW"]},
+                "recheck_when":{"type":"string"},
+            },
+            "required":["source_frames","question","importance","recheck_when"],
+        }},
         "action":ACTION_SCHEMA,
     },
     "required":["state_updates","interpreted_own_active",
-                "interpreted_opponent_active","processed_ocr_frames","action"],
+                "interpreted_opponent_active","processed_ocr_frames",
+                "pending_ocr_questions","action"],
 }
 _SELECTION_NAME = "champions_replay_selection"
 _OBSERVATION_NAME = "champions_replay_observation"
@@ -1580,8 +1591,14 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "cell":r.get("matrix_cell"),"source":r.get("source"),
         "hint":str(r.get("ai_hint") or "")[:140],
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
-    from .ocr_ai_evidence import select_ai_ocr_evidence
-    candidates,_=select_ai_ocr_evidence(local_field_candidates)
+    from .ocr_turn_context import build_ocr_turn_context, sanitize_pending_questions
+    candidates,pending_ocr,context_stats=build_ocr_turn_context(
+        state,local_field_candidates)
+    if diagnostic_sink is not None:
+        diagnostic_sink("OCR_TURN_COMPACTION",{
+            key:value for key,value in context_stats.items()
+            if key not in ("presented_keys","partial_frames")}
+            | {"partial_frame_count":len(context_stats["partial_frames"])})
     prompt={
         "screen_kind":expected_screen_label,
         "choice_kind":"SWITCH_ONLY" if switch_only else "MOVE_OR_SWITCH",
@@ -1623,6 +1640,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "form_by_pokemon",{}).get("opponent",{}).get(opponent)),
         "recent_history":(state.get("history") or [])[-3:],
         "ocr_candidates_unverified":candidates,
+        "ocr_pending_questions_unverified":pending_ocr,
+        "ocr_deferred_rows_local_only":context_stats["rows_deferred"],
         "no_visible_party_confirmation":switch_only,
     }
     if diagnostic_sink is not None:
@@ -1652,6 +1671,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "and give the best defensible action with a brief uncertainty "
                 "warning. Use NO_ACTION only if no legal action can be "
                 "meaningfully assessed. "
+                "Return pending_ocr_questions (at most 16, brief) for critical " 
+                "unresolved OCR concerns with original source_frames, an " 
+                "unverified question, and what future observation resolves it. " 
+                "Those questions are NOT confirmed battle facts. " 
                 "List a frame in processed_ocr_frames ONLY when every OCR "
                 "observation from that frame is fully understood and all "
                 "confirmed battle changes are reflected in state_updates or "
@@ -1676,6 +1699,11 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         proposed=answer.get("state_updates",[]) if combined else []
         action=answer["action"] if combined else answer
         updated,audit=apply_ai_ocr_updates(state,proposed,candidates,assets)
+        # Mark only rows actually presented as metadata; the original local
+        # observations are kept by LocalBattleStateTracker, unchanged.
+        seen=set(updated.get("_ai_ocr_presented_keys") or ())
+        seen.update(context_stats["presented_keys"])
+        updated["_ai_ocr_presented_keys"]=sorted(seen)
         if diagnostic_sink is not None:
             for row in audit:
                 diagnostic_sink("AI_OCR_STATE_DECISION",row)
@@ -1720,10 +1748,26 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                         and row.get("reason")!="ALREADY_APPLIED"):
                     unverified_frames.update(event.get("evidence_frames") or ())
             ack=set(updated.get("_ai_ocr_ack_frames") or ())
+            proposed_questions=answer.get("pending_ocr_questions") or []
+            from .ocr_turn_context import sanitize_pending_questions
+            all_ledger,_=select_ai_ocr_evidence(local_field_candidates)
+            all_frames={row.get("frame_id") for row in all_ledger}
+            next_questions=sanitize_pending_questions(
+                proposed_questions,all_frames)
+            pending_proof={frame for q in next_questions
+                           for frame in q["source_frames"]}
             ack.update(frame for frame in answer["processed_ocr_frames"]
                        if isinstance(frame,str) and frame in known_frames
-                       and frame not in unverified_frames)
+                       and frame not in unverified_frames
+                       and frame not in pending_proof
+                       and frame not in context_stats["partial_frames"])
             updated["_ai_ocr_ack_frames"]=sorted(ack)
+            carry=[q for q in pending_ocr if
+                   not all(f in ack for f in q["source_frames"])]
+            from .ocr_turn_context import MAX_PENDING_QUESTIONS
+            unresolved=sanitize_pending_questions(
+                next_questions+carry,all_frames)
+            updated["_ai_ocr_unresolved"]=unresolved[:MAX_PENDING_QUESTIONS]
         obs["our_active"]=updated.get("our_active","")
         obs["opponent_active"]=updated.get("opponent_active","")
         if switch_only and action.get("action_kind") not in ("SWITCH","NO_ACTION"):
