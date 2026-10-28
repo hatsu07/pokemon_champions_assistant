@@ -46,18 +46,12 @@ from .screen_dataset import new_session_id
 
 def prep_budget_before_battle(selection_started_at: float | None, *,
                               now: float, preview_seconds: float = 90.0,
-                              input_reserve: float = 3.0,
-                              prep_cap: float = 40.0) -> float:
-    """Hard-cap provisional/confirmed PREP within the remaining preview.
-
-    If selection-screen onset was not machine-confirmed, we cannot infer an
-    accurate countdown; retain only the established 40s cap and interrupt on
-    any verified battle event. This helper never implies game timer certainty.
-    """
+                              input_reserve: float = 0.0,
+                              prep_cap: float = 90.0) -> float:
+    """Advisory remaining shared 90-second preview budget, never an AI kill switch."""
     if selection_started_at is None:
-        return prep_cap
-    elapsed=max(0.0,now-selection_started_at)
-    return min(prep_cap,max(0.0,preview_seconds-elapsed-input_reserve))
+        return preview_seconds
+    return max(0.0,preview_seconds-max(0.0,now-selection_started_at))
 
 
 # A fresh *verified* command candidate may replace stale frames, but an
@@ -126,7 +120,7 @@ class _ReplayWorker(QObject):
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
                  local_field_candidates=None,diagnostic_sink=None,
-                 selection_seconds=55.0, prep_seconds=40.0,battle_seconds=30.0,
+                 selection_seconds=120.0, prep_seconds=120.0,battle_seconds=120.0,
                  result_messages=None, result_screen=None):
         super().__init__()
         self.job=job
@@ -210,49 +204,34 @@ class _ReplayWorker(QObject):
                     else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
-                    # Selection: shared 55s including auth and all model calls.
-                    remaining=self.selection_seconds-(perf_counter()-batch_started)
-                    if remaining<=2.0:
-                        next_state,report=self.state,{
-                            "status":"DEADLINE_EXCEEDED",
-                            "reason":"AUTH_OR_CAPTURE_BUDGET"}
-                    else:
-                        next_state,report=run_replay_image(
-                            self.frames[-1],state=self.state,assets=self.assets,
-                            access_token=token,model=self.selected_model,
-                            reasoning_effort=self.reasoning_effort,
-                            total_seconds=remaining,
-                        )
+                    # Game-clock goals never cancel network work; finite HTTP
+                    # timeout is independent from the 90-second preview clock.
+                    next_state,report=run_replay_image(
+                        self.frames[-1],state=self.state,assets=self.assets,
+                        access_token=token,model=self.selected_model,
+                        reasoning_effort=self.reasoning_effort,
+                        total_seconds=self.selection_seconds)
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
-                    # Leave at least 15 seconds from the game's nominal 45s
-                    # input window for the human player. Tests use the same
-                    # one-call replay path and strict 30s target.
-                    remaining=self.battle_seconds-(perf_counter()-batch_started)
-                    if remaining<=1.0:
-                        next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"AUTH_OR_AI_BUDGET"}
+                    if _text_action_eligible(self.screen_label,self.state,self.assets):
+                        next_state,report=run_replay_text_action(
+                            state=self.state,assets=self.assets,
+                            access_token=token,model=self.selected_model,
+                            reasoning_effort=self.reasoning_effort,
+                            total_seconds=self.battle_seconds,
+                            expected_screen_label=self.screen_label,
+                            local_field_candidates=local_candidates,
+                            diagnostic_sink=self.diagnostic_sink)
                     else:
-                        if _text_action_eligible(self.screen_label,self.state,self.assets):
-                            next_state,report=run_replay_text_action(
-                                state=self.state,assets=self.assets,
-                                access_token=token,model=self.selected_model,
-                                reasoning_effort=self.reasoning_effort,
-                                total_seconds=remaining,
-                                expected_screen_label=self.screen_label,
-                                local_field_candidates=local_candidates,
-                                diagnostic_sink=self.diagnostic_sink)
-                        else:
-                            # One current image only when essential active
-                            # identity is genuinely missing from local state.
-                            next_state,report=run_replay_batch(
-                                self.frames[-1:],state=self.state,assets=self.assets,
-                                access_token=token,model=self.selected_model,
-                                reasoning_effort=self.reasoning_effort,
-                                total_seconds=remaining,
-                                local_field_candidates=local_candidates,
-                                expected_screen_label=self.screen_label,
-                                diagnostic_sink=self.diagnostic_sink)
-                            report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
+                        next_state,report=run_replay_batch(
+                            self.frames[-1:],state=self.state,assets=self.assets,
+                            access_token=token,model=self.selected_model,
+                            reasoning_effort=self.reasoning_effort,
+                            total_seconds=self.battle_seconds,
+                            local_field_candidates=local_candidates,
+                            expected_screen_label=self.screen_label,
+                            diagnostic_sink=self.diagnostic_sink)
+                        report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
@@ -277,17 +256,14 @@ class _ReplayWorker(QObject):
                 token=auth.access_token()
                 # Both capture and auth consume the selection budget.
                 capture_and_auth_ms=round((perf_counter()-started)*1000)
-                remaining=self.selection_seconds-(perf_counter()-started)
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     next_state,report=self.state,{"status":"CANCELLED"}
-                elif remaining <= 1.0:
-                    next_state,report=self.state,{"status":"DEADLINE_EXCEEDED"}
                 else:
                     next_state,report=run_replay_image(
                         image, state=self.state, assets=self.assets,
                         access_token=token,model=self.selected_model,
                         reasoning_effort=self.reasoning_effort,
-                        total_seconds=remaining,
+                        total_seconds=self.selection_seconds,
                     )
                 report["capture_and_auth_ms"]=capture_and_auth_ms
                 report["elapsed_ms"]=round((perf_counter()-started)*1000)
@@ -416,7 +392,7 @@ class MatchReplayDialog(QDialog):
         self._last_action_text=""
         self._last_selection_text=""
         self._selection_screen_started=None
-        self._prep_budget_seconds=40.0
+        self._prep_budget_seconds=90.0
         self._proposed_selection=None
         self._proposed_prep_key=None
         self._proposed_prep_payload=None
@@ -659,7 +635,7 @@ class MatchReplayDialog(QDialog):
             self._latest_recognition_screen=None
             self._last_action_text=""
             self._last_selection_text=""
-            self._prep_budget_seconds=40.0
+            self._prep_budget_seconds=90.0
             self._proposed_selection=None
             self._proposed_prep_key=None
             self._proposed_prep_payload=None
@@ -1126,7 +1102,7 @@ class MatchReplayDialog(QDialog):
         self._last_action_request_screen=None
         self._selection_screen_started=None
         self._selection_clock_source=None
-        self._prep_budget_seconds=40.0
+        self._prep_budget_seconds=90.0
         self._clear_capture_preview("撮影開始済み・最初のフレームを取得中")
         if self.training_capture_check.isChecked():
             self._begin_background_collection()
@@ -1513,28 +1489,9 @@ class MatchReplayDialog(QDialog):
                           opponent_known=bool(self.state.get("opponent_active")),
                           state_revision=self._active_state_revision)
         self._active_request_frame=frames[-1] if frames else None
-        if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
-            elapsed_preview=(self._active_request_started-self._selection_screen_started
-                             if self._selection_screen_started is not None else 0.0)
-            selection_remaining=max(0.0,55.0-elapsed_preview)
-        else:
-            selection_remaining=35.0
-        battle_remaining=_CONSERVATIVE_AI_TURN_SECONDS
-        if (self.state.get("phase") in ("PREP","BATTLE")
-                and self._turn_screen_seen_at is not None):
-            battle_remaining=max(0.0,_CONSERVATIVE_AI_TURN_SECONDS-(
-                monotonic()-self._turn_screen_seen_at))
-        if (self.state.get("phase") in ("PREP","BATTLE")
-                and battle_remaining<=1.0):
-            self._trace_event("TURN_BUDGET_EXHAUSTED",
-                              screen_label=screen_label or "UNKNOWN",
-                              timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000),
-                              target_budget_ms=int(_TARGET_AI_TURN_SECONDS*1000))
-            self._last_action_text=""
-            self._render({"status":"DEADLINE_EXCEEDED",
-                          "screen":screen_label,
-                          "warning":"AI表示の最終期限を超過しました。ゲーム内時計は未取得。"})
-            return
+        # Local clock deadlines are only telemetry; transport remains finite.
+        selection_remaining=120.0
+        battle_remaining=120.0
         # Only this successful new AI dispatch invalidates unfinished PREP.
         # No cancellation on soft 40s expiry, screen animations or a request
         # abandoned before it was actually sent.
@@ -1547,7 +1504,7 @@ class MatchReplayDialog(QDialog):
             self._active_turn_epoch=self._turn_epoch
             self._trace_event("TURN_AI_REQUEST_STARTED",
                               screen_label=screen_label,
-                              timeout_budget_ms=int(battle_remaining*1000),
+                              timeout_budget_ms=int(_CONSERVATIVE_AI_TURN_SECONDS*1000),
                               turn_epoch=self._turn_epoch,
                               frame_seq=self._last_capture_seq,
                               ai_request_attempt=self._ai_request_attempts)
@@ -1593,8 +1550,8 @@ class MatchReplayDialog(QDialog):
             battle_seconds=battle_remaining,
         )
         self._worker.moveToThread(self._thread)
-        self._worker.progress.connect(self._on_ai_progress)
-        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(lambda value,rid=request_id:
+            self._on_ai_progress(value) if rid==self._active_request_id else None)
         self._connect_active_worker(request_id)
         self._thread.start()
 
@@ -2637,7 +2594,6 @@ class MatchReplayDialog(QDialog):
             local_field_candidates=evidence,
             cancel_event=self._cancel_event,battle_seconds=120.0)
         self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
         self._connect_active_worker(self._active_request_id)
         self._thread.start()
 
@@ -2670,7 +2626,6 @@ class MatchReplayDialog(QDialog):
             result_messages=messages,cancel_event=self._cancel_event,
             battle_seconds=30.0)
         self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
         self._connect_active_worker(self._active_request_id)
         self._thread.start()
 
