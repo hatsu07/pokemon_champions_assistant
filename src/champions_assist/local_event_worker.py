@@ -154,17 +154,16 @@ class AsyncBattleEventReader:
         return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
 
     def offer(self, image: np.ndarray, *, label: str,
-              frame_id: str | None=None, timestamp: float | None=None,
-              force_result_screen: bool=False) -> bool:
+              frame_id: str | None=None, timestamp: float | None=None) -> bool:
         """Fast ROI change gate. Never OCR or wait in the caller's thread.
 
-        Only BATTLE_EVENT, RESULT_SCREEN and verified action/party UI are eligible.
+        Only BATTLE_EVENT and verified local action/party UI are eligible.
         Work stays on the worker, never the render or AI turn thread.
         """
         profile=self.profile
         if (not self.enabled or self._stop.is_set() or profile is None
                 or not profile.compatible(image)
-                or label not in ("BATTLE_EVENT","RESULT_SCREEN","TURN_ACTION","SWITCH_SELECTION")):
+                or label not in ("BATTLE_EVENT","TURN_ACTION","SWITCH_SELECTION")):
             return False
         crops=[]
         updated={}
@@ -177,12 +176,7 @@ class AsyncBattleEventReader:
                                    "TEXT","PP_FRACTION"):
                 continue
             if label not in region.applicable_labels:
-                # Existing private calibration JSON pre-dates six classes.
-                # Reuse only its explicit battle-message ROI for the result
-                # screen; never reinterpret arbitrary HUD or popup regions.
-                if not (label=="RESULT_SCREEN" and region.kind=="MESSAGE"
-                        and region.name=="battle_message"):
-                    continue
+                continue
             crop=profile.crop(image,region)
             small=crop[::max(1,crop.shape[0]//20),
                        ::max(1,crop.shape[1]//48)].astype(np.float32)
@@ -191,8 +185,7 @@ class AsyncBattleEventReader:
             changed=(previous is None or previous.shape!=small.shape
                      or float(np.mean(np.abs(previous-small)))/255
                         >=self.change_threshold)
-            if changed or (force_result_screen and label=="RESULT_SCREEN"
-                           and region.name=="battle_message"):
+            if changed:
                 crops.append((region.name,region.kind,crop.copy()))
                 updated[key]=small
         if not crops:
