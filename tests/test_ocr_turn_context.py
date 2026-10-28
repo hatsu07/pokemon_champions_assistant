@@ -407,6 +407,27 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertEqual(after["_ai_ocr_unresolved"],state["_ai_ocr_unresolved"])
         self.assertEqual(after["_ai_ocr_presented_keys"],["previous-key"])
 
+    def test_legacy_reply_without_relevance_decision_does_not_retire_ocr(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        raw=rows(12)
+        # Old-format test/provider response contains no explicit OCR retention
+        # judgment. This should never mean the 12 readings are disposable.
+        legacy={"action_kind":"NO_ACTION","move":"",
+                "switch_target":"","warning":""}
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=legacy):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=raw,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
+        selected,_,_=build_ocr_turn_context(after,raw)
+        self.assertEqual(len(selected),12)
+        self.assertEqual(report["status"],"NO_ACTION")
+
     def test_processed_frame_cannot_ack_gpt_retained_uncertainty(self):
         assets=fixture_assets()
         raw=rows(3)
