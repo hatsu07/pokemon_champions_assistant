@@ -77,6 +77,28 @@ class BoundedOcrTurnContextTests(unittest.TestCase):
             presented.update(meta["presented_keys"])
         self.assertEqual(len(seen),365)
 
+    def test_old_conflict_cannot_disappear_behind_newer_ocr(self):
+        ledger=rows()
+        ledger[38]["status"]="CONFLICT"
+        batch,_,stats=build_ocr_turn_context({},ledger)
+        self.assertIn(ledger[38]["frame_id"],
+                      {r["frame_id"] for r in batch})
+        self.assertLessEqual(stats["api_rows_sent"],MAX_TURN_OCR_ROWS)
+        self.assertEqual(len(ledger),365)
+
+    def test_many_pending_frames_leave_capacity_for_new_turn(self):
+        ledger=rows()
+        pending=[
+            {"source_frames":[f"capture-{i:04d}"],
+             "question":f"未解決{i}","importance":"IMPORTANT",
+             "recheck_when":"next observation"}
+            for i in range(16)]
+        batch,pending_questions,stats=build_ocr_turn_context(
+            {"_ai_ocr_unresolved":pending},ledger)
+        self.assertEqual(len(pending_questions),16)
+        self.assertIn("capture-0364",{r["frame_id"] for r in batch})
+        self.assertLessEqual(stats["api_rows_sent"],MAX_TURN_OCR_ROWS)
+
     def test_pending_cannot_fabricate_source_or_confirm_state(self):
         known={"capture-1"}
         q=[
