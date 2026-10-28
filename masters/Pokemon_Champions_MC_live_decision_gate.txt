@@ -1,6 +1,6 @@
-# PC_MC_LIVE_GATE v6 MACHINE_DSL; SHARED_PREP_DEADLINE=2026-10-26
-META updated=2026-10-26 canonical=1 keys=ASCII values=JP_ALLOWED natural_language=MIN
-META timing_change=2026-10-26; user_explicit_selection_plus_prep_90s_with_3s_input; archived_v5=Pokemon_Champions_MC_live_decision_gate_v5_archive_2026-10-26.txt
+# PC_MC_LIVE_GATE v7 MACHINE_DSL; SHARED_PREP_DEADLINE=2026-10-29
+META updated=2026-10-29 canonical=1 keys=ASCII values=JP_ALLOWED natural_language=MIN
+META timing_change=2026-10-29; user_explicit_selection_plus_prep_shared90s_no_87s_hard_stop; archived_v5=Pokemon_Champions_MC_live_decision_gate_v5_archive_2026-10-26.txt
 META current_team=Pokemon_Champions_MC_team_2026-10-03.csv old_team=Pokemon_Champions_MC_team_2026-09-29.csv
 META source_order=CHAMPIONS_FIXED>USER_INGAME>CHAMPIONS_STATS>OTHER
 META forbid_crossgame_inference=1
@@ -73,8 +73,8 @@ STEP Q5 set preserve_priority_top1; optional consume_warning_top1
 STEP Q6 lead_compare_max=2
 OUTPUT "選出：A / B / C" + "初手：A" + optional_one_warning
 
-[PREP_SHARED_87S]
-P0 selection_start_to_prep_UI_deadline_s=87 player_input_reserve_s=3 hard_stop=1 no_web=1; no_independent_PREP_40s_cap=1
+[PREP_SHARED_90S]
+P0 selection_start_to_prep_UI_target_s=90 player_input_reserve_s=0 hard_stop=0 no_web=1; no_independent_PREP_40s_cap=1; model_request_network_timeout_finite=1
 P1 derive_18_from_cached_6rows/fast6 immediately; no_research; expand cached fields, not 18 independent searches
 CACHE_FIELDS={first_action,delta_trigger,forbidden,switch_ok}
 SWITCH_OK recv=U=>N; recv_R/N/I=>PENDING until opponent_max_hit+coverage+landing_ability verified; guarantee_consumption_only=>N; PENDING is never auto_Y
@@ -84,11 +84,11 @@ P4 bench12 each={first_action,delta_trigger,forbidden,switch_ok,S,our_max_hit,op
 P5 require all18_cache + WIN3; mark exactly which fields complete; NO_PREP_COMPLETE_IF_ANY_MISSING
 WIN3={top_preserve,stopper_vs_setup_fast,endgame_closer}
 P6 optional_after_complete={predicted3_lock_consistency,endgame_lowprob}; stop_on_first_opponent
-P7 at_shared_87s_deadline=STOP_REQUIRED_PREP; if incompletion log_support_error=PREP_UNFINISHED; never falsely say complete
+P7 at_shared_90s_target=LOG_OVERTIME_ONLY; keep_same_request_until_new_dispatch_or_opponent_lead; incomplete_must_not_claim_complete=1; timing_PASS_requires_UI_before_90s=1
 P8 while same assistant response after selection: generate lightweight cached PREP and signal complete only if actually done; NO_BACKGROUND_PROMISE; do_not_wait_for_user_prep_request
 P9 when opponent_lead_received stop PREP immediately even_if_incomplete; reply action first
 P10 if_time_pressure cut={detailed_type_guess,fine_damage,lowprob,deep3}; priority_complete=18cache+WIN3
-P11 selection_plus_prep_target_s=45 best_effort; completion_requires_18cache+WIN3 AND UI_delivery_before_87s
+P11 selection_plus_prep_target_s=45 best_effort; structural_complete_requires_18cache+WIN3; timing_pass_requires_UI_delivery_before_90s
 OUTPUT_AFTER_PREP="事前評価完了。"
 
 [LIVE_SPEED]
