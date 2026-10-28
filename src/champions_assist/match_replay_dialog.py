@@ -1078,6 +1078,8 @@ class MatchReplayDialog(QDialog):
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
+        from .crash_diagnostics import record_event
+        record_event("CAPTURE_MONITOR_START", component="MATCH_REPLAY")
         self._auto_running=True
         self._start_local_event_reader()
         self._capture_error_count=0
@@ -1592,15 +1594,19 @@ class MatchReplayDialog(QDialog):
         self._trace_event(kind,ai_request_attempt=self._ai_request_attempts)
 
     def _capture_next(self):
+        from .crash_diagnostics import record_event, record_exception
         if not self._auto_running:
             return
         if self.state is None or self.state.get("phase")=="ENDED":
             if self.state is not None and self.state.get("phase")=="ENDED":
                 self._stop_auto()
             return
+        if self._capture_seq == 0:
+            record_event("FIRST_FRAME_CAPTURE_BEGIN")
         try:
             image=capture_for_chatgpt(self.capture_config)
         except AutoCaptureUnavailable as exc:
+            record_exception("CAPTURE_UNAVAILABLE", exc, stage="CAPTURE")
             self._capture_error_count+=1
             if self._capture_error_count>=3 and not self._capture_paused:
                 # A transient BlueStacks/Win32/ADB miss must not silently
@@ -1626,17 +1632,31 @@ class MatchReplayDialog(QDialog):
                     "message":"画面の取得が復旧しました。自動送信を継続します。"}
             self.entries.append(report)
             self._render(report)
+        if self._capture_seq == 0:
+            record_event("FIRST_FRAME_CAPTURE_COMPLETE")
         self._latest_image=image
         self._capture_seq+=1
         self._last_capture_seq=self._capture_seq
         if self._background_capture is not None:
             self._background_capture.offer(image)
+        if self._last_capture_seq == 1:
+            record_event("FIRST_FRAME_PREVIEW_BEGIN")
         self._show_capture_preview(image)
+        if self._last_capture_seq == 1:
+            record_event("FIRST_FRAME_PREVIEW_COMPLETE")
         # Take completed OCR before dispatching a tactical request. Never
         # wait on OCR, nor send these image pixels to the AI.
         if self._local_event_reader is not None:
+            if self._last_capture_seq == 1:
+                record_event("FIRST_FRAME_OCR_DRAIN_BEGIN")
             self._drain_event_candidates(include_snapshot=False)
+            if self._last_capture_seq == 1:
+                record_event("FIRST_FRAME_OCR_DRAIN_COMPLETE")
+        if self._last_capture_seq == 1:
+            record_event("FIRST_FRAME_MENU_OBSERVE_BEGIN")
         kind=self._turn_buffer.observe(image)
+        if self._last_capture_seq == 1:
+            record_event("FIRST_FRAME_MENU_OBSERVE_COMPLETE")
         phase=self.state.get("phase")
         if kind is not None and self._eligible_menu(kind):
             if kind in _URGENT_SCREENS:
@@ -1647,15 +1667,25 @@ class MatchReplayDialog(QDialog):
             return
 
         if self._screen_model is not None:
+            trace_classifier=self._last_capture_seq==1 or self._last_capture_seq%20==0
+            if trace_classifier:
+                record_event("SCREEN_CLASSIFIER_PREDICT_BEGIN",
+                             frame_seq=self._last_capture_seq,
+                             provider=getattr(self._screen_model,"provider","UNKNOWN"))
             try:
                 prediction=self._screen_model.predict(image)
             except (ValueError,RuntimeError,TypeError) as exc:
+                record_exception("SCREEN_CLASSIFIER_ERROR", exc, stage="SCREEN_CLASSIFIER")
                 # Do not disable capture or fabricate a classification.
                 self._screen_model=None
                 self._screen_model_status="MODEL_RUNTIME_ERROR_"+type(exc).__name__
                 self.local_classifier_label.setText(self._local_classifier_message())
                 self._automatic_probe.reset()
             else:
+                if trace_classifier:
+                    record_event("SCREEN_CLASSIFIER_PREDICT_COMPLETE",
+                                 frame_seq=self._last_capture_seq,
+                                 provider=getattr(self._screen_model,"provider","UNKNOWN"))
                 if (prediction.label in _URGENT_SCREENS
                         and prediction.confidence>=0.80
                         and phase in ("PREP","BATTLE")):
@@ -1735,9 +1765,12 @@ class MatchReplayDialog(QDialog):
         lexicon=ScreenLexicon.from_frozen_assets(
             self.assets,opponent_names=tuple(getattr(self.assets,"matrix_index",{}).keys()))
         device,gpu_id=self._screen_gpu_settings()
+        from .crash_diagnostics import record_event
+        record_event("LOCAL_OCR_READER_START", device=device, gpu_id=gpu_id)
         self._local_event_reader=AsyncBattleEventReader.with_onnx_ocr(
             self._field_profile,lexicon=lexicon,device=device,gpu_id=gpu_id)
         self._last_ocr_reported_status=self._local_event_reader.reason
+        record_event("LOCAL_OCR_READER_CREATED", component="MATCH_REPLAY")
         self._trace_event("LOCAL_OCR_STARTED",
                           status=self._local_event_reader.reason,
                           requested_device=device,requested_gpu_id=gpu_id,
