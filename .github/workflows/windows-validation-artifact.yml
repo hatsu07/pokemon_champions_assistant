@@ -42,10 +42,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip pyinstaller .
       - name: Stage official PP-OCRv6 small ONNX models (build-time only)
         run: python scripts/stage_ocr_onnx.py --output src/champions_assist/data/ocr-v6
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pyinstaller .
       - name: Verify real OCR model on Windows CPU
         shell: pwsh
         run: |
