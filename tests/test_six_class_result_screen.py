@@ -116,6 +116,23 @@ class ScreenResultEvidenceTests(unittest.TestCase):
         self.assertEqual(report["images_sent"],0)
         self.assertEqual(model.call_count,1)
 
+    def test_grounded_loss_from_previous_event(self):
+        row=self.row("capture-200","対戦に敗北しました",18.0)
+        changed,report,_=self.call(
+            {"result":"LOSS","evidence":"敗北しました",
+             "evidence_frame_id":"capture-200"},[row])
+        self.assertEqual(changed["phase"],"ENDED")
+        self.assertEqual(changed["result"],"LOSS")
+        self.assertEqual(report["evidence_frame_id"],"capture-200")
+
+    def test_future_message_is_not_acceptable_as_result_proof(self):
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"勝利しました",
+             "evidence_frame_id":"capture-999"},
+            [self.row("capture-999","対戦に勝利しました",22.0)])
+        self.assertEqual(report["reason"],"NO_RESULT_OCR_EVIDENCE")
+        self.assertEqual(changed["phase"],"BATTLE")
+
     def test_faint_or_fabricated_frame_is_not_match_end(self):
         rows=[self.row("capture-201","ゲンガーは倒れた",19.)]
         for reply in (
