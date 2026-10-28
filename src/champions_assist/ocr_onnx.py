@@ -190,7 +190,8 @@ class PPocrV6SmallOnnx:
         if len(characters) < 1000:
             raise OcrExecutionError("ONNX_OCR_DICTIONARY_INVALID")
         # Official PP-OCRv6 recognizer includes an additional space character.
-        characters.append(" ")
+        if " " not in characters:
+            characters.append(" ")
         try:
             import onnxruntime as ort
             factory = self._session_factory or ort.InferenceSession
