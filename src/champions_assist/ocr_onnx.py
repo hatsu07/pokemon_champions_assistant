@@ -74,17 +74,17 @@ def _new_session(path: Path, *, factory, available, device: str,
     for provider in order:
         if provider not in available:
             continue
-        options = None
-        if provider == "DmlExecutionProvider":
-            import onnxruntime as ort
-            options = ort.SessionOptions()
-            options.enable_mem_pattern = False
-            options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        providers = ([(provider, {"device_id": gpu_id}), "CPUExecutionProvider"] if
-                     provider != "CPUExecutionProvider" else [provider])
         record_event("OCR_SESSION_INIT_BEGIN", component=path.name,
                      provider=provider, device=device, gpu_id=gpu_id)
         try:
+            options = None
+            if provider == "DmlExecutionProvider":
+                import onnxruntime as ort
+                options = ort.SessionOptions()
+                options.enable_mem_pattern = False
+                options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            providers = ([(provider, {"device_id": gpu_id}), "CPUExecutionProvider"] if
+                         provider != "CPUExecutionProvider" else [provider])
             kwargs = {"providers": providers}
             if options is not None:
                 kwargs["sess_options"] = options
