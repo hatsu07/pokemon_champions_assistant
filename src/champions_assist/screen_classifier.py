@@ -17,14 +17,14 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-LABELS=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","OTHER")
+LABELS=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","RESULT_SCREEN","OTHER")
 # UNKNOWN is a low-confidence inference sentinel, never a training class.
 UNDETERMINED="UNKNOWN"
-LABEL_SCHEMA_VERSION=2
+LABEL_SCHEMA_VERSION=3
 MODEL_DIR=Path(__file__).resolve().parent / "data"
 MODEL_FILE="champions_screen_classifier.onnx"
 MANIFEST_FILE="champions_screen_classifier.json"
-EMBEDDED_MANIFEST_KEY="pokemon_champions.screen_classifier.manifest_v2"
+EMBEDDED_MANIFEST_KEY="pokemon_champions.screen_classifier.manifest_v3"
 
 
 @dataclass(frozen=True)
@@ -294,7 +294,7 @@ class ClassifiedMenuGate:
                  # pending; keep the newer candidate for deferred dispatch.
                  "SELECTION":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
                  "PREP":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"},
-                 "BATTLE":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"}}.get(phase,set())
+                 "BATTLE":{"TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","RESULT_SCREEN"}}.get(phase,set())
         kind=prediction.label if prediction.label in allowed else None
         if kind is None:
             self.misses+=1
@@ -313,6 +313,12 @@ class ClassifiedMenuGate:
         # Event and action categories can follow one another directly.
         # Deduplicate steady frames of one category until the kind changes
         # or two unrelated frames permit the same category again.
+        # Result screens require two HIGH-CONFIDENCE consecutive readings;
+        # low-confidence classification never triggers match-end verification.
+        if kind=="RESULT_SCREEN" and (prediction.confidence<0.95 or prediction.margin<0.50):
+            self.candidate=None
+            self.streak=0
+            return None
         # Time-critical menus are dispatched on their FIRST high-confidence
         # classifier frame. Selection and uncertain predictions retain the
         # normal debounce. The local classifier never chooses a move.
