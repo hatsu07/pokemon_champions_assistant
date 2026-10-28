@@ -6,7 +6,7 @@
 ## GUI操作
 
 - 「テスト全般」→「対戦後レビューE2Eテスト」は独立した6番目のタブ。
-- 「オフライン模擬試験」：人工の `phase=ENDED,result=WIN` と `SYNTHETIC_POSTMATCH_TEST_NOT_GAME_EVIDENCE` を使い、毎回新しい一時SQLiteへ記録する。実ゲームキャプチャなし。外部モデル呼び出しなし。
+- 「オフライン模擬試験」：人工の `phase=ENDED,result=WIN` と `SYNTHETIC_TEST_POSTMATCH_NOT_GAME_EVIDENCE` を使い、毎回新しい一時SQLiteへ記録する。実ゲームキャプチャなし。外部モデル呼び出しなし。
 - 「実APIレビュー試験（有料通信）」：画面上の料金・通信注意を確認して、利用者が明示的に押したときだけログイン済みモデルへ送信する。同じ一時SQLiteを使用。認証・通信失敗は FAIL。API結果は **未検証仮説**。
 - 両モードとも、本番の `MatchupLearningStore.record_finished()` と `postmatch_learning.request_review()` を実行後、SQLiteの `match_history` / `postmatch_reviews` の保存内容・スキーマ・試合IDを読戻す。進捗は「記録保存→AIレビュー中→SQLite保存確認→完了/失敗」で表示。試験終了時に一時DBを削除。
 - 既存「1対戦統合テスト（実ゲーム画面）」は独立したままで、スクリーンキャプチャ・状態・FSM・戦術ロジックを流用しない。
