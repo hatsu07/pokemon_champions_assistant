@@ -109,7 +109,7 @@ class AsyncBattleEventReader:
     def with_onnx_ocr(cls, profile: ScreenFieldProfile | None,
                       *, lexicon: ScreenLexicon | None=None,
                       ocr_engine: OcrEngine | None=None,
-                      device: str="auto"):
+                      device: str="auto", gpu_id: int=0):
         """Use the screen classifier's ONNX Runtime; prefer GPU DirectML."""
         if profile is None:
             return cls(None,lexicon=lexicon)
@@ -117,23 +117,11 @@ class AsyncBattleEventReader:
             from .ocr_onnx import make_onnx_ocr
             from .ocr import OcrExecutionError
             try:
-                ocr_engine=make_onnx_ocr(device=device)
-            except (OcrExecutionError,OSError) as exc:
+                ocr_engine=make_onnx_ocr(device=device,gpu_id=gpu_id)
+            except (OcrExecutionError,OSError,ValueError) as exc:
                 instance=cls(profile,lexicon=lexicon)
-                instance.reason=getattr(exc,"code","ONNX_OCR_RUNTIME_MISSING")
+                instance.reason=getattr(exc,"code","ONNX_OCR_INITIALIZATION_FAILED")
                 return instance
-        return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
-
-    @classmethod
-    def with_onnx_ocr(cls, profile: ScreenFieldProfile | None,
-                      *, lexicon: ScreenLexicon | None=None,
-                      ocr_engine: OcrEngine | None=None,
-                      device: str="auto"):
-        if profile is None:
-            return cls(None,lexicon=lexicon)
-        if ocr_engine is None:
-            from .ocr_onnx import make_onnx_ocr
-            ocr_engine=make_onnx_ocr(device=device)
         return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
 
     @classmethod
@@ -228,7 +216,7 @@ class AsyncBattleEventReader:
                              else "ONNX_OCR_READY_UNVERIFIED")
         except Exception as exc:
             self.errors+=1
-            self.reason=getattr(exc,"code","GPU_OCR_INITIALIZATION_FAILED")
+            self.reason=getattr(exc,"code","ONNX_OCR_INITIALIZATION_FAILED")
             # Do not consume queued evidence with an unusable inference
             # engine; report failure rather than inventing observations.
             self.enabled=False
