@@ -1553,8 +1553,7 @@ class MatchReplayDialog(QDialog):
             battle_seconds=battle_remaining,
         )
         self._worker.moveToThread(self._thread)
-        self._worker.progress.connect(lambda value,rid=request_id:
-            self._on_ai_progress(value) if rid==self._active_request_id else None)
+        self._worker.progress.connect(self._on_ai_progress)
         self._connect_active_worker(request_id)
         self._thread.start()
 
@@ -1587,6 +1586,8 @@ class MatchReplayDialog(QDialog):
 
     @Slot(str)
     def _on_ai_progress(self, progress: str) -> None:
+        if self.sender() is not None and self.sender() is not self._worker:
+            return  # Superseded worker: no stale GUI progress.
         self._set_ai_status(f"{progress} / 試行 #{self._ai_request_attempts}")
         if progress.startswith("ChatGPT認証"):
             kind="AUTH_CHECK"
