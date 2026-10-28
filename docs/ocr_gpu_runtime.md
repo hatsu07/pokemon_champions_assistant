@@ -44,6 +44,22 @@ executed on the GPU. DirectML execution, CPU operator fallback and p50/p95
 latency need hardware tracing and GPU tests. Input event ordering, bounded
 reaction deadlines and AI verification of state changes remain unchanged.
 
+## Local OCR diagnostic in テスト全般
+
+The **バトルイベント読み取りテスト → ローカルOCR診断（AI送信なし）**
+button uses the same bundled PP-OCRv6 ONNX engine and screen-classifier
+device/GPU index preference as the live event reader. It does not call the AI
+or write OCR text into match state. The report includes the actual attached
+provider and individual ROI errors.
+
+`OCR_RUNTIME_MISSING` means the **legacy Tesseract diagnostic** was run,
+not a recognition-quality failure. Use an updated Windows distribution.
+`ONNX_OCR_MODELS_MISSING` means the ONNX model bundle was not found;
+`ONNX_OCR_BUNDLE_INTEGRITY_FAILED` means its manifest check failed.
+Neither is proof that a game message was illegible. When all ROIs execute
+without runtime errors but output blank text, inspect ROI calibration and
+Japanese recognition accuracy separately.
+
 ## Remaining accuracy tests
 
 Collect consented/anonymized game ROIs for `battle_message` and
