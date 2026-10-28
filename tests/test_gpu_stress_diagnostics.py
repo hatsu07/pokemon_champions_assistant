@@ -78,9 +78,11 @@ class GPUStressTests(unittest.TestCase):
         with TemporaryDirectory() as tmp, \
             patch.object(gpu, "_create_rec", return_value=fake), \
             patch.object(gpu, "_create_screen", return_value=fake):
+            fake_model=Path(tmp)/"fake.onnx"
+            fake_model.write_bytes(b"synthetic model stub, never executed")
             for mode in gpu.MODES:
                 progress=Path(tmp)/(mode+".jsonl")
-                code=gpu.child(mode, 3, 0, progress, "fake.onnx", False, Path(tmp))
+                code=gpu.child(mode, 3, 0, progress, str(fake_model), False, Path(tmp))
                 self.assertEqual(code,0)
                 events=[json.loads(s) for s in progress.read_text(
                     encoding="utf-8").splitlines()]
