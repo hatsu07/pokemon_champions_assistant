@@ -21,6 +21,7 @@ from scripts.upgrade_five_class_model_manifest import (
 from champions_assist.screen_classifier import (
     LABELS, LABEL_SCHEMA_VERSION, ScreenClassifier, ScreenClassifierError,
 )
+from scripts.upgrade_five_class_model_manifest import LABELS as FIVE_LABELS
 
 
 class DummySession:
@@ -28,7 +29,7 @@ class DummySession:
         return [type("Input", (), {"name": "rgb"})()]
 
     def run(self, _outputs, _feed):
-        return [np.array([[8.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32)]
+        return [np.array([[8.0]+[0.0]*(len(LABELS)-1)], dtype=np.float32)]
 
 
 class ScreenModelManifestV2Tests(unittest.TestCase):
@@ -57,6 +58,8 @@ class ScreenModelManifestV2Tests(unittest.TestCase):
     def legacy_manifest(self):
         old = self.training_manifest()
         old["schema_version"] = 1
+        old["labels"] = list(FIVE_LABELS)
+        old["metrics"] = {key:self.metrics[key] for key in FIVE_LABELS}
         self.manifest.write_text(json.dumps(old), encoding="utf-8")
         return old
 
@@ -109,10 +112,9 @@ class ScreenModelManifestV2Tests(unittest.TestCase):
         self.assertFalse(converted["validated"])
         self.assertEqual((new / MODEL_NAME).read_bytes(), self.model.read_bytes())
         self.assertEqual(self.manifest.read_bytes(), original_bytes)
-        self.assertEqual(self.dummy_loader(new).predict(
-            np.zeros((16, 16, 3), np.uint8)
-        ).label, "TEAM_SELECTION")
-        with self.assertRaisesRegex(ScreenClassifierError, "NOT_VALIDATED"):
+        with self.assertRaisesRegex(ScreenClassifierError, "MANIFEST"):
+            self.dummy_loader(new)
+        with self.assertRaisesRegex(ScreenClassifierError, "MANIFEST"):
             self.dummy_loader(new, experimental=False)
         with self.assertRaisesRegex(ValueError, "destination"):
             upgrade_legacy_five_class_model(self.old, new, apply=True)
@@ -132,7 +134,7 @@ class ScreenModelManifestV2Tests(unittest.TestCase):
         self.manifest.write_text(json.dumps(src), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "seven-class"):
             inspect_legacy_five_class_model(self.old)
-        src["labels"] = list(reversed(LABELS))
+        src["labels"] = list(reversed(FIVE_LABELS))
         self.manifest.write_text(json.dumps(src), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "reordered"):
             upgrade_legacy_five_class_model(self.old, self.root / "new", apply=True)
