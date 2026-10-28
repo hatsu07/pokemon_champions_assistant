@@ -105,7 +105,7 @@ def build_ocr_turn_context(state: dict, local_rows) -> tuple[list[dict], list[di
         take(row)
     # Source metadata can identify a conflict without interpreting its text.
     # Preserve up to eight conflicting observations in addition to pending.
-    conflicts = [r for r in all_rows if r.get("status") == "CONFLICT"]
+    conflicts = [r for r in all_rows if r.get("certainty", r.get("status")) == "CONFLICT"]
     for row in conflicts[-8:]:
         take(row)
     unseen_remaining = [r for r in unseen if _row_key(r) not in taken]
