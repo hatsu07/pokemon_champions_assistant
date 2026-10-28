@@ -27,7 +27,7 @@
 - `contracts/`、`baseline_v2_3/`：形式スキーマ、参照実装、16件の基準テスト
 - `masters/`：Champions固定マスターと効果ルール初期台帳（大半の効果は未整備）
 
-**重要**：このZIPの環境でWindows MSIの生成やBlueStacks認識が確認されたわけではありません。既存テスト通過はランクマ自動認識を保証しません。APIキーや実対戦画像はリポジトリ／CIへ含めないでください。
+**重要**：このZIPの環境でWindows MSIの生成やユーザーが現在使用中のゲーム画面認識が確認されたわけではありません。既存テスト通過はランクマ自動認識を保証しません。APIキーや実対戦画像はリポジトリ／CIへ含めないでください。
 
 ## v2.7 — プロジェクト情報の補完
 - `docs/V2_7_SOURCE_COMPLETENESS_AND_AUTHORITY.md`: 元ソース／再構成文書の収録状況と参照優先順位。
@@ -48,7 +48,7 @@
 
 **GitHub Actions ＋ GitHub Releases**。PRのWindows CIはすべてのオフラインテスト・Assistant/Collector両方のPyInstallerビルドとGUIスモークを実行するが、保存容量に制約のあるActions Artifactsへはアップロードしない。PRは最新SHAでworkflow全体と必須jobの`completed/success`を確認するまでマージ禁止（有料GitHub Proやブランチ保護は不要）。
 
-masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.github/workflows/windows-development-release.yml) が**masterのSHAを再ビルド・再スモーク**し、2つのZIPを[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases)の**DEVELOPMENT_ONLYプレリリース**として公開する。各ZIPの展開直下にEXEと`_internal`があり、二重ZIPはない。Release公開成功はmaster用workflowと2ZIPの実在で別途確認する。
+masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.github/workflows/windows-development-release.yml) が**検証済みPRからの内容一致を確認し、重複テストを省いてmasterのSHAを再ビルド・最小スモーク**し、2つのZIPを[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases)の**DEVELOPMENT_ONLYプレリリース**として公開する。各ZIPの展開直下にEXEと`_internal`があり、二重ZIPはない。Release公開成功はmaster用workflowと2ZIPの実在で別途確認する。
 
 - `PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`
 - `PokemonChampionsScreenDataCollector-v0.1.0-dev.N-windows-x64.zip`
@@ -79,7 +79,7 @@ masterへマージすると別の[Windows DEVELOPMENT GitHub Release workflow](.
 
 ## スマホミラーリングを使用する実機キャプチャ確認（2026-10-23）
 
-- Windowsネイティブ撮影は BlueStacks 限定ではありません。ユーザーが明示的に選んだスマホミラーリングアプリのウィンドウを読み取ります。スマホに直接ゲーム操作を送る機能はありません。
+- Windowsネイティブ撮影は BlueStacks 限定ではありません。ユーザーが明示的に選んだ実ゲームのウィンドウ（ミラーリング等を含む）を読み取ります。現行のゲーム実行・キャプチャ方式は未確認です。スマホに直接ゲーム操作を送る機能はありません。
 - メイン画面の「対戦支援」タブは**同じキャプチャ画像のライブプレビュー**を表示します。監視を開始し、最初の撮影が成功した後に画像と最終撮影時刻・送信ROIサイズを表示し、その後は描画のみ最大2回/秒更新します。プレビューのための別キャプチャ、AI送信、画像ファイル保存はありません。設定ROIより外側はプレビューに出しません。
 - `CAPTURE_PAUSED` のときは直近に取得できた画像を残し、**撮影失敗理由と最終成功時刻**を表示します。監視停止後はプレビュー画像を消去し、現在画像と誤解させません。
 - 設定での1枚プレビュー成功は、ライブ中にウィンドウID（HWND/PID/タイトル）が維持されることを保証しません。`WINDOW_IDENTITY_UNAVAILABLE` の場合は**対戦支援画面の「撮影対象ウィンドウを再選択（ミラーリング対応）」**を押して、列挙された現在のウィンドウから実際のミラーリング対象を明示選択します。指定したそのウィンドウを**対戦支援と同じROI・撮影経路**で検証できた場合だけ設定とセッションの撮影対象を更新します。成功後も自動監視は開始せず、ユーザーが明示的に再開します。
