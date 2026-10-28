@@ -192,9 +192,7 @@ class _ReplayWorker(QObject):
                 auth_ms=round((perf_counter()-auth_started)*1000)
                 self.progress.emit(
                     "OCRテキストによるAI判断中（結果待ち）"
-                    if self.screen_label in _URGENT_SCREENS
-                    and self.state.get("our_active")
-                    and self.state.get("opponent_active")
+                    if _text_action_eligible(self.screen_label,self.state,self.assets)
                     else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
