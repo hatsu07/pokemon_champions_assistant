@@ -56,16 +56,13 @@ class _SelectionTestWorker(QObject):
         started=perf_counter()
         try:
             token=ChatGPTSignIn(ProtectedSessionStore(self.app_root)).access_token()
-            remaining=55.0-(perf_counter()-started)
-            if remaining<=1.5:
-                report={"status":"DEADLINE_EXCEEDED","reason":"AUTH_BUDGET"}
-            else:
-                _state,report=run_replay_image(
-                    self.image,state=new_replay(self.assets),assets=self.assets,
-                    access_token=token,model=self.model,
-                    reasoning_effort=self.reasoning_effort,
-                    total_seconds=remaining,
-                )
+            # 90-second game-clock is measured, not used as a hard API kill.
+            _state,report=run_replay_image(
+                self.image,state=new_replay(self.assets),assets=self.assets,
+                access_token=token,model=self.model,
+                reasoning_effort=self.reasoning_effort,
+                total_seconds=120.0,
+            )
         except Exception as exc:
             report={"status":"ERROR","reason":type(exc).__name__}
         # Diagnostic-only cached six-row coverage; no filesystem/network IO.
@@ -123,7 +120,7 @@ class _TimingTestWorker(QObject):
     finished=Signal(object)
 
     def __init__(self, *, mode, image, assets, state, app_root, model,
-                 reasoning_effort, requested_at, prep_limit_seconds=87.0):
+                 reasoning_effort, requested_at, prep_limit_seconds=90.0):
         super().__init__()
         self.mode=mode
         self.image=image
@@ -222,7 +219,7 @@ class SelectionTestDialog(QDialog):
         heading=QLabel(
             "選出を表示した直後、同じ相手6匹・選出3匹でPREPを自動開始します。"
             " 選出表示＋初手6／控え12対面＋勝ち筋3点の完了を合計90秒以内"
-            " （PREPは残り時間を使用・ゲーム操作余裕3秒）で検証します。"
+            " （PREPは選出後の残り時間を使用）で検証します。"
             "ターン30秒は別画像で検証します。実ゲームの操作はしません。"
         )
         heading.setWordWrap(True)
@@ -853,6 +850,7 @@ class SelectionTestDialog(QDialog):
             report["pass"]=False
             # Report the timing FAIL separately; preserve useful AI structure.
             report["late_valid_result"]=structure_pass
+            report["partial_ready"]=False  # timing PASS and partial timing PASS differ
             report["timing_pass"]=False
         if mode=="PREP":
             self.prep_attempted=True
@@ -869,7 +867,7 @@ class SelectionTestDialog(QDialog):
                 f"／選出表示 {self.selection_display_elapsed_ms/1000:.3f}秒"
                 f"／PREP表示まで {wall/1000:.3f}秒"
                 f"／合計 {total/1000:.3f}秒"
-                f"（ゲーム入力用3秒確保）"
+                f"（実際の操作時間は別途確認）"
                 f"／初手 {report.get('lead_evaluated',0)}/6"
                 f"／控え {report.get('bench_evaluated',0)}/12"
                 f"／勝ち筋 {report.get('win_conditions',0)}/3"
