@@ -15,7 +15,7 @@ from unittest.mock import patch
 from time import perf_counter
 
 import numpy as np
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from champions_assist.app_config import CaptureConfiguration
 from champions_assist.selection_test_dialog import SelectionTestDialog, _TimingTestWorker
@@ -92,6 +92,11 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.dialog._local_ocr_result(result)
         self.assertIn("1領域",self.dialog.event_ocr_status.text())
         self.assertEqual(self.dialog.event_ocr_rows.count(),1)
+        container=self.dialog.event_ocr_rows.itemAt(0).widget()
+        detail=next(label.text() for label in container.findChildren(QLabel)
+                    if "認識:" in label.text())
+        self.assertIn("\n認識:",detail)
+        self.assertNotIn("\\n",detail)
 
     def test_local_ocr_worker_forwards_gpu_mode_and_index_without_ai(self):
         from champions_assist.calibrated_screen_fields import ScreenFieldProfile
