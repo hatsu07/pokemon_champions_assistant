@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from .calibrated_screen_fields import (
-    IGNORED_OCR_ROIS, ScreenFieldProfile, parse_field_text,
+    IGNORED_OCR_ROIS, ScreenFieldProfile, parse_field_text, live_ocr_region_enabled,
 )
 from .observation_events import ScreenLexicon, TextObservationParser
 from .ocr import OcrEngine, TesseractJapaneseOcr
