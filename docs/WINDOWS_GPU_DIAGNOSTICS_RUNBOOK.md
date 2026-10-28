@@ -42,10 +42,12 @@ E: multiprocess — two independent EXE processes, OCR recognizer in one and
 
 The OCR recognizer uses the production resize/preprocessing on a synthetic
 64x128 white BGR image. The screen classifier uses its production predict()
-method on a synthetic 240x400 image. The detector is not used in these four
+method on a synthetic 240x400 image. The detector is not used in these five
 cases; follow-up testing may include det and the full OCR pipeline.
 
-Each test is an independent child EXE. The parent records the exit code
+A-D run one child EXE per trial; E runs two child EXEs per trial.
+E's sync files are temporary and removed after both children are reaped.
+The parent records the exit code
 even if native code crashes before Python can write an exception. An exit
 code of 0xC0000005 is labeled ACCESS_VIOLATION. Unfinished iterations,
 timeouts and other errors are never counted as successes. Every test
