@@ -44,9 +44,8 @@ timeouts and other errors are never counted as successes. Every test
 explicitly requests DirectML; CPU fallback is not enabled.
 
 The screen classifier model is read from the same selected model choice
-as the normal GUI, including the recorded trial opt-in. Missing,
-unverified or otherwise incompatible weights are NOT fabricated or
-silently replaced. These cases are failures/unavailable, not passes.
+as the normal GUI, including the recorded trial opt-in. Missing screen model weights are SKIPPED_NO_SCREEN_MODEL; unverified
+or otherwise incompatible weights are NOT fabricated or silently replaced. These cases are SKIPPED_NO_SCREEN_MODEL, not GPU passes.
 The --screen-model override still requires validation.
 
 Advanced example (from the extracted folder):
