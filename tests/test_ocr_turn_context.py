@@ -1,251 +1,214 @@
-"""Issue #102/C: bounded turn transport, local-ledger preservation and single AI call."""
+"""Issue #102/C: GPT-directed OCR relevance, no arbitrary row-count cutoff."""
 import json
 import unittest
-
-import numpy as np
 from unittest.mock import patch
 
 from champions_assist.ocr_turn_context import (
-    MAX_TURN_OCR_ROWS, build_ocr_turn_context, sanitize_pending_questions,
+    build_ocr_turn_context, sanitize_pending_questions,
 )
 from champions_assist.ocr_ai_evidence import select_ai_ocr_evidence
-from champions_assist.match_replay import run_replay_batch, run_replay_text_action, new_replay
+from champions_assist.match_replay import run_replay_text_action, new_replay
 from tests.test_ocr_ai_context import fixture_assets
 
 
-def rows(n=365):
+def rows(count=365, offset=0):
     return [
         {"frame_id":f"capture-{i:04d}",
          "field":"screen_text.battle_message",
          "raw_text":f"未検証の戦闘イベント {i}",
          "confidence":0.93,
          "observed_at":1000.0+i*0.5}
-        for i in range(n)
+        for i in range(offset,offset+count)
     ]
 
 
-class BoundedOcrTurnContextTests(unittest.TestCase):
-    def test_365_row_view_is_bounded_and_evidence_stays_lossless(self):
+def unresolved(frame,question="相手のこだわり固定が未確定"):
+    return {
+        "source_frames":[frame],
+        "question":question,
+        "importance":"CRITICAL",
+        "recheck_when":"次の技使用を観測したとき",
+    }
+
+
+def battle_state(assets):
+    state=new_replay(assets)
+    state.update(phase="BATTLE",our_active="ゲンガー",
+                 opponent_active="マスカーニャ",
+                 selected_three=["ゲンガー","ドドゲザン","マリルリ"],
+                 lead="ゲンガー",selection_assumed=False)
+    return state
+
+
+def model_reply(pending,own="ゲンガー",processed=None):
+    return {
+        "state_updates":[],
+        "interpreted_own_active":own,
+        "interpreted_opponent_active":"マスカーニャ",
+        "processed_ocr_frames":processed if processed is not None else [],
+        "pending_ocr_questions":pending,
+        "action":{"action_kind":"NO_ACTION","move":"",
+                  "switch_target":"","warning":"未確認事項あり"},
+    }
+
+
+class ModelSelectedOcrContextTests(unittest.TestCase):
+    def test_first_turn_includes_all_365_without_arbitrary_cutoff(self):
         ledger=rows()
         before=json.dumps(ledger,ensure_ascii=False)
-        selected,carry,stats=build_ocr_turn_context({},ledger)
-        self.assertEqual(len(ledger),365)
+        sent,pending,meta=build_ocr_turn_context({},ledger)
+        self.assertEqual(len(sent),365)
+        self.assertEqual(meta["new_rows_sent"],365)
+        self.assertEqual(meta["prior_observations_not_resent"],0)
+        self.assertEqual(pending,[])
         self.assertEqual(json.dumps(ledger,ensure_ascii=False),before)
-        self.assertLessEqual(len(selected),MAX_TURN_OCR_ROWS)
-        self.assertEqual(stats["ledger_rows_available"],365)
-        self.assertEqual(stats["rows_deferred"],365-len(selected))
-        self.assertLess(stats["api_json_bytes"],stats["ledger_json_bytes"])
-        self.assertEqual(carry,[])
         self.assertEqual(len(select_ai_ocr_evidence(ledger)[0]),365)
 
-    def test_unverified_model_questions_keep_original_source_and_recheck_rule(self):
+    def test_next_turn_contains_only_new_and_gpt_selected_unresolved(self):
         ledger=rows()
-        urgent=ledger[-1]["frame_id"]
-        question={"source_frames":[urgent],
-                  "question":"こだわり技固定が未確認",
-                  "importance":"CRITICAL",
-                  "recheck_when":"次に技名が表示された時"}
         first,_,meta=build_ocr_turn_context({},ledger)
-        self.assertIn(urgent,{row["frame_id"] for row in first})
-        state={"_ai_ocr_unresolved":[question],
-               "_ai_ocr_presented_keys":meta["presented_keys"]}
-        second,pending,stats=build_ocr_turn_context(state,ledger)
-        self.assertEqual(pending[0]["verified"],False)
-        self.assertEqual(pending[0]["source_frames"],[urgent])
-        self.assertIn(urgent,{row["frame_id"] for row in second})
-        self.assertLessEqual(stats["api_rows_sent"],112)
-        self.assertGreater(stats["new_rows_sent"],0)
-
-    def test_unacknowledged_previously_shown_rows_can_be_revisited(self):
-        ledger=rows(12)
-        first,_,meta=build_ocr_turn_context({},ledger)
-        self.assertEqual(len(first),12)
-        second,pending,stats=build_ocr_turn_context(
-            {"_ai_ocr_presented_keys":meta["presented_keys"]},ledger)
-        self.assertEqual(len(second),12)
-        self.assertEqual(stats["new_rows_sent"],0)
-        self.assertEqual(pending,[])
-        self.assertEqual({r["frame_id"] for r in second},
-                         {r["frame_id"] for r in ledger})
-
-    def test_unpresented_backlog_reaches_all_365_frames(self):
-        ledger=rows()
-        seen=set()
-        presented=set()
-        for _ in range(5):
-            batch,_,meta=build_ocr_turn_context(
-                {"_ai_ocr_presented_keys":sorted(presented)},ledger)
-            seen.update(row["frame_id"] for row in batch)
-            presented.update(meta["presented_keys"])
-        self.assertEqual(len(seen),365)
-
-    def test_old_conflict_cannot_disappear_behind_newer_ocr(self):
-        ledger=rows()
-        ledger[38]["certainty"]="CONFLICT"
-        batch,_,stats=build_ocr_turn_context({},ledger)
-        self.assertIn(ledger[38]["frame_id"],
-                      {r["frame_id"] for r in batch})
-        self.assertLessEqual(stats["api_rows_sent"],MAX_TURN_OCR_ROWS)
+        self.assertEqual(len(first),365)
+        critical=["capture-0008","capture-0359"]
+        state={"_ai_ocr_presented_keys":meta["presented_keys"],
+               "_ai_ocr_unresolved":[unresolved(x) for x in critical]}
+        second,pending,stats=build_ocr_turn_context(state,ledger+rows(8,365))
+        frames={r["frame_id"] for r in second}
+        self.assertEqual(len(second),10)
+        self.assertEqual(frames,set(critical)|{
+            f"capture-{i:04d}" for i in range(365,373)})
+        self.assertEqual(stats["new_rows_sent"],8)
+        self.assertEqual(stats["unresolved_rows_resent"],2)
+        self.assertEqual(stats["prior_observations_not_resent"],363)
+        self.assertEqual(len(pending),2)
+        self.assertTrue(all(q["verified"] is False for q in pending))
         self.assertEqual(len(ledger),365)
 
-    def test_many_pending_frames_leave_capacity_for_new_turn(self):
-        ledger=rows()
-        pending=[
-            {"source_frames":[f"capture-{i:04d}"],
-             "question":f"未解決{i}","importance":"IMPORTANT",
-             "recheck_when":"next observation"}
-            for i in range(16)]
-        batch,pending_questions,stats=build_ocr_turn_context(
-            {"_ai_ocr_unresolved":pending},ledger)
-        self.assertEqual(len(pending_questions),16)
-        self.assertIn("capture-0364",{r["frame_id"] for r in batch})
-        self.assertLessEqual(stats["api_rows_sent"],MAX_TURN_OCR_ROWS)
+    def test_omission_does_not_make_ignored_ocr_confirmed(self):
+        ledger=rows(20)
+        first,_,meta=build_ocr_turn_context({},ledger)
+        self.assertEqual(len(first),20)
+        second,pending,stats=build_ocr_turn_context(
+            {"_ai_ocr_presented_keys":meta["presented_keys"],
+             "_ai_ocr_unresolved":[]},ledger)
+        self.assertEqual(second,[])
+        self.assertEqual(pending,[])
+        self.assertEqual(stats["prior_observations_not_resent"],20)
+        # The full unverified text is still available locally.
+        self.assertEqual(len(select_ai_ocr_evidence(ledger)[0]),20)
+        self.assertTrue(all(r.get("game_validated") is None for r in ledger))
 
-    def test_own_actor_mismatch_keeps_unresolved_evidence(self):
+    def test_no_locally_imposed_pending_question_quota(self):
+        ledger=rows(50)
+        _,_,meta=build_ocr_turn_context({},ledger)
+        pending=[unresolved(f"capture-{i:04d}") for i in range(26)]
+        second,questions,_=build_ocr_turn_context(
+            {"_ai_ocr_presented_keys":meta["presented_keys"],
+             "_ai_ocr_unresolved":pending},ledger)
+        self.assertEqual(len(second),26)
+        self.assertEqual(len(questions),26)
+
+    def test_new_reading_on_old_frame_remains_new(self):
+        ledger=rows(1)
+        _,_,meta=build_ocr_turn_context({},ledger)
+        later={**ledger[0],"raw_text":"別の戦闘イベント",
+               "observed_at":ledger[0]["observed_at"]+1}
+        selected,_,stats=build_ocr_turn_context(
+            {"_ai_ocr_presented_keys":meta["presented_keys"]},
+            ledger+[later])
+        self.assertEqual(selected,[later])
+        self.assertEqual(stats["new_rows_sent"],1)
+
+    def test_critical_conflict_retained_by_gpt_not_local_text_heuristic(self):
+        ledger=rows(365)
+        ledger[14]["certainty"]="CONFLICT"
+        _,_,meta=build_ocr_turn_context({},ledger)
+        state={"_ai_ocr_presented_keys":meta["presented_keys"],
+               "_ai_ocr_unresolved":[unresolved(ledger[14]["frame_id"],
+                                              "矛盾した相手の素早さ情報")]}
+        selected,pending,_=build_ocr_turn_context(state,ledger)
+        self.assertEqual([r["frame_id"] for r in selected],
+                         [ledger[14]["frame_id"]])
+        self.assertEqual(pending[0]["verified"],False)
+
+    def test_pending_source_proof_is_required(self):
+        q=[unresolved("not-in-ledger"),unresolved("capture-0001")]
+        pending=sanitize_pending_questions(q,{"capture-0001"})
+        self.assertEqual(len(pending),1)
+        self.assertEqual(pending[0]["source_frames"],["capture-0001"])
+        self.assertEqual(pending[0]["verified"],False)
+
+    def test_same_tactical_request_selects_next_turn_pending(self):
         assets=fixture_assets()
-        state=new_replay(assets)
-        state.update(phase="BATTLE",our_active="ゲンガー",
-                     opponent_active="マスカーニャ",
-                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
-                     lead="ゲンガー",selection_assumed=False)
-        ledger=rows(14)
-        proof=ledger[-1]["frame_id"]
-        def answer(_client,**_kwargs):
-            return {
-                "state_updates":[],
-                "interpreted_own_active":"ドドゲザン",
-                "interpreted_opponent_active":"マスカーニャ",
-                "processed_ocr_frames":[proof],
-                "pending_ocr_questions":[{
-                    "source_frames":[proof],"question":"自軍交代は未確認",
-                    "importance":"CRITICAL",
-                    "recheck_when":"次の自軍表示",
-                }],
-                "action":{"action_kind":"NO_ACTION","move":"",
-                          "switch_target":"","warning":""},
-            }
-        with patch("champions_assist.match_replay._stream_json",side_effect=answer):
+        state=battle_state(assets)
+        raw=rows()
+        proof=raw[-1]["frame_id"]
+        submitted=[]
+        def first_reply(_client,**kwargs):
+            submitted.append(json.loads(kwargs["content"][0]["text"]))
+            return model_reply([unresolved(proof)])
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=first_reply):
             after,report=run_replay_text_action(
                 state=state,assets=assets,access_token="unused",
                 model="test",expected_screen_label="TURN_ACTION",
-                local_field_candidates=ledger,
+                local_field_candidates=raw,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(len(submitted),1)
+        self.assertEqual(len(submitted[0]["ocr_candidates_unverified"]),365)
+        self.assertEqual(after["_ai_ocr_unresolved"][0]["source_frames"],[proof])
+        self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
+        self.assertEqual(report["images_sent"],0)
+        def second_reply(_client,**kwargs):
+            submitted.append(json.loads(kwargs["content"][0]["text"]))
+            return model_reply([unresolved(proof)])
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=second_reply):
+            second,_=run_replay_text_action(
+                state=after,assets=assets,access_token="unused",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=raw+rows(6,365),
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(len(submitted),2)
+        self.assertEqual(len(submitted[1]["ocr_candidates_unverified"]),7)
+        self.assertEqual(submitted[1]["ocr_prior_rows_not_resent"],364)
+        self.assertEqual(len(raw),365)
+        self.assertEqual(second["_ai_ocr_unresolved"][0]["source_frames"],[proof])
+
+    def test_processed_frame_cannot_ack_gpt_retained_uncertainty(self):
+        assets=fixture_assets()
+        raw=rows(3)
+        proof=raw[2]["frame_id"]
+        response=model_reply([unresolved(proof)],processed=[proof])
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after,_=run_replay_text_action(
+                state=battle_state(assets),assets=assets,
+                access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=raw,
+                client_factory=lambda **kwargs:object())
+        self.assertNotIn(proof,after.get("_ai_ocr_ack_frames",[]))
+        self.assertEqual(after["_ai_ocr_unresolved"][0]["verified"],False)
+
+    def test_blocked_actor_preserves_raw_evidence_and_question(self):
+        assets=fixture_assets()
+        raw=rows(4)
+        proof=raw[-1]["frame_id"]
+        response=model_reply([unresolved(proof)],own="ドドゲザン",
+                             processed=[proof])
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after,report=run_replay_text_action(
+                state=battle_state(assets),assets=assets,
+                access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=raw,
                 client_factory=lambda **kwargs:object())
         self.assertEqual(report["reason"],"AI_OCR_OWN_ACTIVE_UNVERIFIED")
         self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
         self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
         self.assertEqual(after["_ai_ocr_unresolved"][0]["source_frames"],[proof])
         self.assertEqual(after["our_active"],"ゲンガー")
-
-    def test_partial_frame_never_acknowledged(self):
-        assets=fixture_assets()
-        state=new_replay(assets)
-        state.update(phase="BATTLE",our_active="ゲンガー",
-                     opponent_active="マスカーニャ",
-                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
-                     lead="ゲンガー",selection_assumed=False)
-        frame="capture-big-frame"
-        ledger=[{
-            "frame_id":frame,"field":"screen_text.battle_message",
-            "raw_text":f"message {i}", "confidence":.9,
-            "observed_at":1000+i*.01}
-            for i in range(113)]
-        def answer(_client,**_kwargs):
-            return {
-                "state_updates":[],
-                "interpreted_own_active":"ゲンガー",
-                "interpreted_opponent_active":"マスカーニャ",
-                "processed_ocr_frames":[frame],
-                "pending_ocr_questions":[],
-                "action":{"action_kind":"NO_ACTION","move":"",
-                          "switch_target":"","warning":""},
-            }
-        with patch("champions_assist.match_replay._stream_json",side_effect=answer):
-            after,_report=run_replay_text_action(
-                state=state,assets=assets,access_token="unused",
-                model="test",expected_screen_label="TURN_ACTION",
-                local_field_candidates=ledger,
-                client_factory=lambda **kwargs:object())
-        self.assertNotIn(frame,after.get("_ai_ocr_ack_frames",[]))
-        self.assertEqual(len(ledger),113)
-
-    def test_pending_cannot_fabricate_source_or_confirm_state(self):
-        known={"capture-1"}
-        q=[
-            {"source_frames":["not-real"],"question":"an unverified claim",
-             "importance":"CRITICAL","recheck_when":"next turn"},
-            {"source_frames":["capture-1"],"question":"?", "importance":"IMPORTANT",
-             "recheck_when":""},
-        ]
-        safe=sanitize_pending_questions(q,known)
-        self.assertEqual(len(safe),1)
-        self.assertIs(safe[0]["verified"],False)
-
-    def test_image_exception_path_does_not_send_365_raw_ocr(self):
-        assets=fixture_assets()
-        state=new_replay(assets)
-        state.update(phase="BATTLE",our_active="ゲンガー",
-                     opponent_active="マスカーニャ",
-                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
-                     lead="ゲンガー",selection_assumed=False)
-        requests=[]
-        def fail_after_capturing(_client,**kwargs):
-            requests.append(json.loads(kwargs["content"][0]["text"]))
-            raise RuntimeError("TEST_ONLY_NO_REAL_AI")
-        with patch("champions_assist.match_replay._stream_json",
-                   side_effect=fail_after_capturing):
-            _after,report=run_replay_batch(
-                [np.zeros((80,120,3),dtype=np.uint8)],
-                state=state,assets=assets,access_token="unused",
-                model="test",expected_screen_label="TURN_ACTION",
-                local_field_candidates=rows(),
-                client_factory=lambda **kwargs:object())
-        self.assertEqual(report["status"],"ERROR")
-        self.assertEqual(len(requests),1)
-        self.assertLessEqual(
-            len(requests[0]["local_field_candidates_unverified"]),
-            MAX_TURN_OCR_ROWS)
-        self.assertEqual(requests[0]["ocr_deferred_rows_local_only"],253)
-
-    def test_one_tactical_call_receives_bounded_prompt_and_carries_pending(self):
-        assets=fixture_assets()
-        state=new_replay(assets)
-        state.update(phase="BATTLE",our_active="ゲンガー",
-                     opponent_active="マスカーニャ",
-                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
-                     lead="ゲンガー",selection_assumed=False)
-        ledger=rows()
-        last=ledger[-1]["frame_id"]
-        requests=[]
-        def answer(_client, **kwargs):
-            requests.append(json.loads(kwargs["content"][0]["text"]))
-            return {
-                "state_updates":[],
-                "interpreted_own_active":"ゲンガー",
-                "interpreted_opponent_active":"マスカーニャ",
-                "processed_ocr_frames":[],
-                "pending_ocr_questions":[{
-                    "source_frames":[last],
-                    "question":"未確認の相手行動",
-                    "importance":"CRITICAL",
-                    "recheck_when":"次のターンのOCR",
-                }],
-                "action":{"action_kind":"NO_ACTION","move":"",
-                          "switch_target":"","warning":"未確定"},
-            }
-        with patch("champions_assist.match_replay._stream_json",side_effect=answer):
-            after,report=run_replay_text_action(
-                state=state,assets=assets,access_token="unused",
-                model="test",expected_screen_label="TURN_ACTION",
-                local_field_candidates=ledger,
-                client_factory=lambda **kwargs:object())
-        self.assertEqual(len(requests),1)
-        self.assertLessEqual(len(requests[0]["ocr_candidates_unverified"]),112)
-        self.assertEqual(requests[0]["ocr_deferred_rows_local_only"],253)
-        self.assertEqual(after["_ai_ocr_unresolved"][0]["source_frames"],[last])
-        self.assertIs(after["_ai_ocr_unresolved"][0]["verified"],False)
-        self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
-        self.assertEqual(len(ledger),365)
-        self.assertEqual(report["images_sent"],0)
 
 
 if __name__=="__main__":
