@@ -1432,9 +1432,13 @@ class MatchReplayDialog(QDialog):
                     outstanding=outstanding,wait_ms=int(waited*1000),
                     reason="READY" if not outstanding else "TIME_BUDGET")
             self._ocr_sync_key=None
+        # Image fallback after a failed/unknown screen classification also
+        # receives the same already-acquired OCR delta. Never recapture or
+        # re-run OCR synchronously during the tactical decision.
         local_candidates=(
             self._freeze_local_events_for_action(screen_label)
-            if screen_label in _URGENT_SCREENS else [])
+            if (screen_label in _URGENT_SCREENS or
+                self.state.get("phase") in ("PREP","BATTLE")) else [])
         if frames and self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             frames=[frames[-1]]
         elif frames and screen_label in _URGENT_SCREENS:
