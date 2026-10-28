@@ -1,7 +1,7 @@
 """Opt-in offline DirectML stress diagnosis for the Windows frozen executable.
 
-Four isolated cases: recognizer alone, screen classifier alone, both serial,
-both parallel. Never reads game screenshots or calls an API. The supervisor
+Five isolated cases: recognizer alone, screen classifier alone, both serial,
+both threaded in one process, and two independently initialized processes. Never reads game screenshots or calls an API. The supervisor
 outlives a crashing native child and records exit code and last checkpoint.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from time import perf_counter
 from typing import Callable
 
 MODES = ("rec", "classifier", "serial", "parallel")
+COMPARISON_MODES = (*MODES, "multiprocess")
 WINDOWS_ACCESS_VIOLATION = 0xC0000005
 _SAFE_ERROR = re.compile(r"^[A-Z0-9_]{1,100}$")
 
@@ -234,7 +235,7 @@ def supervisor(executable: str, *, modes: tuple[str, ...], iterations: int,
                trials: int, gpu_id: int, app_root: Path, model: str | None = None,
                runner=None, timeout: int = 180) -> tuple[Path, dict]:
     """Isolate each case in a new EXE; never infer success from missing logs."""
-    if (not modes or any(m not in MODES for m in modes)
+    if (not modes or any(m not in COMPARISON_MODES for m in modes)
             or not (1 <= iterations <= 1000) or not (1 <= trials <= 20)
             or not (0 <= gpu_id <= 7)):
         raise ValueError("INVALID_GPU_DIAGNOSTIC_OPTIONS")
@@ -259,6 +260,22 @@ def supervisor(executable: str, *, modes: tuple[str, ...], iterations: int,
     persist()
     for mode in modes:
         for trial in range(1, trials + 1):
+            if mode == "multiprocess":
+                from .gpu_multiprocess_diagnostics import run_case
+                if not screen_model_available:
+                    report["cases"].append({
+                        "mode": mode, "trial": trial,
+                        "status": "SKIPPED_NO_SCREEN_MODEL",
+                    })
+                else:
+                    # Save each attempt only after the two child processes
+                    # have been reaped; no GUI/game paths are touched.
+                    report["cases"].append(run_case(
+                        executable, output=output, trial=trial,
+                        iterations=iterations, gpu_id=gpu_id,
+                        app_root=app_root, model=model, timeout=timeout))
+                persist()
+                continue
             progress = output / f"{mode}-{trial:02d}.jsonl"
             command = [
                 executable, "--gpu-diagnostic-child", mode,
@@ -302,7 +319,7 @@ def smoke(report_file: Path) -> int:
     report_file.parent.mkdir(parents=True, exist_ok=True)
     report_file.write_text(json.dumps({
         "status": "GPU_DIAGNOSTIC_CLI_SMOKE_OK",
-        "modes": list(MODES), "child_isolation": True,
+        "modes": list(COMPARISON_MODES), "child_isolation": True,
         "network": "NOT_USED", "gpu_inference_tested": False,
     }), encoding="utf-8")
     return 0

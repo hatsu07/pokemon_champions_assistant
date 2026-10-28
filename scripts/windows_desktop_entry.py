@@ -170,9 +170,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, help="optional local non-secret settings.json path")
     parser.add_argument("--smoke", type=Path, metavar="REPORT_JSON", help="offline headless GUI smoke test")
     parser.add_argument("--gpu-diagnostics", action="store_true",
-                        help="isolate four offline DirectML stress cases")
+                        help="isolate five offline DirectML stress cases, including cross-process")
     parser.add_argument("--gpu-diagnostic-child",
                         choices=("rec", "classifier", "serial", "parallel"))
+    parser.add_argument("--gpu-diagnostic-modes", type=str,
+                        default="rec,classifier,serial,parallel,multiprocess",
+                        help="comma-separated comparison modes")
+    parser.add_argument("--gpu-diagnostic-process-child", choices=("rec", "screen"),
+                        help="isolated subprocess worker for condition E")
+    parser.add_argument("--gpu-diagnostic-sync-dir", type=Path)
     parser.add_argument("--gpu-diagnostic-progress", type=Path)
     parser.add_argument("--gpu-diagnostic-smoke", type=Path)
     parser.add_argument("--gpu-id", type=int, default=0)
@@ -207,6 +213,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             from champions_assist.gpu_stress_diagnostics import smoke
             rc = smoke(args.gpu_diagnostic_smoke)
             return rc
+        if args.gpu_diagnostic_process_child is not None:
+            if args.gpu_diagnostic_progress is None or args.gpu_diagnostic_sync_dir is None:
+                raise ValueError("GPU_MULTIPROCESS_PROGRESS_AND_SYNC_REQUIRED")
+            from champions_assist.gpu_multiprocess_diagnostics import process_child
+            from champions_assist.app_config import default_app_root
+            rc = process_child(args.gpu_diagnostic_process_child,
+                               args.iterations, args.gpu_id,
+                               args.gpu_diagnostic_progress,
+                               args.gpu_diagnostic_sync_dir,
+                               args.screen_model, default_app_root())
+            return rc
         if args.gpu_diagnostic_child is not None:
             if args.gpu_diagnostic_progress is None:
                 raise ValueError("GPU_DIAGNOSTIC_PROGRESS_REQUIRED")
@@ -217,10 +234,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                        False, default_app_root())
             return rc
         if args.gpu_diagnostics:
-            from champions_assist.gpu_stress_diagnostics import MODES, supervisor
+            from champions_assist.gpu_stress_diagnostics import COMPARISON_MODES, supervisor
             from champions_assist.app_config import default_app_root
             output, report = supervisor(
-                sys.executable, modes=MODES, iterations=args.iterations,
+                sys.executable, modes=tuple(args.gpu_diagnostic_modes.split(",")),
+                iterations=args.iterations,
                 trials=args.trials, gpu_id=args.gpu_id,
                 app_root=default_app_root(), model=args.screen_model)
             if os.name == "nt":

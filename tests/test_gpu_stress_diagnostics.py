@@ -93,6 +93,26 @@ class GPUStressTests(unittest.TestCase):
                     self.assertEqual(sum(x["event"]=="RUN_COMPLETE"
                                          for x in events),6)
 
+    def test_cross_process_mode_is_routed_without_running_legacy_cases(self):
+        from unittest.mock import patch
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            selected=root/"selected.onnx"
+            selected.write_bytes(b"fake existence only")
+            fake={"mode":"multiprocess", "trial":1, "status":"SUCCESS",
+                  "workers":{"rec":{"status":"SUCCESS"},
+                             "screen":{"status":"SUCCESS"}},
+                  "overlap_iterations":2, "measured_iterations":2}
+            with patch("champions_assist.gpu_multiprocess_diagnostics.run_case",
+                       return_value=fake) as runner:
+                _, result=gpu.supervisor(
+                    "app.exe", modes=("multiprocess",), iterations=2,
+                    trials=1, gpu_id=0, app_root=root, model=str(selected))
+            runner.assert_called_once()
+            self.assertEqual(result["success_count"],1)
+            self.assertEqual(result["cases"][0]["overlap_iterations"],2)
+            self.assertEqual(result["modes"],["multiprocess"])
+
     def test_disallows_invalid_limits(self):
         with TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
@@ -132,7 +152,7 @@ class GPUStressTests(unittest.TestCase):
             self.assertEqual(gpu.smoke(target),0)
             status=json.loads(target.read_text())
             self.assertEqual(status["status"],"GPU_DIAGNOSTIC_CLI_SMOKE_OK")
-            self.assertEqual(status["modes"],list(gpu.MODES))
+            self.assertEqual(status["modes"],list(gpu.COMPARISON_MODES))
             self.assertIs(status["gpu_inference_tested"],False)
 
 
