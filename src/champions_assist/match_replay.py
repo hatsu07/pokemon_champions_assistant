@@ -1394,6 +1394,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             ),
             content=content,
         )
+        ai_elapsed_ms=round((perf_counter()-api_started)*1000)
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
@@ -1654,6 +1655,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         client=client_factory(api_key=access_token,
                               base_url="https://api.openai.com/v1",
                               timeout=total_seconds,max_retries=0)
+        api_started=perf_counter()
         answer=_stream_json(
             client,model=model,schema=AI_OCR_TURN_SCHEMA,
             name="champions_text_only_state_and_action",
@@ -1744,8 +1746,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             for event,row in zip(proposed,audit):
                 if not isinstance(event,dict):
                     continue
-                if (row.get("status")=="REJECTED"
-                        and row.get("reason")!="ALREADY_APPLIED"):
+                if (event.get("certainty")!="CONFIRMED"
+                        or (row.get("status")=="REJECTED"
+                        and row.get("reason")!="ALREADY_APPLIED")):
                     unverified_frames.update(event.get("evidence_frames") or ())
             ack=set(updated.get("_ai_ocr_ack_frames") or ())
             proposed_questions=answer.get("pending_ocr_questions") or []
@@ -1801,6 +1804,24 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         result["images_sent"]=0
         result["screen_label_hint"]=expected_screen_label
         result["elapsed_ms"]=round((perf_counter()-started)*1000)
+        samples=list(updated.get("_ai_ocr_turn_latency_ms") or [])[-63:]
+        samples.append(result["elapsed_ms"])
+        updated["_ai_ocr_turn_latency_ms"]=samples
+        durations=sorted(samples)
+        p50=durations[(len(durations)-1)//2]
+        p95=durations[min(len(durations)-1,(95*len(durations)+99)//100-1)]
+        if diagnostic_sink is not None:
+            diagnostic_sink("OCR_TURN_TIMING",{
+                "turn_elapsed_ms":result["elapsed_ms"],
+                "ai_request_ms":ai_elapsed_ms,
+                "pre_ai_ms":round((api_started-started)*1000),
+                "post_ai_ms":round((perf_counter()-api_started)*1000)-ai_elapsed_ms,
+                "turn_warning_32s":result["elapsed_ms"]>32000,
+                "turn_within_45s":result["elapsed_ms"]<=45000,
+                "turn_p50_ms":p50,"turn_p95_ms":p95,
+                "sample_count":len(durations),
+                "ocr_json_bytes_before":context_stats["ledger_json_bytes"],
+                "ocr_json_bytes_sent":context_stats["api_json_bytes"]})
         result["action_basis"]="SELECTED_BENCH_UNVERIFIED_VISIBILITY" if switch_only else "REGISTERED_MOVES"
         return updated,result
     except Exception as exc:
