@@ -1,6 +1,6 @@
 """Train an experimental Champions UI classifier from consented local captures.
 
-Run only in the Docker ``trainer`` environment. The five human-labelled PNG
+Run only in the Docker ``trainer`` environment. The six human-labelled PNG
 classes are read from ``screens/<LABEL>/<session>__<frame>.png``. The separate
 ``screens/_UNLABELLED`` JPEG staging area is deliberately never scanned.
 
@@ -64,7 +64,7 @@ def inspect_dataset(root: Path, *, progress: bool=False) -> DatasetInspection:
     records: list[Sample]=[]
     issues: list[str]=[]
     # Never silently exclude legacy 7-class PNGs when a user points the new
-    # five-class trainer at their original dataset. Copy into a NEW root first.
+    # six-class trainer at their original dataset. Copy into a NEW root first.
     for legacy in ("MATCHMAKING","MOVE_MENU","PARTY_MENU","RESULT","UNKNOWN"):
         folder=root/legacy
         if folder.is_dir() and any(
@@ -72,7 +72,7 @@ def inspect_dataset(root: Path, *, progress: bool=False) -> DatasetInspection:
                 for path in folder.rglob("*")):
             issues.append(
                 f"Legacy seven-class images detected in {folder}. "
-                "Run prepare_five_class_screen_dataset.py and review "
+                "Run prepare_six_class_screen_dataset.py and review "
                 "the ambiguous BATTLE_EVENT/UNKNOWN images before training.")
     for index,name in enumerate(LABELS):
         folder=root/name
@@ -237,14 +237,14 @@ def build_training_manifest(
     quality_gate_passed: bool, approve_if_thresholds_pass: bool,
     confidence: float, device: str, pretrained: bool,
 ) -> dict[str, Any]:
-    """Create the shared five-label model contract without importing Torch.
+    """Create the shared six-label model contract without importing Torch.
 
     A good dataset and a schema-compatible artifact are separate conditions.
     The validated flag is never set unless both the quality gate and explicit
     approval were satisfied.
     """
     if set(metrics) != set(LABELS):
-        raise ValueError("training metrics must contain exactly the five screen labels")
+        raise ValueError("training metrics must contain exactly the six screen labels")
     if not 0.5 <= confidence < 1:
         raise ValueError("invalid model confidence threshold")
     return {
