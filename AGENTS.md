@@ -18,18 +18,18 @@
 ## Development host isolation (v2.6)
 - **Source code is stored in WSL2 Linux**, not `/mnt/c` or a Windows filesystem. VS Code WSL + Codex IDE extension is the default editing/agent workflow.
 - **All Python/ADB/Tesseract/development tools run in Docker.** The canonical commands are `docker compose run --rm dev ...` or terminal in Dev Container. Never direct Codex to install Python/Node/ADB/OCR tools on Windows or WSL host or create a host `.venv`.
-- Use `.devcontainer/`, `compose.yaml` and `WSL_DOCKER_VSCODE_CODEX_SETUP.md` for environment and setup. Host retains Windows VS Code, Docker Desktop, WSL2, BlueStacks, and a limited VS Code/Codex extension installation.
-- BlueStacks runs in **Windows**, not Docker. ADB network connectivity must be tested; do not bind an unauthenticated ADB port to the LAN to make it work. Never assume Win32 screen capture works inside Linux container.
+- Use `.devcontainer/`, `compose.yaml` and `WSL_DOCKER_VSCODE_CODEX_SETUP.md` for environment and setup. Host retains Windows VS Code, Docker Desktop and WSL2; the user's current game execution/capture environment remains unconfirmed. ADB/BlueStacks are optional legacy adapters, not installation requirements.
+- If the user explicitly selects a Windows emulator/ADB adapter, validate its connectivity; never expose an unauthenticated ADB port to the LAN. Never assume Win32 screen capture works inside Linux container.
 - Do not mount Docker socket, SSH credentials, ChatGPT/Codex auth or Windows home to dev container without permission. Codex extension inside Dev Container is optional, can require reauthentication / adjusted sandbox, and must not be presumed working.
-- Preserve app isolation across all BUILD_PLAN phases. A phase is not complete unless Docker-based unit tests pass. Real Windows/BlueStacks coverage remains separate.
+- Preserve app isolation across all BUILD_PLAN phases. A phase is not complete unless Docker-based unit tests pass. Real-game capture evidence from the user-selected environment remains separate.
 
 ## Windows-native runtime and MSI contract (v2.6)
 - The authoritative **deployment and packaging** design is `docs/Pokemon_Champions_WSL_Docker_Windows_MSI_Design_v2_6.md`. It does NOT supersede API wire v2.3 or Champions strategy sources.
 - Develop inside WSL2 + Docker, but the production desktop application runs **natively on Windows, without Docker/WSL**.
-- Primary desktop implementation is PySide6. Keep OS-independent core separate from Win32 capture/credential adapters. No claims of working Windows capture until tested on BlueStacks.
+- Primary desktop implementation is PySide6. Keep OS-independent core separate from Win32 capture/credential adapters. No claims of working game capture until tested with user-confirmed actual game footage.
 - Build Windows executable with PyInstaller **onedir on Windows** (initially GitHub Actions Windows runners). Build per-user `.msi` with WiX Toolset. Do not try PyInstaller cross-compilation on Linux and do not install Python toolchain on user's Windows host for release.
 - Keep program files separate from `%LOCALAPPDATA%\PokemonChampionsAssistant` user DB/config/log/cache. In-place upgrade and uninstall must retain user data by default; deleting user data needs explicit confirmation. Use OS credential protection for the runtime API key; never embed it in MSI, CI logs or source.
-- Windows build/release gates: Windows CLI/GUI smoke, runtime DLL/OCR bundling, MSI install/upgrade/uninstall, no privilege escalation by default, security/licensing review, and separate actual BlueStacks E2E validation.
+- Windows build/release gates: Windows CLI/GUI smoke, runtime DLL/OCR bundling, MSI install/upgrade/uninstall, no privilege escalation by default, security/licensing review, and separate real-game E2E validation with the user-selected capture route.
 - WiX version/licensing (including revenue-related maintenance requirements) and code signing must be checked at actual release time. A packaging spec is not a completed `.msi`.
 
 ## Project-specific historical sources & offline improvement (v2.7)
@@ -41,9 +41,9 @@
 - `knowledge/Pokemon_Champions_Realtime_AI_System_Design_v1_0.md` and schema v0.1 are archived historical sources, superseded where conflicting with versioned v2.x contracts.
 
 ## Objective and scope
-Build a **Windows local desktop, observer-only** assistant for Pokémon Champions singles ranked battles running in BlueStacks 5. The user manually plays. **All strategic decisions must come from the OpenAI API**, not Python heuristics: team selection (three + lead), mandatory PREP, every new move/party choice, and post-match analysis. Python owns screen capture, local OCR, Champions-specific evidence parsing, effects, deterministic state management, legal action parsing/validation, SQLite logging, notification UI, and API scheduling.
+Build a **Windows local desktop, observer-only** assistant for Pokémon Champions singles ranked battles captured from a user-selected game window; the actual game execution environment is unconfirmed. The user manually plays. **All strategic decisions must come from the OpenAI API**, not Python heuristics: team selection (three + lead), mandatory PREP, every new move/party choice, and post-match analysis. Python owns screen capture, local OCR, Champions-specific evidence parsing, effects, deterministic state management, legal action parsing/validation, SQLite logging, notification UI, and API scheduling.
 
-This repository contains a design/handoff package, not a completed working system. Do NOT claim BlueStacks/Champions detection works without sample footage and tests. Game rule details not in Champions masters are **unknown**; never import Sword/Shield/SV/ZA mechanics by assumption. Do not pretend `UNMAPPED` effects are understood.
+This repository contains a design/handoff package, not a completed working system. Do NOT claim real-game/Champions detection works without user-confirmed footage and tests. Game rule details not in Champions masters are **unknown**; never import Sword/Shield/SV/ZA mechanics by assumption. Do not pretend `UNMAPPED` effects are understood.
 
 ## Source of truth (read in this order)
 1. `docs/Pokemon_Champions_Contract_And_State_Reconciliation_v2_3.md` and `contracts/` (wire protocol `2.3.0`).
@@ -71,10 +71,10 @@ This repository contains a design/handoff package, not a completed working syste
 - Follow `BUILD_PLAN.md` phase by phase. Produce real code, tests, and user-facing Windows run instructions, not only documentation.
 - First execute existing tests inside Docker: `docker compose build`, `docker compose run --rm dev python scripts/verify_package.py`, then `docker compose run --rm dev python -m unittest discover -s baseline_v2_3 -p "test_*.py" -v`. Do not install host-side Python packages. Report truthfully.
 - Python >= 3.11, type hints, package layout, pytest or unittest, structured logging, settings via environment. Choose specific screen capture/OCR libraries based on Windows verification, not guesses; separate adapters to enable offline replay.
-- Testing without BlueStacks is via synthetic frames and **explicitly labeled simulated** event traces; don't equate simulated pass with game accuracy. Provide a calibration workflow for user-provided screenshots/videos.
+- Testing without verified real-game captures is via synthetic frames and **explicitly labeled simulated** event traces; don't equate simulated pass with game accuracy. Provide a calibration workflow for user-provided screenshots/videos.
 - Keep stage log in `IMPLEMENTATION_STATUS.md` and document blockers and next commands. All main modules must offer `--dry-run` or equivalent no-API mode.
 - If requirements conflict, newer versioned **wire contract** wins on API structure, while gameplay constraints and Champions fixed masters remain authoritative; record conflicts rather than silently assuming behavior.
 - Implement each phase with acceptance tests; no blanket claim of completion if phase-specific evidence is absent.
 
 ## Done means
-A local app that can (1) load four masters with verifiable hashes, (2) replay and reason about observed events and turn boundaries deterministically, (3) open/close/de-duplicate decision windows, (4) call OpenAI with v2.3 structured contract and reject stale/illegal results, (5) show user-facing recommendation/correction UI, (6) log/replay sessions, (7) ingest BlueStacks screenshots after calibration, all with documented Windows setup and tests. Real-match readiness requires separate on-device evidence and approval.
+A local app that can (1) load four masters with verifiable hashes, (2) replay and reason about observed events and turn boundaries deterministically, (3) open/close/de-duplicate decision windows, (4) call OpenAI with v2.3 structured contract and reject stale/illegal results, (5) show user-facing recommendation/correction UI, (6) log/replay sessions, (7) ingest user-selected game-window screenshots after calibration, all with documented Windows setup and tests. Real-match readiness requires separate on-device evidence and approval.
