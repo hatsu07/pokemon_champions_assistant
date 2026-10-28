@@ -20,6 +20,7 @@ from .calibrated_screen_fields import (
 )
 from .observation_events import ScreenLexicon, TextObservationParser
 from .ocr import OcrEngine, TesseractJapaneseOcr
+from .crash_diagnostics import record_event, record_exception
 
 
 @dataclass(frozen=True)
@@ -205,16 +206,20 @@ class AsyncBattleEventReader:
 
     def _run(self) -> None:
         # Warm the model in the OCR worker, never on the Qt render thread.
+        record_event("LOCAL_OCR_WORKER_STARTED", component="OCR_WORKER")
         try:
             warmup=getattr(self._ocr,"warmup",None)
             if warmup is not None:
+                record_event("LOCAL_OCR_WARMUP_BEGIN", component="OCR_WORKER")
                 warmup()
                 provider=getattr(self._ocr,"provider","UNKNOWN")
+                record_event("LOCAL_OCR_WARMUP_COMPLETE", provider=provider)
                 self.reason=("ONNX_OCR_READY_GPU" if provider in
                              ("DmlExecutionProvider","CUDAExecutionProvider")
                              else "ONNX_OCR_READY_CPU" if provider=="CPUExecutionProvider"
                              else "ONNX_OCR_READY_UNVERIFIED")
         except Exception as exc:
+            record_exception("LOCAL_OCR_WARMUP_ERROR", exc, stage="OCR_WORKER")
             self.errors+=1
             self.reason=getattr(exc,"code","ONNX_OCR_INITIALIZATION_FAILED")
             # Do not consume queued evidence with an unusable inference
@@ -259,6 +264,7 @@ class AsyncBattleEventReader:
                         detected_moves=parsed.detected_moves,
                         detected_pokemon=parsed.detected_pokemon))
                 except Exception as exc:
+                    record_exception("LOCAL_OCR_ROI_ERROR", exc, stage="OCR_ROI")
                     # One failing ROI never discards another successfully
                     # recognized HP/message in the same battle-event frame.
                     self.errors+=1
