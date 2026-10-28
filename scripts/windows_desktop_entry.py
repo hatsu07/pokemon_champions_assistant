@@ -109,26 +109,19 @@ def probe_bundled_ocr_execution() -> dict[str, object]:
 
 
 def probe_gpu_ocr_contract() -> dict[str, object]:
-    """Confirm fully bundled OCR models and real local CPU inference in smoke."""
+    """Validate bundled source bytes and actual recognition from frozen EXE."""
     from champions_assist.ocr_onnx import (
-        MODEL_DET,MODEL_REC,ENGINE_NAME,PPocrV6SmallOnnx)
-    if (MODEL_DET,MODEL_REC)!=(
-            "PP-OCRv6_small_det","PP-OCRv6_small_rec"):
+        MODEL_DET, MODEL_REC, ENGINE_NAME)
+    from champions_assist.ocr_smoke import verify_real_cpu_ocr
+
+    if (MODEL_DET, MODEL_REC) != (
+            "PP-OCRv6_small_det", "PP-OCRv6_small_rec"):
         raise RuntimeError("ONNX_OCR_MODEL_MISMATCH")
-    import cv2
-    import numpy as np
-    reader=PPocrV6SmallOnnx(device="cpu")
-    reader.warmup()
-    image=np.full((96,400,3),255,np.uint8)
-    cv2.putText(image,"97%",(12,68),cv2.FONT_HERSHEY_SIMPLEX,
-                1.8,(0,0,0),3,cv2.LINE_AA)
-    reading=reader.read(image,roi_name="opponent_hp_percent")
-    if reading.engine!=ENGINE_NAME:
-        raise RuntimeError("ONNX_OCR_EXECUTION_FAILED")
-    return {"gpu_ocr_backend":ENGINE_NAME,
-            "gpu_ocr_runtime":"BUNDLED_ONNX_RUNTIME",
-            "ocr_cpu_inference_tested":True,
-            "gpu_inference_tested":False}
+    reading = verify_real_cpu_ocr()
+    return {"gpu_ocr_backend": ENGINE_NAME,
+            "gpu_ocr_runtime": "BUNDLED_ONNX_RUNTIME",
+            "gpu_inference_tested": False,
+            **reading}
 
 
 def run_smoke(report_path: Path) -> int:
