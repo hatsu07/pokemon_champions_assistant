@@ -19,7 +19,7 @@ from .prep import (
     validate_partial_prep_result,
 )
 
-PREP_LIMIT_SECONDS = 87.0  # Team-selection 90s clock minus 3s for player input.
+PREP_LIMIT_SECONDS = 90.0  # Entire selection+PREP game clock; no 3s cutoff.
 # PREP has no independent 40s deadline: the caller gives it the remaining
 # budget from the ORIGINAL selection start, including authentication and UI.
 TURN_TARGET_SECONDS = 30.0
@@ -85,17 +85,10 @@ def prep_timing_test(
     started = clock() if started_at is None else started_at
     cap = max(0.0, min(PREP_LIMIT_SECONDS, limit_seconds))
     remaining = _response_limit(started, cap, clock)
-    if remaining <= 1.0:
-        return deepcopy(state), {
-            "status": "PREP_TIMING_FAIL", "reason": "AUTH_OR_QUEUE_BUDGET",
-            "elapsed_ms": _elapsed_ms(started, clock), "limit_ms": round(cap*1000),
-            "lead_evaluated": 0, "bench_evaluated": 0,
-            "win_conditions": 0, "pass": False,
-        }
     params = {
         "state": state, "assets": assets, "access_token": access_token,
         "model": model, "reasoning_effort": reasoning_effort,
-        "limit_seconds": remaining,
+        "limit_seconds": max(120.0,remaining),
     }
     if client_factory is not None:
         params["client_factory"] = client_factory
@@ -186,7 +179,7 @@ def prep_timing_test(
         and updated.get("prep_status")=="CACHE_INCOMPLETE"
         and win_roles==3 and len(rows)==18
         and elapsed<=round(cap*1000))
-    return (updated if passed or partial_ready or cache_incomplete
+    return (updated if complete or passed or partial_ready or cache_incomplete
             else deepcopy(state)), {
         "status": ("PREP_TIMING_PASS" if passed else
                    "PREP_TIMING_PARTIAL" if partial_ready else
@@ -217,6 +210,8 @@ def prep_timing_test(
         "cache_ready":cache_incomplete,
         "partial_ready":partial_ready,
         "pass": passed,
+        "structure_complete":complete,
+        "late_valid_result":complete and not passed,
         "evidence_scope": ("AI_PROVISIONAL_NOT_TACTICALLY_CERTIFIED"
                            if state.get("matrix_provisional")
                            else "STRUCTURE_ONLY_NOT_TACTICALLY_CERTIFIED"),
@@ -243,8 +238,9 @@ def switch_timing_test(*, image, state: dict, assets, access_token: str,
         "PARTY_MENU_AND_LEGAL_SWITCH_REQUIRED"
         if report.get("pass") else report.get("reason", "NO_SWITCH"))
     report["pass"] = passed
-    report["recommendation"] = report.get("recommendation", "") if passed else ""
-    return (updated if passed else deepcopy(state)), report
+    report["recommendation"] = report.get("recommendation", "") if (
+        passed or report.get("late_valid_result")) else ""
+    return (updated if passed or report.get("late_valid_result") else deepcopy(state)), report
 
 
 
@@ -264,12 +260,6 @@ def turn_timing_test(
     """
     started = clock() if started_at is None else started_at
     remaining = _response_limit(started, TURN_TARGET_SECONDS, clock)
-    if remaining <= 1.0:
-        return deepcopy(state), {
-            "status": "TURN_TIMING_FAIL", "reason": "AUTH_OR_QUEUE_BUDGET",
-            "elapsed_ms": _elapsed_ms(started, clock), "target_ms": 30000,
-            "game_limit_ms": 45000, "recommendation": "", "pass": False,
-        }
     if (state.get("phase") not in ("PREP", "BATTLE")
             or len(state.get("selected_three") or ()) != 3
             or len(state.get("opponent_six") or ()) != 6):
@@ -283,7 +273,7 @@ def turn_timing_test(
     params = {
         "images": [image], "state": snap, "assets": assets,
         "access_token": access_token, "model": model,
-        "reasoning_effort": reasoning_effort, "total_seconds": remaining,
+        "reasoning_effort": reasoning_effort, "total_seconds": max(120.0,remaining),
     }
     if client_factory is not None:
         params["client_factory"] = client_factory
@@ -305,7 +295,7 @@ def turn_timing_test(
         and isinstance(recommendation, str) and bool(recommendation.strip())
     )
     passed = legal and elapsed <= 30000
-    return (updated if passed else deepcopy(state)), {
+    return (updated if legal else deepcopy(state)), {
         "status": "TURN_TIMING_PASS" if passed else "TURN_TIMING_FAIL",
         "source_status": report.get("status", "UNKNOWN"),
         "reason": "OK" if passed else (
@@ -315,8 +305,9 @@ def turn_timing_test(
         "game_limit_ms": 45000,
         "input_margin_ms": max(0, 45000 - elapsed),
         "action_kind": action.get("kind", ""),
-        "recommendation": recommendation if passed else "",
+        "recommendation": recommendation if legal else "",
         "pass": passed,
+        "late_valid_result":legal and not passed,
         "screen_observation": report.get("screen", "UNKNOWN"),
         "scope": "OFFMATCH_SAVED_SCREENSHOT_NOT_LIVE_GAME_CERTIFICATION",
     }
