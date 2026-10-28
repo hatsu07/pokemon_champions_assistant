@@ -14,6 +14,7 @@ import json
 from .ocr_ai_evidence import select_ai_ocr_evidence
 
 MAX_TURN_OCR_ROWS = 112
+MAX_PENDING_EVIDENCE_ROWS = 32  # reserve room for the current actionable turn
 MAX_PENDING_QUESTIONS = 16
 MAX_PENDING_SOURCE_FRAMES = 4
 MAX_QUESTION_CHARS = 180
@@ -98,7 +99,14 @@ def build_ocr_turn_context(state: dict, local_rows) -> tuple[list[dict], list[di
             return
         ordered.append(row)
         taken.add(key)
-    for row in pending_rows:
+    # Old unresolved evidence must not consume the entire current-turn
+    # budget. The questions themselves are also passed to the AI by source ID.
+    for row in pending_rows[-MAX_PENDING_EVIDENCE_ROWS:]:
+        take(row)
+    # Source metadata can identify a conflict without interpreting its text.
+    # Preserve up to eight conflicting observations in addition to pending.
+    conflicts = [r for r in all_rows if r.get("status") == "CONFLICT"]
+    for row in conflicts[-8:]:
         take(row)
     unseen_remaining = [r for r in unseen if _row_key(r) not in taken]
     if len(unseen_remaining) <= MAX_TURN_OCR_ROWS - len(ordered):
