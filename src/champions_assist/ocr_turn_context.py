@@ -111,6 +111,13 @@ def build_ocr_turn_context(state: dict, local_rows) -> tuple[list[dict], list[di
             take(row)
         for row in unseen_remaining[-(remaining-oldest_quota):]:
             take(row)
+    # No AI acknowledgment means still UNVERIFIED, not permanently
+    # consumed. When the unseen backlog is drained, revisit previous
+    # unacknowledged evidence; never mark it as confirmed or delete it.
+    for row in reversed(all_rows):
+        if len(ordered) >= MAX_TURN_OCR_ROWS:
+            break
+        take(row)
     sent = sorted(ordered, key=lambda r: (
         float(r.get("observed_at")) if type(r.get("observed_at")) in (int, float)
         else 0.0, str(r.get("frame_id") or "")))
