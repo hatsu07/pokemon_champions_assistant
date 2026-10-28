@@ -1,13 +1,15 @@
 """Issue #102/C: bounded turn transport, local-ledger preservation and single AI call."""
 import json
 import unittest
+
+import numpy as np
 from unittest.mock import patch
 
 from champions_assist.ocr_turn_context import (
     MAX_TURN_OCR_ROWS, build_ocr_turn_context, sanitize_pending_questions,
 )
 from champions_assist.ocr_ai_evidence import select_ai_ocr_evidence
-from champions_assist.match_replay import run_replay_text_action, new_replay
+from champions_assist.match_replay import run_replay_batch, run_replay_text_action, new_replay
 from tests.test_ocr_ai_context import fixture_assets
 
 
@@ -177,6 +179,32 @@ class BoundedOcrTurnContextTests(unittest.TestCase):
         safe=sanitize_pending_questions(q,known)
         self.assertEqual(len(safe),1)
         self.assertIs(safe[0]["verified"],False)
+
+    def test_image_exception_path_does_not_send_365_raw_ocr(self):
+        assets=fixture_assets()
+        state=new_replay(assets)
+        state.update(phase="BATTLE",our_active="ゲンガー",
+                     opponent_active="マスカーニャ",
+                     selected_three=["ゲンガー","ドドゲザン","マリルリ"],
+                     lead="ゲンガー",selection_assumed=False)
+        requests=[]
+        def fail_after_capturing(_client,**kwargs):
+            requests.append(json.loads(kwargs["content"][0]["text"]))
+            raise RuntimeError("TEST_ONLY_NO_REAL_AI")
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=fail_after_capturing):
+            _after,report=run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],
+                state=state,assets=assets,access_token="unused",
+                model="test",expected_screen_label="TURN_ACTION",
+                local_field_candidates=rows(),
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["status"],"ERROR")
+        self.assertEqual(len(requests),1)
+        self.assertLessEqual(
+            len(requests[0]["local_field_candidates_unverified"]),
+            MAX_TURN_OCR_ROWS)
+        self.assertEqual(requests[0]["ocr_deferred_rows_local_only"],253)
 
     def test_one_tactical_call_receives_bounded_prompt_and_carries_pending(self):
         assets=fixture_assets()
