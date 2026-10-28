@@ -85,7 +85,6 @@ class DiagnosticsTabTests(unittest.TestCase):
                           return_value=np.zeros((572,960,3),dtype=np.uint8)):
             self.dialog.choose_event_image()
         self.assertTrue(self.dialog.event_ocr_button.isEnabled())
-        self.assertFalse(self.dialog.event_ocr_button.isEnabled())
         result={"status":"OCR_DIAGNOSTIC_COMPLETE","rows":[{
             "name":"battle_message","kind":"MESSAGE",
             "crop":np.zeros((40,150,3),dtype=np.uint8),
