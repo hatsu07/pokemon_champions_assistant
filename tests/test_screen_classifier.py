@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from champions_assist.screen_classifier import (
-    LABELS,ClassifiedMenuGate,ScreenClassifier,ScreenClassifierError,
+    LABELS,LABEL_SCHEMA_VERSION,ClassifiedMenuGate,ScreenClassifier,ScreenClassifierError,
     ScreenPrediction,load_bundled_classifier,EMBEDDED_MANIFEST_KEY,
 )
 
@@ -21,7 +21,7 @@ class DummySession:
         self.calls=[]
         self.metadata=metadata or {}
         self.logits=np.array([logits if logits is not None
-            else [9,-10,-10,-10,-10]],dtype=np.float32)
+            else [9]+[-10]*(len(LABELS)-1)],dtype=np.float32)
 
     def get_modelmeta(self):
         return type("ModelMeta",(),{"custom_metadata_map":self.metadata})()
@@ -43,7 +43,7 @@ class ScreenClassifierTests(unittest.TestCase):
         self.meta=self.root/"champions_screen_classifier.json"
         self.model.write_bytes(b"local fake ONNX fixture")
         self.config={
-            "schema_version":2,"labels":list(LABELS),"input_size":[160,160],
+            "schema_version":LABEL_SCHEMA_VERSION,"labels":list(LABELS),"input_size":[160,160],
             "sha256":sha256(self.model.read_bytes()).hexdigest(),
             "mean":[0,0,0],"std":[1,1,1],
             "min_confidence":0.90,"min_margin":0.20,
@@ -66,7 +66,7 @@ class ScreenClassifierTests(unittest.TestCase):
         session=DummySession()
         klass=ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:session)
         self.assertEqual(tuple(LABELS),("TEAM_SELECTION","TURN_ACTION",
-                                        "SWITCH_SELECTION","BATTLE_EVENT","OTHER"))
+                                        "SWITCH_SELECTION","BATTLE_EVENT","RESULT_SCREEN","OTHER"))
         self.assertEqual(klass.device,"cpu")
         image=np.full((24,36,3),120,dtype=np.uint8)
         prediction=klass.predict(image)
