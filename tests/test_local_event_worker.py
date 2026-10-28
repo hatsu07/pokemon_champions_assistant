@@ -133,6 +133,33 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
             release.set()
             reader.stop()
 
+    def test_sidecar_failure_disables_future_ocr_and_reports_reason(self):
+        from champions_assist.ocr import OcrExecutionError
+        profile,image,_=fixture()
+        class BrokenSidecar:
+            def __init__(self):
+                self.stop_calls=0
+            def warmup(self):
+                self.provider="DmlExecutionProvider"
+            def read(self, image, *, roi_name):
+                raise OcrExecutionError("OCR_SIDECAR_EXITED")
+            def stop(self):
+                self.stop_calls+=1
+        engine=BrokenSidecar()
+        reader=AsyncBattleEventReader(profile,ocr_engine=engine)
+        try:
+            self.assertTrue(reader.offer(image,label="BATTLE_EVENT"))
+            result=completed(reader)
+            self.assertEqual(len(result),1)
+            self.assertEqual(result[0].observations,())
+            self.assertEqual(result[0].error_code,"OCR_SIDECAR_EXITED")
+            self.assertFalse(reader.enabled)
+            self.assertEqual(reader.reason,"OCR_SIDECAR_EXITED")
+            self.assertFalse(reader.offer(image,label="BATTLE_EVENT"))
+            self.assertEqual(engine.stop_calls,1)
+        finally:
+            reader.stop()
+
     def test_diagnostic_stats_include_duration_and_queue_health_without_text(self):
         profile,image,engine=fixture()
         reader=AsyncBattleEventReader(profile,ocr_engine=engine)
