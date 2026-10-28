@@ -137,8 +137,9 @@ class ScreenClassifier:
             raise ScreenClassifierError("SCREEN_MODEL_NOT_VALIDATED")
         self.experimental=info.get("validated") is not True
         labels=info.get("labels")
-        if (not isinstance(labels,list) or len(labels)!=len(LABELS)
-                or set(labels)!=set(LABELS) or len(set(labels))!=len(labels)):
+        if (not isinstance(labels,list) or tuple(labels)!=LABELS):
+            # A manifest with swapped output indices is a different model
+            # contract, even when it lists all six class names.
             raise ScreenClassifierError("INVALID_SCREEN_MODEL_LABELS")
         input_size=info.get("input_size")
         if (not isinstance(input_size,list) or len(input_size)!=2
