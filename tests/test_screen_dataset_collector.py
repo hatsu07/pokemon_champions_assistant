@@ -130,6 +130,13 @@ class DatasetCollectorGuiTests(unittest.TestCase):
         del gui
         gc.collect()
 
+    def test_result_screen_label_available_for_manual_and_group_correction(self):
+        from champions_assist.screen_dataset_collector import SCREEN_LABELS
+        self.assertIn("RESULT_SCREEN",SCREEN_LABELS)
+        self.assertIn("結果画面",SCREEN_LABELS["RESULT_SCREEN"])
+        self.assertGreaterEqual(self.gui.label_box.findData("RESULT_SCREEN"),0)
+        self.assertGreaterEqual(self.gui.auto_label_box.findData("RESULT_SCREEN"),0)
+
     def test_resize_stacks_controls_and_keeps_preview_inside_viewport(self):
         """Regression: narrowing the window must not clip horizontal controls."""
         self.gui.show()
