@@ -139,6 +139,22 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             self.assertEqual(model.call_args.kwargs["battle_seconds"],120.0)
             thread.return_value.start.assert_called_once()
 
+    def test_late_result_gpt_cannot_override_human_confirmed_result(self):
+        from unittest.mock import MagicMock
+        from champions_assist.match_replay_dialog import MatchReplayDialog
+        panel=self.fixture(status="COMPLETE")
+        panel.state={"phase":"ENDED","result":"WIN"}
+        panel._active_job="result_screen"
+        panel._cancel_event=MagicMock()
+        panel._cancel_event.is_set.return_value=False
+        MatchReplayDialog._completed(
+            panel,{"state":{"phase":"ENDED","result":"LOSS"},
+                   "report":{"status":"MATCH_END","recommendation":"敗北。"}})
+        self.assertEqual(panel.state["result"],"WIN")
+        self.assertTrue(any(
+            call.args[0]=="RESULT_SCREEN_ANSWER_AFTER_MATCH_END_DROPPED"
+            for call in panel._trace_event.call_args_list))
+
     def test_ocr_completed_with_no_words_does_not_call_gpt(self):
         from unittest.mock import patch
         panel=self.fixture(status="COMPLETE")
