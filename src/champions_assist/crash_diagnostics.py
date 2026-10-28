@@ -58,7 +58,12 @@ class _Recorder:
             elif key in {"gpu_id", "exit_code", "frame_seq"} and type(value) is int:
                 record[key] = value
             elif key == "frames" and isinstance(value, list):
-                record[key] = value[:20]
+                record[key] = [
+                    {"file": _safe(item.get("file")),
+                     "line": item.get("line") if type(item.get("line")) is int else 0,
+                     "function": _safe(item.get("function"))}
+                    for item in value[:20] if isinstance(item, dict)
+                ]
         line = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
         with self.lock:
             os.write(self.fd, line)
