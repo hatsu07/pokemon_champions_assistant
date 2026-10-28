@@ -145,6 +145,20 @@ class ScreenResultEvidenceTests(unittest.TestCase):
             self.assertEqual(changed["phase"],"BATTLE")
             self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
 
+    def test_explicit_opposite_outcome_quote_is_rejected(self):
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"敗北しました",
+             "evidence_frame_id":"capture-201"},
+            [self.row("capture-201","対戦に敗北しました",19.)])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+        changed,report,_=self.call(
+            {"result":"LOSS","evidence":"勝利しました",
+             "evidence_frame_id":"capture-201"},
+            [self.row("capture-201","対戦に勝利しました",19.)])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
     def test_unknown_or_missing_evidence_preserves_match(self):
         rows=[self.row("capture-201","とてもこうかはばつぐん",19.)]
         changed,report,_=self.call(
