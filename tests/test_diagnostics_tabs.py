@@ -114,6 +114,23 @@ class DiagnosticsTabTests(unittest.TestCase):
         inspect.assert_called_once_with(image,profile,device="directml",gpu_id=3)
         self.assertEqual(results,[sample])
 
+    def test_local_ocr_worker_records_unexpected_error_and_emits_failure(self):
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        from champions_assist.selection_test_dialog import _LocalOcrWorker
+        image=np.full((572,960,3),255,dtype=np.uint8)
+        worker=_LocalOcrWorker(
+            image,ScreenFieldProfile.from_user_samples_960x572())
+        output=[]
+        worker.finished.connect(output.append)
+        with patch("champions_assist.ocr_diagnostics.inspect_battle_event_image",
+                   side_effect=RuntimeError("DO_NOT_LOG_PRIVATE_IMAGE")), patch(
+            "champions_assist.crash_diagnostics.record_exception") as error:
+            worker.run()
+        self.assertEqual(output[0]["status"],"OCR_DIAGNOSTIC_FAILED")
+        self.assertEqual(output[0]["rows"],[])
+        self.assertNotIn("DO_NOT_LOG_PRIVATE_IMAGE",str(output[0]))
+        error.assert_called_once()
+
     def test_event_observation_requires_actual_event_not_generic_screen(self):
         state=selection_test_prep_state(self.assets,selection_fixture())
         emitted=[]
