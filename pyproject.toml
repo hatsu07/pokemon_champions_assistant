@@ -30,4 +30,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-champions_assist = ["data/*.json", "data/*.onnx"]
+champions_assist = ["data/*.json", "data/*.onnx", "data/ocr-v6/*.onnx", "data/ocr-v6/*.txt"]
