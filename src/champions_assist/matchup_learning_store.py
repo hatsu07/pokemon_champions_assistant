@@ -314,6 +314,16 @@ class MatchupLearningStore:
                     "AI_HYPOTHESIS_UNVERIFIED"))
             return True
 
+    def postmatch_review(self, match_id: str) -> dict | None:
+        """Read back only a previously persisted, unverified review by match id."""
+        with closing(self._db()) as db:
+            row=db.execute("""SELECT review_schema,review_json,reviewed_at,status
+                FROM postmatch_reviews WHERE match_id=?""",(match_id,)).fetchone()
+        if row is None:
+            return None
+        return {"schema":row[0], "review":json.loads(row[1]),
+                "reviewed_at":row[2], "status":row[3]}
+
     def recent_review_notes(self, team_id: str, *, limit: int = 10,
                             team_signature: str | None = None) -> list[dict]:
         with closing(self._db()) as db:
