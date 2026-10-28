@@ -7,7 +7,7 @@ import unittest
 
 from PIL import Image
 
-from scripts.prepare_five_class_screen_dataset import build_plan, main
+from scripts.prepare_five_class_screen_dataset import build_plan, main, NEW_LABELS as FIVE_LABELS
 from scripts.train_screen_classifier import inspect_dataset
 from champions_assist.screen_classifier import LABELS
 
@@ -28,7 +28,7 @@ class FiveClassDatasetMigrationTests(unittest.TestCase):
         return file
 
     def test_exact_five_labels_and_no_unknown_training_class(self):
-        self.assertEqual(LABELS,("TEAM_SELECTION","TURN_ACTION",
+        self.assertEqual(FIVE_LABELS,("TEAM_SELECTION","TURN_ACTION",
                                  "SWITCH_SELECTION","BATTLE_EVENT","OTHER"))
         self.assertNotIn("UNKNOWN",LABELS)
 
