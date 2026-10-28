@@ -1723,10 +1723,6 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         opponent_mismatch=(combined and
             _canonical(answer.get("interpreted_opponent_active",""))!=
             _canonical(updated.get("opponent_active","")))
-        if own_conflict or own_mismatch:
-            return updated,{"status":"BLOCKED","recommendation":"",
-                            "reason":"AI_OCR_OWN_ACTIVE_UNVERIFIED",
-                            "transport":"OCR_TEXT_ONLY","images_sent":0}
         if opponent_mismatch:
             # Preserve verified internal facts; do not turn a model's empty
             # or contradictory opponent label into a fabricated confirmation.
@@ -1764,7 +1760,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                        if isinstance(frame,str) and frame in known_frames
                        and frame not in unverified_frames
                        and frame not in pending_proof
-                       and frame not in context_stats["partial_frames"])
+                       and frame not in context_stats["partial_frames"]
+                       and not own_mismatch and not own_conflict)
             updated["_ai_ocr_ack_frames"]=sorted(ack)
             carry=[q for q in pending_ocr if
                    not all(f in ack for f in q["source_frames"])]
@@ -1777,6 +1774,15 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                        key=lambda q:priorities.get(q["importance"],1)),
                 all_frames)
             updated["_ai_ocr_unresolved"]=unresolved[:MAX_PENDING_QUESTIONS]
+        if own_conflict or own_mismatch:
+            # A blocked actor interpretation cannot consume the evidence;
+            # keep newly returned unresolved questions, but re-present the
+            # raw candidates next turn rather than treating them as handled.
+            updated["_ai_ocr_presented_keys"]=list(
+                state.get("_ai_ocr_presented_keys") or ())
+            return updated,{"status":"BLOCKED","recommendation":"",
+                            "reason":"AI_OCR_OWN_ACTIVE_UNVERIFIED",
+                            "transport":"OCR_TEXT_ONLY","images_sent":0}
         obs["our_active"]=updated.get("our_active","")
         obs["opponent_active"]=updated.get("opponent_active","")
         if switch_only and action.get("action_kind") not in ("SWITCH","NO_ACTION"):
