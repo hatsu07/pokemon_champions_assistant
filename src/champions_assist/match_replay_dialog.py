@@ -7,6 +7,7 @@ The four frozen match assets are loaded once, never re-read during battle.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import replace as dataclass_replace
 from datetime import datetime
 from pathlib import Path
