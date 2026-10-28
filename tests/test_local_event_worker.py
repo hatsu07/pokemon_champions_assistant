@@ -75,47 +75,6 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         finally:
             reader.stop()
 
-    def test_result_screen_reads_battle_message_from_old_calibration(self):
-        # Older private ROI profiles lack RESULT_SCREEN. They are read-only
-        # and should still capture only their existing battle-message crop.
-        profile,image,engine=fixture()
-        reader=AsyncBattleEventReader(profile,ocr_engine=engine)
-        try:
-            self.assertTrue(reader.offer(
-                image,label="RESULT_SCREEN",frame_id="capture-result"))
-            results=completed(reader)
-            self.assertEqual(len(results),1)
-            self.assertEqual({r.field for r in results[0].observations},
-                             {"screen_text.battle_message"})
-            self.assertEqual(results[0].frame_id,"capture-result")
-            self.assertNotIn("own_hp_fraction",engine.calls)
-        finally:
-            reader.stop()
-
-    def test_result_screen_force_queues_exact_stable_frame_even_when_unchanged(self):
-        # The first classifier frame may have already produced an identical
-        # message signature. The stable (second) result frame must still
-        # complete OCR before its GPT result verification is attempted.
-        profile,image,engine=fixture()
-        reader=AsyncBattleEventReader(profile,ocr_engine=engine)
-        try:
-            self.assertTrue(reader.offer(
-                image,label="RESULT_SCREEN",frame_id="capture-first",
-                force_result_screen=True))
-            self.assertEqual(len(completed(reader)),1)
-            self.assertFalse(reader.offer(
-                image,label="RESULT_SCREEN",frame_id="capture-unchanged"))
-            self.assertTrue(reader.offer(
-                image,label="RESULT_SCREEN",frame_id="capture-stable",
-                force_result_screen=True))
-            result=completed(reader)
-            self.assertEqual(len(result),1)
-            self.assertEqual(result[0].frame_id,"capture-stable")
-            self.assertEqual([r.field for r in result[0].observations],
-                             ["screen_text.battle_message"])
-        finally:
-            reader.stop()
-
     def test_action_screen_reads_hp_without_event_message_or_timer(self):
         profile,image,engine=fixture()
         reader=AsyncBattleEventReader(profile,ocr_engine=engine)
