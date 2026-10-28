@@ -15,7 +15,9 @@ import shutil
 import tempfile
 from typing import Any
 
-from champions_assist.screen_classifier import LABELS, LABEL_SCHEMA_VERSION
+# Historical repair tool; must never re-label a five-output model as six.
+LABELS=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT","OTHER")
+LABEL_SCHEMA_VERSION=2
 
 MODEL_NAME = "champions_screen_classifier.onnx"
 MANIFEST_NAME = "champions_screen_classifier.json"
