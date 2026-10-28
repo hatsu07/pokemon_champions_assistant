@@ -371,6 +371,11 @@ def train_model(args):
                and selected["precision"]>=0.995)
     validated=validated and all(
         item["support"]>=30 and item["recall"]>=0.95 for item in metrics.values())
+    # A false RESULT_SCREEN during battle can incorrectly end assistance.
+    # Keep manual result confirmation available and require a stronger
+    # independently held-out result-screen precision gate.
+    validated=(validated and metrics["RESULT_SCREEN"]["precision"]>=0.995
+               and metrics["RESULT_SCREEN"]["false_positives"]==0)
     args.output_dir.mkdir(parents=True,exist_ok=True)
     model_path=args.output_dir/"champions_screen_classifier.onnx"
     model_cpu=model.cpu()
