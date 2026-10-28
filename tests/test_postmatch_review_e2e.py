@@ -98,6 +98,82 @@ class ReviewE2EQtTest(TestCase):
             page.close()
 
 
+
+class ProductionReviewVisibleQtTest(TestCase):
+    """Exercise the actual desktop widgets with a temporary storage root."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from champions_assist.app_config import AppSettingsStore
+        from champions_assist.settings_management import DesktopSettingsService
+        from champions_assist.desktop import DesktopController
+        from champions_assist.store import BattleStore
+        self.temp = TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        master = Path(__file__).resolve().parents[1] / "masters"
+        settings = AppSettingsStore(root / "settings.json", defaults_root=root)
+        service = DesktopSettingsService(settings, master_directory=master)
+        self.battle_store = BattleStore(root / "matches.sqlite3")
+        self.window = DesktopMainWindow(
+            DesktopController(store=self.battle_store, settings_service=service),
+            settings_service=service)
+
+    def tearDown(self):
+        self.window.close()
+        self.battle_store.close()
+
+    def test_end_event_to_visible_missing_model_and_saved_sqlite_body(self):
+        match_id = "synthetic-visible-match"
+        self.window._match_panel.match_id = match_id
+        self.window._match_panel.state = {"phase": "ENDED", "result": "WIN"}
+        state = {"phase": "ENDED", "result": "WIN",
+                 "history": [], "opponent_six": [], "selected_three": []}
+        with patch.object(self.window.settings_service.environment,
+                          "record_finished_match") as saved, patch(
+            "champions_assist.vision_preferences.VisionPreferenceStore"
+        ) as prefs:
+            prefs.return_value.selected_model.return_value = ""
+            self.window._on_unified_state(
+                state, {"status": "MATCH_END", "result_source": "SYNTHETIC_TEST"})
+            saved.assert_called_once()
+        self.assertIn("未実行", self.window.postmatch_status_label.text())
+        self.assertIn("モデル未設定", self.window.postmatch_status_label.text())
+        self.assertIn(match_id, self.window.postmatch_match_label.text())
+        self.assertIn("matchup-learning.sqlite3",
+                      self.window.postmatch_storage_label.text())
+        self.assertTrue(self.window.postmatch_retry_button.isEnabled())
+        store = self.window._postmatch_store()
+        self.assertIsNotNone(store.pending_match(match_id))
+        review = {"schema": REVIEW_SCHEMA, "match_id": match_id,
+                  "findings": [], "next_match_notes": "SQLiteから読み出した合成レビュー"}
+        store.save_postmatch_review(match_id=match_id, review=review)
+        self.window._show_saved_postmatch_review(match_id)
+        self.assertIn("完了・SQLite保存済み", self.window.postmatch_status_label.text())
+        self.assertIn("SQLiteから読み出した合成レビュー",
+                      self.window.postmatch_detail.toPlainText())
+        self.assertFalse(self.window.postmatch_retry_button.isEnabled())
+        self.assertEqual(self.window.tabs.tabText(self.window.tabs.count()-1),
+                         "対戦後レビュー")
+
+    def test_production_review_worker_failure_visible_and_pending_retry(self):
+        match_id = "synthetic-failed-review"
+        store = self.window._postmatch_store()
+        self.assertTrue(store.record_finished(
+            match_id=match_id, team_id=None,
+            state={"phase": "ENDED", "result": "LOSS"},
+            source="SYNTHETIC_TEST"))
+        self.window._postmatch_review_done({
+            "match_id": match_id, "status": "FAILED_REVIEW_RETAINED"})
+        self.assertIn("失敗", self.window.postmatch_status_label.text())
+        self.assertIn("FAILED_REVIEW_RETAINED",
+                      self.window.postmatch_detail.toPlainText())
+        self.assertIsNotNone(store.pending_match(match_id))
+        self.assertTrue(self.window.postmatch_retry_button.isEnabled())
+
 class ProductionMatchEndWiringTest(TestCase):
     def setUp(self):
         self.temp = TemporaryDirectory()
