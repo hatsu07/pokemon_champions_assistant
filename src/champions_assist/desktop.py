@@ -698,6 +698,8 @@ class DesktopMainWindow(QMainWindow):
         self._unified_team_id = None
         self._unified_team_sha = ""
         self._postmatch_worker = None
+        self._postmatch_match_id = None
+        self._postmatch_waiting_match_id = None
         self.setWindowTitle("Pokémon Champions Assistant — observer only")
         self.setMinimumSize(680, 460)
         self._build_ui()
@@ -833,6 +835,25 @@ class DesktopMainWindow(QMainWindow):
         state_layout.addWidget(self.state_tree)
         self.tabs.addTab(state_tab, "観測状態")
         self.tabs.addTab(self._history_tab(), "試合履歴")
+        review_tab = QWidget(self.tabs)
+        review_layout = QVBoxLayout(review_tab)
+        self.postmatch_status_label = QLabel("未開始")
+        self.postmatch_status_label.setWordWrap(True)
+        review_layout.addWidget(self.postmatch_status_label)
+        self.postmatch_match_label = QLabel("試合ID：—")
+        review_layout.addWidget(self.postmatch_match_label)
+        self.postmatch_storage_label = QLabel(
+            "保存先：SQLite（対戦履歴・学習DB）／レビュー本文は未保存")
+        self.postmatch_storage_label.setWordWrap(True)
+        review_layout.addWidget(self.postmatch_storage_label)
+        self.postmatch_detail = QPlainTextEdit(self.tabs)
+        self.postmatch_detail.setReadOnly(True)
+        review_layout.addWidget(self.postmatch_detail)
+        self.postmatch_retry_button = QPushButton("未処理レビューを再試行")
+        self.postmatch_retry_button.setEnabled(False)
+        self.postmatch_retry_button.clicked.connect(self._retry_pending_postmatch_review)
+        review_layout.addWidget(self.postmatch_retry_button)
+        self.tabs.addTab(review_tab, "対戦後レビュー")
         layout.addWidget(self.tabs, 1)
 
         controls = QHBoxLayout()
@@ -1089,6 +1110,7 @@ class DesktopMainWindow(QMainWindow):
             except (OSError, ValueError, RuntimeError) as exc:
                 self.header_labels["records"].setText("SQLite記録失敗: " + type(exc).__name__)
         if status=="MATCH_END" and panel.match_id:
+            self._postmatch_match_id=panel.match_id
             try:
                 self.settings_service.environment.record_finished_match(
                     match_id=panel.match_id,state=state)
@@ -1098,43 +1120,129 @@ class DesktopMainWindow(QMainWindow):
                 inserted=learning.record_finished(
                     match_id=panel.match_id,team_id=self._unified_team_id,state=state,
                     team_signature=self._unified_team_sha,source=result_source)
-                if inserted:
-                    # All AI transport is deferred until AFTER END and detached
-                    # from the live state. Failed reviews stay pending in SQLite.
-                    self._start_postmatch_review(panel.match_id)
-            except (OSError,ValueError,RuntimeError):
-                # Logging/review must never disrupt a finished match.
-                pass
+                if learning.postmatch_review(panel.match_id) is not None:
+                    self._show_saved_postmatch_review(panel.match_id)
+                elif inserted or learning.pending_match(panel.match_id) is not None:
+                    # Retries of MATCH_END never duplicate history. The pending
+                    # review survives missing model, busy worker and failures.
+                    if inserted:
+                        self._set_postmatch_status("対戦記録済み",panel.match_id)
+                    if self._postmatch_worker is None:
+                        self._start_postmatch_review(panel.match_id)
+                    elif getattr(self._postmatch_worker, "match_id", None) != panel.match_id:
+                        self._postmatch_waiting_match_id=panel.match_id
+                        self._set_postmatch_status(
+                            "レビュー起動待ち（別試合のAI処理中）",panel.match_id)
+                else:
+                    self._set_postmatch_status(
+                        "未実行（終了記録なし・再試行不可）",panel.match_id)
+            except (OSError,ValueError,RuntimeError) as exc:
+                # Review errors are visible, but never block the match UI.
+                self._set_postmatch_status(
+                    "失敗（記録またはDB処理）",panel.match_id,
+                    reason=type(exc).__name__)
         elif status == "RESET":
             self._unified_match_id = None
             self._unified_last_report_key = None
 
+    def _postmatch_store(self):
+        from .matchup_learning_store import MatchupLearningStore
+        return MatchupLearningStore(self.settings_service.settings.storage.data_root)
+
+    def _set_postmatch_status(self, message: str, match_id: str,
+                              *, reason: str = "") -> None:
+        self._postmatch_match_id=match_id
+        self.postmatch_status_label.setText(message)
+        self.postmatch_match_label.setText("試合ID：" + match_id)
+        try:
+            storage_path=str(self._postmatch_store().db_path)
+        except (OSError,ValueError,RuntimeError):
+            storage_path="SQLiteにアクセスできません"
+        self.postmatch_storage_label.setText("保存先：" + storage_path)
+        if reason:
+            self.postmatch_detail.setPlainText("理由：" + reason)
+        try:
+            can_retry=(self._postmatch_worker is None
+                       and self._postmatch_store().pending_match(match_id) is not None)
+        except (OSError,ValueError,RuntimeError):
+            can_retry=False
+        self.postmatch_retry_button.setEnabled(can_retry)
+
+    def _show_saved_postmatch_review(self, match_id: str) -> None:
+        stored=self._postmatch_store().postmatch_review(match_id)
+        if stored is None:
+            self._set_postmatch_status("失敗（SQLite読戻し不可）",match_id)
+            return
+        review=stored["review"]
+        findings=review.get("findings",[])
+        details=[
+            "保存状態：" + stored["status"],
+            "保存時刻：" + str(stored["reviewed_at"]),
+            "スキーマ：" + stored["schema"],
+            "次戦向けAI要約（未検証）：" + str(review.get("next_match_notes","")),
+            "分析件数：" + str(len(findings)),
+        ]
+        for idx,item in enumerate(findings,1):
+            details.append(
+                f"{idx}. [{item.get('certainty','HYPOTHESIS')}] "
+                f"{item.get('opponent','')} / {item.get('our_pokemon','')}："
+                f"{item.get('issue','')} → {item.get('suggestion','')}"
+            )
+        self._set_postmatch_status("完了・SQLite保存済み（仮説／未検証）",match_id)
+        self.postmatch_detail.setPlainText("\n".join(details))
+        self.postmatch_retry_button.setEnabled(False)
+
     def _start_postmatch_review(self, match_id: str) -> None:
         if self._postmatch_worker is not None:
+            self._set_postmatch_status(
+                "レビュー起動待ち（別試合のワーカーが実行中）",match_id)
+            return
+        if self._postmatch_store().pending_match(match_id) is None:
+            if self._postmatch_store().postmatch_review(match_id) is not None:
+                self._show_saved_postmatch_review(match_id)
+            else:
+                self._set_postmatch_status("未実行（未処理記録なし）",match_id)
             return
         from .app_config import default_app_root
         from .vision_preferences import VisionPreferenceStore
         prefs=VisionPreferenceStore(default_app_root())
         model=prefs.selected_model()
         if not model:
+            self._set_postmatch_status(
+                "未実行（モデル未設定・SQLiteに未処理記録を保持）",match_id)
             return
         worker=_PostmatchReviewWorker(
             self.settings_service.settings.storage.data_root,
             match_id,default_app_root(),model,prefs.reasoning_effort(),self)
         self._postmatch_worker=worker
+        self._set_postmatch_status("レビュー実行中（AI通信）",match_id)
+        self.postmatch_retry_button.setEnabled(False)
         worker.result_ready.connect(self._postmatch_review_done)
         worker.finished.connect(self._postmatch_review_finished)
         worker.start()
 
     @Slot(object)
     def _postmatch_review_done(self, result: dict) -> None:
-        # This is an optional off-match analysis, not a new action decision.
-        status=result.get("status")
-        if status=="STORED_UNVERIFIED_REVIEW":
-            self.header_labels["records"].setText(
-                f"対戦後AI評価を保存（未検証・{result.get('findings',0)}件）。次戦の準備時に反映。")
-        elif status=="FAILED_REVIEW_RETAINED":
-            self.header_labels["records"].setText("対戦後AI評価未完了（対戦ログはSQLiteに保持）")
+        worker=self._postmatch_worker
+        match_id=str(result.get("match_id") or (
+            worker.match_id if worker is not None else self._postmatch_match_id or ""))
+        if (self._postmatch_waiting_match_id
+                and self._postmatch_waiting_match_id != match_id):
+            # The older review was stored/failed in SQLite, but do not
+            # replace the newer match's pending status in the UI.
+            return
+        if result.get("status")=="STORED_UNVERIFIED_REVIEW":
+            try:
+                self._show_saved_postmatch_review(match_id)
+            except (OSError,ValueError,RuntimeError) as exc:
+                self._set_postmatch_status(
+                    "失敗（レビューSQLite読戻し）",match_id,
+                    reason=type(exc).__name__)
+        else:
+            self._set_postmatch_status(
+                "失敗（レビュー未保存・再試行可能）",match_id,
+                reason=str(result.get("status") or "UNKNOWN"))
+        # A worker is still finishing; retry becomes enabled on finished.
 
     @Slot()
     def _postmatch_review_finished(self) -> None:
@@ -1142,7 +1250,28 @@ class DesktopMainWindow(QMainWindow):
         self._postmatch_worker=None
         if worker is not None:
             worker.deleteLater()
+        if self._postmatch_waiting_match_id:
+            waiting=self._postmatch_waiting_match_id
+            self._postmatch_waiting_match_id=None
+            self._set_postmatch_status("レビュー起動待ち（前試合の処理終了）",waiting)
+        if self._postmatch_match_id:
+            try:
+                pending=self._postmatch_store().pending_match(self._postmatch_match_id)
+                self.postmatch_retry_button.setEnabled(pending is not None)
+            except (OSError,ValueError,RuntimeError):
+                self.postmatch_retry_button.setEnabled(False)
         self._retry_close_after_workers()
+
+    def _retry_pending_postmatch_review(self) -> None:
+        if not self._unified or self._postmatch_worker is not None:
+            return
+        if (self._match_panel.state is not None
+                and self._match_panel.state.get("phase") != "ENDED"):
+            self._set_postmatch_status(
+                "未実行（対戦中のAIを優先）",self._postmatch_match_id or "—")
+            return
+        if self._postmatch_match_id:
+            self._start_postmatch_review(self._postmatch_match_id)
 
     @Slot()
     def _retry_close_after_workers(self):

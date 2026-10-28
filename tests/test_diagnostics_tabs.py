@@ -40,12 +40,15 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.dialog.close()
         self.root.cleanup()
 
-    def test_five_separate_tabs_and_no_implicit_live_capture(self):
-        self.assertEqual(self.dialog.tabs.count(),5)
-        self.assertEqual([self.dialog.tabs.tabText(i) for i in range(5)],[
+    def test_six_separate_tabs_and_no_implicit_live_capture(self):
+        self.assertEqual(self.dialog.tabs.count(),6)
+        self.assertEqual([self.dialog.tabs.tabText(i) for i in range(6)],[
             "選出画面テスト","ターン画面テスト",
             "交代先選択画面テスト","バトルイベント読み取りテスト",
-            "1対戦統合テスト（実ゲーム画面）"])
+            "1対戦統合テスト（実ゲーム画面）",
+            "対戦後レビューE2Eテスト"])
+        self.assertFalse(self.dialog.postmatch_page.has_active_worker)
+        self.assertIn("未開始",self.dialog.postmatch_page.stage_label.text())
         self.assertIsNone(self.dialog.live_panel)
         self.assertFalse(self.dialog.turn_run_button.isEnabled())
         self.assertFalse(self.dialog.switch_run_button.isEnabled())
