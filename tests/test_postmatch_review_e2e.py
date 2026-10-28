@@ -159,6 +159,24 @@ class ProductionReviewVisibleQtTest(TestCase):
         self.assertEqual(self.window.tabs.tabText(self.window.tabs.count()-1),
                          "対戦後レビュー")
 
+    def test_review_running_state_is_visible_before_worker_dispatch(self):
+        match_id = "synthetic-running-review"
+        store = self.window._postmatch_store()
+        self.assertTrue(store.record_finished(
+            match_id=match_id, team_id=None,
+            state={"phase": "ENDED", "result": "WIN"},
+            source="SYNTHETIC_TEST"))
+        with patch("champions_assist.vision_preferences.VisionPreferenceStore") as prefs, patch(
+            "champions_assist.desktop._PostmatchReviewWorker"
+        ) as worker_cls:
+            prefs.return_value.selected_model.return_value = "test-model"
+            self.window._start_postmatch_review(match_id)
+            worker_cls.return_value.start.assert_called_once()
+            self.assertIn("レビュー実行中", self.window.postmatch_status_label.text())
+            self.assertFalse(self.window.postmatch_retry_button.isEnabled())
+        # A mocked thread is not running; let normal GUI close finish.
+        self.window._postmatch_worker = None
+
     def test_production_review_worker_failure_visible_and_pending_retry(self):
         match_id = "synthetic-failed-review"
         store = self.window._postmatch_store()
