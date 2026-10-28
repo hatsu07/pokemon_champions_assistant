@@ -1608,8 +1608,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     if diagnostic_sink is not None:
         diagnostic_sink("OCR_TURN_COMPACTION",{
             key:value for key,value in context_stats.items()
-            if key not in ("presented_keys","partial_frames","ledger_frames")}
-            | {"partial_frame_count":len(context_stats["partial_frames"])})
+            if key not in ("presented_keys","ledger_frames")})
     prompt={
         "screen_kind":expected_screen_label,
         "choice_kind":"SWITCH_ONLY" if switch_only else "MOVE_OR_SWITCH",
@@ -1652,7 +1651,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "recent_history":(state.get("history") or [])[-3:],
         "ocr_candidates_unverified":candidates,
         "ocr_pending_questions_unverified":pending_ocr,
-        "ocr_deferred_rows_local_only":context_stats["rows_deferred"],
+        "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
         "no_visible_party_confirmation":switch_only,
     }
     if diagnostic_sink is not None:
@@ -1683,10 +1682,20 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "and give the best defensible action with a brief uncertainty "
                 "warning. Use NO_ACTION only if no legal action can be "
                 "meaningfully assessed. "
-                "Return pending_ocr_questions (at most 16, brief) for critical " 
-                "unresolved OCR concerns with original source_frames, an " 
-                "unverified question, and what future observation resolves it. " 
-                "Those questions are NOT confirmed battle facts. " 
+                "This ONE tactical response also determines which OCR facts " 
+                "need to be remembered next turn. All OCR rows not shown "
+                "previously are included now; already shown rows appear only " 
+                "when you previously requested them as unresolved evidence. " 
+                "Return pending_ocr_questions for EVERY tactically important " 
+                "uncertain event (choice lock, speed, priority, boosts, items, " 
+                "HP, switches, forms, statuses, conflicting observations). "
+                "For each provide original source_frames, an unverified " 
+                "question, importance and specific recheck_when. Continue " 
+                "previous questions only if they still matter. Leave the " 
+                "list empty only when none require future attention. " 
+                "Omitted old events remain archived as UNVERIFIED locally, " 
+                "never become confirmed and will not be resent automatically. " 
+                "Do not choose which OCR to read by age or row count. "
                 "List a frame in processed_ocr_frames ONLY when every OCR "
                 "observation from that frame is fully understood and all "
                 "confirmed battle changes are reflected in state_updates or "
@@ -1743,48 +1752,41 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                     "internal":updated.get("opponent_active") or "",
                     "model":answer.get("interpreted_opponent_active") or "",
                     "reason":"OCR_ACTOR_MISMATCH_NONFATAL"})
-        # Explicit model acknowledgments remove only fully handled OCR
-        # frames from the next request. Unknown, uncertain or rejected events
-        # cannot silently delete their observations.
-        if combined and isinstance(answer.get("processed_ocr_frames"),list):
+        # GPT decides what remains important on its existing tactical
+        # response. Only those source-linked unresolved questions return in
+        # later prompts. Local raw OCR and its UNVERIFIED status are unchanged.
+        if combined:
             known_frames={row.get("frame_id") for row in candidates
                           if isinstance(row,dict) and row.get("frame_id")}
+            prior_frames={f for q in pending_ocr
+                          for f in q["source_frames"]}
+            cited_frames=known_frames | prior_frames
+            # Missing field in an older mock/provider reply does not discard
+            # the previous questions; a deliberate [] means none retained.
+            proposed_questions=(answer["pending_ocr_questions"]
+                                if "pending_ocr_questions" in answer
+                                else pending_ocr)
+            next_questions=sanitize_pending_questions(
+                proposed_questions,cited_frames)
+            updated["_ai_ocr_unresolved"]=next_questions
+            pending_proof={f for q in next_questions
+                           for f in q["source_frames"]}
             unverified_frames=set()
             for event,row in zip(proposed,audit):
                 if not isinstance(event,dict):
                     continue
                 if (event.get("certainty")!="CONFIRMED"
                         or (row.get("status")=="REJECTED"
-                        and row.get("reason")!="ALREADY_APPLIED")):
+                            and row.get("reason")!="ALREADY_APPLIED")):
                     unverified_frames.update(event.get("evidence_frames") or ())
             ack=set(updated.get("_ai_ocr_ack_frames") or ())
-            proposed_questions=answer.get("pending_ocr_questions") or []
-            all_frames=set(context_stats["ledger_frames"])
-            cited_frames=known_frames | {
-                frame for item in pending_ocr
-                for frame in item["source_frames"]}
-            next_questions=sanitize_pending_questions(
-                proposed_questions,cited_frames)
-            pending_proof={frame for q in next_questions
-                           for frame in q["source_frames"]}
-            ack.update(frame for frame in answer["processed_ocr_frames"]
-                       if isinstance(frame,str) and frame in known_frames
-                       and frame not in unverified_frames
-                       and frame not in pending_proof
-                       and frame not in context_stats["partial_frames"]
-                       and not own_mismatch and not own_conflict)
+            for frame in answer.get("processed_ocr_frames") or []:
+                if (isinstance(frame,str) and frame in known_frames
+                        and frame not in unverified_frames
+                        and frame not in pending_proof
+                        and not own_mismatch and not own_conflict):
+                    ack.add(frame)
             updated["_ai_ocr_ack_frames"]=sorted(ack)
-            carry=[q for q in pending_ocr if
-                   not all(f in ack for f in q["source_frames"])]
-            from .ocr_turn_context import MAX_PENDING_QUESTIONS
-            # Do not let 16 new LOW questions evict a carried critical
-            # threat. Provenance remains local; priority comes from the AI.
-            priorities={"CRITICAL":0,"IMPORTANT":1,"LOW":2}
-            unresolved=sanitize_pending_questions(
-                sorted(carry+next_questions,
-                       key=lambda q:priorities.get(q["importance"],1)),
-                all_frames)
-            updated["_ai_ocr_unresolved"]=unresolved[:MAX_PENDING_QUESTIONS]
         if own_conflict or own_mismatch:
             # A blocked actor interpretation cannot consume the evidence;
             # keep newly returned unresolved questions, but re-present the
