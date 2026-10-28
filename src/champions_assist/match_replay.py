@@ -1744,6 +1744,8 @@ def run_replay_screen_result(*, state: dict,
         grounded=(isinstance(source,str) and bool(evidence)
                   and any(row["frame_id"]==source
                           and evidence in row["raw_text"]
+                          and row["confidence"] is not None
+                          and row["confidence"]>=0.72
                           and possible_result_message(evidence)
                           for row in recent))
         if (result not in ("WIN","LOSS") or not grounded
