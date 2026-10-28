@@ -1647,7 +1647,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "cell":r.get("matrix_cell"),"source":r.get("source"),
         "hint":str(r.get("ai_hint") or "")[:140],
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
-    from .ocr_turn_context import build_ocr_turn_context, sanitize_pending_questions
+    from .ocr_turn_context import build_ocr_turn_context, apply_model_ocr_carryover
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
         state,local_field_candidates)
     if diagnostic_sink is not None:
@@ -1751,9 +1751,14 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "known fainting, statuses, choice locks, mega forms and first-"
                 "move priority. Use only registered moves and known living "
                 "selected bench. Do not infer other-game mechanics. "
-                "For SWITCH_ONLY return SWITCH with one living bench member "
-                "or NO_ACTION, NEVER MOVE/PIVOT. A switch-screen classifier "
-                "does not confirm which selected party entries are visible. "
+                "For SWITCH_ONLY return SWITCH with one living selected "
+                "bench member or NO_ACTION; never MOVE/PIVOT. In a confirmed "
+                "forced replacement, the fainted own active may be unknown. "
+                "If so, interpreted_own_active must stay empty unless OCR "
+                "actually proves its identity; choose using the selected "
+                "living bench and opponent instead of guessing an actor. "
+                "A switch-screen classifier does not confirm which selected "
+                "party entries are visible. "
                 "If materially uncertain use NO_ACTION; no invented data."
             ),
             content=[{"type":"input_text","text":json.dumps(
@@ -1766,11 +1771,6 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         proposed=answer.get("state_updates",[]) if combined else []
         action=answer["action"] if combined else answer
         updated,audit=apply_ai_ocr_updates(state,proposed,candidates,assets)
-        # Mark only rows actually presented as metadata; the original local
-        # observations are kept by LocalBattleStateTracker, unchanged.
-        seen=set(updated.get("_ai_ocr_presented_keys") or ())
-        seen.update(context_stats["presented_keys"])
-        updated["_ai_ocr_presented_keys"]=sorted(seen)
         if diagnostic_sink is not None:
             for row in audit:
                 diagnostic_sink("AI_OCR_STATE_DECISION",row)
@@ -1797,47 +1797,25 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                     "internal":updated.get("opponent_active") or "",
                     "model":answer.get("interpreted_opponent_active") or "",
                     "reason":"OCR_ACTOR_MISMATCH_NONFATAL"})
-        # GPT decides what remains important on its existing tactical
-        # response. Only those source-linked unresolved questions return in
-        # later prompts. Local raw OCR and its UNVERIFIED status are unchanged.
-        if combined:
-            known_frames={row.get("frame_id") for row in candidates
-                          if isinstance(row,dict) and row.get("frame_id")}
-            prior_frames={f for q in pending_ocr
-                          for f in q["source_frames"]}
-            cited_frames=known_frames | prior_frames
-            # Missing field in an older mock/provider reply does not discard
-            # the previous questions; a deliberate [] means none retained.
-            proposed_questions=(answer["pending_ocr_questions"]
-                                if "pending_ocr_questions" in answer
-                                else pending_ocr)
-            next_questions=sanitize_pending_questions(
-                proposed_questions,cited_frames)
-            updated["_ai_ocr_unresolved"]=next_questions
-            pending_proof={f for q in next_questions
-                           for f in q["source_frames"]}
-            unverified_frames=set()
-            for event,row in zip(proposed,audit):
-                if not isinstance(event,dict):
-                    continue
-                if (event.get("certainty")!="CONFIRMED"
-                        or (row.get("status")=="REJECTED"
-                            and row.get("reason")!="ALREADY_APPLIED")):
-                    unverified_frames.update(event.get("evidence_frames") or ())
-            ack=set(updated.get("_ai_ocr_ack_frames") or ())
-            for frame in answer.get("processed_ocr_frames") or []:
-                if (isinstance(frame,str) and frame in known_frames
-                        and frame not in unverified_frames
-                        and frame not in pending_proof
-                        and not own_mismatch and not own_conflict):
-                    ack.add(frame)
-            updated["_ai_ocr_ack_frames"]=sorted(ack)
+        # Both image and text paths persist GPT-selected carryover through
+        # one shared, non-tactical helper. AI saw a frame != verified fact.
+        rejected_frames=set()
+        for event,row in zip(proposed,audit):
+            if not isinstance(event,dict):
+                continue
+            if (event.get("certainty")!="CONFIRMED"
+                    or (row.get("status")=="REJECTED"
+                        and row.get("reason")!="ALREADY_APPLIED")):
+                rejected_frames.update(event.get("evidence_frames") or ())
+        updated=apply_model_ocr_carryover(
+            updated,answer,local_field_candidates,candidates,pending_ocr,
+            rejected_frames=rejected_frames,
+            block_ack=own_conflict or own_mismatch,
+            commit_presentation=not (own_conflict or own_mismatch))
         if own_conflict or own_mismatch:
             # A blocked actor interpretation cannot consume the evidence;
             # keep newly returned unresolved questions, but re-present the
             # raw candidates next turn rather than treating them as handled.
-            updated["_ai_ocr_presented_keys"]=list(
-                state.get("_ai_ocr_presented_keys") or ())
             return updated,{"status":"BLOCKED","recommendation":"",
                             "reason":"AI_OCR_OWN_ACTIVE_UNVERIFIED",
                             "transport":"OCR_TEXT_ONLY","images_sent":0}
