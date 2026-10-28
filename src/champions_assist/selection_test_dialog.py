@@ -106,8 +106,16 @@ class _LocalOcrWorker(QObject):
     @Slot()
     def run(self):
         from .ocr_diagnostics import inspect_battle_event_image
-        self.finished.emit(inspect_battle_event_image(
-            self.image,self.profile,device=self.device,gpu_id=self.gpu_id))
+        from .crash_diagnostics import record_exception
+        try:
+            report=inspect_battle_event_image(
+                self.image,self.profile,device=self.device,gpu_id=self.gpu_id)
+        except Exception as exc:
+            record_exception("OCR_DIAGNOSTIC_WORKER_ERROR", exc,
+                             stage="OCR_DIAGNOSTIC")
+            report={"status":"OCR_DIAGNOSTIC_FAILED","rows":[],
+                    "error":getattr(exc,"code",type(exc).__name__)}
+        self.finished.emit(report)
 
 
 class _TimingTestWorker(QObject):
