@@ -12,7 +12,9 @@ battle recognition accuracy test or a permanent workaround.
 2. Extract the entire ZIP to a new folder. Check BUILD_REVISION.txt.
 3. Save other work and stop the live match monitor. Native GPU failures
    can terminate the diagnostic process or disturb the driver.
-4. Double-click Run-GPU-Diagnostics.cmd. It runs 3 independent trials
+4. Double-click Run-GPU-Diagnostics.cmd. This Phase-1 launcher defaults to
+   **E only**, avoiding repeated known crashes from condition D. It runs
+   3 independent trials
    per condition, 20 inferences per trial on DirectML GPU 0.
 5. Inspect the automatically opened folder:
    %LOCALAPPDATA%\PokemonChampionsAssistant\diagnostics\gpu-stress-*
@@ -56,6 +58,10 @@ The --screen-model override still requires validation.
 
 Advanced example (from the extracted folder):
 Run-GPU-Diagnostics.cmd --gpu-id 0 --iterations 100 --trials 5
+
+To explicitly rerun A through E in a single set of conditions (warning: D is
+known to crash on the affected NVIDIA PC):
+Run-GPU-Diagnostics.cmd --gpu-diagnostic-modes rec,classifier,serial,parallel,multiprocess
 
 Keep the same GPU, driver, model, and input in all five cases. Do not
 immediately raise the trial count if the system repeatedly crashes.
