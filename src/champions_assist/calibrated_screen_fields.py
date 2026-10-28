@@ -46,7 +46,7 @@ _SAMPLE_960 = (
     FieldRegion("opponent_hp_percent", "HP_PERCENT", (868, 57, 932, 88), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("own_active_name", "TEXT", (75, 489, 184, 526), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("opponent_active_name", "TEXT", (777, 14, 877, 49), ("TURN_ACTION", "BATTLE_EVENT")),
-    FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT","RESULT_SCREEN")),
+    FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT",)),
     FieldRegion("opponent_effect_popup", "MESSAGE", (754, 195, 941, 284), ("BATTLE_EVENT",)),
     FieldRegion("own_item_popup", "MESSAGE", (58, 194, 267, 279), ("BATTLE_EVENT",)),
 )
@@ -80,7 +80,7 @@ class ScreenFieldProfile:
         seen = set()
         valid_kinds = {"HP_FRACTION", "HP_PERCENT", "PP_FRACTION",
                        "TIMER", "MESSAGE", "TEXT"}
-        valid_labels = {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "RESULT_SCREEN"}
+        valid_labels = {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT"}
         for raw in raw_regions:
             name = raw.get("name")
             kind = raw.get("kind")
@@ -199,11 +199,11 @@ def observe_screen_fields(
 ) -> tuple[VisualCandidate, ...]:
     """Extract bounded candidate observations; no network/API/strategy work.
 
-    Game scene must already have an *independently* validated 6-class label.
+    Game scene must already have an *independently* validated 5-class label.
     UNKNOWN/OTHER do not invoke OCR.  For low-confidence classification the
     normal vision fallback is preserved.
     """
-    if label not in {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "RESULT_SCREEN", "HUD_UNCLASSIFIED"}:
+    if label not in {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "HUD_UNCLASSIFIED"}:
         return ()
     if not profile.compatible(image):
         return ()
@@ -219,11 +219,7 @@ def observe_screen_fields(
             if region.kind not in {"HP_FRACTION", "HP_PERCENT"}:
                 continue
         elif label not in region.applicable_labels:
-            # A private pre-v3 calibration need not be overwritten just to
-            # recognize RESULT_SCREEN. Reuse only its message crop.
-            if not (label=="RESULT_SCREEN" and region.name=="battle_message"
-                    and region.kind=="MESSAGE"):
-                continue
+            continue
         if attempted >= max_rois:
             break
         attempted += 1
