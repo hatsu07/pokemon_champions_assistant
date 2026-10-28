@@ -154,7 +154,8 @@ class AsyncBattleEventReader:
         return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
 
     def offer(self, image: np.ndarray, *, label: str,
-              frame_id: str | None=None, timestamp: float | None=None) -> bool:
+              frame_id: str | None=None, timestamp: float | None=None,
+              force_result_screen: bool=False) -> bool:
         """Fast ROI change gate. Never OCR or wait in the caller's thread.
 
         Only BATTLE_EVENT, RESULT_SCREEN and verified action/party UI are eligible.
@@ -190,7 +191,8 @@ class AsyncBattleEventReader:
             changed=(previous is None or previous.shape!=small.shape
                      or float(np.mean(np.abs(previous-small)))/255
                         >=self.change_threshold)
-            if changed:
+            if changed or (force_result_screen and label=="RESULT_SCREEN"
+                           and region.name=="battle_message"):
                 crops.append((region.name,region.kind,crop.copy()))
                 updated[key]=small
         if not crops:
