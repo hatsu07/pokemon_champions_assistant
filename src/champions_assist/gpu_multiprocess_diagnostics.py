@@ -176,7 +176,10 @@ def run_case(executable: str, *, output: Path, trial: int, iterations: int,
             (sync / f"go-{iteration:04d}").touch()
             done = [_signal(sync, "done", role, iteration) for role in ROLES]
             while not all(path.exists() for path in done):
-                if any(proc.poll() is not None for proc in processes.values()):
+                # One fast child may finish its final iteration and exit 0
+                # while the other is still running: that is not a failure.
+                if any(proc.poll() is not None and proc.returncode != 0
+                       for proc in processes.values()):
                     break
                 if monotonic() >= deadline:
                     timed_out = True
