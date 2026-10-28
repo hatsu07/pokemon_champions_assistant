@@ -52,7 +52,8 @@ class _Recorder:
         }
         for key, value in details.items():
             if key in {"stage", "component", "provider", "device", "error_type",
-                       "error_code", "thread", "logging_name", "qt_category"}:
+                       "error_code", "thread", "logging_name", "qt_category",
+                       "build_revision", "build_version"}:
                 record[key] = _safe(value)
             elif key in {"gpu_id", "exit_code", "frame_seq"} and type(value) is int:
                 record[key] = value
