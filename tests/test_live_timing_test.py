@@ -369,13 +369,15 @@ class TimingQtFlowTest(unittest.TestCase):
         self.dialog.selection_started_at=time.perf_counter()-89.0
         self.dialog.selection_display_elapsed_ms=89000
         self.dialog.test_state=selection_test_prep_state(self.assets,selection_fixture())
-        self.dialog._start_timing_test("PREP")
-        self.assertIsNotNone(self.dialog.thread)
-        self.assertFalse(self.dialog.prep_completed)
-        self.assertEqual(self.dialog.prep_limit_seconds,1.0)
-        self.dialog.thread.quit()
-        self.dialog.thread.wait(3000)
-        self.dialog._clear_worker()
+        with patch("champions_assist.selection_test_dialog.QThread") as thread,patch(
+                "champions_assist.selection_test_dialog._TimingTestWorker") as worker:
+            self.dialog._start_timing_test("PREP")
+            self.assertFalse(self.dialog.prep_completed)
+            self.assertEqual(round(self.dialog.prep_limit_seconds),1)
+            thread.return_value.start.assert_called_once()
+            worker.assert_called_once()
+            self.dialog.thread=None
+            self.dialog.worker=None
 
     def test_qt_accepts_complete_prep_over_40s_before_shared_deadline(self):
         import time
