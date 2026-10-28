@@ -146,6 +146,7 @@ def build_ocr_turn_context(state: dict, local_rows) -> tuple[list[dict], list[di
         "ledger_json_bytes": before_bytes,
         "api_json_bytes": after_bytes,
         "ledger_not_mutated": True,
+        "ledger_frames": sorted(f for f in available if f),
         "presented_keys": [_row_key(r) for r in sent],
     }
     return sent, pending, meta
