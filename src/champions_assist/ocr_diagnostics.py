@@ -9,7 +9,7 @@ from time import perf_counter
 import numpy as np
 
 from .calibrated_screen_fields import (
-    ScreenFieldProfile, IGNORED_OCR_ROIS, parse_field_text,
+    ScreenFieldProfile, IGNORED_OCR_ROIS, parse_field_text, confirmed_auto_move_notice,
 )
 from .ocr import OcrEngine
 from .ocr_onnx import make_onnx_ocr
@@ -34,9 +34,14 @@ def inspect_battle_event_image(
         try:
             reading = reader.read(crop, roi_name=region.name)
             parsed = parse_field_text(region, reading.text, frame_id="diagnostic")
+            observed_notice=(region.name=="system_message" and
+                confirmed_auto_move_notice(reading.text,reading.confidence,
+                    calibrated=profile.validated_on_game_capture and
+                               region.bounds_normalized is not None))
             row = dict(name=region.name, kind=region.kind, crop=crop,
                        text=reading.text, confidence=reading.confidence,
-                       parsed=parsed.value if parsed else None, error="")
+                       parsed=("AUTO_MOVE_SELECTED_INPUT_NOT_DELIVERED" if observed_notice
+                               else parsed.value if parsed else None), error="")
         except Exception as exc:
             record_exception("OCR_DIAGNOSTIC_ROI_ERROR", exc,
                              stage="OCR_DIAGNOSTIC")
