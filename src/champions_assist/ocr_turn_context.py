@@ -74,8 +74,14 @@ def build_ocr_turn_context(state: dict, local_rows) -> tuple[list[dict], list[di
     """
     all_rows, _ = select_ai_ocr_evidence(local_rows)
     available = {r.get("frame_id") for r in all_rows}
-    pending = sanitize_pending_questions(state.get("_ai_ocr_unresolved") or [],
-                                         available)
+    # Previously validated source IDs remain valid as *references* even if
+    # the local OCR snapshot is temporarily unavailable (reader restart).
+    # Never fabricate the missing raw rows or mark them confirmed.
+    prior=state.get("_ai_ocr_unresolved") or []
+    previously_cited={f for q in prior if isinstance(q,dict)
+                      for f in q.get("source_frames",[])
+                      if isinstance(f,str) and f}
+    pending = sanitize_pending_questions(prior,available | previously_cited)
     retained_frames = {f for item in pending for f in item["source_frames"]}
     previous = set(state.get("_ai_ocr_presented_keys") or ())
     selected = [row for row in all_rows if
@@ -114,8 +120,6 @@ def apply_model_ocr_carryover(
     from copy import deepcopy
 
     updated = deepcopy(state)
-    all_rows, _ = select_ai_ocr_evidence(local_rows)
-    all_frames = {row.get("frame_id") for row in all_rows}
     presented_frames = {row.get("frame_id") for row in selected_rows}
     known_to_model = presented_frames | {
         frame for question in pending for frame in question["source_frames"]}
