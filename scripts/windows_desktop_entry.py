@@ -169,6 +169,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="PokemonChampionsAssistant")
     parser.add_argument("--config", type=Path, help="optional local non-secret settings.json path")
     parser.add_argument("--smoke", type=Path, metavar="REPORT_JSON", help="offline headless GUI smoke test")
+    parser.add_argument("--gpu-diagnostics", action="store_true",
+                        help="isolate four offline DirectML stress cases")
+    parser.add_argument("--gpu-diagnostic-child",
+                        choices=("rec", "classifier", "serial", "parallel"))
+    parser.add_argument("--gpu-diagnostic-progress", type=Path)
+    parser.add_argument("--gpu-diagnostic-smoke", type=Path)
+    parser.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument("--screen-model", type=str)
     args = parser.parse_args(argv)
 
     from champions_assist.crash_diagnostics import (
@@ -193,6 +203,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         record_event("BUILD_REVISION_UNAVAILABLE")
     rc = 1
     try:
+        if args.gpu_diagnostic_smoke is not None:
+            from champions_assist.gpu_stress_diagnostics import smoke
+            rc = smoke(args.gpu_diagnostic_smoke)
+            return rc
+        if args.gpu_diagnostic_child is not None:
+            if args.gpu_diagnostic_progress is None:
+                raise ValueError("GPU_DIAGNOSTIC_PROGRESS_REQUIRED")
+            from champions_assist.gpu_stress_diagnostics import child
+            from champions_assist.app_config import default_app_root
+            rc = child(args.gpu_diagnostic_child, args.iterations, args.gpu_id,
+                       args.gpu_diagnostic_progress, args.screen_model,
+                       False, default_app_root())
+            return rc
+        if args.gpu_diagnostics:
+            from champions_assist.gpu_stress_diagnostics import MODES, supervisor
+            from champions_assist.app_config import default_app_root
+            output, report = supervisor(
+                sys.executable, modes=MODES, iterations=args.iterations,
+                trials=args.trials, gpu_id=args.gpu_id,
+                app_root=default_app_root(), model=args.screen_model)
+            if os.name == "nt":
+                import ctypes
+                message = (
+                    "GPU診断が終了しました。\n"
+                    f"成功: {report['success_count']} / {len(report['cases'])}\n"
+                    f"アクセス違反: {report['crash_count']}\n"
+                    "保存先: " + str(output) + "\n"
+                    "summary.jsonと各JSONLを確認してください。"
+                )
+                ctypes.windll.user32.MessageBoxW(
+                    None, message, "Pokemon Champions GPU診断", 0x40)
+            rc = 0 if report["success_count"] == len(report["cases"]) else 3
+            return rc
         if args.smoke is not None:
             rc = run_smoke(args.smoke)
             return rc
