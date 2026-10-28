@@ -61,7 +61,7 @@ def stage(destination: Path) -> dict[str, str]:
             if (not isinstance(vocab, list) or len(vocab) < 1000
                     or not all(isinstance(c, str) and c for c in vocab)):
                 raise RuntimeError("ONNX_OCR_OFFICIAL_DICTIONARY_INVALID")
-            dictionary = ("\\n".join(vocab) + "\\n").encode("utf-8")
+            dictionary = ("\n".join(vocab) + "\n").encode("utf-8")
             dictionary_name = "ppocrv6_dict.txt"
             (destination / dictionary_name).write_bytes(dictionary)
             hashes[dictionary_name] = sha256(dictionary).hexdigest()
