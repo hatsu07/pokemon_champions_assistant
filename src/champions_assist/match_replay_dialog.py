@@ -1596,13 +1596,14 @@ class MatchReplayDialog(QDialog):
 
     def _capture_next(self):
         from .crash_diagnostics import record_event, record_exception
+        capture_base=getattr(self,"_crash_capture_baseline",0)
         if not self._auto_running:
             return
         if self.state is None or self.state.get("phase")=="ENDED":
             if self.state is not None and self.state.get("phase")=="ENDED":
                 self._stop_auto()
             return
-        if self._capture_seq == self._crash_capture_baseline:
+        if self._capture_seq == capture_base:
             record_event("FIRST_FRAME_CAPTURE_BEGIN")
         try:
             image=capture_for_chatgpt(self.capture_config)
@@ -1633,30 +1634,30 @@ class MatchReplayDialog(QDialog):
                     "message":"画面の取得が復旧しました。自動送信を継続します。"}
             self.entries.append(report)
             self._render(report)
-        if self._capture_seq == self._crash_capture_baseline:
+        if self._capture_seq == capture_base:
             record_event("FIRST_FRAME_CAPTURE_COMPLETE")
         self._latest_image=image
         self._capture_seq+=1
         self._last_capture_seq=self._capture_seq
         if self._background_capture is not None:
             self._background_capture.offer(image)
-        if self._last_capture_seq == self._crash_capture_baseline+1:
+        if self._last_capture_seq == capture_base+1:
             record_event("FIRST_FRAME_PREVIEW_BEGIN")
         self._show_capture_preview(image)
-        if self._last_capture_seq == self._crash_capture_baseline+1:
+        if self._last_capture_seq == capture_base+1:
             record_event("FIRST_FRAME_PREVIEW_COMPLETE")
         # Take completed OCR before dispatching a tactical request. Never
         # wait on OCR, nor send these image pixels to the AI.
         if self._local_event_reader is not None:
-            if self._last_capture_seq == self._crash_capture_baseline+1:
+            if self._last_capture_seq == capture_base+1:
                 record_event("FIRST_FRAME_OCR_DRAIN_BEGIN")
             self._drain_event_candidates(include_snapshot=False)
-            if self._last_capture_seq == self._crash_capture_baseline+1:
+            if self._last_capture_seq == capture_base+1:
                 record_event("FIRST_FRAME_OCR_DRAIN_COMPLETE")
-        if self._last_capture_seq == self._crash_capture_baseline+1:
+        if self._last_capture_seq == capture_base+1:
             record_event("FIRST_FRAME_MENU_OBSERVE_BEGIN")
         kind=self._turn_buffer.observe(image)
-        if self._last_capture_seq == self._crash_capture_baseline+1:
+        if self._last_capture_seq == capture_base+1:
             record_event("FIRST_FRAME_MENU_OBSERVE_COMPLETE")
         phase=self.state.get("phase")
         if kind is not None and self._eligible_menu(kind):
@@ -1668,7 +1669,7 @@ class MatchReplayDialog(QDialog):
             return
 
         if self._screen_model is not None:
-            trace_classifier=self._last_capture_seq==self._crash_capture_baseline+1 or self._last_capture_seq%20==0
+            trace_classifier=self._last_capture_seq==capture_base+1 or self._last_capture_seq%20==0
             if trace_classifier:
                 record_event("SCREEN_CLASSIFIER_PREDICT_BEGIN",
                              frame_seq=self._last_capture_seq,
