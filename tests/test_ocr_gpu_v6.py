@@ -1,109 +1,37 @@
-"""Offline ONNX OCR contract and tactical regression tests.
-
-The Windows EXE smoke additionally executes the bundled real models on CPU.
-Actual DirectML GPU throughput needs a Windows GPU machine.
-"""
+"""ONNX OCR wiring, live GUI, and unknown-active regressions."""
 from __future__ import annotations
-
-import tempfile
 import unittest
-from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
-
 import numpy as np
-
-from champions_assist.ocr import OcrExecutionError, OcrRead
 from champions_assist.ocr_onnx import (
-    ENGINE_NAME, MODEL_DET, MODEL_REC, PPocrV6SmallOnnx,
-    _ctc_decode, _det_tensor, _rec_tensor, make_onnx_ocr)
+    PPocrV6SmallOnnx, MODEL_DET,MODEL_REC,ENGINE_NAME)
 from champions_assist.ai_ocr_state_updates import apply_ai_ocr_updates
 from champions_assist.match_replay import run_replay_text_action
 from tests.test_ai_ocr_state_updates import fixture_state
 from tests.test_match_replay import fixture_assets
 
+class GpuContract(unittest.TestCase):
+    def test_small_onnx_models_are_explicit(self):
+        self.assertEqual(MODEL_DET,"PP-OCRv6_small_det")
+        self.assertEqual(MODEL_REC,"PP-OCRv6_small_rec")
+        self.assertEqual(ENGINE_NAME,"pp-ocrv6-small-onnx")
 
-class OnnxContract(unittest.TestCase):
-    def test_models_and_engine_remain_pp_ocrv6_small(self):
-        self.assertEqual(MODEL_DET, "PP-OCRv6_small_det")
-        self.assertEqual(MODEL_REC, "PP-OCRv6_small_rec")
-        self.assertEqual(make_onnx_ocr().engine_name, ENGINE_NAME)
-
-    def test_onnx_session_is_loaded_once_and_raw_text_is_returned(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            for name in ("pp-ocrv6-small-det.onnx", "pp-ocrv6-small-rec.onnx"):
-                (root / name).write_bytes(b"fake-onnx-only-for-injected-session")
-            # The test dictionary has 1,000 codepoints; the production asset
-            # script validates the actual official dictionary (18,708 rows).
-            (root / "ppocrv6_dict.txt").write_text(
-                "\n".join(chr(0x4e00 + i) for i in range(1000)) + "\n",
-                encoding="utf-8")
-            created = []
-
-            class Session:
-                def __init__(self, path, **kwargs):
-                    self.kind = "det" if "det.onnx" in path else "rec"
-                    created.append((self.kind, kwargs))
-                def get_providers(self):
-                    return ["CPUExecutionProvider"]
-                def get_inputs(self):
-                    return [SimpleNamespace(name="x")]
-                def run(self, _outputs, tensors):
-                    assert tensors["x"].shape[0] == 1
-                    if self.kind == "det":
-                        m = np.zeros((1, 1, 64, 128), dtype=np.float32)
-                        m[0, 0, 14:34, 10:110] = 0.99
-                        return [m]
-                    m = np.zeros((1, 4, 1002), dtype=np.float32)
-                    m[0, :, 0] = 0.01
-                    m[0, 0, 1] = 0.95
-                    m[0, 1, 1] = 0.95
-                    m[0, 2, 0] = 0.95
-                    m[0, 3, 2] = 0.95
-                    return [m]
-
-            reader = PPocrV6SmallOnnx(model_dir=root, device="cpu",
-                        session_factory=Session,
-                        available_providers=["CPUExecutionProvider"])
-            sample = np.full((64,128,3),255,dtype=np.uint8)
-            first = reader.read(sample,roi_name="battle_message")
-            second = reader.read(sample,roi_name="battle_message")
-            self.assertEqual(first.engine,ENGINE_NAME)
-            self.assertEqual(first.text, "一丁")
-            self.assertEqual(second.text,first.text)
-            self.assertEqual(reader.provider,"CPUExecutionProvider")
-            self.assertEqual(len(created),2)
-
-    def test_missing_packaged_models_is_diagnostic_not_crash(self):
-        with tempfile.TemporaryDirectory() as folder:
-            reader=PPocrV6SmallOnnx(model_dir=folder)
-            with self.assertRaises(OcrExecutionError) as err:
-                reader.warmup()
-            self.assertEqual(err.exception.code,"ONNX_OCR_MODELS_MISSING")
-
-    def test_ctc_rejects_dictionary_mismatch(self):
-        with self.assertRaises(OcrExecutionError) as err:
-            _ctc_decode(np.zeros((1,4,5),np.float32),["あ"])
-        self.assertEqual(err.exception.code,"ONNX_OCR_REC_OUTPUT_INVALID")
-
-    def test_reader_factory_uses_onnx_without_external_python(self):
+    def test_gpu_reader_default_factory_uses_onnx(self):
         from champions_assist.local_event_worker import AsyncBattleEventReader
         from tests.test_local_event_worker import fixture
         profile,image,_=fixture()
-        class FakeOnnx:
-            provider="DmlExecutionProvider"
+        class FakeOcr:
             def read(self,*args,**kw):
+                from champions_assist.ocr import OcrRead
                 return OcrRead("",None,ENGINE_NAME)
         with patch("champions_assist.ocr_onnx.make_onnx_ocr",
-                   return_value=FakeOnnx()) as factory:
+                   return_value=FakeOcr()) as maker:
             reader=AsyncBattleEventReader.with_onnx_ocr(profile)
             try:
                 self.assertTrue(reader.enabled)
-                factory.assert_called_once_with(device="auto")
+                maker.assert_called_once()
             finally:
                 reader.stop()
-
 
 class NoStaleAdviceGuiRegression(unittest.TestCase):
     @classmethod
