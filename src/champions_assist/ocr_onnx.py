@@ -229,7 +229,7 @@ class PPocrV6SmallOnnx:
             det, det_provider = _new_session(
                 root / _DET_FILE, factory=factory, available=available, device=self.device, gpu_id=self.gpu_id)
             rec, rec_provider = _new_session(
-                root / _REC_FILE, factory=factory, available=available, device=self.device)
+                root / _REC_FILE, factory=factory, available=available, device=self.device, gpu_id=self.gpu_id)
 
             def inference_probe(detector, recognizer):
                 sample = np.full((64, 128, 3), 255, np.uint8)
@@ -252,7 +252,7 @@ class PPocrV6SmallOnnx:
                 det, det_provider = _new_session(
                     root / _DET_FILE, factory=factory, available=available, device="cpu", gpu_id=self.gpu_id)
                 rec, rec_provider = _new_session(
-                    root / _REC_FILE, factory=factory, available=available, device="cpu")
+                    root / _REC_FILE, factory=factory, available=available, device="cpu", gpu_id=self.gpu_id)
                 inference_probe(det, rec)
             self.det_provider = det_provider
             self.rec_provider = rec_provider
