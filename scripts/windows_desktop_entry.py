@@ -109,14 +109,28 @@ def probe_bundled_ocr_execution() -> dict[str, object]:
 
 
 def probe_gpu_ocr_contract() -> dict[str, object]:
-    """CI can verify backend selection but cannot execute CUDA without GPU."""
-    from champions_assist.ocr_gpu import MODEL_DET,MODEL_REC,ENGINE_NAME
-    if (MODEL_DET,MODEL_REC)!=(
-            "PP-OCRv6_small_det","PP-OCRv6_small_rec"):
-        raise RuntimeError("GPU_OCR_MODEL_MISMATCH")
-    return {"gpu_ocr_backend":ENGINE_NAME,
-            "gpu_ocr_runtime":"EXTERNAL_GPU_ENV_REQUIRED",
-            "gpu_inference_tested":False}
+    """Exercise bundled PP-OCRv6 ONNX models with the shared CPU provider.
+
+    Windows Actions does not verify DirectML performance or GPU recognition.
+    The smoke does verify the *actual included models* and CTC decoding.
+    """
+    import cv2
+    import numpy as np
+    from champions_assist.ocr_onnx import (
+        ENGINE_NAME, MODEL_DET, MODEL_REC, PPocrV6SmallOnnx)
+    if (MODEL_DET, MODEL_REC) != ("PP-OCRv6_small_det", "PP-OCRv6_small_rec"):
+        raise RuntimeError("ONNX_OCR_MODEL_MISMATCH")
+    sample = np.full((72, 280, 3), 255, dtype=np.uint8)
+    cv2.putText(sample, "97%", (20, 51), cv2.FONT_HERSHEY_SIMPLEX,
+                1.3, (0, 0, 0), 2, cv2.LINE_AA)
+    reader = PPocrV6SmallOnnx(device="cpu")
+    result = reader.read(sample, roi_name="opponent_hp_percent")
+    if result.engine != ENGINE_NAME:
+        raise RuntimeError("ONNX_OCR_ENGINE_MISMATCH")
+    return {"gpu_ocr_backend": ENGINE_NAME,
+            "gpu_ocr_runtime": "BUNDLED_ONNX_CPU_SMOKE_OK",
+            "gpu_inference_tested": False,
+            "ocr_cpu_provider": reader.provider}
 
 
 def run_smoke(report_path: Path) -> int:
