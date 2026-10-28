@@ -16,8 +16,7 @@ BASE_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 LABEL_PATTERN = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-dev\.([1-9]\d*)$")
 RELEASE_PREFIX = "development-windows-"
 DISPLAY_PREFIX = "Windows DEVELOPMENT "
-ZIP_APPS = ("PokemonChampionsAssistant", "PokemonChampionsScreenDataCollector",
-            "PokemonChampionsGPUDiagnostics")
+ZIP_APPS = ("PokemonChampionsAssistant", "PokemonChampionsScreenDataCollector")
 
 
 @dataclass(frozen=True)
