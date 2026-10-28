@@ -46,7 +46,7 @@ _SAMPLE_960 = (
     FieldRegion("opponent_hp_percent", "HP_PERCENT", (868, 57, 932, 88), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("own_active_name", "TEXT", (75, 489, 184, 526), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("opponent_active_name", "TEXT", (777, 14, 877, 49), ("TURN_ACTION", "BATTLE_EVENT")),
-    FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT",)),
+    FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT","RESULT_SCREEN")),
     FieldRegion("opponent_effect_popup", "MESSAGE", (754, 195, 941, 284), ("BATTLE_EVENT",)),
     FieldRegion("own_item_popup", "MESSAGE", (58, 194, 267, 279), ("BATTLE_EVENT",)),
 )
@@ -80,7 +80,7 @@ class ScreenFieldProfile:
         seen = set()
         valid_kinds = {"HP_FRACTION", "HP_PERCENT", "PP_FRACTION",
                        "TIMER", "MESSAGE", "TEXT"}
-        valid_labels = {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT"}
+        valid_labels = {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "RESULT_SCREEN"}
         for raw in raw_regions:
             name = raw.get("name")
             kind = raw.get("kind")
@@ -199,11 +199,11 @@ def observe_screen_fields(
 ) -> tuple[VisualCandidate, ...]:
     """Extract bounded candidate observations; no network/API/strategy work.
 
-    Game scene must already have an *independently* validated 5-class label.
+    Game scene must already have an *independently* validated 6-class label.
     UNKNOWN/OTHER do not invoke OCR.  For low-confidence classification the
     normal vision fallback is preserved.
     """
-    if label not in {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "HUD_UNCLASSIFIED"}:
+    if label not in {"TEAM_SELECTION", "TURN_ACTION", "SWITCH_SELECTION", "BATTLE_EVENT", "RESULT_SCREEN", "HUD_UNCLASSIFIED"}:
         return ()
     if not profile.compatible(image):
         return ()
