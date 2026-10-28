@@ -113,6 +113,28 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             MatchReplayDialog._attempt_result_screen_verification(panel))
         return panel
 
+    def test_result_screen_only_triggers_preexisting_ocr_no_new_capture(self):
+        from champions_assist.match_replay_dialog import MatchReplayDialog
+        panel=self.fixture(pending=())
+        panel._result_screen_candidate=None
+        panel._ocr_capture_epochs={"capture-200":0}
+        panel._last_capture_seq=202
+        from unittest.mock import MagicMock
+        panel._offer_event_for_local_ocr=MagicMock()
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer:
+            MatchReplayDialog._note_stable_result_screen(panel)
+            candidate=panel._result_screen_candidate
+            self.assertEqual(candidate["frame"],"capture-202")
+            self.assertEqual(candidate["pending_ocr_frames"],("capture-200",))
+            self.assertEqual(timer.call_count,1)
+            panel._last_capture_seq=205
+            panel._ocr_capture_epochs["capture-204"]=0
+            MatchReplayDialog._note_stable_result_screen(panel)
+            self.assertIs(panel._result_screen_candidate,candidate)
+            self.assertEqual(candidate["pending_ocr_frames"],("capture-200",))
+            self.assertEqual(timer.call_count,1)
+        panel._offer_event_for_local_ocr.assert_not_called()
+
     def test_pre_result_ocr_may_finish_late_without_time_cutoff(self):
         panel=self.fixture()
         from unittest.mock import patch
