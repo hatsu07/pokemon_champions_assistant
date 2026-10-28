@@ -80,6 +80,17 @@ class RealBattleGateTests(unittest.TestCase):
         self.assertEqual(json.loads(file.read_text())["match_count"],5)
         self.assertEqual(result["match_count"],5)
 
+    def test_current_real_capture_is_not_bluestacks_only(self):
+        data=self.packet()
+        data["platform"]="WINDOWS_REAL_CAPTURE"
+        status=self.check(data)
+        self.assertEqual(status["capture_platform"],"WINDOWS_REAL_CAPTURE")
+        self.assertTrue(status["device_evidence_passed"])
+        for invalid in ("REPLAY","SYNTHETIC","",None,"UNCONFIRMED"):
+            data["platform"]=invalid
+            with self.subTest(platform=invalid),self.assertRaises(ConfigurationError):
+                self.check(data)
+
     def test_four_matches_never_pass_even_if_all_under_deadline(self):
         self.assertFalse(self.check(self.packet(4))["device_evidence_passed"])
 
