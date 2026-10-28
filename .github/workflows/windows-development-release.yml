@@ -43,13 +43,15 @@ jobs:
           function Api([string]$p) {
             $raw = & gh api "repos/$repo/$p"
             if ($LASTEXITCODE -ne 0 -or -not $raw) { throw "No API proof: $p" }
-            return ($raw | ConvertFrom-Json)
+            return (($raw -join [Environment]::NewLine) | ConvertFrom-Json)
           }
           $merged = @(Api "commits/$sha/pulls" | Where-Object { $_.merged_at -and $_.merge_commit_sha -eq $sha -and $_.base.ref -eq 'master' })
           if ($merged.Count -ne 1) { throw 'No unique merged PR' }
           $head = [string]$merged[0].head.sha
           $tree = (git rev-parse 'HEAD^{tree}').Trim()
-          if ($tree -ne [string](Api "commits/$head").commit.tree.sha) { throw 'Unverified master file tree' }
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify master tree' }
+          $prCommit = Api "commits/$head"
+          if ($tree -ne [string]$prCommit.commit.tree.sha) { throw 'Unverified master file tree' }
           $runs = (Api "actions/runs?event=pull_request&head_sha=$head&per_page=100").workflow_runs
           $valid = @($runs | Where-Object { $_.head_sha -eq $head -and $_.event -eq 'pull_request' -and $_.path -eq '.github/workflows/windows-validation-artifact.yml' } | Sort-Object created_at,id -Descending)
           if ($valid.Count -lt 1) { throw 'No PR CI run for tested HEAD' }
