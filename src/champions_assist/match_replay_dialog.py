@@ -1060,7 +1060,7 @@ class MatchReplayDialog(QDialog):
                 and getattr(self._screen_model,"experimental",False)):
             answer=QMessageBox.warning(
                 self,"未検証ONNX：対戦での試験利用",
-                "現在は未検証の5分類ONNXが選択されています。"
+                "現在は未検証の6分類ONNXが選択されています。"
                 "操作画面の誤判定や追加AI通信の可能性があります。"
                 "この対戦で試験利用しますか？",
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
@@ -1134,10 +1134,10 @@ class MatchReplayDialog(QDialog):
         self._render(self.entries[-1] if self.entries else {"status":"AUTO_STARTED"})
         self._update_menu_detection_label()
         self._set_ai_status(
-            "未検証5分類ONNXで試験監視中（誤判定に注意）"
+            "未検証6分類ONNXで試験監視中（誤判定に注意）"
             if self._screen_model is not None
             and getattr(self._screen_model,"experimental",False)
-            else "5分類モデル監視中（操作画面のみAI送信）"
+            else "6分類モデル監視中（結果画面のみOCR完了後に勝敗確認）"
             if self._screen_model is not None
             else "分類モデルなし：画像変化を低頻度でAI確認（誤認識の可能性あり）")
         self._capture_next()
@@ -2091,6 +2091,13 @@ class MatchReplayDialog(QDialog):
             # its stale action, advance the match, or dispatch more captures.
             return
         report=payload["report"]
+        if (self._active_job=="result_screen"
+                and self.state is not None
+                and self.state.get("phase")=="ENDED"):
+            # Human-confirmed result or another accepted match ending wins.
+            # A long-running postmatch OCR/GPT cannot overwrite it.
+            self._trace_event("RESULT_SCREEN_ANSWER_AFTER_MATCH_END_DROPPED")
+            return
         if (self._active_job=="result_screen"
                 and self._result_screen_candidate is None):
             # Result classification was superseded by a real next-turn menu.
