@@ -1562,12 +1562,11 @@ class MatchReplayDialog(QDialog):
         """Capture identity for Qt callbacks; old replies never touch new state."""
         worker,thread=self._worker,self._thread
         thread.started.connect(worker.run)
-        worker.finished.connect(lambda payload,rid=request_id:
-                                self._completed_for_request(rid,payload))
+        worker.finished.connect(self._completed)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda rid=request_id:self._cleanup_for_request(rid))
+        thread.finished.connect(self._cleanup)
 
     def _retire_active_worker(self,reason):
         if self._thread is None:
@@ -1585,20 +1584,6 @@ class MatchReplayDialog(QDialog):
         self._active_turn_epoch=None
         self._active_request_id=None
         self._inflight_screen_label=None
-
-    def _completed_for_request(self,request_id,payload):
-        if request_id!=self._active_request_id:
-            self._trace_event("STALE_AI_RESPONSE_DROPPED",
-                              request_id=request_id,reason="SUPERSEDED_BY_NEW_REQUEST")
-            return
-        self._completed(payload)
-
-    def _cleanup_for_request(self,request_id):
-        if request_id!=self._active_request_id:
-            self._retired_workers.pop(request_id,None)
-            self._maybe_finish_shutdown()
-            return
-        self._cleanup()
 
     @Slot(str)
     def _on_ai_progress(self, progress: str) -> None:
@@ -2097,6 +2082,14 @@ class MatchReplayDialog(QDialog):
 
     @Slot(object)
     def _completed(self, payload):
+        source=self.sender()
+        if source is not None and source is not self._worker:
+            # @Slot on the GUI object preserves Qt queued-delivery semantics.
+            rid=next((rid for rid,(_,worker) in self._retired_workers.items()
+                      if worker is source),"UNKNOWN")
+            self._trace_event("STALE_AI_RESPONSE_DROPPED",request_id=rid,
+                              reason="SUPERSEDED_BY_NEW_REQUEST")
+            return
         if self._shutdown_intent is not None or self._cancel_event.is_set():
             # A stopped HTTP request can still return a result. Never apply
             # its stale action, advance the match, or dispatch more captures.
@@ -2847,6 +2840,14 @@ class MatchReplayDialog(QDialog):
 
     @Slot()
     def _cleanup(self):
+        source=self.sender()
+        if source is not None and source is not self._thread:
+            rid=next((rid for rid,(thread,_) in self._retired_workers.items()
+                      if thread is source),None)
+            if rid is not None:
+                self._retired_workers.pop(rid,None)
+            self._maybe_finish_shutdown()
+            return
         self._active_request_started=None
         self._active_request_frame=None
         self._active_turn_epoch=None
