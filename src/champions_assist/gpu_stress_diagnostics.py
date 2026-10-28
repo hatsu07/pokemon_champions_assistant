@@ -142,6 +142,9 @@ def child(mode: str, iterations: int, gpu_id: int, progress: Path,
                     try:
                         barrier.wait(timeout=30)
                         checkpoint.add("RUN_BEGIN", iteration=iteration, component=name)
+                        # Confirm BOTH tasks reach the call boundary; without
+                        # this, checkpoint fsync could serialize the runs.
+                        barrier.wait(timeout=30)
                         action()
                         checkpoint.add("RUN_COMPLETE", iteration=iteration, component=name)
                     except Exception as exc:
@@ -217,10 +220,16 @@ def supervisor(executable: str, *, modes: tuple[str, ...], iterations: int,
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     output = app_root / "diagnostics" / ("gpu-stress-" + stamp)
     output.mkdir(parents=True, exist_ok=False)
+    try:
+        model_path, _ = _choose_screen_model(model, app_root)
+        screen_model_available = model_path.is_file()
+    except (OSError, ValueError, TypeError):
+        screen_model_available = False
     report = {"schema": 1, "status": "RUNNING", "gpu_id": gpu_id,
               "modes": list(modes), "iterations": iterations, "trials": trials,
               "isolated_processes": True, "network": "NOT_USED",
-              "game_capture": "NOT_USED", "cases": []}
+              "game_capture": "NOT_USED",
+              "screen_model_available": screen_model_available, "cases": []}
     run_func = runner if runner is not None else subprocess.run
     def persist():
         tmp = output / "summary.tmp"
@@ -241,6 +250,10 @@ def supervisor(executable: str, *, modes: tuple[str, ...], iterations: int,
             case = {"mode": mode, "trial": trial, "status": "RUNNING",
                     "progress": progress.name}
             report["cases"].append(case)
+            if mode != "rec" and not screen_model_available:
+                case["status"] = "SKIPPED_NO_SCREEN_MODEL"
+                persist()
+                continue
             persist()
             try:
                 completed = run_func(command, timeout=timeout, check=False)
@@ -258,6 +271,7 @@ def supervisor(executable: str, *, modes: tuple[str, ...], iterations: int,
     report["status"] = "COMPLETE"
     report["success_count"] = sum(x["status"] == "SUCCESS" for x in report["cases"])
     report["crash_count"] = sum(x["status"] == "ACCESS_VIOLATION" for x in report["cases"])
+    report["skipped_count"] = sum(x["status"].startswith("SKIPPED_") for x in report["cases"])
     persist()
     return output, report
 
