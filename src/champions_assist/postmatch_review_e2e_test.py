@@ -7,12 +7,12 @@ offline uses a protocol fake, while API mode uses the signed-in ChatGPT model.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from typing import Callable
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -55,7 +55,8 @@ def _offline_client_factory(match_id: str):
 
 def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
                              access_token: str | None = None,
-                             use_api: bool = False, client_factory=None) -> dict:
+                             use_api: bool = False, client_factory=None,
+                             on_stage: Callable[[str], None] | None = None) -> dict:
     """Return a stage-by-stage, non-sensitive report after storage read-back.
 
     A new temporary SQLite database is used for every test. The finished
@@ -80,9 +81,14 @@ def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
         "findings": 0,
         "next_match_notes": "",
     }
+    def stage(name: str) -> None:
+        report["stage"] = name
+        if on_stage is not None:
+            on_stage(name)
+
     try:
         if use_api and (not access_token or not model):
-            report["stage"] = "AUTH_REQUIRED"
+            stage("AUTH_REQUIRED")
             return report
         with TemporaryDirectory(prefix="champions-postmatch-e2e-") as temp:
             store = MatchupLearningStore(Path(temp))
@@ -91,14 +97,19 @@ def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
                 "opponent_six": [], "selected_three": [], "lead": None,
                 "history": [], "battle_evidence": {}, "observed_hp": {},
             }
-            report["stage"] = "RECORD_END"
+            stage("RECORD_END")
             inserted = store.record_finished(
                 match_id=match_id, team_id=None, state=simulated, source=SOURCE)
-            if not inserted or store.pending_match(match_id) is None:
+            with sqlite3.connect(store.db_path) as db:
+                saved = db.execute(
+                    "SELECT result,source FROM match_history WHERE match_id=?",
+                    (match_id,)).fetchone()
+            if (not inserted or store.pending_match(match_id) is None
+                    or saved != ("WIN", SOURCE)):
                 raise RuntimeError("TEST_MATCH_RECORD_NOT_PENDING")
             report["record_saved"] = True
 
-            report["stage"] = "REVIEW_REQUEST"
+            stage("REVIEW_REQUEST")
             factory = (client_factory if client_factory is not None else
                        None if use_api else _offline_client_factory(match_id))
             result = request_review(
@@ -110,7 +121,7 @@ def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
             if result.get("status") != "STORED_UNVERIFIED_REVIEW":
                 raise RuntimeError("TEST_REVIEW_NOT_STORED")
 
-            report["stage"] = "READBACK"
+            stage("READBACK")
             with sqlite3.connect(store.db_path) as db:
                 row = db.execute(
                     "SELECT review_json,status FROM postmatch_reviews WHERE match_id=?",
@@ -123,14 +134,16 @@ def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
                     or not isinstance(decoded.get("findings"), list)
                     or store.pending_match(match_id) is not None):
                 raise RuntimeError("TEST_REVIEW_READBACK_MISMATCH")
+            stage("COMPLETE")
             report.update(
-                status="PASS", stage="COMPLETE", review_saved=True,
+                status="PASS", review_saved=True,
                 findings=len(decoded["findings"]),
                 next_match_notes=str(decoded.get("next_match_notes", ""))[:360],
             )
             return report
     except Exception as exc:
         # No credentials, stack traces, source data, or raw API errors in GUI.
+        stage("FAILED")
         from .team_ai_analysis import safe_ai_error
         report["error_type"] = type(exc).__name__
         report["error"] = safe_ai_error(exc)
