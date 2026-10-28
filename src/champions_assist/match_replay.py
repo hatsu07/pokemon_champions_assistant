@@ -1635,6 +1635,13 @@ def select_screen_result_evidence(rows: list[dict], *,
         if not isinstance(row,dict):
             continue
         frame=row.get("frame_id")
+        field=str(row.get("field") or "")
+        # Only the battle/system/result message ROI can support match-end
+        # confirmation. Repeated HP overlay OCR must not crowd out events.
+        if not (field.startswith("screen_text.") and
+                field.endswith(("battle_message","system_message",
+                                 "result_message"))):
+            continue
         raw=row.get("raw_text",row.get("text",""))
         observed=row.get("observed_at",row.get("captured_at",row.get("timestamp")))
         if (not isinstance(frame,str) or not frame
