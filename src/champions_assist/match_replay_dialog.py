@@ -1756,25 +1756,27 @@ class MatchReplayDialog(QDialog):
                     self._begin_local_turn(prediction.label)
                 # RESULT_SCREEN is a gate for one OCR-grounded result check,
                 # NEVER a direct WIN/LOSS determination or a new tactical call.
-                if (prediction.label=="RESULT_SCREEN"
-                        and prediction.confidence>=0.95
-                        and prediction.margin>=0.50
-                        and phase=="BATTLE"
-                        and not getattr(self._screen_model,"experimental",False)
-                        and not self._result_screen_sent):
-                    self._offer_event_for_local_ocr(image,label="RESULT_SCREEN")
                 classified=self._screen_gate.observe(prediction,phase)
                 if classified=="RESULT_SCREEN":
                     if getattr(self._screen_model,"experimental",False):
                         self._trace_event("RESULT_SCREEN_TRIAL_REQUIRES_MANUAL_CONFIRMATION")
                     elif not self._result_screen_sent and phase=="BATTLE":
+                        # The stable-screen capture is the authoritative OCR
+                        # job. Force its one message ROI even if the preceding
+                        # classifier frame had identical pixels.
+                        observed_at=monotonic()
+                        frame=f"capture-{self._last_capture_seq}"
                         self._result_screen_candidate={
-                            "frame":f"capture-{self._last_capture_seq}",
-                            "time":monotonic(),"detected_at":monotonic()}
+                            "frame":frame,"time":observed_at,
+                            "ocr_status":"QUEUED","ocr_rows":[]}
+                        queued=self._offer_event_for_local_ocr(
+                            image,label="RESULT_SCREEN",force_result_screen=True)
+                        if not queued:
+                            self._result_screen_candidate["ocr_status"]="UNAVAILABLE"
                         self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
-                            frame_id=self._result_screen_candidate["frame"],
-                            stable_frames=2)
-                        QTimer.singleShot(750,self._attempt_result_screen_verification)
+                            frame_id=frame,stable_frames=2,
+                            ocr_queued=queued)
+                        QTimer.singleShot(0,self._attempt_result_screen_verification)
                     classified=None
                 if (prediction.label=="BATTLE_EVENT"
                         and prediction.confidence>=0.80
@@ -1835,7 +1837,8 @@ class MatchReplayDialog(QDialog):
         if reader is not None:
             reader.stop()
 
-    def _offer_event_for_local_ocr(self,image,*,label="BATTLE_EVENT"):
+    def _offer_event_for_local_ocr(
+            self,image,*,label="BATTLE_EVENT",force_result_screen=False):
         if self._local_event_reader is None:
             self._start_local_event_reader()
         # Persist already-finished OCR immediately DURING event animations.
@@ -1843,11 +1846,15 @@ class MatchReplayDialog(QDialog):
         self._drain_event_candidates(include_snapshot=False)
         reader=self._local_event_reader
         capture_id=f"capture-{self._last_capture_seq}"
-        if reader.offer(image,label=label,frame_id=capture_id):
+        offered=reader.offer(
+            image,label=label,frame_id=capture_id,
+            force_result_screen=force_result_screen)
+        if offered:
             self._ocr_capture_epochs[capture_id]=self._turn_epoch
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               frame_seq=self._last_capture_seq,
                               pending_overflow=reader.overflow)
+        return offered
 
     def _drain_event_candidates(self,*,include_snapshot=True):
         """Persist completed OCR only; never wait in the command-menu path."""
@@ -1868,6 +1875,21 @@ class MatchReplayDialog(QDialog):
                     captured_frame=result.observations[0].frame_id
                 capture_epoch=self._ocr_capture_epochs.pop(
                     captured_frame,self._turn_epoch)
+                candidate=self._result_screen_candidate
+                if (candidate is not None
+                        and captured_frame==candidate["frame"]
+                        and candidate["ocr_status"]=="QUEUED"):
+                    # Completion is signalled even for zero recognized words
+                    # or an OCR error. Neither is evidence of a victory.
+                    candidate["ocr_rows"]=[
+                        row.as_dict() for row in result.observations]
+                    candidate["ocr_status"]=(
+                        "FAILED" if result.error else "COMPLETE")
+                    self._trace_event(
+                        "RESULT_SCREEN_OCR_COMPLETED",
+                        frame_id=captured_frame,
+                        status=candidate["ocr_status"],
+                        recognized_rows=len(result.observations))
                 if (self._active_request_started is not None and
                         result.timestamp<=self._active_request_started):
                     self._trace_event("OCR_COMPLETED_AFTER_AI_INPUT_FREEZE",
