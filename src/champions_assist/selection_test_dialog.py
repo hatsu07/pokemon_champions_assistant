@@ -400,6 +400,13 @@ class SelectionTestDialog(QDialog):
         self.integration_status=QLabel("ライブテストは未開始")
         self.integration_status.setWordWrap(True)
         self.integration_layout.addWidget(self.integration_status)
+        # Independent synthetic test: never connects to the live capture panel.
+        from .postmatch_review_test_page import PostmatchReviewTestPage
+        self.postmatch_page=PostmatchReviewTestPage(
+            app_root=self.app_root, model=self.model,
+            effort=self.reasoning_effort, parent=self.tabs)
+        self.tabs.addTab(self.postmatch_page,"対戦後レビューE2Eテスト")
+        self.postmatch_page.idle.connect(self._retry_close_after_workers)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _on_tab_changed(self,index):
@@ -484,6 +491,7 @@ class SelectionTestDialog(QDialog):
     def _retry_close_after_workers(self):
         if (self._close_after_workers and self.thread is None
                 and self.ocr_thread is None
+                and not self.postmatch_page.has_active_worker
                 and (self.live_panel is None or
                      (self.live_panel._thread is None
                       and self.live_panel._prep_thread is None))):
@@ -1012,6 +1020,7 @@ class SelectionTestDialog(QDialog):
 
     def closeEvent(self,event):
         self._close_after_workers=True
+        self.postmatch_page.request_close()
         # Close is a one-shot request, not a dialog asking the user to keep
         # retrying. Cancellation can still await an in-flight HTTP timeout.
         self.auto_prep_pending=False
@@ -1019,6 +1028,7 @@ class SelectionTestDialog(QDialog):
             if not self.live_panel._shutdown_ready:
                 self.live_panel.request_shutdown("close")
         if (self.thread is not None or self.ocr_thread is not None or
+                self.postmatch_page.has_active_worker or
                 (self.live_panel is not None and (
                  self.live_panel._thread is not None or
                  self.live_panel._prep_thread is not None))):
