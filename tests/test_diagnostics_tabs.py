@@ -44,7 +44,7 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.assertEqual(self.dialog.tabs.count(),6)
         self.assertEqual([self.dialog.tabs.tabText(i) for i in range(6)],[
             "選出画面テスト","ターン画面テスト",
-            "交代先選択画面テスト","バトルイベント読み取りテスト",
+            "交代先選択画面テスト","ローカルOCR診断",
             "1対戦統合テスト（実ゲーム画面）",
             "対戦後レビューE2Eテスト"])
         self.assertFalse(self.dialog.postmatch_page.has_active_worker)
@@ -52,7 +52,7 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.assertIsNone(self.dialog.live_panel)
         self.assertFalse(self.dialog.turn_run_button.isEnabled())
         self.assertFalse(self.dialog.switch_run_button.isEnabled())
-        self.assertFalse(self.dialog.event_run_button.isEnabled())
+        self.assertFalse(self.dialog.event_ocr_button.isEnabled())
         self.dialog.tabs.setCurrentWidget(self.dialog.integration_page)
         self.assertIn("設定",self.dialog.integration_status.text())
         self.assertIsNone(self.dialog.live_panel)
@@ -68,24 +68,24 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.dialog._clear_worker()
         self.assertTrue(self.dialog.turn_run_button.isEnabled())
         self.assertTrue(self.dialog.switch_run_button.isEnabled())
-        self.assertTrue(self.dialog.event_run_button.isEnabled())
+        self.assertTrue(self.dialog.event_ocr_button.isEnabled())
         self.dialog.set_image(np.ones((250,500,3),dtype=np.uint8))
         self.assertIsNone(self.dialog.test_state)
         self.assertIsNone(self.dialog.switch_image)
         self.assertIsNone(self.dialog.event_image)
         self.assertIsNone(self.dialog.turn_image)
         self.assertFalse(self.dialog.switch_run_button.isEnabled())
-        self.assertFalse(self.dialog.event_run_button.isEnabled())
+        self.assertFalse(self.dialog.event_ocr_button.isEnabled())
 
-    def test_local_ocr_diagnostics_are_separate_from_api_event_test(self):
+    def test_local_ocr_diagnostics_are_independent_of_selection_and_prep(self):
         # No selection, PREP or ChatGPT access is necessary to inspect a
         # user-selected screenshot's exact ROI and OCR result.
-        self.assertFalse(self.dialog.event_run_button.isEnabled())
+        self.assertFalse(self.dialog.event_ocr_button.isEnabled())
         with patch.object(self.dialog,"_pick_diagnostic_image",
                           return_value=np.zeros((572,960,3),dtype=np.uint8)):
             self.dialog.choose_event_image()
         self.assertTrue(self.dialog.event_ocr_button.isEnabled())
-        self.assertFalse(self.dialog.event_run_button.isEnabled())
+        self.assertFalse(self.dialog.event_ocr_button.isEnabled())
         result={"status":"OCR_DIAGNOSTIC_COMPLETE","rows":[{
             "name":"battle_message","kind":"MESSAGE",
             "crop":np.zeros((40,150,3),dtype=np.uint8),
@@ -133,28 +133,6 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.assertEqual(output[0]["rows"],[])
         self.assertNotIn("DO_NOT_LOG_PRIVATE_IMAGE",str(output[0]))
         error.assert_called_once()
-
-    def test_event_observation_requires_actual_event_not_generic_screen(self):
-        state=selection_test_prep_state(self.assets,selection_fixture())
-        emitted=[]
-        worker=_TimingTestWorker(
-            mode="EVENT",image=np.zeros((300,500,3),dtype=np.uint8),
-            assets=self.assets,state=state,app_root=Path(self.root.name),
-            model="mock",reasoning_effort="auto",requested_at=perf_counter())
-        worker.finished.connect(lambda payload:emitted.append(payload))
-        revised=deepcopy(state)
-        revised["phase"]="ENDED"
-        revised["result"]="WIN"
-        observed={"status":"MATCH_END","screen":"RESULT_SCREEN",
-                  "observation":{"observed_event":"TURN_RESOLVED",
-                                 "messages":["勝敗の表示"],"match_result":"WIN"}}
-        with patch("champions_assist.selection_test_dialog.ChatGPTSignIn.access_token",
-                   return_value="dummy"),patch(
-            "champions_assist.match_replay.run_replay_batch",
-            return_value=(revised,observed)):
-            worker.run()
-        self.assertEqual(emitted[0]["report"]["status"],"EVENT_READ_PASS")
-        self.assertEqual(emitted[0]["state"]["phase"],"ENDED")
 
     def test_live_integration_close_after_worker_without_retry_dialog(self):
         from PySide6.QtCore import QCoreApplication
