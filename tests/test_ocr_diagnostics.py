@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 import numpy as np
 from champions_assist.calibrated_screen_fields import (
     ScreenFieldProfile, FieldRegion,
 )
-from champions_assist.ocr import OcrRead
+from champions_assist.ocr import OcrRead, OcrExecutionError
 from champions_assist.ocr_diagnostics import inspect_battle_event_image
 
 
@@ -34,6 +35,44 @@ class LocalOcrDiagnosticTests(unittest.TestCase):
         self.assertTrue(hit["crop"].size)
         self.assertEqual(hit["error"],"")
         self.assertTrue(any(r["text"].startswith("ガブリアス") for r in report["rows"]))
+
+    def test_default_runtime_uses_same_onnx_backend_and_gpu_settings_as_live(self):
+        image=np.full((572,960,3),255,dtype=np.uint8)
+        profile=ScreenFieldProfile.from_user_samples_960x572()
+        class FakeOnnxEngine:
+            engine_name="pp-ocrv6-small-onnx"
+            provider="DmlExecutionProvider"
+            def read(self,image,*,roi_name):
+                return OcrRead("117/131",0.91,self.engine_name)
+        with patch("champions_assist.ocr_diagnostics.make_onnx_ocr",
+                   return_value=FakeOnnxEngine()) as factory:
+            report=inspect_battle_event_image(
+                image,profile,device="directml",gpu_id=2)
+        factory.assert_called_once_with(device="directml",gpu_id=2)
+        self.assertEqual(report["engine"],"pp-ocrv6-small-onnx")
+        self.assertEqual(report["provider"],"DmlExecutionProvider")
+        self.assertEqual(report["requested_device"],"directml")
+        self.assertEqual(report["requested_gpu_id"],2)
+        self.assertEqual([r["error"] for r in report["rows"]],[""]*len(report["rows"]))
+        self.assertTrue(any(r["parsed"]=={"current":117,"maximum":131}
+                            for r in report["rows"]))
+
+    def test_missing_onnx_bundle_is_not_reported_as_missing_tesseract(self):
+        image=np.full((572,960,3),255,dtype=np.uint8)
+        profile=ScreenFieldProfile.from_user_samples_960x572()
+        class MissingOnnx:
+            engine_name="pp-ocrv6-small-onnx"
+            provider="NOT_INITIALIZED"
+            def read(self,image,*,roi_name):
+                raise OcrExecutionError("ONNX_OCR_MODELS_MISSING")
+        with patch("champions_assist.ocr_diagnostics.make_onnx_ocr",
+                   return_value=MissingOnnx()):
+            report=inspect_battle_event_image(image,profile)
+        self.assertTrue(report["rows"])
+        self.assertTrue(all(r["error"]=="ONNX_OCR_MODELS_MISSING"
+                            for r in report["rows"]))
+        self.assertFalse(any(r["error"]=="OCR_RUNTIME_MISSING"
+                             for r in report["rows"]))
 
     def test_bad_aspect_ratio_is_reported_without_ocr(self):
         reader=StaticEngine()

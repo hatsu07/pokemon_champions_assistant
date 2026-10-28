@@ -15,7 +15,7 @@ from unittest.mock import patch
 from time import perf_counter
 
 import numpy as np
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from champions_assist.app_config import CaptureConfiguration
 from champions_assist.selection_test_dialog import SelectionTestDialog, _TimingTestWorker
@@ -92,6 +92,44 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.dialog._local_ocr_result(result)
         self.assertIn("1領域",self.dialog.event_ocr_status.text())
         self.assertEqual(self.dialog.event_ocr_rows.count(),1)
+        container=self.dialog.event_ocr_rows.itemAt(0).widget()
+        detail=next(label.text() for label in container.findChildren(QLabel)
+                    if "認識:" in label.text())
+        self.assertIn("\n認識:",detail)
+        self.assertNotIn("\\n",detail)
+
+    def test_local_ocr_worker_forwards_gpu_mode_and_index_without_ai(self):
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        from champions_assist.selection_test_dialog import _LocalOcrWorker
+        image=np.full((572,960,3),255,dtype=np.uint8)
+        profile=ScreenFieldProfile.from_user_samples_960x572()
+        worker=_LocalOcrWorker(image,profile,device="directml",gpu_id=3)
+        results=[]
+        worker.finished.connect(results.append)
+        sample={"status":"OCR_DIAGNOSTIC_COMPLETE","rows":[],
+                "engine":"pp-ocrv6-small-onnx","provider":"DmlExecutionProvider"}
+        with patch("champions_assist.ocr_diagnostics.inspect_battle_event_image",
+                   return_value=sample) as inspect:
+            worker.run()
+        inspect.assert_called_once_with(image,profile,device="directml",gpu_id=3)
+        self.assertEqual(results,[sample])
+
+    def test_local_ocr_worker_records_unexpected_error_and_emits_failure(self):
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        from champions_assist.selection_test_dialog import _LocalOcrWorker
+        image=np.full((572,960,3),255,dtype=np.uint8)
+        worker=_LocalOcrWorker(
+            image,ScreenFieldProfile.from_user_samples_960x572())
+        output=[]
+        worker.finished.connect(output.append)
+        with patch("champions_assist.ocr_diagnostics.inspect_battle_event_image",
+                   side_effect=RuntimeError("DO_NOT_LOG_PRIVATE_IMAGE")), patch(
+            "champions_assist.crash_diagnostics.record_exception") as error:
+            worker.run()
+        self.assertEqual(output[0]["status"],"OCR_DIAGNOSTIC_FAILED")
+        self.assertEqual(output[0]["rows"],[])
+        self.assertNotIn("DO_NOT_LOG_PRIVATE_IMAGE",str(output[0]))
+        error.assert_called_once()
 
     def test_event_observation_requires_actual_event_not_generic_screen(self):
         state=selection_test_prep_state(self.assets,selection_fixture())

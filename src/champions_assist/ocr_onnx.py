@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from .ocr import OcrExecutionError, OcrRead
+from .crash_diagnostics import record_event, record_exception
 
 ENGINE_NAME = "pp-ocrv6-small-onnx"
 MODEL_DET = "PP-OCRv6_small_det"
@@ -73,15 +74,17 @@ def _new_session(path: Path, *, factory, available, device: str,
     for provider in order:
         if provider not in available:
             continue
-        options = None
-        if provider == "DmlExecutionProvider":
-            import onnxruntime as ort
-            options = ort.SessionOptions()
-            options.enable_mem_pattern = False
-            options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        providers = ([(provider, {"device_id": gpu_id}), "CPUExecutionProvider"] if
-                     provider != "CPUExecutionProvider" else [provider])
+        record_event("OCR_SESSION_INIT_BEGIN", component=path.name,
+                     provider=provider, device=device, gpu_id=gpu_id)
         try:
+            options = None
+            if provider == "DmlExecutionProvider":
+                import onnxruntime as ort
+                options = ort.SessionOptions()
+                options.enable_mem_pattern = False
+                options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            providers = ([(provider, {"device_id": gpu_id}), "CPUExecutionProvider"] if
+                         provider != "CPUExecutionProvider" else [provider])
             kwargs = {"providers": providers}
             if options is not None:
                 kwargs["sess_options"] = options
@@ -90,8 +93,11 @@ def _new_session(path: Path, *, factory, available, device: str,
             if provider not in actual:
                 last = "PROVIDER_NOT_ATTACHED"
                 continue
+            record_event("OCR_SESSION_INIT_COMPLETE", component=path.name,
+                         provider=provider, device=device, gpu_id=gpu_id)
             return session, provider
         except (RuntimeError, ValueError, OSError, TypeError) as exc:
+            record_exception("OCR_SESSION_INIT_ERROR", exc, stage="OCR_SESSION")
             last = type(exc).__name__
     if device in ("gpu", "directml", "cuda"):
         raise OcrExecutionError("ONNX_OCR_GPU_UNAVAILABLE")
@@ -211,11 +217,14 @@ class PPocrV6SmallOnnx:
     def warmup(self):
         if self._det is not None:
             return
+        record_event("OCR_WARMUP_BEGIN", device=self.device, gpu_id=self.gpu_id)
         root = self.model_dir or bundled_model_directory()
         for name in (_DET_FILE, _REC_FILE, _DICT_FILE):
             if not (root / name).is_file():
                 raise OcrExecutionError("ONNX_OCR_MODELS_MISSING")
+        record_event("OCR_BUNDLE_VERIFY_BEGIN")
         _verify_bundle(root)
+        record_event("OCR_BUNDLE_VERIFIED")
         characters = (root / _DICT_FILE).read_text(encoding="utf-8-sig").splitlines()
         if len(characters) < 1000:
             raise OcrExecutionError("ONNX_OCR_DICTIONARY_INVALID")
@@ -223,7 +232,9 @@ class PPocrV6SmallOnnx:
         if " " not in characters:
             characters.append(" ")
         try:
+            record_event("OCR_RUNTIME_IMPORT_BEGIN")
             import onnxruntime as ort
+            record_event("OCR_RUNTIME_IMPORT_COMPLETE")
             factory = self._session_factory or ort.InferenceSession
             available = set(self._available or ort.get_available_providers())
             det, det_provider = _new_session(
@@ -242,6 +253,7 @@ class PPocrV6SmallOnnx:
                     raise OcrExecutionError("ONNX_OCR_DICTIONARY_MISMATCH")
 
             try:
+                record_event("OCR_INFERENCE_PROBE_BEGIN", provider=det_provider)
                 inference_probe(det, rec)
             except Exception as exc:
                 if self.device != "auto" or (
@@ -253,15 +265,20 @@ class PPocrV6SmallOnnx:
                     root / _DET_FILE, factory=factory, available=available, device="cpu", gpu_id=self.gpu_id)
                 rec, rec_provider = _new_session(
                     root / _REC_FILE, factory=factory, available=available, device="cpu", gpu_id=self.gpu_id)
+                record_event("OCR_INFERENCE_PROBE_CPU_RETRY")
                 inference_probe(det, rec)
+            record_event("OCR_INFERENCE_PROBE_COMPLETE", provider=det_provider)
             self.det_provider = det_provider
             self.rec_provider = rec_provider
             self.provider = (det_provider if det_provider == rec_provider else
                              "MIXED:" + det_provider + "/" + rec_provider)
             self._det, self._rec, self._characters = det, rec, characters
-        except OcrExecutionError:
+            record_event("OCR_WARMUP_COMPLETE", provider=self.provider)
+        except OcrExecutionError as exc:
+            record_exception("OCR_WARMUP_ERROR", exc, stage="OCR_WARMUP")
             raise
         except Exception as exc:
+            record_exception("OCR_WARMUP_ERROR", exc, stage="OCR_WARMUP")
             raise OcrExecutionError("ONNX_OCR_INITIALIZATION_FAILED") from exc
 
     def read(self, image: np.ndarray, *, roi_name: str) -> OcrRead:
@@ -295,9 +312,11 @@ class PPocrV6SmallOnnx:
                         scores.append(confidence)
             return OcrRead(" ".join(texts),
                            sum(scores) / len(scores) if scores else None, ENGINE_NAME)
-        except OcrExecutionError:
+        except OcrExecutionError as exc:
+            record_exception("OCR_READ_ERROR", exc, stage="OCR_READ")
             raise
         except Exception as exc:
+            record_exception("OCR_READ_ERROR", exc, stage="OCR_READ")
             raise OcrExecutionError("ONNX_OCR_INFERENCE_FAILED") from exc
 
 

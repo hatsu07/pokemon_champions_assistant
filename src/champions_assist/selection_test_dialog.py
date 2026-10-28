@@ -96,15 +96,26 @@ class _LocalOcrWorker(QObject):
     """Separate OCR-only worker; no API calls and no saved screenshots."""
     finished=Signal(object)
 
-    def __init__(self, image, profile):
+    def __init__(self, image, profile, *, device="auto", gpu_id=0):
         super().__init__()
         self.image=image
         self.profile=profile
+        self.device=device
+        self.gpu_id=gpu_id
 
     @Slot()
     def run(self):
         from .ocr_diagnostics import inspect_battle_event_image
-        self.finished.emit(inspect_battle_event_image(self.image,self.profile))
+        from .crash_diagnostics import record_exception
+        try:
+            report=inspect_battle_event_image(
+                self.image,self.profile,device=self.device,gpu_id=self.gpu_id)
+        except Exception as exc:
+            record_exception("OCR_DIAGNOSTIC_WORKER_ERROR", exc,
+                             stage="OCR_DIAGNOSTIC")
+            report={"status":"OCR_DIAGNOSTIC_FAILED","rows":[],
+                    "error":getattr(exc,"code",type(exc).__name__)}
+        self.finished.emit(report)
 
 
 class _TimingTestWorker(QObject):
@@ -725,8 +736,12 @@ class SelectionTestDialog(QDialog):
             profile=ScreenFieldProfile.from_user_samples_960x572()
         self.event_ocr_button.setEnabled(False)
         self.event_ocr_status.setText("OCRをローカル実行中（AI通信なし）")
+        from .vision_preferences import VisionPreferenceStore
+        preferences=VisionPreferenceStore(self.app_root)
+        device,gpu_id=preferences.screen_device(),preferences.screen_gpu_id()
         self.ocr_thread=QThread(self)
-        self.ocr_worker=_LocalOcrWorker(self.event_image.copy(),profile)
+        self.ocr_worker=_LocalOcrWorker(
+            self.event_image.copy(),profile,device=device,gpu_id=gpu_id)
         self.ocr_worker.moveToThread(self.ocr_thread)
         self.ocr_thread.started.connect(self.ocr_worker.run)
         self.ocr_worker.finished.connect(self._local_ocr_result)
@@ -744,8 +759,14 @@ class SelectionTestDialog(QDialog):
                 item.widget().deleteLater()
         rows=report.get("rows",[])
         errors=sum(bool(r["error"]) for r in rows)
+        if not rows and report.get("error"):
+            errors+=1
+        engine=report.get("engine")
+        provider=report.get("provider")
+        runtime=(f" / {engine} [{provider}]" if engine and provider
+                 else f" / {engine}" if engine else "")
         self.event_ocr_status.setText(
-            f"OCR：{report['status']} / {len(rows)}領域 / {errors}エラー"
+            f"OCR：{report['status']} / {len(rows)}領域 / {errors}エラー{runtime}"
             "（結果は候補であり対戦状態へは反映しません）")
         for result in rows:
             container=QWidget()
@@ -761,8 +782,8 @@ class SelectionTestDialog(QDialog):
                         else f"{result['confidence']:.2f}")
             details=QLabel(
                 f"{result['name']} ({result['kind']}) / "
-                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\\n"
-                f"認識: {result['text'] or '（空）'}\\n"
+                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\n"
+                f"認識: {result['text'] or '（空）'}\n"
                 f"解析: {str(result['parsed']) if result['parsed'] is not None else '未確定'}"
                 f" / エラー: {result['error'] or 'なし'}")
             details.setWordWrap(True)
@@ -771,8 +792,10 @@ class SelectionTestDialog(QDialog):
             layout.addWidget(details,1)
             self.event_ocr_rows.addWidget(container)
         if not rows:
-            self.event_ocr_rows.addWidget(
-                QLabel("ROI範囲が画像と不一致／対象領域がありません。校正を確認してください。"))
+            error=report.get("error")
+            self.event_ocr_rows.addWidget(QLabel(
+                "OCR診断失敗: "+str(error) if error else
+                "ROI範囲が画像と不一致／対象領域がありません。校正を確認してください。"))
 
     @Slot()
     def _local_ocr_cleanup(self):
