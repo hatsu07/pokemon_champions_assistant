@@ -196,6 +196,21 @@ class Phase8SettingsTestCase(unittest.TestCase):
             migrate_data_directory(source, occupied)
         self.assertEqual((occupied / "do-not-replace").read_text(encoding="utf-8"), "keep")
 
+    def test_capture_window_requires_explicit_selection(self) -> None:
+        selected=WindowCandidate(97,98,"MirrorApp.exe","Game Mirror",(1,2,31,22),96,False)
+        service=CapturePreviewService(window_enumerator=lambda:(selected,))
+        dialog=SettingsDialog(
+            self.service,match_active=lambda:False,preview_service=service)
+        try:
+            self.assertIsNone(dialog.window_box.currentData())
+            self.assertEqual(dialog.window_box.count(),2)
+            self.assertIsNone(dialog._capture_config().selected_window_identity)
+            dialog.window_box.setCurrentIndex(1)
+            self.assertEqual(dialog._capture_config().selected_window_identity,
+                             selected.identity())
+        finally:
+            dialog.close()
+
     def test_mock_window_selection_preview_and_stale_identity_are_read_only(self) -> None:
         candidate = WindowCandidate(77, 88, "HD-Player.exe", "BlueStacks App Player", (1, 2, 31, 22), 192, False)
         service = CapturePreviewService(
