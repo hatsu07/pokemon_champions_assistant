@@ -1,58 +1,48 @@
-# PP-OCRv6 small via shared ONNX Runtime (Windows)
+# PP-OCRv6 small ONNX Runtime — built into the Windows desktop ZIP
 
-## Architecture
+The live OCR uses official PaddlePaddle **PP-OCRv6 small** ONNX detection
+and recognition models with the **same ONNX Runtime** as the existing
+screen classifier. The user installs **no separate Python, PaddlePaddle,
+CUDA toolkit or `CHAMPIONS_OCR_PYTHON` environment variable**.
+The frozen application includes both models and their official vocabulary
+under `_internal/ocr-v6`. No runtime model download or network OCR.
 
-The live OCR backend is **PP-OCRv6_small_det_onnx + PP-OCRv6_small_rec_onnx**,
-loaded using the same `onnxruntime-directml` package as the screen classifier.
+## Build and release
 
-- **No separate Python environment, PaddlePaddle, sidecar installation,
-  `CHAMPIONS_OCR_PYTHON`, or runtime download.**
-- One persistent pair of ONNX Runtime sessions is initialized by the local OCR
-  worker; recognition returns untrusted text, confidence and frame timestamps.
-- Windows prefers DirectML GPU, can try CUDA if available, and falls back to
-  CPU for `auto` (including when DML attaches but a model operator cannot run).
-  The selected provider is reported as `ONNX_OCR_READY_GPU` or
-  `ONNX_OCR_READY_CPU`.
-- The GUI's screen classifier and OCR use separate model sessions, but the
-  same executable, interpreter and ONNX Runtime installation.
-- The OCR processor NEVER interprets battle moves or decides Pokémon identity.
-  Only AI proposals validated by the existing evidence/state verifier may
-  change battle state.
+1. Windows CI installs ONNX Runtime DirectML (already a core dependency)
+   and PyYAML for staging metadata at build time.
+2. `python scripts/stage_ppocrv6_onnx.py --output build/ocr-v6` fetches
+   pinned versions of the official repositories:
+   `PaddlePaddle/PP-OCRv6_small_det_onnx` and
+   `PaddlePaddle/PP-OCRv6_small_rec_onnx`, their `inference.yml` metadata,
+   and extracts the official recognition character dictionary.
+3. It writes a SHA-256 manifest and stops on missing/invalid data.
+4. `python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6`
+   loads **both real models** and executes a synthetic crop through ONNX Runtime
+   CPU, before PyInstaller builds the GUI.
+5. The one-directory PyInstaller desktop ZIP embeds this exact `ocr-v6`
+   folder and ONNX Runtime native libraries. The packaged GUI smoke loads
+   and executes the actual CPU OCR, not a mocked call.
 
-## Model acquisition and reproducibility
+This is still a development distribution, not evidence of real-world
+BlueStacks accuracy or GPU throughput. Validate Japanese text and GPU DirectML
+on the user's Windows hardware before declaring production readiness.
 
-Models are fetched **at build time**, not on the user's machine.
+## Runtime
 
-```powershell
-python scripts/stage_ocr_onnx.py --output src/champions_assist/data/ocr-v6
-```
+- Model: PP-OCRv6 small detection + recognition; no other OCR model selection.
+- Inference: prefer ONNX Runtime DirectML GPU, then CUDA GPU, with CPU
+  fallback. Both OCR sessions are persistent in one OCR worker thread.
+  The screen classifier and OCR use the same installed ONNX Runtime, though
+  separate inference sessions.
+- OCR remains raw untrusted text. ChatGPT interprets battle events and
+  proposes state changes; the application verifies before applying them.
+- The ROI capture and chronological evidence queue continue unchanged.
+- Model/file/provider errors are visible as `ONNX_OCR_*` diagnostics.
+  Missing OCR does **not** disable normal text-based tactical assistance.
+- CPU-only CI does **not** prove GPU DirectML acceleration. The provider
+  reported by the runtime is included in the OCR readiness diagnostics.
 
-The script downloads the official PaddlePaddle release weights at pinned HF
-revisions, verifies both model SHA-256 digests, validates the 18,708-entry
-official PP-OCRv6 CTC dictionary, and stages them for PyInstaller. Windows
-Actions runs this step before building the portable EXE, then bundles the
-files into `_internal/ocr-v6/`.
-
-Official source:
-- https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
-- https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
-- https://github.com/PaddlePaddle/PaddleOCR/blob/main/ppocr/utils/dict/ppocrv6_dict.txt
-
-Weights and dictionary retain their upstream Apache-2.0 attribution.
-
-## Validation
-
-Windows CI invokes real detection and CTC recognition using CPU ONNX Runtime
-**and** repeats a synthetic inference smoke in the packaged EXE. This checks
-that the bundled weights, dictionary and model execution are present. CI also
-runs deterministic tactical-state, late OCR, GUI stale-advice and queue tests.
-
-The smoke result says `gpu_inference_tested=false`, because a hosted Windows
-runner does not establish actual DirectML runtime speed and accuracy. Confirm
-on the player's GPU: active provider, p50/p95 capture-to-OCR, Japanese
-Pokémon/move-name correctness, and 45-second decision readiness. Do not
-describe the build as GPU-validated based only on the CPU smoke.
-
-If OCR remains disabled, the existing policy of continuing AI support with
-previously known and explicitly uncertain information is unchanged. No
-silent OCR-derived battle-state updates are added.
+Official sources:
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
