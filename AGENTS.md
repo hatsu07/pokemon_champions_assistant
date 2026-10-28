@@ -2,7 +2,7 @@
 
 
 ## Mandatory AI development / CI policy (2026-10-23)
-- Screen classifier labels are exactly TEAM_SELECTION, TURN_ACTION, SWITCH_SELECTION, BATTLE_EVENT, OTHER (schema v2). Read `docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md` before modifying screen training, collector GUI, manifests, or battle triggers. Never overwrite legacy 7-label PNGs; BATTLE_EVENT vs OTHER and former UNKNOWN require image-by-image human review. Event *classification* does not prove a specific move, ability, held item or mega event.
+- Screen classifier labels are exactly TEAM_SELECTION, TURN_ACTION, SWITCH_SELECTION, BATTLE_EVENT, RESULT_SCREEN, OTHER (schema v3). Read `docs/ISSUE_102_SIX_CLASS_RESULT_SCREEN.md` and the historical `docs/SCREEN_LABELS_FIVE_CLASS_MIGRATION.md` before modifying screen training, collector GUI, manifests, or battle triggers. Never overwrite legacy 7-label PNGs; BATTLE_EVENT vs OTHER and former UNKNOWN require image-by-image human review. Event *classification* does not prove a specific move, ability, held item or mega event.
 - **New chat handoff: read `docs/CURRENT_DEVELOPMENT_HANDOFF.md` first, then the canonical policies it lists.** Confirm the current GitHub master, PRs, latest Windows CI and Releases directly; historical summary is never enough.
 - **Read and follow `docs/AI_DEVELOPMENT_AND_CI_POLICY.md` and `docs/CI_MERGE_GUARD_AND_NEXT_CHAT.md` before changing code or reporting a result.** This requirement applies to Codex, ChatGPT, other development agents and human contributors.
 - Use a Draft PR while implementing, testing, documenting and committing. **Freeze the final commit before triggering/accepting release CI.**
