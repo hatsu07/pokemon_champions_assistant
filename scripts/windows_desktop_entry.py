@@ -49,6 +49,8 @@ def _diagnostic_root() -> Path:
 def _record_startup_failure(exc: Exception) -> Path | None:
     """Log the exception TYPE and stack locations only; never log secrets/values."""
     try:
+        from champions_assist.crash_diagnostics import record_exception
+        record_exception("STARTUP_EXCEPTION", exc, stage="WINDOWS_ENTRY")
         root = _diagnostic_root()
         root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -169,20 +171,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--smoke", type=Path, metavar="REPORT_JSON", help="offline headless GUI smoke test")
     args = parser.parse_args(argv)
 
+    from champions_assist.crash_diagnostics import (
+        install_crash_diagnostics, record_event)
+    diagnostic_path = install_crash_diagnostics(_diagnostic_root())
+    record_event("WINDOWS_ENTRY_STARTED",
+                 component="DESKTOP_SMOKE" if args.smoke is not None else "DESKTOP_GUI")
+    rc = 1
     try:
         if args.smoke is not None:
-            return run_smoke(args.smoke)
+            rc = run_smoke(args.smoke)
+            return rc
         from champions_assist.__main__ import main as assistant_main
 
         command = ["desktop", "--master-dir", str(bundled_master_directory())]
         if args.config is not None:
             command.extend(["--config", str(args.config.expanduser())])
-        return assistant_main(command)
+        rc = assistant_main(command)
+        return rc
     except Exception as exc:
         log_path = _record_startup_failure(exc)
         if args.smoke is None:
             _show_startup_failure(log_path)
         return 1
+    finally:
+        record_event("WINDOWS_ENTRY_EXIT", exit_code=rc)
 
 
 if __name__ == "__main__":
