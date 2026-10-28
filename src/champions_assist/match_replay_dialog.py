@@ -1760,11 +1760,14 @@ class MatchReplayDialog(QDialog):
                         and prediction.confidence>=0.95
                         and prediction.margin>=0.50
                         and phase=="BATTLE"
+                        and not getattr(self._screen_model,"experimental",False)
                         and not self._result_screen_sent):
                     self._offer_event_for_local_ocr(image,label="RESULT_SCREEN")
                 classified=self._screen_gate.observe(prediction,phase)
                 if classified=="RESULT_SCREEN":
-                    if not self._result_screen_sent and phase=="BATTLE":
+                    if getattr(self._screen_model,"experimental",False):
+                        self._trace_event("RESULT_SCREEN_TRIAL_REQUIRES_MANUAL_CONFIRMATION")
+                    elif not self._result_screen_sent and phase=="BATTLE":
                         self._result_screen_candidate={
                             "frame":f"capture-{self._last_capture_seq}",
                             "time":monotonic(),"detected_at":monotonic()}
