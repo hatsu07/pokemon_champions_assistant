@@ -421,11 +421,17 @@ class LiveStateOcrTests(unittest.TestCase):
                 client_factory=lambda **_kwargs:object(),
                 diagnostic_sink=lambda name,detail: events.append((name,detail)))
         self.assertNotEqual(report["status"],"ERROR",report)
+        # OCR delta and turn-latency diagnostics are now emitted alongside
+        # the original AI request/response/validation diagnostics.
         self.assertEqual([e[0] for e in events],
-                         ["AI_INPUT","AI_RESPONSE_RAW","AI_VALIDATION"])
-        self.assertEqual(events[0][1]["active_own"],"マスカーニャ")
-        self.assertEqual(events[1][1]["switch_target"],"マリルリ")
-        self.assertIn("validation_code",events[2][1])
+                         ["OCR_TURN_COMPACTION","AI_INPUT",
+                          "AI_RESPONSE_RAW","AI_VALIDATION",
+                          "OCR_TURN_TIMING"])
+        self.assertEqual(events[1][1]["active_own"],"マスカーニャ")
+        self.assertEqual(events[2][1]["switch_target"],"マリルリ")
+        self.assertIn("validation_code",events[3][1])
+        self.assertIn("api_rows_sent",events[0][1])
+        self.assertIn("turn_elapsed_ms",events[4][1])
 
 
 if __name__=="__main__":
