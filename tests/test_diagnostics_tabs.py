@@ -93,6 +93,22 @@ class DiagnosticsTabTests(unittest.TestCase):
         self.assertIn("1領域",self.dialog.event_ocr_status.text())
         self.assertEqual(self.dialog.event_ocr_rows.count(),1)
 
+    def test_local_ocr_worker_forwards_gpu_mode_and_index_without_ai(self):
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        from champions_assist.selection_test_dialog import _LocalOcrWorker
+        image=np.full((572,960,3),255,dtype=np.uint8)
+        profile=ScreenFieldProfile.from_user_samples_960x572()
+        worker=_LocalOcrWorker(image,profile,device="directml",gpu_id=3)
+        results=[]
+        worker.finished.connect(results.append)
+        sample={"status":"OCR_DIAGNOSTIC_COMPLETE","rows":[],
+                "engine":"pp-ocrv6-small-onnx","provider":"DmlExecutionProvider"}
+        with patch("champions_assist.ocr_diagnostics.inspect_battle_event_image",
+                   return_value=sample) as inspect:
+            worker.run()
+        inspect.assert_called_once_with(image,profile,device="directml",gpu_id=3)
+        self.assertEqual(results,[sample])
+
     def test_event_observation_requires_actual_event_not_generic_screen(self):
         state=selection_test_prep_state(self.assets,selection_fixture())
         emitted=[]
