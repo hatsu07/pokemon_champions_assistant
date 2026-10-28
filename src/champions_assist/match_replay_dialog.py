@@ -1707,6 +1707,16 @@ class MatchReplayDialog(QDialog):
                     record_event("SCREEN_CLASSIFIER_PREDICT_COMPLETE",
                                  frame_seq=self._last_capture_seq,
                                  provider=getattr(self._screen_model,"provider","UNKNOWN"))
+                if (self._result_screen_candidate is not None
+                        and prediction.label in _URGENT_SCREENS
+                        and prediction.confidence>=0.95
+                        and prediction.margin>=0.50):
+                    # A fresh real player action invalidates a stale/falsely
+                    # identified end screen, even if the result GPT is busy.
+                    self._trace_event("RESULT_SCREEN_STALE_ACTION_OBSERVED",
+                                      frame_seq=self._last_capture_seq)
+                    self._result_screen_candidate=None
+                    self._result_screen_sent=False
                 if (prediction.label in _URGENT_SCREENS
                         and prediction.confidence>=0.80
                         and phase in ("PREP","BATTLE")):
@@ -2056,6 +2066,14 @@ class MatchReplayDialog(QDialog):
             # its stale action, advance the match, or dispatch more captures.
             return
         report=payload["report"]
+        if (self._active_job=="result_screen"
+                and self._result_screen_candidate is None):
+            # Result classification was superseded by a real next-turn menu.
+            # Ignore the old GPT conclusion; never overwrite current battle.
+            self._trace_event("STALE_RESULT_SCREEN_ANSWER_DROPPED")
+            report={"status":"SUPERSEDED","recommendation":"",
+                    "warning":"RESULT_SCREEN_NO_LONGER_CURRENT"}
+            payload={"state":self.state,"report":report}
         if (self._active_job=="batch" and
                 self._active_state_revision is not None and
                 (self.state or {}).get("_live_state_revision",0)!=self._active_state_revision and
