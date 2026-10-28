@@ -33,6 +33,34 @@ class GpuContract(unittest.TestCase):
             finally:
                 reader.stop()
 
+    def test_configured_gpu_mode_index_reaches_factory(self):
+        from champions_assist.local_event_worker import AsyncBattleEventReader
+        from champions_assist.ocr import OcrRead
+        from tests.test_local_event_worker import fixture
+        profile,_,_=fixture()
+        class FakeOcr:
+            def read(self,*args,**kwargs):
+                return OcrRead("",None,ENGINE_NAME)
+        with patch("champions_assist.ocr_onnx.make_onnx_ocr",
+                   return_value=FakeOcr()) as factory:
+            reader=AsyncBattleEventReader.with_onnx_ocr(
+                profile,device="directml",gpu_id=2)
+            try:
+                factory.assert_called_once_with(device="directml",gpu_id=2)
+            finally:
+                reader.stop()
+
+    def test_init_failure_is_visible_without_ocr_worker(self):
+        from champions_assist.local_event_worker import AsyncBattleEventReader
+        from champions_assist.ocr import OcrExecutionError
+        from tests.test_local_event_worker import fixture
+        profile,_,_=fixture()
+        with patch("champions_assist.ocr_onnx.make_onnx_ocr",
+                   side_effect=OcrExecutionError("ONNX_OCR_MODELS_MISSING")):
+            reader=AsyncBattleEventReader.with_onnx_ocr(profile)
+            self.assertFalse(reader.enabled)
+            self.assertEqual(reader.reason,"ONNX_OCR_MODELS_MISSING")
+
 class NoStaleAdviceGuiRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
