@@ -759,6 +759,8 @@ class SelectionTestDialog(QDialog):
                 item.widget().deleteLater()
         rows=report.get("rows",[])
         errors=sum(bool(r["error"]) for r in rows)
+        if not rows and report.get("error"):
+            errors+=1
         engine=report.get("engine")
         provider=report.get("provider")
         runtime=(f" / {engine} [{provider}]" if engine and provider
@@ -790,8 +792,10 @@ class SelectionTestDialog(QDialog):
             layout.addWidget(details,1)
             self.event_ocr_rows.addWidget(container)
         if not rows:
-            self.event_ocr_rows.addWidget(
-                QLabel("ROI範囲が画像と不一致／対象領域がありません。校正を確認してください。"))
+            error=report.get("error")
+            self.event_ocr_rows.addWidget(QLabel(
+                "OCR診断失敗: "+str(error) if error else
+                "ROI範囲が画像と不一致／対象領域がありません。校正を確認してください。"))
 
     @Slot()
     def _local_ocr_cleanup(self):
