@@ -155,7 +155,7 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
     eligible = (len(normalized)>=MIN_MATCHES
                 and all_deadlines and no_tracking_errors)
     return {
-        "schema":SCHEMA,"team_id":team_id,
+        "schema":packet["schema"],"team_id":team_id,
         "team_fingerprint":team_fingerprint,"regulation":regulation,
         "capture_platform":platform,
         "matches":normalized,"match_count":len(normalized),
@@ -168,7 +168,7 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
             "INDEPENDENT_CHAMPIONS_EFFECT_AND_DAMAGE_VALIDATION",
             "REVIEWED_PROCESSOR_AND_SAFE_SWITCH_ROLE_EVIDENCE",
             "INDEPENDENT_REAL_GAME_TACTICAL_ACCURACY_REVIEW",
-        ] + ([] if eligible else ["DEVICE_E2E_90_40_45_NOT_PROVEN"]),
+        ] + ([] if eligible else ["DEVICE_E2E_90_90_45_NOT_PROVEN"]),
         "note":"Audited packet structure is not automatically proof of tactical correctness.",
     }
 
