@@ -173,6 +173,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="isolate five offline DirectML stress cases, including cross-process")
     parser.add_argument("--gpu-diagnostic-child",
                         choices=("rec", "classifier", "serial", "parallel"))
+    parser.add_argument("--gpu-diagnostic-modes", type=str,
+                        default="rec,classifier,serial,parallel,multiprocess",
+                        help="comma-separated comparison modes")
     parser.add_argument("--gpu-diagnostic-process-child", choices=("rec", "screen"),
                         help="isolated subprocess worker for condition E")
     parser.add_argument("--gpu-diagnostic-sync-dir", type=Path)
@@ -234,7 +237,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             from champions_assist.gpu_stress_diagnostics import COMPARISON_MODES, supervisor
             from champions_assist.app_config import default_app_root
             output, report = supervisor(
-                sys.executable, modes=COMPARISON_MODES, iterations=args.iterations,
+                sys.executable, modes=tuple(args.gpu_diagnostic_modes.split(",")),
+                iterations=args.iterations,
                 trials=args.trials, gpu_id=args.gpu_id,
                 app_root=default_app_root(), model=args.screen_model)
             if os.name == "nt":
