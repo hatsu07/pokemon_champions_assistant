@@ -249,7 +249,10 @@ def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenM
     own=state.get("our_active") or ""
     opponent=state.get("opponent_active") or ""
     if screen_label=="TURN_ACTION":
-        return bool(own and opponent and _member_for(own,assets))
+        # We can still evaluate registered moves when the opponent identity
+        # is UNKNOWN. The tactical prompt marks that uncertainty explicitly.
+        # Missing enemy identity should not erase a playable own turn.
+        return bool(own and _member_for(own,assets))
     selected=list(state.get("selected_three") or ())
     if not opponent or len(selected)!=3 or any(_member_for(n,assets) is None for n in selected):
         return False
