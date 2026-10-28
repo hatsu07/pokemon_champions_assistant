@@ -74,6 +74,30 @@ def _safe_code(exc: Exception) -> str:
     return "OCR_SIDECAR_INFERENCE_FAILED"
 
 
+def _stream(name: str, explicit: BinaryIO | None) -> BinaryIO:
+    """Get a pipe even in PyInstaller --windowed where sys.std* is None."""
+    if explicit is not None:
+        return explicit
+    stream = getattr(sys, name, None)
+    binary = getattr(stream, "buffer", None)
+    if binary is not None:
+        return binary
+    if os.name != "nt":
+        raise OcrExecutionError("OCR_SIDECAR_STANDARD_PIPE_UNAVAILABLE")
+    import ctypes
+    import msvcrt
+    kernel = ctypes.windll.kernel32
+    kernel.GetStdHandle.restype = ctypes.c_void_p
+    kernel.GetStdHandle.argtypes = [ctypes.c_ulong]
+    std_id = -10 if name == "stdin" else -11
+    handle = kernel.GetStdHandle(std_id & 0xFFFFFFFF)
+    if handle in (None, 0, ctypes.c_void_p(-1).value):
+        raise OcrExecutionError("OCR_SIDECAR_STANDARD_PIPE_UNAVAILABLE")
+    flags = os.O_BINARY | (os.O_RDONLY if name == "stdin" else os.O_WRONLY)
+    descriptor = msvcrt.open_osfhandle(handle, flags)
+    return os.fdopen(descriptor, "rb" if name == "stdin" else "wb", buffering=0)
+
+
 def serve(*, device: str, gpu_id: int, factory: Callable | None = None,
           source: BinaryIO | None = None, target: BinaryIO | None = None) -> int:
     """The *only* runtime entry into OCR native ONNX sessions on GPU.
@@ -82,8 +106,8 @@ def serve(*, device: str, gpu_id: int, factory: Callable | None = None,
     not from within the GUI Python process. An injected factory enables
     hardware-free protocol contract tests.
     """
-    inp = source if source is not None else sys.stdin.buffer
-    out = target if target is not None else sys.stdout.buffer
+    inp = _stream("stdin", source)
+    out = _stream("stdout", target)
     try:
         if factory is None:
             from .ocr_onnx import make_onnx_ocr
