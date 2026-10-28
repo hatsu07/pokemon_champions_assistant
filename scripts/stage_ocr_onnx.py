@@ -56,6 +56,15 @@ def stage(destination: Path):
     for filename, url, expected_sha in MODELS:
         _fetch(url, destination / filename, expected_sha)
     _fetch(DICTIONARY_URL, destination / "ppocrv6_dict.txt", None)
+    # Upstream Apache-2.0 license must accompany redistributed weights.
+    license_path = destination / "PP-OCRv6-LICENSE.txt"
+    if not license_path.exists():
+        with urlopen("https://raw.githubusercontent.com/PaddlePaddle/"
+                     "PaddleOCR/main/LICENSE", timeout=30) as reply:
+            license_data = reply.read()
+        if b"Apache License" not in license_data or len(license_data) < 1000:
+            raise RuntimeError("OCR_UPSTREAM_LICENSE_INVALID")
+        license_path.write_bytes(license_data)
     print("PP_OCRV6_SMALL_ONNX_STAGED")
 
 
