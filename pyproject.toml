@@ -19,8 +19,6 @@ dependencies = [
     "PySide6-Essentials>=6.8,<7",
 ]
 
-[project.optional-dependencies]
-gpu-ocr = ["paddleocr>=3.7,<4"]
 
 [project.scripts]
 champions-assist = "champions_assist.__main__:main"
