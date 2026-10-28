@@ -173,9 +173,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from champions_assist.crash_diagnostics import (
         install_crash_diagnostics, record_event)
-    diagnostic_path = install_crash_diagnostics(_diagnostic_root())
+    install_crash_diagnostics(_diagnostic_root())
     record_event("WINDOWS_ENTRY_STARTED",
                  component="DESKTOP_SMOKE" if args.smoke is not None else "DESKTOP_GUI")
+    # A prerelease can be compared by its tested build revision without
+    # persisting any user settings or private filesystem paths.
+    try:
+        revision_file = Path(sys.executable).parent / "BUILD_REVISION.txt"
+        if revision_file.is_file():
+            revision = dict(
+                line.split("=", 1) for line in
+                revision_file.read_text(encoding="utf-8-sig").splitlines()
+                if "=" in line
+            )
+            record_event("BUILD_REVISION",
+                         build_revision=revision.get("commit_sha"),
+                         build_version=revision.get("version"))
+    except (OSError, ValueError, TypeError):
+        record_event("BUILD_REVISION_UNAVAILABLE")
     rc = 1
     try:
         if args.smoke is not None:
