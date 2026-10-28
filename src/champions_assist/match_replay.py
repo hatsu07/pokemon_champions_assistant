@@ -1472,8 +1472,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             limit_seconds=total_seconds,
         )
         if (result.get("status")!="BLOCKED"
-                and expected_screen_label in ("TURN_ACTION","SWITCH_SELECTION")
-                and state.get("phase") in ("PREP","BATTLE")):
+                and state.get("phase") in ("PREP","BATTLE")
+                and (expected_screen_label in ("TURN_ACTION","SWITCH_SELECTION")
+                     or selected_ocr)):
             # Image interpretation may assist the tactic, but it does not
             # independently prove that any OCR frame was validated. Preserve
             # the GPT-selected carryover and do not auto-ACK raw OCR here.
