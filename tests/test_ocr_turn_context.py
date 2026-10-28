@@ -132,6 +132,34 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                          [ledger[14]["frame_id"]])
         self.assertEqual(pending[0]["verified"],False)
 
+    def test_previous_unresolved_survives_temporary_ocr_snapshot_gap(self):
+        previous=unresolved("capture-0012")
+        state={"_ai_ocr_unresolved":[dict(previous,verified=False)],
+               "_ai_ocr_presented_keys":["prior-hash"]}
+        sent,pending,stats=build_ocr_turn_context(state,[])
+        self.assertEqual(sent,[])
+        self.assertEqual(len(pending),1)
+        self.assertEqual(pending[0]["source_frames"],["capture-0012"])
+        self.assertEqual(pending[0]["verified"],False)
+        self.assertEqual(stats["ledger_rows_available"],0)
+
+    def test_forced_replacement_unknown_actor_can_abstain_without_false_error(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        state["our_active"]=""
+        state["awaiting_replacement"]=True
+        state["battle_evidence"]["hp_by_pokemon"]["own"]["ゲンガー"]="0/120"
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=model_reply([],own="")):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="SWITCH_SELECTION",
+                local_field_candidates=rows(2),
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["status"],"NO_ACTION")
+        self.assertEqual(report["images_sent"],0)
+        self.assertEqual(after["our_active"],"")
+
     def test_pending_source_proof_is_required(self):
         q=[unresolved("not-in-ledger"),unresolved("capture-0001")]
         pending=sanitize_pending_questions(q,{"capture-0001"})
