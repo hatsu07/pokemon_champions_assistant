@@ -325,6 +325,44 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         state["awaiting_replacement"]=False
         self.assertFalse(_text_action_eligible("SWITCH_SELECTION",state,assets))
 
+    def test_unclassified_image_fallback_with_new_ocr_keeps_model_question(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        recent=rows(4)
+        keep=recent[-1]["frame_id"]
+        calls=[]
+        def reply(_client,**kwargs):
+            calls.append(json.loads(kwargs["content"][0]["text"]))
+            return {
+                "observation":frame("ACTION_RESOLUTION",our_active="ゲンガー",
+                                    opponent_active="マスカーニャ"),
+                "action":{"action_kind":"NO_ACTION","move":"",
+                          "switch_target":"","warning":""},
+                "selection":{"selected_three":[],"lead":""},
+                "processed_ocr_frames":[],
+                "pending_ocr_questions":[unresolved(keep)],
+            }
+        with patch("champions_assist.match_replay._stream_json",side_effect=reply):
+            after,report=run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],
+                state=state,assets=assets,access_token="unused",
+                model="test",expected_screen_label=None,
+                local_field_candidates=recent,
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(len(calls),1)
+        self.assertEqual(len(calls[0]["local_field_candidates_unverified"]),4)
+        self.assertEqual(after["_ai_ocr_unresolved"][0]["source_frames"],[keep])
+        self.assertEqual(report["images_sent"],1)
+
+    def test_unconfirmed_opponent_in_forced_switch_uses_visual_fallback(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        state["our_active"]=""
+        state["opponent_active"]=""
+        state["awaiting_replacement"]=True
+        state["battle_evidence"]["hp_by_pokemon"]["own"]["ゲンガー"]="0/120"
+        self.assertFalse(_text_action_eligible("SWITCH_SELECTION",state,assets))
+
     def test_image_non_action_screen_keeps_previous_unresolved(self):
         assets=fixture_assets()
         state=battle_state(assets)
