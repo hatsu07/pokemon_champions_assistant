@@ -351,6 +351,8 @@ class MatchReplayDialog(QDialog):
         self._pending_result_messages=None
         self._result_check_sent_keys=set()
         self._result_ocr_candidate=None
+        self._result_screen_candidate=None
+        self._result_screen_sent=False
         self._revision_retry_keys=set()
         self._last_advised_switch=None
         self._automatic_probe=AutomaticVisualProbe(
@@ -636,6 +638,8 @@ class MatchReplayDialog(QDialog):
             self._pending_result_messages=None
             self._result_check_sent_keys.clear()
             self._result_ocr_candidate=None
+            self._result_screen_candidate=None
+            self._result_screen_sent=False
             self._revision_retry_keys.clear()
             self._last_advised_switch=None
             self.match_id=new_id
@@ -755,6 +759,8 @@ class MatchReplayDialog(QDialog):
         self._pending_result_messages=None
         self._result_check_sent_keys.clear()
         self._result_ocr_candidate=None
+        self._result_screen_candidate=None
+        self._result_screen_sent=False
         self._revision_retry_keys.clear()
         self._last_advised_switch=None
         self.assets=None
