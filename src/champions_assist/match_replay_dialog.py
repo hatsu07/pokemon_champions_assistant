@@ -2509,6 +2509,15 @@ class MatchReplayDialog(QDialog):
         if self._thread is not None:
             return
         evidence=self._drain_event_candidates(include_snapshot=True)
+        # The result screen is not a 45-second action window. Prefer OCR
+        # collected from the confirmed screen over racing the asynchronous
+        # reader with only older battle messages.
+        current_frame_ready=any(
+            row.get("frame_id")==candidate["frame"] for row in evidence)
+        if (not current_frame_ready
+                and monotonic()-candidate["detected_at"]<1.5):
+            QTimer.singleShot(200,self._attempt_result_screen_verification)
+            return
         if not evidence:
             if monotonic()-candidate["detected_at"]<3.0:
                 QTimer.singleShot(200,self._attempt_result_screen_verification)
