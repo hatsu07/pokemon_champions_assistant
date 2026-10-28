@@ -7,6 +7,8 @@ offline uses a protocol fake, while API mode uses the signed-in ChatGPT model.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 from pathlib import Path
 import sqlite3
@@ -19,7 +21,7 @@ from uuid import uuid4
 from .matchup_learning_store import MatchupLearningStore
 from .postmatch_learning import REVIEW_SCHEMA, request_review
 
-SOURCE = "SYNTHETIC_POSTMATCH_TEST_NOT_GAME_EVIDENCE"
+SOURCE = "SYNTHETIC_TEST_POSTMATCH_NOT_GAME_EVIDENCE"
 
 
 def _offline_client_factory(match_id: str):
@@ -100,7 +102,7 @@ def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
             stage("RECORD_END")
             inserted = store.record_finished(
                 match_id=match_id, team_id=None, state=simulated, source=SOURCE)
-            with sqlite3.connect(store.db_path) as db:
+            with closing(sqlite3.connect(store.db_path)) as db:
                 saved = db.execute(
                     "SELECT result,source FROM match_history WHERE match_id=?",
                     (match_id,)).fetchone()
@@ -122,7 +124,7 @@ def run_postmatch_review_e2e(*, model: str, reasoning_effort: str = "auto",
                 raise RuntimeError("TEST_REVIEW_NOT_STORED")
 
             stage("READBACK")
-            with sqlite3.connect(store.db_path) as db:
+            with closing(sqlite3.connect(store.db_path)) as db:
                 row = db.execute(
                     "SELECT review_json,status FROM postmatch_reviews WHERE match_id=?",
                     (match_id,)).fetchone()
