@@ -199,7 +199,30 @@ class PPocrV6SmallOnnx:
                 root / _DET_FILE, factory=factory, available=available, device=self.device)
             rec, rec_provider = _new_session(
                 root / _REC_FILE, factory=factory, available=available, device=self.device)
-            # A mixed DML+CPU pair is accurately reported as CPU/mixed.
+
+            def inference_probe(detector, recognizer):
+                sample = np.full((64, 128, 3), 255, np.uint8)
+                det_input, _ = _det_tensor(sample)
+                detector.run(None, {detector.get_inputs()[0].name: det_input})
+                output = recognizer.run(None, {
+                    recognizer.get_inputs()[0].name: _rec_tensor(sample)})[0]
+                if (np.asarray(output).ndim != 3 or
+                        np.asarray(output).shape[2] != len(characters) + 1):
+                    raise OcrExecutionError("ONNX_OCR_DICTIONARY_MISMATCH")
+
+            try:
+                inference_probe(det, rec)
+            except Exception as exc:
+                if self.device != "auto" or (
+                        det_provider == rec_provider == "CPUExecutionProvider"):
+                    raise OcrExecutionError("ONNX_OCR_INFERENCE_PROBE_FAILED") from exc
+                # DML can attach but fail to execute an unsupported operator.
+                # Fall back to the CPU *before* reporting readiness to the GUI.
+                det, det_provider = _new_session(
+                    root / _DET_FILE, factory=factory, available=available, device="cpu")
+                rec, rec_provider = _new_session(
+                    root / _REC_FILE, factory=factory, available=available, device="cpu")
+                inference_probe(det, rec)
             self.provider = (det_provider if det_provider == rec_provider else
                              "MIXED:" + det_provider + "/" + rec_provider)
             self._det, self._rec, self._characters = det, rec, characters
