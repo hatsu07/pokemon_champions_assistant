@@ -32,287 +32,33 @@ jobs:
           $sha = (git rev-parse HEAD).Trim()
           if ($sha -ne $env:GITHUB_SHA) { throw "Checked-out SHA does not match triggered master commit" }
           Write-Host "Publishing DEVELOPMENT builds from master commit $sha"
-      - name: Verify master content matches the validated PR
+      - name: Verify master derives from a successful PR
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Fast fail-closed provenance check, not a repeat of PR tests.
-          # SHA differs for merge/squash; Git tree represents exact files.
           $ErrorActionPreference = 'Stop'
           $repo = $env:GITHUB_REPOSITORY
-          $master = $env:GITHUB_SHA
-          function Read-Api([string]$path) {
-            $response = & gh api "repos/$repo/$path"
-            if ($LASTEXITCODE -ne 0 -or -not $response) {
-              throw "GitHub API evidence unavailable: $path"
-            }
-            return ($response | ConvertFrom-Json)
+          $sha = $env:GITHUB_SHA
+          function Api([string]$p) {
+            $raw = & gh api "repos/$repo/$p"
+            if ($LASTEXITCODE -ne 0 -or -not $raw) { throw "No API proof: $p" }
+            return ($raw | ConvertFrom-Json)
           }
-          $associated = @(Read-Api "commits/$master/pulls")
-          $merged = @($associated | Where-Object {
-            $_.merged_at -and $_.state -eq 'closed' -and
-            $_.base.ref -eq 'master' -and
-            $_.merge_commit_sha -eq $master
-          })
-          if ($merged.Count -ne 1) { throw "Require one merged PR for master release" }
-          $pr = $merged[0]
-          $head = [string]$pr.head.sha
-          if ($head -notmatch '^[0-9a-f]{40}
-        id: release_version
-        shell: pwsh
-        run: |
-          python scripts/development_release_version.py --run-number $env:GITHUB_RUN_NUMBER --github-output $env:GITHUB_OUTPUT
-          if ($LASTEXITCODE -ne 0) { throw "Invalid release VERSION or run number" }
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip pyinstaller pyyaml .
-      - name: Stage and verify pinned PP-OCRv6 small ONNX bundle
-        shell: pwsh
-        run: |
-          python scripts/stage_ocr_onnx.py --output build/ocr-v6
-          if ($LASTEXITCODE -ne 0) { throw "Official OCR bundle staging failed" }
-          python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6
-          if ($LASTEXITCODE -ne 0) { throw "Real OCR string validation failed" }
-      - name: Check whether a validated screen model is available
-        shell: pwsh
-        run: |
-          python scripts/check_screen_model_release.py
-          if ($LASTEXITCODE -ne 0) { throw "model diagnostic failed" }
-          # Development CI may run with no trained model, but that build is
-          # never labelled as releasable. A real release must call --release.
-      - name: Stage non-private live assets for the desktop GUI
-        shell: pwsh
-        run: |
-          $destination = ".\\build\\desktop-assets\\masters"
-          New-Item -ItemType Directory -Force $destination | Out-Null
-          $files = @(
-            "Pokemon_Champions_MC_live_decision_gate.txt",
-            "Pokemon_Champions_MC_live_selection_matrix.txt",
-            "Pokemon_Champions_MC_60sec_lookup_master.txt",
-            "Pokemon_Champions_MC_usable_pokemon.csv",
-            "Pokemon_Champions_MC_move_master.csv",
-            "Pokemon_Champions_MC_usable_held_items.csv",
-            "Pokemon_Champions_MC_ability_master.csv",
-            "Pokemon_Champions_MC_pokemon_learnsets_linked.csv",
-            "Pokemon_Champions_MC_team_2026-10-03.csv"
-          )
-          foreach ($file in $files) {
-            Copy-Item -LiteralPath (Join-Path ".\\masters" $file) -Destination (Join-Path $destination $file) -Force
-          }
-      - name: Build portable Windows desktop GUI (not MSI)
-        run: >-
-          python -m PyInstaller --noconfirm --clean --onedir --windowed
-          --name PokemonChampionsAssistant --paths src
-          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
-          --add-data "build\\desktop-assets\\masters;masters" --add-data "build\\ocr-v6;ocr-v6"
-          scripts/windows_desktop_entry.py
-      - name: Add opt-in GPU diagnostics launcher to portable Windows distribution
-        shell: pwsh
-        run: |
-          Copy-Item -LiteralPath "scripts/Run-GPU-Diagnostics.cmd" -Destination "dist/PokemonChampionsAssistant/Run-GPU-Diagnostics.cmd"
-          if (-not (Test-Path -LiteralPath "dist/PokemonChampionsAssistant/Run-GPU-Diagnostics.cmd")) {
-            throw "GPU stress launcher not packaged"
-          }
-      - name: Confirm bundled OCR bytes match validated staging files
-        shell: pwsh
-        run: |
-          $source = "build/ocr-v6"
-          $frozen = "dist/PokemonChampionsAssistant/_internal/ocr-v6"
-          foreach ($item in Get-ChildItem -LiteralPath $source -File) {
-            $dest = Join-Path $frozen $item.Name
-            if (-not (Test-Path -LiteralPath $dest)) {
-              throw "Packaged OCR file missing: $($item.Name)"
-            }
-            $want = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
-            $actual = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
-            if ($want -ne $actual) {
-              throw "Packaged OCR byte mismatch: $($item.Name)"
-            }
-          }
-          Write-Host "OCR_BUNDLE_PACKAGED_BYTES_IDENTICAL"
-      - name: Build standalone local dataset collector GUI
-        run: >-
-          python -m PyInstaller --noconfirm --clean --onedir --windowed
-          --name PokemonChampionsScreenDataCollector --paths src
-          --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-all PySide6
-          scripts/windows_screen_dataset_collector_entry.py
-      - name: Smoke desktop GUI headlessly with isolated local settings, no capture/API
-        shell: pwsh
-        run: |
-          $env:QT_QPA_PLATFORM = "offscreen"
-          $exe = Resolve-Path .\\dist\\PokemonChampionsAssistant\\PokemonChampionsAssistant.exe
-          $report = Join-Path $env:RUNNER_TEMP "desktop-smoke.json"
-          # GUI-subsystem Windows executables must be explicitly waited for.
-          # In PowerShell, direct '& $exe' may return before a windowed process
-          # finishes, leaving $LASTEXITCODE unset or stale from another program.
-          $process = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
-          Write-Host "Desktop GUI smoke exit code: $($process.ExitCode)"
-          if ($process.ExitCode -ne 0) {
-            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\\diagnostics"
-            if (Test-Path -LiteralPath $diagnostics) {
-              Get-ChildItem -LiteralPath $diagnostics -Filter "startup-*.log" -File |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -First 3 |
-                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
-            }
-            throw "portable desktop GUI startup smoke failed (actual exit code $($process.ExitCode))"
-          }
-          if (-not (Test-Path -LiteralPath $report)) { throw "missing desktop startup smoke report" }
-          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-          if ($result.status -ne "GUI_DESKTOP_SMOKE_OK" -or $result.network -ne "NOT_USED" -or
-              $result.gpu_ocr_backend -ne "pp-ocrv6-small-onnx" -or
-              $result.ocr_cpu_provider -ne "CPUExecutionProvider") {
-            throw "desktop GUI startup smoke returned unexpected report"
-          }
-          Remove-Item Env:QT_QPA_PLATFORM
-      - name: Smoke bundled GPU diagnostic CLI without actual GPU inference
-        shell: pwsh
-        run: |
-          $exe = Resolve-Path ".\dist\PokemonChampionsAssistant\PokemonChampionsAssistant.exe"
-          $report = Join-Path $env:RUNNER_TEMP "gpu-stress-cli-smoke.json"
-          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--gpu-diagnostic-smoke', ('"' + $report + '"')) -Wait -PassThru
-          if ($proc.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $report)) {
-            throw "Frozen GPU diagnostic CLI smoke failed"
-          }
-          $data = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-          if ($data.status -ne "GPU_DIAGNOSTIC_CLI_SMOKE_OK" -or
-              $data.network -ne "NOT_USED" -or $data.gpu_inference_tested -ne $false -or
-              @($data.modes).Count -ne 5) {
-            throw "Frozen GPU diagnostic smoke report invalid"
-          }
-      - name: Smoke frozen persistent OCR child via CPU-only pipe roundtrip
-        shell: pwsh
-        run: |
-          $exe = (Resolve-Path ".\\dist\\PokemonChampionsAssistant\\PokemonChampionsAssistant.exe").Path
-          $report = Join-Path $env:RUNNER_TEMP "ocr-sidecar-cpu-smoke.json"
-          python scripts/smoke_ocr_sidecar_exe.py "$exe" "$report"
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $report)) {
-            throw "Frozen OCR sidecar CPU IPC smoke failed"
-          }
-          $data = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-          if ($data.status -ne "FROZEN_OCR_SIDECAR_SMOKE_OK" -or
-              $data.provider -ne "CPUExecutionProvider" -or
-              $data.gpu_inference_tested -ne $false -or
-              $data.network -ne "NOT_USED" -or
-              $data.game_capture -ne "NOT_USED") {
-            throw "Frozen OCR sidecar IPC smoke report invalid"
-          }
-      - name: Smoke dataset collector GUI offline (no actual screen access)
-        shell: pwsh
-        run: |
-          $env:QT_QPA_PLATFORM = "offscreen"
-          $exe = Resolve-Path .\\dist\\PokemonChampionsScreenDataCollector\\PokemonChampionsScreenDataCollector.exe
-          $report = Join-Path $env:RUNNER_TEMP "collector-smoke.json"
-          $proc = Start-Process -FilePath $exe.Path -ArgumentList @('--smoke', ('"' + $report + '"')) -Wait -PassThru
-          if ($proc.ExitCode -ne 0) {
-            Write-Host "Dataset collector GUI smoke exit code: $($proc.ExitCode)"
-            $diagnostics = Join-Path $env:LOCALAPPDATA "PokemonChampionsAssistant\diagnostics"
-            if (Test-Path -LiteralPath $diagnostics) {
-              Get-ChildItem -LiteralPath $diagnostics -Filter "dataset-collector-startup-*.log" -File |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -First 3 |
-                ForEach-Object { Write-Host ("=== " + $_.Name + " ==="); Get-Content -LiteralPath $_.FullName }
-            }
-            throw "dataset collector GUI startup smoke failed"
-          }
-          if (-not (Test-Path -LiteralPath $report)) { throw "missing dataset collector smoke report" }
-          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-          if ($result.status -ne "SCREEN_DATASET_COLLECTOR_SMOKE_OK" -or
-              $result.network -ne "NOT_USED" -or
-              $result.screenshot_files -ne "NOT_CREATED") {
-            throw "dataset collector smoke produced an unexpected result"
-          }
-          Remove-Item Env:QT_QPA_PLATFORM
-      - name: Embed build revision into portable distribution
-        shell: pwsh
-        run: |
-          $built = (git rev-parse HEAD).Trim()
-          @(
-            "commit_sha=$built"
-            "version=${{ steps.release_version.outputs.version }}"
-            "workflow_run_id=${{ github.run_id }}"
-            "workflow_run_attempt=${{ github.run_attempt }}"
-            "artifact_type=DEVELOPMENT_ONLY"
-            "screen_model_release_validated=false"
-          ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
-          @(
-            "commit_sha=$built"
-            "version=${{ steps.release_version.outputs.version }}"
-            "workflow_run_id=${{ github.run_id }}"
-            "workflow_run_attempt=${{ github.run_attempt }}"
-            "artifact_type=SCREEN_DATASET_COLLECTOR_DEVELOPMENT"
-            "screenshots_auto_saved=false"
-            "network_upload=false"
-          ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
-
-      - name: Package and validate both Windows ZIPs
-        shell: pwsh
-        run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          New-Item -ItemType Directory -Force "release-zips" | Out-Null
-          foreach ($app in @("PokemonChampionsAssistant", "PokemonChampionsScreenDataCollector")) {
-            $root = Join-Path "dist" $app
-            $exe = Join-Path $root "$app.exe"
-            $revision = Join-Path $root "BUILD_REVISION.txt"
-            if (-not (Test-Path $exe) -or -not (Test-Path $revision)) {
-              throw "Missing tested executable or revision metadata for $app"
-            }
-            $metadata = Get-Content $revision -Raw
-            if (-not $metadata.Contains("commit_sha=$env:GITHUB_SHA")) {
-              throw "Revision metadata differs from current master: $app"
-            }
-            $releaseVersion = "${{ steps.release_version.outputs.version }}"
-            if (-not $metadata.Contains("version=$releaseVersion")) {
-              throw "Version metadata differs from versioned ZIP name: $app"
-            }
-            $name = "$app-$releaseVersion-windows-x64.zip"
-            $zipPath = Join-Path "release-zips" $name
-            Compress-Archive -Path (Join-Path $root "*") -DestinationPath $zipPath -CompressionLevel Optimal
-            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath).Path)
-            try {
-              $members = @($zip.Entries | ForEach-Object FullName)
-              if ("$app.exe" -notin $members -or "BUILD_REVISION.txt" -notin $members) {
-                throw "ZIP root does not contain EXE and revision file: $name"
-              }
-            }
-            finally { $zip.Dispose() }
-            if ((Get-Item $zipPath).Length -ge 2GB) { throw "GitHub Release asset exceeds 2GiB limit" }
-            Write-Host "Verified: $name"
-          }
-      - name: Publish verified DEVELOPMENT prerelease (no Actions Artifacts)
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          & ./scripts/publish_windows_development_release.ps1 -ExpectedSha $env:GITHUB_SHA -ReleaseVersion "${{ steps.release_version.outputs.version }}"
-          if ($LASTEXITCODE -ne 0) { throw "Development Release publishing failed" }
-) { throw "Invalid PR HEAD" }
-          $testedCommit = Read-Api "commits/$head"
-          $masterTree = (git rev-parse 'HEAD^{tree}').Trim()
-          if ($LASTEXITCODE -ne 0 -or $masterTree -ne [string]$testedCommit.commit.tree.sha) {
-            throw "Master file tree differs from verified PR HEAD"
-          }
-          $runs = (Read-Api "actions/runs?event=pull_request&head_sha=$head&per_page=100").workflow_runs
-          $matching = @($runs | Where-Object {
-            $_.head_sha -eq $head -and $_.event -eq 'pull_request' -and
-            $_.path -eq '.github/workflows/windows-validation-artifact.yml'
-          } | Sort-Object -Property created_at,id -Descending)
-          if ($matching.Count -eq 0) { throw "Missing PR Windows CI evidence" }
-          $latest = $matching[0]
-          if ($latest.status -ne 'completed' -or $latest.conclusion -ne 'success') {
-            throw "Latest PR Windows CI not completed/success"
-          }
-          $jobs = @((Read-Api "actions/runs/$($latest.id)/jobs?per_page=100").jobs)
-          $required = @($jobs | Where-Object { $_.name -eq 'desktop-windows-validation' })
-          if ($required.Count -ne 1 -or $required[0].conclusion -ne 'success' -or
-              $required[0].status -ne 'completed' -or $jobs.Count -eq 0 -or
-              @($jobs | Where-Object { $_.status -ne 'completed' -or $_.conclusion -ne 'success' }).Count -ne 0) {
-            throw "Not all required PR Windows CI jobs passed"
-          }
-          Write-Host "Validated PR #$($pr.number) HEAD=$head CI=$($latest.id) master=$master tree=$masterTree"
+          $merged = @(Api "commits/$sha/pulls" | Where-Object { $_.merged_at -and $_.merge_commit_sha -eq $sha -and $_.base.ref -eq 'master' })
+          if ($merged.Count -ne 1) { throw 'No unique merged PR' }
+          $head = [string]$merged[0].head.sha
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          if ($tree -ne [string](Api "commits/$head").commit.tree.sha) { throw 'Unverified master file tree' }
+          $runs = (Api "actions/runs?event=pull_request&head_sha=$head&per_page=100").workflow_runs
+          $valid = @($runs | Where-Object { $_.head_sha -eq $head -and $_.event -eq 'pull_request' -and $_.path -eq '.github/workflows/windows-validation-artifact.yml' } | Sort-Object created_at,id -Descending)
+          if ($valid.Count -lt 1) { throw 'No PR CI run for tested HEAD' }
+          $run = $valid[0]
+          if ($run.status -ne 'completed' -or $run.conclusion -ne 'success') { throw 'PR CI not successful' }
+          $jobs = @((Api "actions/runs/$($run.id)/jobs?per_page=100").jobs)
+          $required = @($jobs | Where-Object { $_.name -eq 'desktop-windows-validation' -and $_.status -eq 'completed' -and $_.conclusion -eq 'success' })
+          if ($required.Count -ne 1 -or $jobs.Count -lt 1 -or @($jobs | Where-Object { $_.status -ne 'completed' -or $_.conclusion -ne 'success' }).Count -gt 0) { throw 'PR Windows CI jobs not all successful' }
+          Write-Host "Verified PR #$($merged[0].number) head=$head CI=$($run.id) master=$sha tree=$tree"
       - name: Resolve monotonic semantic development version
         id: release_version
         shell: pwsh
