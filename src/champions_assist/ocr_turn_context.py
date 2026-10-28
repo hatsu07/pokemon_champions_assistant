@@ -138,7 +138,11 @@ def apply_model_ocr_carryover(
         updated["_ai_ocr_presented_keys"] = sorted(seen)
     forbidden = set(rejected_frames) | retained
     ack = set(updated.get("_ai_ocr_ack_frames") or ())
-    if not block_ack and relevance_decided:
+    # Processed-frame acknowledgments predate the carryover field and are a
+    # separate, explicit decision. Preserve verified historical ACKs even
+    # if an older model/test double omits pending_ocr_questions: only the
+    # relevance-based compression must wait for the new field.
+    if not block_ack:
         for frame in model_answer.get("processed_ocr_frames") or ():
             # Only accept a frame the model actually received in this call;
             # confirmation still depends on separate state-update validation.
