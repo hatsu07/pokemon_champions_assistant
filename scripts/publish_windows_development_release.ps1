@@ -24,7 +24,8 @@ $title = "Windows DEVELOPMENT $ReleaseVersion"
 # run_number; reruns retain their original release identity and SHA.
 $names = @(
     "PokemonChampionsAssistant-$ReleaseVersion-windows-x64.zip",
-    "PokemonChampionsScreenDataCollector-$ReleaseVersion-windows-x64.zip"
+    "PokemonChampionsScreenDataCollector-$ReleaseVersion-windows-x64.zip",
+    "PokemonChampionsGPUDiagnostics-$ReleaseVersion-windows-x64.zip"
 )
 $paths = @()
 foreach ($filename in $names) {
@@ -85,7 +86,7 @@ if ($null -eq $release) {
         "workflow_run_id=$env:GITHUB_RUN_ID",
         'release_kind=windows-development-only',
         '',
-        'Two separate ZIPs containing an EXE at the root, _internal and BUILD_REVISION.txt.',
+        'Three ZIPs: desktop GUI, dataset collector, and opt-in GPU crash diagnostics.',
         'Only offline GUI smoke tests were performed.',
         'No raw screenshots, private battle logs or credentials are included.',
         'Trained screen-model accuracy, device capture and live battles are NOT validated.'
@@ -96,7 +97,7 @@ if ($null -eq $release) {
     # A draft is not visible through GET /releases/tags/<tag> until published.
     # NEVER create an empty draft and then try to fetch it via the tag API.
     $arguments = @('release', 'create', $tag,
-        $paths[0], $paths[1],
+        $paths[0], $paths[1], $paths[2],
         '--repo', $env:GITHUB_REPOSITORY,
         '--target', $ExpectedSha,
         '--title', $title,
