@@ -275,6 +275,8 @@ class OcrSidecarClient:
 
     def stop(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
             proc = self._proc
         if proc is not None:
