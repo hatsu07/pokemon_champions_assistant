@@ -244,9 +244,7 @@ class _ReplayWorker(QObject):
                                 diagnostic_sink=self.diagnostic_sink)
                             report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
                 report["auth_ms"]=auth_ms
-                # The lossless original lives in LocalBattleStateTracker;
-                # never duplicate hundreds of raw OCR messages in GUI reports.
-                report["local_field_candidate_count"]=len(local_candidates)
+                report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
                     "FIVE_CLASS_OR_USER_CALIBRATED" if self.screen_label
                     else "UNKNOWN"
