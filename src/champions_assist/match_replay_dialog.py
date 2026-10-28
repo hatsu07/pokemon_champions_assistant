@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
-from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, possible_result_message)
+from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, possible_result_message, _text_action_eligible)
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile
@@ -192,9 +192,7 @@ class _ReplayWorker(QObject):
                 auth_ms=round((perf_counter()-auth_started)*1000)
                 self.progress.emit(
                     "OCRテキストによるAI判断中（結果待ち）"
-                    if self.screen_label in _URGENT_SCREENS
-                    and self.state.get("our_active")
-                    and self.state.get("opponent_active")
+                    if _text_action_eligible(self.screen_label,self.state,self.assets)
                     else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
@@ -220,9 +218,7 @@ class _ReplayWorker(QObject):
                     if remaining<=1.0:
                         next_state,report=self.state,{"status":"DEADLINE_EXCEEDED","reason":"AUTH_OR_AI_BUDGET"}
                     else:
-                        if (self.screen_label in _URGENT_SCREENS
-                                and self.state.get("our_active")
-                                and self.state.get("opponent_active")):
+                        if _text_action_eligible(self.screen_label,self.state,self.assets):
                             next_state,report=run_replay_text_action(
                                 state=self.state,assets=self.assets,
                                 access_token=token,model=self.selected_model,
@@ -1436,9 +1432,13 @@ class MatchReplayDialog(QDialog):
                     outstanding=outstanding,wait_ms=int(waited*1000),
                     reason="READY" if not outstanding else "TIME_BUDGET")
             self._ocr_sync_key=None
+        # Image fallback after a failed/unknown screen classification also
+        # receives the same already-acquired OCR delta. Never recapture or
+        # re-run OCR synchronously during the tactical decision.
         local_candidates=(
             self._freeze_local_events_for_action(screen_label)
-            if screen_label in _URGENT_SCREENS else [])
+            if (screen_label in _URGENT_SCREENS or
+                self.state.get("phase") in ("PREP","BATTLE")) else [])
         if frames and self.state.get("phase") in ("MATCHMAKING","SELECTION"):
             frames=[frames[-1]]
         elif frames and screen_label in _URGENT_SCREENS:
@@ -1464,9 +1464,7 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
-        text_only=(screen_label in _URGENT_SCREENS
-                   and bool(self.state.get("our_active"))
-                   and bool(self.state.get("opponent_active")))
+        text_only=_text_action_eligible(screen_label,self.state,self.assets)
         planned_image_count=0 if text_only else len(frames)
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
