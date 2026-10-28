@@ -62,6 +62,22 @@ class ScreenClassifierTests(unittest.TestCase):
             ScreenClassifier(self.model,self.meta,
                              session_factory=lambda *a,**kw:DummySession())
 
+    def test_six_labels_reordered_manifest_fails_closed(self):
+        self.config["labels"]=list(reversed(LABELS))
+        self.write_config()
+        with self.assertRaisesRegex(ScreenClassifierError,"LABELS"):
+            ScreenClassifier(self.model,self.meta,
+                             session_factory=lambda *a,**kw:DummySession())
+
+    def test_old_five_class_v2_model_is_not_six_class(self):
+        self.config["schema_version"]=2
+        self.config["labels"]=["TEAM_SELECTION","TURN_ACTION",
+                               "SWITCH_SELECTION","BATTLE_EVENT","OTHER"]
+        self.write_config()
+        with self.assertRaisesRegex(ScreenClassifierError,"MANIFEST"):
+            ScreenClassifier(self.model,self.meta,
+                             session_factory=lambda *a,**kw:DummySession())
+
     def test_cpu_prediction_uses_pinned_model_rgb_and_preprocess(self):
         session=DummySession()
         klass=ScreenClassifier(self.model,self.meta,session_factory=lambda *a,**k:session)
