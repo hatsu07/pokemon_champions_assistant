@@ -152,10 +152,14 @@ def install_crash_diagnostics(root: str | Path) -> Path | None:
     try:
         from PySide6.QtCore import QtMsgType, qInstallMessageHandler
         def on_qt_message(mode, context, message):
-            if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
-                        QtMsgType.QtFatalMsg):
-                record_event("QT_RUNTIME_MESSAGE", error_type=mode.name,
-                             qt_category=getattr(context, "category", None))
+            try:
+                if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
+                            QtMsgType.QtFatalMsg):
+                    record_event("QT_RUNTIME_MESSAGE",
+                                 error_type=getattr(mode, "name", "QT_MESSAGE"),
+                                 qt_category=getattr(context, "category", None))
+            except Exception:
+                pass  # Qt's native callback must never fail from telemetry.
         recorder.qt_callback = on_qt_message
         recorder.previous_qt_callback = qInstallMessageHandler(on_qt_message)
     except (ImportError, RuntimeError, AttributeError):
