@@ -54,6 +54,29 @@ class BoundedOcrTurnContextTests(unittest.TestCase):
         self.assertLessEqual(stats["api_rows_sent"],112)
         self.assertGreater(stats["new_rows_sent"],0)
 
+    def test_unacknowledged_previously_shown_rows_can_be_revisited(self):
+        ledger=rows(12)
+        first,_,meta=build_ocr_turn_context({},ledger)
+        self.assertEqual(len(first),12)
+        second,pending,stats=build_ocr_turn_context(
+            {"_ai_ocr_presented_keys":meta["presented_keys"]},ledger)
+        self.assertEqual(len(second),12)
+        self.assertEqual(stats["new_rows_sent"],0)
+        self.assertEqual(pending,[])
+        self.assertEqual({r["frame_id"] for r in second},
+                         {r["frame_id"] for r in ledger})
+
+    def test_unpresented_backlog_reaches_all_365_frames(self):
+        ledger=rows()
+        seen=set()
+        presented=set()
+        for _ in range(5):
+            batch,_,meta=build_ocr_turn_context(
+                {"_ai_ocr_presented_keys":sorted(presented)},ledger)
+            seen.update(row["frame_id"] for row in batch)
+            presented.update(meta["presented_keys"])
+        self.assertEqual(len(seen),365)
+
     def test_pending_cannot_fabricate_source_or_confirm_state(self):
         known={"capture-1"}
         q=[
