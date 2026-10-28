@@ -84,6 +84,25 @@ class SampleScreenFieldTests(unittest.TestCase):
                                   ocr_engine=engine, profile=legacy)
             self.assertTrue(excluded.isdisjoint(engine.calls))
 
+    def test_result_screen_ocr_reuses_old_battle_message_calibration(self):
+        from champions_assist.calibrated_screen_fields import FieldRegion
+        legacy=ScreenFieldProfile(
+            self.profile.reference_resolution,
+            tuple(FieldRegion(r.name,r.kind,r.bounds_px,
+                ("BATTLE_EVENT",) if r.name=="battle_message"
+                else r.applicable_labels) for r in self.profile.regions),
+            "OLD_PROFILE",False)
+        message=next(r for r in legacy.regions if r.name=="battle_message")
+        engine=MappingOcrEngine.for_images([
+            ("battle_message",legacy.crop(self.image,message),
+             OcrRead("対戦に勝利しました",0.97,"TEST"))])
+        result=observe_screen_fields(
+            self.image,label="RESULT_SCREEN",frame_id="capture-100",
+            ocr_engine=engine,profile=legacy)
+        self.assertEqual([r.field for r in result],["screen_text.battle_message"])
+        self.assertEqual(result[0].value,"対戦に勝利しました")
+        self.assertEqual(engine.calls,["battle_message"])
+
     def test_scaled_full_frame_capture_has_compatible_ocr_crops(self):
         import cv2
         self.image[412:505,141:540]=150
