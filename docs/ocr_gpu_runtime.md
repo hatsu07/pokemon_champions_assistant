@@ -1,62 +1,58 @@
-# Pokémon Champions: PP-OCRv6 small + GPU OCR
+# PP-OCRv6 small via shared ONNX Runtime (Windows)
 
-The live OCR backend is **PP-OCRv6_small_det + PP-OCRv6_small_rec**,
-using NVIDIA GPU device `gpu:0`. It runs locally; OCR content never
-leaves the device until the normal user-authorized tactical AI request.
-The app never derives game mechanics from OCR text.
+## Architecture
 
-## Windows packaged EXE
+The live OCR backend is **PP-OCRv6_small_det_onnx + PP-OCRv6_small_rec_onnx**,
+loaded using the same `onnxruntime-directml` package as the screen classifier.
 
-A GPU-free Windows Actions runner can validate the GUI, transport, and
-mocked OCR, but **cannot verify live GPU inference**. The EXE does not
-bundle multi-GB Paddle/CUDA libraries. Configure a persistent local
-Python GPU worker once before playing:
+- **No separate Python environment, PaddlePaddle, sidecar installation,
+  `CHAMPIONS_OCR_PYTHON`, or runtime download.**
+- One persistent pair of ONNX Runtime sessions is initialized by the local OCR
+  worker; recognition returns untrusted text, confidence and frame timestamps.
+- Windows prefers DirectML GPU, can try CUDA if available, and falls back to
+  CPU for `auto` (including when DML attaches but a model operator cannot run).
+  The selected provider is reported as `ONNX_OCR_READY_GPU` or
+  `ONNX_OCR_READY_CPU`.
+- The GUI's screen classifier and OCR use separate model sessions, but the
+  same executable, interpreter and ONNX Runtime installation.
+- The OCR processor NEVER interprets battle moves or decides Pokémon identity.
+  Only AI proposals validated by the existing evidence/state verifier may
+  change battle state.
 
-1. Install Python 3.12, an appropriate NVIDIA GPU driver, and verify
-   `nvidia-smi` works.
-2. From the repository checkout, run
-   `powershell -ExecutionPolicy Bypass -File scripts/setup_windows_gpu_ocr.ps1`
-   (default CUDA 12.6 wheel, driver >= 550.54.14).
-   If an older supported driver is used, pass `-CudaIndex cu118`.
-3. The setup installs the GPU wheel and `paddleocr>=3.7` into an isolated
-   user-local venv and **preloads both small models**. It configures the
-   `CHAMPIONS_OCR_PYTHON` user environment variable to its Python binary.
-4. Restart the Windows GUI. The match reader starts a persistent child
-   process (`python -m champions_assist.ocr_gpu_worker`). The child only
-   exchanges PNG ROI crops and OCR candidate text over local stdio.
-   No HTTP/server port and no ChatGPT call from the child.
-5. The GUI reports `GPU_OCR_PYTHON_NOT_CONFIGURED`,
-   `GPU_OCR_CUDA_UNAVAILABLE`, `GPU_OCR_INITIALIZATION_FAILED`, or
-   `GPU_OCR_SIDECAR_TIMEOUT` explicitly; it **never silently falls
-   back to CPU or Tesseract**. Without GPU, OCR cannot run.
+## Model acquisition and reproducibility
 
-When launched from source, install the same GPU runtime and package in
-the current Python environment (the `[gpu-ocr]` extra installs
-PaddleOCR; install PaddlePaddle GPU from its dedicated CUDA index
-separately). The OCR engine initializes on the OCR worker thread.
+Models are fetched **at build time**, not on the user's machine.
 
-**Note:** Official PaddlePaddle documentation has special Windows
-wheels and limitations for NVIDIA RTX 50-series GPUs. Check their
-version-specific installation guidance rather than assuming the
-standard CUDA wheel works for every card.
+```powershell
+python scripts/stage_ocr_onnx.py --output src/champions_assist/data/ocr-v6
+```
 
-## Timing, safety and validation
+The script downloads the official PaddlePaddle release weights at pinned HF
+revisions, verifies both model SHA-256 digests, validates the 18,708-entry
+official PP-OCRv6 CTC dictionary, and stages them for PyInstaller. Windows
+Actions runs this step before building the portable EXE, then bundles the
+files into `_internal/ocr-v6/`.
 
-- The GPU model is loaded once, not once per frame or ROI.
-- Every changed source frame is queued by default without a fixed
-  4-frame eviction limit; message ROIs are read before HUD ROIs.
-- The action dispatcher may wait up to 1.5 seconds for outstanding OCR
-  if the local 32-second AI deadline retains at least five seconds.
-- It then sends ALL processed but unacknowledged OCR candidates to a
-  single tactical AI request. If OCR is not ready it sends the known
-  facts + explicit uncertainty, not a guessed opponent.
-- Rejected/unverified AI state changes are recorded; only verified
-  changes mutate the state. In particular an own actor disagreement
-  blocks an illegal command, but an unknown opponent alone does not.
-- Automated Windows CI tests with mocked GPU output are not evidence of
-  in-game 45s viability. Confirm hardware startup time, OCR p50/p95,
-  capture-to-OCR delay and real Pokémon-name correctness on the user's
-  actual GPU before claiming production readiness.
+Official source:
+- https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+- https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+- https://github.com/PaddlePaddle/PaddleOCR/blob/main/ppocr/utils/dict/ppocrv6_dict.txt
 
-References: https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/pipeline_usage/OCR.en.md
-and https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/paddlepaddle_installation.en.md
+Weights and dictionary retain their upstream Apache-2.0 attribution.
+
+## Validation
+
+Windows CI invokes real detection and CTC recognition using CPU ONNX Runtime
+**and** repeats a synthetic inference smoke in the packaged EXE. This checks
+that the bundled weights, dictionary and model execution are present. CI also
+runs deterministic tactical-state, late OCR, GUI stale-advice and queue tests.
+
+The smoke result says `gpu_inference_tested=false`, because a hosted Windows
+runner does not establish actual DirectML runtime speed and accuracy. Confirm
+on the player's GPU: active provider, p50/p95 capture-to-OCR, Japanese
+Pokémon/move-name correctness, and 45-second decision readiness. Do not
+describe the build as GPU-validated based only on the CPU smoke.
+
+If OCR remains disabled, the existing policy of continuing AI support with
+previously known and explicitly uncertain information is unchanged. No
+silent OCR-derived battle-state updates are added.
