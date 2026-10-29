@@ -744,13 +744,15 @@ class SelectionTestDialog(QDialog):
             "（結果は候補であり対戦状態へは反映しません）")
         for result in rows:
             container=QWidget()
-            layout=QHBoxLayout(container)
+            # Vertical layout leaves the wide two-line body preview legible.
+            layout=QVBoxLayout(container)
             crop=np.ascontiguousarray(result["crop"])
             h,w=crop.shape[:2]
             preview=QLabel()
             qimage=QImage(crop.data,w,h,3*w,QImage.Format.Format_RGB888).copy()
             preview.setPixmap(QPixmap.fromImage(qimage).scaled(
-                340,120,Qt.AspectRatioMode.KeepAspectRatio))
+                min(950,max(340,w)),max(120,min(200,h)),
+                Qt.AspectRatioMode.KeepAspectRatio))
             layout.addWidget(preview)
             confidence=("不明" if result["confidence"] is None
                         else f"{result['confidence']:.2f}")
@@ -766,7 +768,7 @@ class SelectionTestDialog(QDialog):
             details.setWordWrap(True)
             details.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse)
-            layout.addWidget(details,1)
+            layout.addWidget(details)
             self.event_ocr_rows.addWidget(container)
         if not rows:
             error=report.get("error")
