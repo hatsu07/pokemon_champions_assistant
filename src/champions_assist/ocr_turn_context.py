@@ -277,8 +277,17 @@ class OcrSentLedger:
             key, field = entry.get("source_row_key"), entry.get("field")
             if not isinstance(key, str) or field not in permitted:
                 return None
-            if not isinstance(obs.get(field), str) or not obs[field].strip():
+            value = obs.get(field)
+            if (not isinstance(value, str) or not value.strip()
+                    or value.strip().casefold() in
+                    ("unknown", "none", "?", "不明")):
                 return None
+            if field in ("our_stat_changes", "opponent_stat_changes"):
+                from .battle_evidence import _visual_stages
+                # A vague "boosted" message does not establish a concrete
+                # current stage; image-derived stages must pass the validator.
+                if _visual_stages(value) is None:
+                    return None
             by_key.setdefault(key, set()).add(field)
         expected_keys = {_row_key(row) for row in rows}
         if not expected_keys or set(by_key) != expected_keys:
