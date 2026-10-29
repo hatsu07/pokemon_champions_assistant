@@ -238,7 +238,7 @@ def _bench_candidates(state: dict) -> list[str]:
 
 
 def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenMatchAssets,
-                          local_rows=None) -> bool:
+                          local_rows=None, sent_ocr_ledger=None) -> bool:
     """Screen-specific eligibility; replacement need not have an active own actor.
 
     For an unknown own actor, only a confirmed forced-replacement situation
@@ -256,10 +256,12 @@ def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenM
         if own:
             return bool(_member_for(own,assets))
         selected=list(state.get("selected_three") or ())
-        return bool(not state.get("awaiting_replacement")
-                    and local_rows
-                    and len(selected)==3
-                    and all(_member_for(n,assets) for n in selected))
+        if (state.get("awaiting_replacement") or len(selected)!=3
+                or not all(_member_for(n,assets) for n in selected)):
+            return False
+        from .ocr_turn_context import has_ocr_transport_evidence
+        return has_ocr_transport_evidence(
+            state,local_rows,sent_ledger=sent_ocr_ledger)
     selected=list(state.get("selected_three") or ())
     if not opponent or len(selected)!=3 or any(_member_for(n,assets) is None for n in selected):
         return False
@@ -1844,7 +1846,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     current=state.get("our_active")
     opponent=state.get("opponent_active")
     if not _text_action_eligible(
-            expected_screen_label,state,assets,local_rows=local_field_candidates):
+            expected_screen_label,state,assets,
+            local_rows=local_field_candidates,sent_ocr_ledger=sent_ocr_ledger):
         return state,{
             "status":"BLOCKED","reason":"TEXT_DECISION_MISSING_EVIDENCE_OR_SELECTION",
             "images_sent":0}
