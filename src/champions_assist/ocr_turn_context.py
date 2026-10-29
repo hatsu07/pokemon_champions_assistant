@@ -64,7 +64,9 @@ def _visually_same_ocr_fact(row: dict, field: str, value: str) -> bool:
         stage=stages.get(next(iter(kinds)))
         return stage is not None and (stage>0 if up else stage<0)
     if field == prefix+"_used_move":
-        match=re.search(r"の([^!！。]+?)を?(?:つかった|使った|使用した)[!！。]?$",raw)
+        # The actor may itself be preceded by の; take the last clause.
+        chunk=raw.rsplit("の",1)[-1]
+        match=re.search(r"^([^!！。]+?)を?(?:つかった|使った|使用した)[!！。]?$",chunk)
         return bool(match and _compare_text(match.group(1))==visible)
     if field == prefix+"_item_revealed":
         match=re.search(
@@ -106,6 +108,7 @@ class OcrSentLedger:
         # those actors forces image/NO_ACTION again, not stale text reasoning.
         self._quarantined_actors = {"our": set(), "opponent": set()}
         self._overflow_identity_unknown = False
+        self._stale_actor_context: dict[str, dict | None] = {}
 
     def snapshot(self) -> set[str]:
         with self._lock:
@@ -270,12 +273,27 @@ class OcrSentLedger:
             unique.pop(0)
         return {_row_key(row) for row in unique}, overflow
 
+    def _quarantine_overflow_actors(self, request_id: str) -> None:
+        if not self._needs_visual_confirmation or self._visual_guard_rows is not None:
+            return
+        context = self._stale_actor_context.get(request_id)
+        if not isinstance(context, dict):
+            self._overflow_identity_unknown = True
+            return
+        for side, key in (("our","our_active"),("opponent","opponent_active")):
+            actor = str(context.get(key) or "")
+            if not actor:
+                self._overflow_identity_unknown = True
+            else:
+                self._quarantined_actors[side].add(actor)
+
     def _stage_stale(self, request_id: str) -> None:
         rows = self._request_rows.pop(request_id, [])
         keys, overflow = self._specific_reinspection_keys(rows)
         if overflow or keys & self._reinspected_keys:
             # An exhausted OCR retry/unknown episode cannot be assumed safe.
             self._set_visual_guard(None if overflow else rows)
+            self._quarantine_overflow_actors(request_id)
         self._reinspect_keys.update(keys - self._reinspected_keys)
 
     def mark_sent(self, keys, *, request_id: str | None = None,
@@ -294,6 +312,7 @@ class OcrSentLedger:
                     dict(row) for row in rows if _row_key(row) in delivered]
                 if request_id in self._stale_requests:
                     self._stage_stale(request_id)
+                    self._quarantine_overflow_actors(request_id)
 
     def mark_stale(self, request_id: str | None, *,
                    battle_context: dict | None = None) -> None:
@@ -301,16 +320,12 @@ class OcrSentLedger:
             return
         with self._lock:
             self._stale_requests.add(request_id)
-            # Preserve the affected actors BEFORE losing the original context.
-            # No context => no provable quarantine => remain in visual mode.
-            if battle_context is not None:
-                for side, field in (("our", "our_active"),
-                                    ("opponent", "opponent_active")):
-                    actor = str(battle_context.get(field) or "")
-                    if actor:
-                        self._quarantined_actors[side].add(actor)
-                    else:
-                        self._overflow_identity_unknown = True
+            # Record actors as *potential* quarantine provenance. Do not
+            # quarantine ordinary failed requests that were fully reconciled.
+            self._stale_actor_context[request_id] = (
+                {"our_active":battle_context.get("our_active"),
+                 "opponent_active":battle_context.get("opponent_active")}
+                if isinstance(battle_context,dict) else None)
             # If this worker reserved proof but has not confirmed HTTP send,
             # the next worker must not silently act from incomplete OCR.
             if self._reserved.get(request_id) and request_id not in self._request_rows:
@@ -318,9 +333,11 @@ class OcrSentLedger:
                 # Keep a bounded copy of the reserved ORIGINAL proof so a
                 # later accepted screenshot can reconcile it explicitly.
                 self._set_visual_guard(self._reserved_rows.get(request_id))
+                self._quarantine_overflow_actors(request_id)
             # Do not release a reservation here: its worker may already be
             # in client.responses.create(). Only that worker may release it.
             self._stage_stale(request_id)
+            self._quarantine_overflow_actors(request_id)
 
     def confirmed_visual_recovery_epoch(self, report: dict,
                                         updated: dict) -> int | None:
@@ -459,6 +476,7 @@ class OcrSentLedger:
             self._reserved.pop(request_id, None)
             self._reserved_rows.pop(request_id, None)
             self._stale_requests.discard(request_id)
+            self._stale_actor_context.pop(request_id,None)
             if (visual_confirmed and recovery_epoch is not None
                     and recovery_epoch == self._visual_guard_epoch):
                 self._needs_visual_confirmation = False
