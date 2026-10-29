@@ -1574,16 +1574,22 @@ def run_replay_text_result(*, state: dict, messages: list[str],
             instructions=(
                 "Use ONLY the supplied local OCR text. Determine whether the "
                 "human player won or lost the entire Pokémon Champions match, "
-                "not whether one Pokémon fainted. UNKNOWN for any unclear, "
+                "not whether one Pokémon fainted. Game/system result "
+                "'○○との勝負に勝った' means HUMAN WIN and "
+                "'○○との勝負に負けた' means HUMAN LOSS; do not "
+                "invert it as opponent dialogue. UNKNOWN for any unclear, "
                 "truncated, contradictory, or non-final message. Quote an "
                 "EXACT substring from one supplied OCR message as evidence; "
                 "never invent winner labels or infer from party HP. No images."),
             content=[{"type":"input_text","text":payload}])
         result=answer.get("result","UNKNOWN")
         evidence=str(answer.get("evidence") or "").strip()
-        # Enforce that the AI grounded its decision in an actual OCR snippet.
+        # Check both the GPT's exact quote and the complete source OCR.
+        # Quoting only "勝った" cannot conceal a contradictory full message.
         if (result not in ("WIN","LOSS") or not evidence
+                or not _result_quote_direction_consistent(result,evidence)
                 or not any(evidence in m and possible_result_message(m)
+                           and _result_quote_direction_consistent(result,m)
                            for m in recent)):
             return updated,{"status":"RESULT_UNCONFIRMED",
                             "reason":"NO_GROUNDED_EXPLICIT_RESULT",
@@ -1665,26 +1671,36 @@ def select_screen_result_evidence(rows: list[dict], *,
 
 
 def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
-    """Fail closed on an explicit opposite outcome; never infer a result.
+    """Fail closed on player-perspective game/system match-result OCR.
 
-    Only an independent GPT decision can end the match. This check merely
-    rejects contradictory grounded quotations (e.g. WIN citing 敗北).
-    Ambiguous or two-sided messages require human confirmation.
+    '○○との勝負に勝った/負けた' is a result for the HUMAN player,
+    not the speech of an opponent. GPT decides; this guard checks only
+    whether its answer is consistent with the quoted OCR.
     """
-    phrase=" ".join(evidence.casefold().split())
-    # In an opponent's dialogue, "Xとの勝負に負けた" means the
-    # *speaker* lost. This explicit opposite-perspective phrase can
-    # support a human WIN, never a human LOSS without further proof.
     import re
-    if re.search(r"との.{0,18}勝負に.{0,8}負けた",phrase):
-        return result=="WIN"
-    win_cues=("勝利","勝った","勝ちました","you win","相手が降参","相手が投了")
-    loss_cues=("敗北","負けた","負けました","you lose","自分が降参")
-    matches_win=any(cue in phrase for cue in win_cues)
-    matches_loss=any(cue in phrase for cue in loss_cues)
-    if matches_win==matches_loss:
+    if result not in ("WIN","LOSS"):
         return False
-    return matches_win if result=="WIN" else matches_loss if result=="LOSS" else False
+    phrase=re.sub(r"\\s+","",unicodedata.normalize("NFKC",str(evidence).casefold()))
+    outcome_words=re.findall(r"との勝負に(勝った|負けた)",phrase)
+    if outcome_words:
+        # Two opposite result messages in one OCR source are ambiguous.
+        if len(set(outcome_words)) != 1:
+            return False
+        player_result="WIN" if outcome_words[0]=="勝った" else "LOSS"
+        contrary=(("敗北","負けました","youlose","自分が降参")
+                  if player_result=="WIN"
+                  else ("勝利","勝ちました","youwin","相手が降参","相手が投了"))
+        return result==player_result and not any(cue in phrase for cue in contrary)
+    if "との勝負に" in phrase:
+        # Incomplete battle result: do not decide based on a fragment.
+        return False
+    # Existing explicit result labels remain valid. Isolated "勝った" or
+    # "負けた" without the game-result context is not enough.
+    win_cues=("勝利","勝ちました","youwin","相手が降参","相手が投了")
+    loss_cues=("敗北","負けました","youlose","自分が降参")
+    has_win=any(cue in phrase for cue in win_cues)
+    has_loss=any(cue in phrase for cue in loss_cues)
+    return has_win != has_loss and (has_win if result=="WIN" else has_loss)
 
 
 def run_replay_screen_result(*, state: dict,
@@ -1738,10 +1754,11 @@ def run_replay_screen_result(*, state: dict,
                 "messages captured BEFORE the result screen. Do not assume "
                 "the result screen itself has been OCR-read. Return "
                 "WIN or LOSS ONLY if one cited OCR phrase explicitly identifies "
-                "the HUMAN player's final MATCH outcome. Identify the speaker "
-                "and whether an opponent says THEY lost to the human player. "
-                "A bare '負けた' does not itself mean the human lost; "
-                "when the speaker is ambiguous return UNKNOWN. "
+                "the HUMAN player's final MATCH outcome. The game's system "
+                "result '○○との勝負に勝った' means the HUMAN player WON "
+                "(WIN); '○○との勝負に負けた' means the HUMAN player "
+                "LOST (LOSS). This is NOT the opponent's speech. Never "
+                "invert the result direction. If OCR is ambiguous, UNKNOWN. "
                 "A Pokemon fainting, "
                 "a partial turn, an opponent's move, or a vague win phrase is "
                 "NOT enough. If contradictory, missing, or uncertain, return "
@@ -1757,6 +1774,8 @@ def run_replay_screen_result(*, state: dict,
                           and row["confidence"] is not None
                           and row["confidence"]>=0.72
                           and possible_result_message(evidence)
+                          and _result_quote_direction_consistent(
+                              result,row["raw_text"])
                           for row in recent))
         if (result not in ("WIN","LOSS") or not grounded
                 or not _result_quote_direction_consistent(result,evidence)):
