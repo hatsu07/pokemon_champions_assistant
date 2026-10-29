@@ -16,19 +16,94 @@ from .ocr_ai_evidence import select_ai_ocr_evidence
 
 
 class OcrSentLedger:
-    """Thread-safe, match-local proof of actual OCR transport, not GPT comprehension."""
+    """Transport facts plus one-shot proof reinspection after an unadopted reply.
+
+    A sent OCR row is NOT a confirmed battle event. Only a request whose reply
+    was lost/superseded exposes chosen original frames for ONE subsequent call.
+    Match-local threading lock handles late HTTP dispatch after UI retirement.
+    """
 
     def __init__(self):
         self._lock = Lock()
         self._keys: set[str] = set()
+        self._request_rows: dict[str, list[dict]] = {}
+        self._stale_requests: set[str] = set()
+        self._reinspect_keys: set[str] = set()
+        self._reinspected_keys: set[str] = set()
 
     def snapshot(self) -> set[str]:
         with self._lock:
             return set(self._keys)
 
-    def mark_sent(self, keys) -> None:
+    def reinspection_keys(self) -> set[str]:
         with self._lock:
-            self._keys.update(str(key) for key in keys if key)
+            return set(self._reinspect_keys)
+
+    @staticmethod
+    def _specific_reinspection_keys(rows: list[dict]) -> set[str]:
+        """Choose proof by OCR *region and display*, not Pokémon semantics.
+
+        Preserve two readings per distinct battle message display, which can
+        be necessary for corroborating an actual switch. A missing display ID
+        is not merged with any other message. For HUD fields select the latest
+        reading and its predecessor so changes remain available. This is
+        scoped to the lost request, never the whole match history.
+        """
+        event_fields = ("battle_message", "system_message", "effect_popup",
+                        "item_popup", "item_message")
+        event_groups: dict[tuple, list[dict]] = {}
+        hud_groups: dict[str, list[dict]] = {}
+        for index, row in enumerate(rows):
+            field = str(row.get("field") or "")
+            if field.endswith(event_fields):
+                # Same visual display is one event; absent IDs are distinct.
+                episode = row.get("display_id") or f"single:{index}"
+                group = (field, str(episode))
+                event_groups.setdefault(group, []).append(row)
+            else:
+                hud_groups.setdefault(field, []).append(row)
+        chosen: set[str] = set()
+        for group in event_groups.values():
+            for row in (group[:2] if len(group) >= 2 else group):
+                chosen.add(_row_key(row))
+        for group in hud_groups.values():
+            for row in group[-2:]:
+                chosen.add(_row_key(row))
+        return chosen
+
+    def _stage_stale(self, request_id: str) -> None:
+        rows = self._request_rows.pop(request_id, [])
+        self._reinspect_keys.update(
+            self._specific_reinspection_keys(rows) - self._reinspected_keys)
+
+    def mark_sent(self, keys, *, request_id: str | None = None,
+                  rows: list[dict] | None = None) -> None:
+        with self._lock:
+            delivered = set(str(key) for key in keys if key)
+            self._keys.update(delivered)
+            # Each row can be selectively re-shown once; it never becomes NEW.
+            revisited = delivered & self._reinspect_keys
+            self._reinspect_keys.difference_update(revisited)
+            self._reinspected_keys.update(revisited)
+            if request_id and rows:
+                self._request_rows[request_id] = [
+                    dict(row) for row in rows if _row_key(row) in delivered]
+                if request_id in self._stale_requests:
+                    self._stage_stale(request_id)
+
+    def mark_stale(self, request_id: str | None) -> None:
+        if not request_id:
+            return
+        with self._lock:
+            self._stale_requests.add(request_id)
+            self._stage_stale(request_id)
+
+    def mark_adopted(self, request_id: str | None) -> None:
+        if not request_id:
+            return
+        with self._lock:
+            self._request_rows.pop(request_id, None)
+            self._stale_requests.discard(request_id)
 
 
 def _compare_text(value: str) -> str:
