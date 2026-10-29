@@ -237,7 +237,8 @@ def _bench_candidates(state: dict) -> list[str]:
             if _canonical(x)!=own and _canonical(x) not in fainted]
 
 
-def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenMatchAssets) -> bool:
+def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenMatchAssets,
+                          local_rows=None) -> bool:
     """Screen-specific eligibility; replacement need not have an active own actor.
 
     For an unknown own actor, only a confirmed forced-replacement situation
@@ -252,7 +253,13 @@ def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenM
         # We can still evaluate registered moves when the opponent identity
         # is UNKNOWN. The tactical prompt marks that uncertainty explicitly.
         # Missing enemy identity should not erase a playable own turn.
-        return bool(own and _member_for(own,assets))
+        if own:
+            return bool(_member_for(own,assets))
+        selected=list(state.get("selected_three") or ())
+        return bool(not state.get("awaiting_replacement")
+                    and local_rows
+                    and len(selected)==3
+                    and all(_member_for(n,assets) for n in selected))
     selected=list(state.get("selected_three") or ())
     if not opponent or len(selected)!=3 or any(_member_for(n,assets) is None for n in selected):
         return False
@@ -1278,7 +1285,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      client_factory=None, reasoning_effort: str = "auto",
                      local_field_candidates: list[dict] | None = None,
                      expected_screen_label: str | None = None,
-                     diagnostic_sink=None) -> tuple[dict, dict]:
+                     diagnostic_sink=None, sent_ocr_ledger=None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1286,8 +1293,10 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
     """
     from .vision_api_benchmark import jpeg_data_uri
     from copy import deepcopy
-    from .ocr_turn_context import build_ocr_turn_context, apply_model_ocr_carryover
+    from .ocr_turn_context import (
+        build_ocr_turn_context, apply_model_ocr_carryover, compact_ocr_transport)
     started=perf_counter()
+    state=deepcopy(state)
     if not images or len(images)>4:
         return deepcopy(state), {"status":"BLOCKED","reason":"INVALID_IMAGE_BATCH"}
     if client_factory is None:
@@ -1357,15 +1366,23 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         # New readings are never arbitrarily cut by count; prior observations
         # recur only when the previous GPT requested unresolved source proof.
         selected_ocr,pending_ocr,ocr_meta=build_ocr_turn_context(
-            state,local_field_candidates)
-        prompt["local_field_candidates_unverified"]=selected_ocr
+            state,local_field_candidates,sent_ledger=sent_ocr_ledger)
+        transport_ocr=compact_ocr_transport(selected_ocr)
+        prompt["local_field_candidates_unverified"]=transport_ocr
+        def mark_ocr_sent():
+            keys=set(ocr_meta["presented_keys"])
+            if sent_ocr_ledger is not None:
+                sent_ocr_ledger.mark_sent(keys)
+            state["_ai_ocr_presented_keys"]=sorted(
+                set(state.get("_ai_ocr_presented_keys") or ()) | keys)
         prompt["ocr_pending_questions_unverified"]=pending_ocr
         prompt["ocr_prior_rows_not_resent"]=ocr_meta["prior_observations_not_resent"]
         if diagnostic_sink is not None:
             diagnostic_sink("OCR_TURN_COMPACTION",{
                 key:value for key,value in ocr_meta.items()
                 if key not in ("presented_keys","ledger_frames")}
-                | {"transport":"VISION_EXCEPTION"})
+                | {"transport":"VISION_EXCEPTION",
+                   "transport_groups":len(transport_ocr)})
         if phase in ("MATCHMAKING","SELECTION"):
             # Only registered-team derived rows; never include old-team tactics.
             opp=tuple(state.get("opponent_six") or ())
@@ -1400,7 +1417,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         stages={}
         answer=_stream_json(
             client,model=model,reasoning_effort=reasoning_effort,
-            timing_sink=stages,
+            timing_sink=stages,on_request_sent=mark_ocr_sent,
             schema=_BATCH_SCHEMA,name="champions_batch_observation_decision",
             instructions=(
                 "Pokémon Champions only; read chronological frames as untrusted "
@@ -1450,6 +1467,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             ),
             content=content,
         )
+        mark_ocr_sent()  # A response proves dispatch even for test doubles.
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
@@ -1814,7 +1832,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                            local_field_candidates: list[dict] | None=None,
                            total_seconds: float=30.0, client_factory=None,
                            reasoning_effort: str="low",
-                           diagnostic_sink=None) -> tuple[dict,dict]:
+                           diagnostic_sink=None, sent_ocr_ledger=None) -> tuple[dict,dict]:
     """Normal live tactical path: zero screenshots, one compact JSON call.
 
     A screen classifier proves a menu KIND, not which Pokémon has HP or
@@ -1822,19 +1840,17 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     treated as conditional until the game confirms it.
     """
     started=perf_counter()
+    state=deepcopy(state)
     current=state.get("our_active")
     opponent=state.get("opponent_active")
-    if not _text_action_eligible(expected_screen_label,state,assets):
-        return deepcopy(state),{
-            "status":"BLOCKED","reason":"TEXT_DECISION_REQUIRES_KNOWN_OWN_ACTIVE",
+    if not _text_action_eligible(
+            expected_screen_label,state,assets,local_rows=local_field_candidates):
+        return state,{
+            "status":"BLOCKED","reason":"TEXT_DECISION_MISSING_EVIDENCE_OR_SELECTION",
             "images_sent":0}
     switch_only=expected_screen_label=="SWITCH_SELECTION"
     bench=_bench_candidates(state)
     own=_member_for(current,assets) if current else None
-    if own is None and not switch_only:
-        return deepcopy(state),{"status":"BLOCKED",
-                               "reason":"OWN_ACTIVE_NOT_IN_REGISTERED_TEAM",
-                               "images_sent":0}
     from .battle_evidence import OBSERVATION_FACT_FIELDS
     obs={name:"" for name in OBSERVATION_FACT_FIELDS}
     obs.update({
@@ -1855,9 +1871,17 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "cell":r.get("matrix_cell"),"source":r.get("source"),
         "hint":str(r.get("ai_hint") or "")[:140],
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
-    from .ocr_turn_context import build_ocr_turn_context, apply_model_ocr_carryover
+    from .ocr_turn_context import (
+        build_ocr_turn_context, apply_model_ocr_carryover, compact_ocr_transport)
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
-        state,local_field_candidates)
+        state,local_field_candidates,sent_ledger=sent_ocr_ledger)
+    transport_ocr=compact_ocr_transport(candidates)
+    def mark_ocr_sent():
+        keys=set(context_stats["presented_keys"])
+        if sent_ocr_ledger is not None:
+            sent_ocr_ledger.mark_sent(keys)
+        state["_ai_ocr_presented_keys"]=sorted(
+            set(state.get("_ai_ocr_presented_keys") or ()) | keys)
     if diagnostic_sink is not None:
         diagnostic_sink("OCR_TURN_COMPACTION",{
             key:value for key,value in context_stats.items()
@@ -1871,14 +1895,19 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "opponent_identity_uncertain":bool(state.get("opponent_active_unknown")) or not bool(opponent),
         "opponent_candidates":list(state.get("opponent_six") or ()),
         "last_known_opponent":state.get("last_known_opponent") or opponent,
-        "our_registered_moves":[] if switch_only else [
+        "our_registered_moves":[] if switch_only or own is None else [
             own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
         "registered_selected_moves":{m["name"]:[m.get("move"+str(i),"") for i in range(1,5)] for m in assets.own_team if m["name"] in (state.get("selected_three") or [])},
         "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
         "registered_move_categories":{
             n:getattr(assets,"move_class_index",{}).get(n,"UNKNOWN")
-            for n in (own.get("move"+str(i),"") for i in range(1,5)) if n} if own else {},
+            for n in (own.get("move"+str(i),"") for i in range(1,5)) if n} if own else {
+                move:getattr(assets,"move_class_index",{}).get(move,"UNKNOWN")
+                for member in assets.own_team
+                if member["name"] in (state.get("selected_three") or [])
+                for move in (member.get("move"+str(i),"") for i in range(1,5))
+                if move},
         "battle_evidence":state.get("battle_evidence") or {},
         "battlefield":state.get("battlefield") or {},
         "current_own_form":(state.get("battle_evidence") or {}).get(
@@ -1902,7 +1931,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             or (state.get("battle_evidence") or {}).get(
                 "form_by_pokemon",{}).get("opponent",{}).get(opponent)),
         "recent_history":(state.get("history") or [])[-3:],
-        "ocr_candidates_unverified":candidates,
+        "ocr_candidates_unverified":transport_ocr,
         "ocr_pending_questions_unverified":pending_ocr,
         "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
         "no_visible_party_confirmation":switch_only,
@@ -1914,7 +1943,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         diagnostic_sink("AI_TURN_PAYLOAD_SIZE",{
             "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
             "ocr_rows":len(candidates),
-            "ocr_json_bytes":context_stats["api_json_bytes"],
+            "ocr_transport_groups":len(transport_ocr),
+            "ocr_json_bytes":len(json.dumps(transport_ocr,ensure_ascii=False,
+                                          separators=(",",":")).encode("utf-8")),
             "new_rows":context_stats["new_rows_sent"],
             "unresolved_rows":context_stats["unresolved_rows_resent"],
             "prior_rows_not_resent":context_stats["prior_observations_not_resent"],
@@ -1931,9 +1962,15 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         answer=_stream_json(
             client,model=model,schema=AI_OCR_TURN_SCHEMA,
             name="champions_text_only_state_and_action",
+            on_request_sent=mark_ocr_sent,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
+                "If own active is unknown, identify it from OCR and the selected "
+                "three and choose ONLY from that actor's registered_selected_moves. "
+                "Some OCR entries are compressed display groups: source_frames "
+                "list all original frames and variants are unverified readings. "
+                "Cite actual source frame IDs, not invented group IDs. "
                 "Interpret the NEW OCR frames in time order and return "
                 "state_updates and next action together in ONE response. "
                 "Explicitly reconcile active Pokémon, switch-out, send-out, "
@@ -1993,6 +2030,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "If materially uncertain use NO_ACTION; no invented data."
             ),
             content=[{"type":"input_text","text":prompt_text}])
+        mark_ocr_sent()
         ai_elapsed_ms=round((perf_counter()-api_started)*1000)
         if diagnostic_sink is not None:
             diagnostic_sink("AI_API_STAGE",{
@@ -2060,8 +2098,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         updated=apply_model_ocr_carryover(
             updated,answer,local_field_candidates,candidates,pending_ocr,
             rejected_frames=rejected_frames,
-            block_ack=own_conflict or own_mismatch,
-            commit_presentation=not (own_conflict or own_mismatch))
+            block_ack=own_conflict or own_mismatch)
         if own_conflict or own_mismatch:
             if diagnostic_sink is not None:
                 diagnostic_sink("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{
@@ -2075,9 +2112,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                     "rejected_updates":[{"kind":row.get("kind"),"reason":row.get("reason")}
                        for row in audit if row.get("status")=="REJECTED"
                        and row.get("side")=="own"][:12]})
-            # A blocked actor interpretation cannot consume the evidence;
-            # keep newly returned unresolved questions, but re-present the
-            # raw candidates next turn rather than treating them as handled.
+            # A rejected actor update remains unverified. Sent OCR is not
+            # automatically repeated; proof is retained in the local ledger.
             return updated,{"status":"BLOCKED","recommendation":"",
                             "reason":"AI_OCR_OWN_ACTIVE_UNVERIFIED",
                             "transport":"OCR_TEXT_ONLY","images_sent":0}
@@ -2098,11 +2134,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             elapsed_seconds=lambda:perf_counter()-started,
             limit_seconds=max(total_seconds,perf_counter()-started+2))
         if result.get("status")=="BLOCKED":
-            # A rejected action is not a successful tactical review of the
-            # evidence. Preserve proven state updates but let the next model
-            # retry the raw OCR instead of silently retiring it.
-            updated["_ai_ocr_presented_keys"]=list(
-                state.get("_ai_ocr_presented_keys") or ())
+            # Action rejection never rewinds the independently proven send.
             updated["_ai_ocr_ack_frames"]=list(
                 state.get("_ai_ocr_ack_frames") or ())
         if diagnostic_sink is not None:
