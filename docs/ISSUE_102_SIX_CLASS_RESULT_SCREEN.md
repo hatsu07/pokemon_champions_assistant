@@ -39,6 +39,8 @@ TRAINING_DATA_DIR="$NEW" ./scripts/train_screen_classifier_docker.sh --validate-
 TRAINING_DATA_DIR="$NEW" ./scripts/train_screen_classifier_docker.sh --gpu --epochs 12 --pretrained --archive-output
 ```
 
+GPU学習の起動方式・失敗時の出力保護・修正後の再実行手順は [Issue #108の検証手順](ISSUE_108_GPU_TRAINING_RECOVERY.md) を参照。
+
 学習と独立した試合をholdoutにする。6分類モデルの精度・速度と
 `RESULT_SCREEN` の誤検知・見逃しをWindows実環境で検証する。
 `validated` はデータ不足や品質ゲート未達なら `false` とする。
