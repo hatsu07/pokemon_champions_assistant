@@ -112,6 +112,18 @@ class BattleMessageRubyTests(unittest.TestCase):
             self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
             self.assertEqual(crop.shape[:2], (93, 399))
 
+    def test_same_size_ui_text_scale_change_abstains(self):
+        image = synthetic_frame()
+        transformed = image.copy()
+        # Simulated game UI scale: text geometry changes, capture stays 960x572.
+        transformed[430:491, 150:215] = 180
+        transformed[432:456, 160:190] = 235
+        transformed[464:486, 160:190] = 235
+        self.assertTrue(sample(True).compatible(transformed))
+        _, info = prepare_battle_message(transformed, sample(True), _REGION)
+        self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
+        self.assertFalse(info["ruby_excluded"])
+
     def test_unchanged_message_right_animation_does_not_retrigger_ocr(self):
         image = synthetic_frame()
         engine = CountingEngine("効果はいまひとつだ")
@@ -143,6 +155,12 @@ class BattleMessageRubyTests(unittest.TestCase):
         self.assertEqual(engine.calls[0][1].shape[:2], (59, 399))
         self.assertEqual(enabled["rows"][0]["parsed"], engine.text)
         self.assertFalse(enabled["rows"][0]["game_validated"])
+        self.assertGreaterEqual(enabled["rows"][0]["preprocess_ms"], 0)
+        self.assertGreaterEqual(enabled["rows"][0]["ocr_elapsed_ms"], 0)
+        self.assertGreaterEqual(enabled["rows"][0]["elapsed_ms"], 0)
+        self.assertAlmostEqual(enabled["rows"][0]["elapsed_ms"],
+                               enabled["rows"][0]["preprocess_ms"] +
+                               enabled["rows"][0]["ocr_elapsed_ms"], delta=0.02)
         engine.calls.clear()
         disabled = inspect_battle_event_image(frame, sample(), engine=engine,
                                                ruby_preview=False)
