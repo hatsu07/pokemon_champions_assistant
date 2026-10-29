@@ -755,6 +755,13 @@ class Issue125TransportTests(unittest.TestCase):
         ledger.mark_adopted("C",visual_confirmed=True,
                             recovery_epoch=epoch+1)
         self.assertTrue(ledger.needs_visual_confirmation())
+        # A new failed worker delivers lost proof during image validation.
+        # Its newer safety epoch must block the old image's unlock token.
+        ledger.mark_sent([key],request_id="D",rows=[proof])
+        ledger.mark_stale("D")
+        ledger.mark_adopted("C",visual_confirmed=True,
+                            recovery_epoch=epoch)
+        self.assertTrue(ledger.needs_visual_confirmation())
 
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
