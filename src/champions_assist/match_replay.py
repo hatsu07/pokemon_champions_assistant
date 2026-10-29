@@ -1875,9 +1875,18 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
         "no_visible_party_confirmation":switch_only,
     }
+    prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
     if diagnostic_sink is not None:
         from .live_diagnostics import ai_input_digest
         diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
+        diagnostic_sink("AI_TURN_PAYLOAD_SIZE",{
+            "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
+            "ocr_rows":len(candidates),
+            "pending_ocr_questions":len(pending_ocr),
+            "ocr_json_bytes":context_stats["api_json_bytes"],
+            "prior_observations_not_resent":context_stats["prior_observations_not_resent"],
+            "screen_label":expected_screen_label,
+            "state_revision":state.get("_live_state_revision",0)})
     if client_factory is None:
         from openai import OpenAI
         client_factory=OpenAI
@@ -1937,9 +1946,15 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "party entries are visible. "
                 "If materially uncertain use NO_ACTION; no invented data."
             ),
-            content=[{"type":"input_text","text":json.dumps(
-                prompt,ensure_ascii=False,separators=(",",":"))}])
+            content=[{"type":"input_text","text":prompt_text}])
         ai_elapsed_ms=round((perf_counter()-api_started)*1000)
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_API_STAGE",{
+                "api_elapsed_ms":ai_elapsed_ms,
+                "pre_api_elapsed_ms":round((api_started-started)*1000),
+                "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
+                "ocr_rows":len(candidates),
+                "result":"RESPONSE_RECEIVED"})
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
@@ -1958,7 +1973,12 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                          row.get("side")=="own" and
                          row.get("kind") in ("SWITCH","SWITCH_OUT","FAINT","MEGA")
                          for row in audit)
-        own_mismatch=(combined and
+        # On a forced switch screen the fainted outgoing actor may be
+        # genuinely invisible; GPT is instructed to leave it blank.
+        # Do not require a stale actor identity just to select a living bench.
+        actor_missing_on_switch=(switch_only and
+                                 not _canonical(answer.get("interpreted_own_active","")))
+        own_mismatch=(combined and not actor_missing_on_switch and
             _canonical(answer.get("interpreted_own_active",""))!=
             _canonical(updated.get("our_active","")))
         opponent_mismatch=(combined and
@@ -1989,6 +2009,20 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             block_ack=own_conflict or own_mismatch,
             commit_presentation=not (own_conflict or own_mismatch))
         if own_conflict or own_mismatch:
+            if diagnostic_sink is not None:
+                diagnostic_sink("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{
+                    "own_update_conflict":bool(own_conflict),
+                    "own_identity_mismatch":bool(own_mismatch),
+                    "screen_label":expected_screen_label,
+                    "internal_own":updated.get("our_active") or "",
+                    "model_own":answer.get("interpreted_own_active") or "",
+                    "rejected_own_updates":[{
+                        "kind":row.get("kind"),"reason":row.get("reason")}
+                        for row in audit
+                        if row.get("status")=="REJECTED"
+                        and row.get("side")=="own"
+                        and row.get("kind") in ("SWITCH","SWITCH_OUT","FAINT","MEGA")][:12],
+                    "ocr_rows":len(candidates)})
             # A blocked actor interpretation cannot consume the evidence;
             # keep newly returned unresolved questions, but re-present the
             # raw candidates next turn rather than treating them as handled.
@@ -2058,6 +2092,12 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         return updated,result
     except Exception as exc:
         if diagnostic_sink is not None:
+            diagnostic_sink("AI_API_STAGE",{
+                "error_type":type(exc).__name__,
+                "elapsed_ms":round((perf_counter()-started)*1000),
+                "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
+                "ocr_rows":len(candidates),
+                "result":"ERROR"})
             diagnostic_sink("AI_VALIDATION",{
                 "validation_code":type(exc).__name__,
                 "status":"ERROR","reason":"ACTION_PATH_EXCEPTION"})
