@@ -1322,7 +1322,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
     from .vision_api_benchmark import jpeg_data_uri
     from copy import deepcopy
     from .ocr_turn_context import (
-        build_ocr_turn_context, apply_model_ocr_carryover, compact_ocr_transport)
+        build_ocr_turn_context, apply_model_ocr_carryover,
+        compact_ocr_transport, _row_key)
     started=perf_counter()
     state=deepcopy(state)
     if not images or len(images)>4:
@@ -1408,11 +1409,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         # Only a bounded, unverified subset is shown again for visual
         # reconciliation. No lost OCR is automatically treated as true.
         prompt["stale_visual_proof_to_reconcile"]=([
-            {"source_row_key":__import__("hashlib").sha256(
-                json.dumps((row.get("frame_id",""),row.get("field",""),
-                            row.get("raw_text",row.get("candidate",""))),
-                           ensure_ascii=False,separators=(",",":"))
-                           .encode("utf-8")).hexdigest()[:24],
+            {"source_row_key":_row_key(row),
              "frame_id":row.get("frame_id"),"field":row.get("field"),
              "raw_text":row.get("raw_text",row.get("candidate",""))}
             for row in sent_ocr_ledger.visual_guard_rows()]
