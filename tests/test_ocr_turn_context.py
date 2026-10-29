@@ -336,6 +336,32 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                              "living_selected_bench_candidates"])
         self.assertEqual(after["our_active"],"")
 
+    def test_forced_switch_blank_actor_does_not_conflict_with_stale_active(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        # The engine may still retain the fainted outgoing actor until the
+        # newly selected bench member actually appears on the game screen.
+        state["our_active"]="ゲンガー"
+        state["awaiting_replacement"]=True
+        state["battle_evidence"]["hp_by_pokemon"]["own"]["ゲンガー"]="0/120"
+        self.assertTrue(_text_action_eligible("SWITCH_SELECTION",state,assets))
+        answer=model_reply([],own="")
+        answer["action"]={"action_kind":"SWITCH","move":"",
+                          "switch_target":"ドドゲザン","warning":""}
+        messages=[]
+        with patch("champions_assist.match_replay._stream_json",return_value=answer):
+            changed,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="SWITCH_SELECTION",
+                local_field_candidates=rows(3),
+                client_factory=lambda **kwargs:object(),
+                diagnostic_sink=lambda name,data:messages.append((name,data)))
+        self.assertNotEqual(report.get("reason"),"AI_OCR_OWN_ACTIVE_UNVERIFIED")
+        self.assertNotEqual(report["status"],"ERROR")
+        self.assertTrue(any(event=="AI_API_STAGE" for event,data in messages))
+        self.assertEqual(changed["our_active"],"ゲンガー")
+        self.assertNotIn(("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{}),messages)
+
     def test_unknown_own_without_confirmed_faint_requires_visual_fallback(self):
         assets=fixture_assets()
         state=battle_state(assets)
