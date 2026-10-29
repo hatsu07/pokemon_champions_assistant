@@ -2199,15 +2199,28 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             # The pre-dispatch gate checks the OLD opponent. Fresh OCR can
             # introduce a quarantined actor mid-request. Never adopt an action
             # calculated without its missing history.
-            if (sent_ocr_ledger is None or
-                    not sent_ocr_ledger.quarantined_actor_is_active(updated)):
+            if sent_ocr_ledger is None:
+                return None
+            # Check accepted events AND a model-identified active that has
+            # not yet been verified by the local evidence validator. Both
+            # must be considered before returning an actionable MOVE.
+            model_actors=dict(updated)
+            for field in ("our_active","opponent_active"):
+                inferred=str(answer.get("interpreted_"+field) or "")
+                if inferred:
+                    model_actors[field]=inferred
+            quarantine_state=(updated if
+                sent_ocr_ledger.quarantined_actor_is_active(updated)
+                else model_actors)
+            if not sent_ocr_ledger.quarantined_actor_is_active(quarantine_state):
                 return None
             from .ocr_turn_context import _same_quarantined_actor
-            isolated=sent_ocr_ledger.visual_overflow_actors(updated)
+            isolated=sent_ocr_ledger.visual_overflow_actors(quarantine_state)
             suspects={
-                side:str(updated.get(key) or "")
+                side:str(quarantine_state.get(key) or "")
                 for side,key in (("our","our_active"),("opponent","opponent_active"))
-                if any(_same_quarantined_actor(name,updated.get(key) or "")
+                if any(_same_quarantined_actor(
+                           name,quarantine_state.get(key) or "")
                        for name in isolated.get(side,()))
             }
             if diagnostic_sink is not None:
