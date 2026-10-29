@@ -115,7 +115,7 @@ class EvidenceArchiveTest(unittest.TestCase):
         snapshot=buf.finish()
         self.archive.save_ended(snapshot)
         altered=json.loads(json.dumps(snapshot))
-        altered["context"]["team_sha"]="different"
+        altered["context"]["tactical_version"]="posthoc-changed-tactics"
         with self.assertRaises(ConfigurationError):
             self.archive.save_ended(altered)
         with closing(sqlite3.connect(self.store.db_path)) as db:
