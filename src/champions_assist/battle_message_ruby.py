@@ -49,8 +49,12 @@ def prepare_battle_message(
     if not enabled:
         info["preprocess"] = "DISABLED"
         return original, info
-    if not profile.validated_on_game_capture and not preview_unvalidated:
-        info["preprocess"] = "UNVALIDATED_LIVE_DISABLED"
+    calibrated = (profile.validated_on_game_capture
+                  and profile.ruby_body_rows_validated)
+    if not calibrated and not preview_unvalidated:
+        info["preprocess"] = ("UNVALIDATED_LIVE_DISABLED"
+                              if not profile.validated_on_game_capture
+                              else "RUBY_BANDS_UNVALIDATED_LIVE_DISABLED")
         return original, info
     if (profile.reference_resolution != _REFERENCE
             or region.bounds_px != _EXPECTED_REGION
@@ -100,10 +104,10 @@ def prepare_battle_message(
                               max(1, round(composite.shape[0] * scale))),
                               interpolation=cv2.INTER_AREA)
     info.update(
-        preprocess=("BODY_LINES_PREVIEW_ONLY" if not profile.validated_on_game_capture
-                    else "BODY_LINES_CALIBRATED"),
+        preprocess=("BODY_LINES_CALIBRATED" if calibrated
+                    else "BODY_LINES_PREVIEW_ONLY"),
         body_rois=rois,
         ruby_excluded=True,
-        game_validated=bool(profile.validated_on_game_capture),
+        game_validated=bool(calibrated),
     )
     return np.ascontiguousarray(composite), info
