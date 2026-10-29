@@ -199,9 +199,9 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
         panel=self.fixture(pending=("capture-200",))
         # Even though reader.enabled stays true, its pre-result work is stuck.
         # The UI must not be trapped in 250-ms retries indefinitely.
-        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \\
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \
              patch("champions_assist.match_replay_dialog.monotonic",
-                   side_effect=(100.0,119.9,120.1)), \\
+                   side_effect=(100.0,119.9,120.1)), \
              patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
             panel._attempt_result_screen_verification()
             panel._attempt_result_screen_verification()
@@ -220,7 +220,7 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
 
     def test_pre_result_ocr_progress_resets_stall_watchdog(self):
         panel=self.fixture(pending=("capture-200","capture-201"))
-        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \\
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \
              patch("champions_assist.match_replay_dialog.monotonic",
                    side_effect=(100.0,119.0,138.9,139.1)):
             panel._attempt_result_screen_verification()
