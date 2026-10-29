@@ -16,8 +16,9 @@ _REFERENCE = (960, 572)
 _EXPECTED_REGION = (141, 412, 540, 505)
 # Half-open boundaries include every measured body pixel, but neither ruby row.
 _BODY_ROWS = ((430, 454), (464, 489))
-# Keep the entire plausible message width rather than the old 150..510 crop.
-_TEXT_X = (141, 950)
+# Proven sample messages stay within the pre-existing right edge of X=540.
+# A wider text region must be separately calibrated from long real messages.
+_TEXT_X = (141, 540)
 
 
 def _has_black_capture_bars(image: np.ndarray) -> bool:
@@ -28,6 +29,42 @@ def _has_black_capture_bars(image: np.ndarray) -> bool:
         return float(np.mean(block)) < 5.0 and float(np.std(block)) < 5.0
     return ((black(image[:dh]) and black(image[-dh:]))
             or (black(image[:, :dw]) and black(image[:, -dw:])))
+
+
+def _current_frame_body_anchor_matches(image: np.ndarray) -> bool:
+    """Fail closed on obvious UI scale or vertical-position changes.
+
+    Uses near-neutral bright strokes from the leftmost message prefix, not
+    battle semantics or an extra OCR inference. This is a narrow visual
+    plausibility check, not a substitute for user-approved calibration.
+    If glyphs/background cannot be distinguished, use the old full ROI.
+    """
+    h, w = image.shape[:2]
+    x0, x1 = round(150 * w / 960), round(215 * w / 960)
+    y0, y1 = round(420 * h / 572), round(493 * h / 572)
+    patch = image[y0:y1, x0:x1]
+    if patch.size == 0:
+        return False
+    # Resolve relative pixel geometry at a single reference size so 1x, 1.5x
+    # and 2x follow the same conservative tolerance for each body line.
+    patch = cv2.resize(patch, (65, 73), interpolation=cv2.INTER_AREA)
+    lo = patch.min(axis=2).astype(np.int16)
+    hi = patch.max(axis=2).astype(np.int16)
+    active = ((lo >= 160) & ((hi - lo) <= 75)).sum(axis=1) >= 4
+    runs = []
+    start = None
+    for offset, present in enumerate([*active, False]):
+        if present and start is None:
+            start = offset
+        elif not present and start is not None:
+            if offset - start >= 9:
+                runs.append((420 + start, 419 + offset))
+            start = None
+    first = lambda pair: 432 <= pair[0] <= 438 and 447 <= pair[1] <= 452
+    second = lambda pair: 465 <= pair[0] <= 470 and 478 <= pair[1] <= 484
+    return bool(runs) and any(first(run) for run in runs) and all(
+        first(run) or second(run) for run in runs
+    )
 
 
 def prepare_battle_message(
@@ -70,6 +107,9 @@ def prepare_battle_message(
         return original, info
     if _has_black_capture_bars(image):
         info["preprocess"] = "POSSIBLE_BLACK_BARS"
+        return original, info
+    if not _current_frame_body_anchor_matches(image):
+        info["preprocess"] = "BODY_ANCHOR_MISMATCH"
         return original, info
 
     x0, x1 = (round(_TEXT_X[0] * width / _REFERENCE[0]),
