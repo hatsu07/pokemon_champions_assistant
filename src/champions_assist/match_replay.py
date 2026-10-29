@@ -1580,7 +1580,9 @@ def run_replay_text_result(*, state: dict, messages: list[str],
                 "invert it as opponent dialogue. UNKNOWN for any unclear, "
                 "truncated, contradictory, or non-final message. Quote an "
                 "EXACT substring from one supplied OCR message as evidence; "
-                "never invent winner labels or infer from party HP. No images."),
+                "quote the entire 'との勝負に勝った/負けた' phrase when present, "
+                "not just its final word. Never invent winner labels or "
+                "infer from party HP. No images."),
             content=[{"type":"input_text","text":payload}])
         result=answer.get("result","UNKNOWN")
         evidence=str(answer.get("evidence") or "").strip()
@@ -1762,8 +1764,9 @@ def run_replay_screen_result(*, state: dict,
                 "A Pokemon fainting, "
                 "a partial turn, an opponent's move, or a vague win phrase is "
                 "NOT enough. If contradictory, missing, or uncertain, return "
-                "UNKNOWN. Quote an exact OCR substring as evidence and its "
-                "real input frame_id. Do not invent proof or infer from HP."),
+                "UNKNOWN. Quote the complete 'との勝負に勝った/負けた' "
+                "phrase when present, not only '勝った/負けた'; cite its "
+                "real input frame_id. Never invent proof or infer from HP."),
             content=[{"type":"input_text","text":prompt}])
         result=answer.get("result","UNKNOWN")
         evidence=str(answer.get("evidence") or "").strip()
