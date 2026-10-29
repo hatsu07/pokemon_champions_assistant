@@ -126,7 +126,7 @@ class _ReplayWorker(QObject):
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
                  local_field_candidates=None,diagnostic_sink=None,
-                 exchange_sink=None,sent_ocr_ledger=None,
+                 exchange_sink=None,sent_ocr_ledger=None,ocr_request_id=None,
                  selection_seconds=120.0, prep_seconds=120.0,battle_seconds=120.0,
                  result_messages=None, result_screen=None):
         super().__init__()
@@ -138,6 +138,7 @@ class _ReplayWorker(QObject):
         self.diagnostic_sink=diagnostic_sink
         self.exchange_sink=exchange_sink
         self.sent_ocr_ledger=sent_ocr_ledger
+        self.ocr_request_id=ocr_request_id
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -248,7 +249,8 @@ class _ReplayWorker(QObject):
                             expected_screen_label=self.screen_label,
                             local_field_candidates=local_candidates,
                             diagnostic_sink=self.diagnostic_sink,
-                            sent_ocr_ledger=self.sent_ocr_ledger)
+                            sent_ocr_ledger=self.sent_ocr_ledger,
+                            ocr_request_id=self.ocr_request_id)
                     else:
                         next_state,report=run_replay_batch(
                             self.frames[-1:],state=self.state,assets=self.assets,
@@ -258,7 +260,8 @@ class _ReplayWorker(QObject):
                             local_field_candidates=local_candidates,
                             expected_screen_label=self.screen_label,
                             diagnostic_sink=self.diagnostic_sink,
-                            sent_ocr_ledger=self.sent_ocr_ledger)
+                            sent_ocr_ledger=self.sent_ocr_ledger,
+                            ocr_request_id=self.ocr_request_id)
                         report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
@@ -1650,6 +1653,7 @@ class MatchReplayDialog(QDialog):
             local_field_candidates=local_candidates,
             diagnostic_sink=diagnostic_sink,
             sent_ocr_ledger=self._ocr_sent_ledger,
+            ocr_request_id=request_id,
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -1672,6 +1676,8 @@ class MatchReplayDialog(QDialog):
         if self._thread is None:
             return
         rid=self._active_request_id
+        if rid and getattr(self,"_ocr_sent_ledger",None) is not None:
+            self._ocr_sent_ledger.mark_stale(rid)
         self._retired_workers[rid]=(self._thread,self._worker)
         self._trace_event("AI_REQUEST_LOGICALLY_CANCELLED",request_id=rid,
                           reason=reason,turn_epoch=self._active_turn_epoch)
@@ -2401,6 +2407,13 @@ class MatchReplayDialog(QDialog):
             # An unclassified fallback frame was verified by vision. End PREP
             # without accepting any later stale PREP response.
             self._interrupt_prep()
+        ledger=getattr(self,"_ocr_sent_ledger",None)
+        if self._active_job=="batch" and ledger is not None:
+            if report["status"] in ("ERROR","DEADLINE_EXCEEDED",
+                                    "CANCELLED","SUPERSEDED","BLOCKED"):
+                ledger.mark_stale(self._active_request_id)
+            else:
+                ledger.mark_adopted(self._active_request_id)
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
             before=current_state_digest(self.state)
