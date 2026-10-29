@@ -217,8 +217,8 @@ AI_EXCHANGE_MAX_BYTES = 32 * 1024 * 1024
 AI_EXCHANGE_EVENT_MAX_BYTES = 3 * 1024 * 1024
 AI_EXCHANGE_KEEP_FILES = 10
 _AI_SECRET = re.compile(
-    r"(?i)(?:sk-[a-z0-9_-]{8,}|bearer\\s+[a-z0-9._-]{8,}"
-    r"|(?:api[_ -]?key|access[_ -]?token|authorization)\\s*[:=]\\s*[^\\s\\\"]+)"
+    r'(?i)(?:sk-[a-z0-9_-]{8,}|bearer\s+[a-z0-9._-]{8,}'
+    r'|(?:api[_ -]?key|access[_ -]?token|authorization)\s*[:=]\s*[^\s"]+)'
 )
 
 
