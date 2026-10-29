@@ -31,6 +31,7 @@ class OcrSentLedger:
         self._lock = Lock()
         self._keys: set[str] = set()
         self._reserved: dict[str, set[str]] = {}
+        self._reserved_rows: dict[str, list[dict]] = {}
         self._request_rows: dict[str, list[dict]] = {}
         self._stale_requests: set[str] = set()
         self._reinspect_keys: set[str] = set()
@@ -108,6 +109,8 @@ class OcrSentLedger:
                        if _row_key(row) not in owned_elsewhere]
             self._reserved.setdefault(request_id, set()).update(
                 _row_key(row) for row in claimed)
+            self._reserved_rows.setdefault(request_id, []).extend(
+                dict(row) for row in claimed)
             return claimed
 
     def release(self, request_id: str | None) -> None:
@@ -116,6 +119,7 @@ class OcrSentLedger:
             return
         with self._lock:
             self._reserved.pop(request_id, None)
+            self._reserved_rows.pop(request_id, None)
 
     @staticmethod
     def _specific_reinspection_keys(rows: list[dict]) -> tuple[set[str], bool]:
@@ -200,6 +204,7 @@ class OcrSentLedger:
             self._reinspected_keys.update(revisited)
             if request_id:
                 self._reserved.pop(request_id, None)
+                self._reserved_rows.pop(request_id, None)
             if request_id and rows:
                 self._request_rows[request_id] = [
                     dict(row) for row in rows if _row_key(row) in delivered]
@@ -214,7 +219,10 @@ class OcrSentLedger:
             # If this worker reserved proof but has not confirmed HTTP send,
             # the next worker must not silently act from incomplete OCR.
             if self._reserved.get(request_id) and request_id not in self._request_rows:
-                self._set_visual_guard(None)
+                # The request might still reach HTTP after logical retirement.
+                # Keep a bounded copy of the reserved ORIGINAL proof so a
+                # later accepted screenshot can reconcile it explicitly.
+                self._set_visual_guard(self._reserved_rows.get(request_id))
             # Do not release a reservation here: its worker may already be
             # in client.responses.create(). Only that worker may release it.
             self._stage_stale(request_id)
@@ -301,6 +309,7 @@ class OcrSentLedger:
         with self._lock:
             self._request_rows.pop(request_id, None)
             self._reserved.pop(request_id, None)
+            self._reserved_rows.pop(request_id, None)
             self._stale_requests.discard(request_id)
             if (visual_confirmed and recovery_epoch is not None
                     and recovery_epoch == self._visual_guard_epoch):
