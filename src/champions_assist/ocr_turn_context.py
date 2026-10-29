@@ -225,31 +225,52 @@ def sanitize_pending_questions(questions, available_frames) -> list[dict]:
     return result
 
 
+def _own_actor_identification_candidate(row: dict) -> bool:
+    """Check OCR input *kind*, never locally certify a Pokémon identity.
+
+    HP/percentage, timer, and random effect text alone cannot establish a
+    first-turn own actor. A HUD name or an outgoing 'go' message is evidence
+    GPT can interpret. Substantial OCR typos may still yield NO_ACTION.
+    """
+    field = str(row.get("field") or "").lower()
+    if field.endswith(("own_active_name", "own_pokemon_name",
+                       "own_name", "own_species")):
+        return bool(str(row.get("raw_text", row.get("candidate", ""))).strip())
+    if not field.endswith("battle_message"):
+        return False
+    text = _compare_text(str(row.get("raw_text", row.get("candidate", ""))))
+    return any(marker in text for marker in ("ゆけっ", "ゆけ", "ゆげっ",
+                                              "ゆげ", "いけっ", "いけ"))
+
+
 def has_ocr_transport_evidence(state: dict, local_rows, *,
                                sent_ledger=None) -> bool:
-    """Can an unidentified active be evaluated from OCR in the NEXT request?
+    """True only if this request can SEND an own-actor identification clue.
 
-    This is a transport gate, not a local Pokémon/HP interpretation.
-    If req-A sent OCR but its answer was discarded, those rows are sent and
-    req-B must use a fresh screenshot or safely abstain, never an empty OCR
-    text prompt. Already verified active Pokémon do not need this gate.
+    Unknown actor + HP-only OCR must use vision/abstain. A reinspection row
+    explicitly chosen from a stale request may serve as a clue once more.
     """
     all_rows, _ = select_ai_ocr_evidence(local_rows)
     previous = set(state.get("_ai_ocr_presented_keys") or ())
+    reinspect = set()
     if sent_ledger is not None:
         previous.update(sent_ledger.snapshot())
+        reinspect = sent_ledger.reinspection_keys()
     retained = {
         frame for q in (state.get("_ai_ocr_unresolved") or ())
         if isinstance(q, dict)
         for frame in q.get("source_frames", [])
         if isinstance(frame, str)
     }
-    return any(_row_key(row) not in previous or
-               row.get("frame_id") in retained for row in all_rows)
+    return any((_row_key(row) not in previous
+                or _row_key(row) in reinspect
+                or row.get("frame_id") in retained)
+               and _own_actor_identification_candidate(row)
+               for row in all_rows)
 
 
 def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tuple[list[dict], list[dict], dict]:
-    """Return NEW OCR + source rows for GPT-retained unresolved questions.
+    """Return NEW OCR, GPT-retained questions, and one-shot stale proof.
 
     Every row from the complete local OCR ledger is eligible the first time.
     On later turns do not resend previously presented rows unless the model's
@@ -270,10 +291,13 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
     pending = sanitize_pending_questions(prior,available | previously_cited)
     retained_frames = {f for item in pending for f in item["source_frames"]}
     previous = set(state.get("_ai_ocr_presented_keys") or ())
+    reinspect_keys = set()
     if sent_ledger is not None:
         previous.update(sent_ledger.snapshot())
+        reinspect_keys = sent_ledger.reinspection_keys()
     selected = [row for row in all_rows if
                 _row_key(row) not in previous
+                or _row_key(row) in reinspect_keys
                 or row.get("frame_id") in retained_frames]
     before_bytes = len(json.dumps(all_rows, ensure_ascii=False,
                                   separators=(",", ":")).encode("utf-8"))
@@ -285,6 +309,8 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
         "api_rows_sent": len(selected),
         "new_rows_sent": new_count,
         "unresolved_rows_resent": len(selected)-new_count,
+        "stale_reinspection_rows": sum(
+            _row_key(row) in reinspect_keys for row in selected),
         "prior_observations_not_resent": len(all_rows)-len(selected),
         "unresolved_questions": len(pending),
         "ledger_json_bytes": before_bytes,
