@@ -9,7 +9,7 @@ read is used whether the message has one or two lines.
 - Keep the complete existing `battle_message` OCR ROI **X=[141,540),
   Y=[412,505)**. Do not extract/stack/reflow the text lines.
 - Apply **both** half-open ruby masks **X=[141,540)**,
-  **Y=[423,432)** and **Y=[454,464)**, regardless of how many body lines exist.
+  **Y=[423,430)** and **Y=[454,464)**, regardless of how many body lines exist.
 - Each thin stripe is replaced using per-column vertical interpolation
   between adjacent, unmasked source rows (not a solid black rectangle).
   Every byte outside the two ruby stripes remains unchanged. In particular,
@@ -19,6 +19,14 @@ read is used whether the message has one or two lines.
 - If the first-line anchor is not in its expected location, if an optional
   second-line anchor is misaligned, or if an extra main-text run is detected
   in the inspected region, **fall back to the original ROI** with one OCR.
+- The first mask **never touches Y430 or Y431**, which may contain upper
+  portions of the first main-text glyphs. Before either mask is applied, the
+  **full width X=[141,540)** of both ruby bands is inspected for unusually
+  dense, neutral-white body-sized strokes. A suspicious band (including a
+  shifted second line outside the left-side anchor) is not modified; the
+  original ROI is read once. This check is intentionally conservative and
+  may reject some legitimate, long ruby text. It cannot guarantee every
+  subtle offset is detectable: verify with real game images before live opt-in.
   A legitimate single line is allowed; absence of a second line does not
   by itself disable masking.
 
@@ -65,7 +73,8 @@ Do not infer Champions mechanics from an OCR text snippet.
 ## Tests and remaining acceptance checks
 
 Synthetic regression tests cover one- and two-line ruby removal, mask-only
-pixel edits and rightmost body punctuation, resize normalization,
+pixel edits, boundary glyphs at Y430–434, right-side shifted second lines,
+rightmost body punctuation, resize normalization,
 shifted/extra second lines, one-line live/diagnostic OCR, and fallback
 on invalid calibration/aspect/black bars. Windows CI also checks the
 bundled GUI and offline OCR integration.
