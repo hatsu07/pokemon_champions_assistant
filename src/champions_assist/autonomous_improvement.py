@@ -96,8 +96,11 @@ class AutonomousImprovementStore:
               FROM postmatch_reviews r
               JOIN match_history m ON m.match_id=r.match_id
              WHERE m.team_id=? AND r.status='AI_HYPOTHESIS_UNVERIFIED'
+               AND CASE WHEN json_valid(m.payload)
+                        THEN json_extract(m.payload, '$.team_signature')
+                        ELSE NULL END = ?
              ORDER BY m.observed_at DESC, m.match_id DESC LIMIT ?
-            """, (team_id, MAX_REVIEWS)).fetchall()
+            """, (team_id, team_signature, MAX_REVIEWS)).fetchall()
         records = []
         for match_id, snapshot_json, result, review_json in rows:
             try:
@@ -139,9 +142,15 @@ class AutonomousImprovementStore:
             if not db.execute("SELECT 1 FROM postmatch_reviews WHERE match_id=?",
                               (match_id,)).fetchone():
                 return {"status": "NO_SAVED_REVIEW", "candidate_count": 0}
-            snapshot = json.loads(snapshot_json)
-            team_signature = snapshot.get("team_signature") or ""
-            if not isinstance(team_signature, str) or len(team_signature) > 256:
+            try:
+                snapshot = json.loads(snapshot_json)
+                team_signature = snapshot.get("team_signature") if isinstance(snapshot, dict) else None
+            except (TypeError, ValueError):
+                team_signature = None
+            # Legacy record_finished() defaults to an empty signature: it is
+            # NOT evidence that several old matches used the same team version.
+            if (not isinstance(team_signature, str) or
+                    not team_signature.strip() or len(team_signature) > 256):
                 return {"status": "TEAM_SIGNATURE_UNKNOWN", "candidate_count": 0}
             reviews = self._review_records(db, stored_team, team_signature)
             ids = {r["match_id"] for r in reviews}
