@@ -413,6 +413,7 @@ class MatchReplayDialog(QDialog):
         self.shutdown_finished.connect(self._on_shutdown_finished)
         self._ai_request_attempts=0
         self._ai_last_status="AI未送信（撮影・メニュー認識待ち）"
+        self._shutdown_requested_at=None
         panel=QVBoxLayout(self)
         intro=QLabel(
             "開始を一度押すと、設定したゲーム画面を自動キャプチャしてChatGPTに送信します。\\n"
@@ -686,6 +687,12 @@ class MatchReplayDialog(QDialog):
             return
         self._shutdown_intent=intent
         self._shutdown_ready=False
+        self._shutdown_requested_at=monotonic()
+        self._trace_event("SHUTDOWN_REQUESTED",intent=intent,
+                          active_job=self._active_job or "NONE",
+                          active_thread=self._thread is not None,
+                          prep_thread=self._prep_thread is not None,
+                          retired_threads=len(self._retired_workers))
         self._restart_prep_after_cleanup=False
         self._stop_auto()
         self._interrupt_prep()
@@ -703,6 +710,10 @@ class MatchReplayDialog(QDialog):
             return
         if self._thread is not None or self._prep_thread is not None or self._retired_workers:
             return
+        self._trace_event("SHUTDOWN_WORKERS_DRAINED",
+                          waited_ms=round((monotonic()-self._shutdown_requested_at)*1000)
+                          if self._shutdown_requested_at is not None else None)
+        self._shutdown_requested_at=None
         intent=self._shutdown_intent
         self._shutdown_intent=None
         if intent=="reset":
@@ -1124,6 +1135,13 @@ class MatchReplayDialog(QDialog):
         self._capture_next()
 
     def _stop_auto(self):
+        self._trace_event("AUTO_STOP_REQUESTED",
+                          active_job=self._active_job or "NONE",
+                          active_thread=self._thread is not None,
+                          prep_thread=self._prep_thread is not None,
+                          retired_threads=len(self._retired_workers),
+                          active_elapsed_ms=round((monotonic()-self._active_request_started)*1000)
+                          if self._active_request_started is not None else None)
         self._stop_local_event_reader()
         self._interrupt_prep()
         self._end_background_collection()
@@ -2758,14 +2776,18 @@ class MatchReplayDialog(QDialog):
         # The selection countdown limits what we can promise to the player;
         # it must not kill a pending PREP request or discard a valid reply.
         # The next outgoing AI message is the only automatic supersession.
-        self._prep_budget_seconds=prep_budget_before_battle(
-            self._selection_screen_started,now=monotonic())
+        self._prep_budget_seconds=min(40.0,prep_budget_before_battle(
+            self._selection_screen_started,now=monotonic()))
         if self._prep_budget_seconds<=2.0:
             self._trace_event("PREP_SOFT_BUDGET_EXPIRED_CONTINUING")
         self._prep_cancel_event.clear()
         if not provisional:
             self.state["prep_status"]="RUNNING"
         self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000),
+                          stage="CACHE_ROLES_OR_18_MATCHUPS",
+                          cache_available=bool(self.assets.matchup_cache_index),
+                          matrix_compatible=bool(self.state.get("matrix_compatible")),
+                          matrix_provisional=bool(self.state.get("matrix_provisional")),
                           status="PROVISIONAL" if provisional else "ACTUAL",
                           known_opponents=(
                               len(prep_state.get("opponent_six",[]))-
@@ -2778,7 +2800,7 @@ class MatchReplayDialog(QDialog):
             assets=self.assets, state=prep_state, job="prep",
             # Network failure still needs a finite socket timeout. It is NOT
             # the local game-clock target and late valid results are accepted.
-            prep_seconds=max(120.0,self._prep_budget_seconds),
+            prep_seconds=max(1.0,self._prep_budget_seconds),
             cancel_event=self._prep_cancel_event,
         )
         self._prep_worker.moveToThread(self._prep_thread)
@@ -2814,12 +2836,17 @@ class MatchReplayDialog(QDialog):
     def _prep_deadline(self):
         if self._prep_thread is None:
             return
-        # Advisory timer: never cancel or discard PREP merely for 40s expiry.
-        self._trace_event("PREP_SOFT_DEADLINE_EXCEEDED_CONTINUING")
+        # The socket may finish later, but its response cannot complete
+        # the 40-second PREP. Keep previously cached 18 matchup evidence.
+        self._prep_cancel_event.set()
+        self._trace_event("PREP_HARD_DEADLINE_INCOMPLETE",
+                          running_worker=True,
+                          budget_ms=round(self._prep_budget_seconds*1000),
+                          cached_matchups=(self.state or {}).get("prep",{}).get("cached_matchups",0))
         if self.state is not None and self.state.get("phase")=="PREP":
-            self._render({"status":"PREP_OVERTIME_RUNNING",
-                          "message":"PREPの目標時間を超過しましたが、"
-                          "次のAI依頼まで計算と有効回答の受付を継続します。"})
+            self.state["prep_status"]="INCOMPLETE_DEADLINE"
+            self._render({"status":"PREP_DEADLINE_EXCEEDED",
+                          "message":"40秒PREPを終了。未完成部分は完了扱いしません。"})
 
     @Slot(object)
     def _on_prep_result(self, payload):
@@ -2827,6 +2854,15 @@ class MatchReplayDialog(QDialog):
         if self._prep_cancel_event.is_set() or self.state is None:
             return
         result=payload["report"]
+        self._trace_event("PREP_WORKER_RESULT_DIAGNOSTIC",
+                          status=result.get("status","UNKNOWN"),
+                          reason=result.get("reason","UNKNOWN"),
+                          stage=result.get("request_stage","UNKNOWN"),
+                          elapsed_ms=result.get("elapsed_ms"),
+                          model_elapsed_ms=result.get("model_elapsed_ms"),
+                          prompt_chars=result.get("prompt_chars"),
+                          matchups_evaluated=result.get("matchups_evaluated"),
+                          win_conditions=result.get("win_conditions"))
         if (self.state.get("phase")=="SELECTION"
                 and self._proposed_prep_key is not None):
             # Preserve the result for actual confirmation, never mark it
@@ -2899,6 +2935,9 @@ class MatchReplayDialog(QDialog):
         self._inflight_screen_label=None
         self._set_busy(False)
         if self._shutdown_intent is not None:
+            self._trace_event("SHUTDOWN_ACTIVE_WORKER_CLEANUP",
+                              elapsed_ms=round((monotonic()-self._shutdown_requested_at)*1000)
+                              if self._shutdown_requested_at is not None else None)
             self._maybe_finish_shutdown()
             return
         if self._cancel_event.is_set():
