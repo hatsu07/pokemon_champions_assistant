@@ -341,6 +341,7 @@ class MatchReplayDialog(QDialog):
         self._result_ocr_candidate=None
         self._result_screen_candidate=None
         self._result_screen_sent=False
+        self._manual_result_available=False
         self._revision_retry_keys=set()
         self._last_advised_switch=None
         self._automatic_probe=AutomaticVisualProbe(
@@ -466,16 +467,22 @@ class MatchReplayDialog(QDialog):
             "padding: 12px; background: #1d4ed8; color: white;}")
         self.action_banner.setWordWrap(True)
         panel.addWidget(self.action_banner)
-        # Legacy test interfaces remain callable but are not shown to users.
-        # Result screen OCR + GPT now owns the automatic outcome flow.
-        self.confirm_win_button=QPushButton("legacy-result-win",self)
-        self.confirm_loss_button=QPushButton("legacy-result-loss",self)
-        self.confirm_win_button.hide()
-        self.confirm_loss_button.hide()
+        # Keep manual fallback out of the normal battle UI. Show it only
+        # after an actual OCR/GPT result check could not establish WIN/LOSS.
+        self._manual_result_controls=QWidget(self)
+        self._manual_result_controls.setObjectName("unconfirmedResultControls")
+        confirm_row=QHBoxLayout(self._manual_result_controls)
+        confirm_row.addWidget(QLabel("勝敗を自動確定できません。実際の結果を確認："))
+        self.confirm_win_button=QPushButton("勝利を登録")
+        self.confirm_loss_button=QPushButton("敗北を登録")
         self.confirm_win_button.clicked.connect(
             lambda:self._finish_match_manually("WIN"))
         self.confirm_loss_button.clicked.connect(
             lambda:self._finish_match_manually("LOSS"))
+        confirm_row.addWidget(self.confirm_win_button)
+        confirm_row.addWidget(self.confirm_loss_button)
+        panel.addWidget(self._manual_result_controls)
+        self._manual_result_controls.hide()
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         self.ai_status_label=QLabel(self._ai_last_status)
@@ -631,6 +638,7 @@ class MatchReplayDialog(QDialog):
             self._result_ocr_candidate=None
             self._result_screen_candidate=None
             self._result_screen_sent=False
+            self._manual_result_available=False
             self._revision_retry_keys.clear()
             self._last_advised_switch=None
             self.match_id=new_id
@@ -763,6 +771,7 @@ class MatchReplayDialog(QDialog):
         self._result_ocr_candidate=None
         self._result_screen_candidate=None
         self._result_screen_sent=False
+        self._manual_result_available=False
         self._revision_retry_keys.clear()
         self._last_advised_switch=None
         self.assets=None
@@ -1744,6 +1753,8 @@ class MatchReplayDialog(QDialog):
                                       frame_seq=self._last_capture_seq)
                     self._result_screen_candidate=None
                     self._result_screen_sent=False
+                    self._manual_result_available=False
+                    self._manual_result_controls.hide()
                 if (prediction.label in _URGENT_SCREENS
                         and prediction.confidence>=0.80
                         and phase in ("PREP","BATTLE")):
@@ -2734,8 +2745,9 @@ class MatchReplayDialog(QDialog):
         self._thread.start()
 
     def _finish_match_manually(self, result):
-        """Explicit human attestation when OCR is unavailable or ambiguous."""
-        if result not in ("WIN","LOSS") or self.state is None:
+        """Human attestation ONLY when automatic OCR/GPT result was inconclusive."""
+        if (result not in ("WIN","LOSS") or self.state is None
+                or not self._manual_result_available):
             return
         if self.state.get("phase")=="ENDED":
             return
@@ -2753,7 +2765,9 @@ class MatchReplayDialog(QDialog):
         self.state["phase"]="ENDED"
         self.state["result"]=result
         self.state["last_event"]="PLAYER_CONFIRMED_MATCH_RESULT"
-        self._trace_event("MANUAL_MATCH_RESULT_CONFIRMED",result=result)
+        self._trace_event("MANUAL_MATCH_RESULT_CONFIRMED",result=result,
+                          reason="AUTOMATIC_RESULT_UNCONFIRMED")
+        self._manual_result_available=False
         report={"status":"MATCH_END","screen":"USER_CONFIRMED_RESULT",
                 "recommendation":"勝利。" if result=="WIN" else "敗北。",
                 "result_source":"PLAYER_EXPLICIT_CONFIRMATION",
@@ -3113,6 +3127,20 @@ class MatchReplayDialog(QDialog):
     def _render(self, report):
         state=self.state or {}
         phase=state.get("phase","NOT_STARTED")
+        result_status=report.get("status")
+        if phase=="ENDED" or result_status in (
+                "MATCH_STARTED","RESET","RESULT_VERIFICATION_PENDING"):
+            self._manual_result_available=False
+        elif result_status=="RESULT_UNCONFIRMED" and (
+                self._result_screen_candidate is not None
+                or self._active_job in ("result","result_screen")):
+            self._manual_result_available=True
+            self._trace_event("MANUAL_RESULT_FALLBACK_OFFERED",
+                              reason=report.get("reason","UNKNOWN"))
+        elif (result_status=="SUPERSEDED"
+              and report.get("warning")=="RESULT_SCREEN_NO_LONGER_CURRENT"):
+            self._manual_result_available=False
+        self._manual_result_controls.setVisible(self._manual_result_available)
         compatible=state.get("matrix_compatible",False)
         suffix=("構築別LIVEマトリクス有効" if compatible
                 else "登録構築専用・根拠限定AI判断（未検証）"
