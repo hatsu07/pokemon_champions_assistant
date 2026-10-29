@@ -33,7 +33,8 @@ _ALLOWED_CERTAINTY = frozenset(("UNKNOWN", "AI_VISUAL_CANDIDATE", "OCR_CANDIDATE
 def _text(value: Any, maximum: int = MAX_LABEL) -> str:
     if not isinstance(value, str):
         return ""
-    return " ".join(c for c in value if c.isprintable() and c not in "<>|").strip()[:maximum]
+    return " ".join("".join(c for c in value if c.isprintable()
+                              and c not in "<>|").split())[:maximum]
 
 
 def _json(value: Any) -> str:
@@ -162,8 +163,10 @@ class MatchEvidenceBuffer:
             confirmation = "UNKNOWN"
         # Never invent a manual action from a recommendation, even on success.
         recommended = _action(report.get("action")) if status in _ADVICE_STATUSES else {}
+        timestamp = captured_at or _time()
+        hp = state.get("observed_hp") if isinstance(state.get("observed_hp"), dict) else {}
         event = {
-            "captured_at": captured_at or _time(), "phase": phase,
+            "captured_at": timestamp, "phase": phase,
             "step": step if type(step) is int and 0 <= step < 1000000 else None,
             "report_status": status,
             "turn_id": _text(state.get("turn_id") or state.get("turn") or state.get("game_turn_seq")) or "UNKNOWN",
@@ -172,8 +175,8 @@ class MatchEvidenceBuffer:
             "observation": {
                 "certainty": evidence_source, "ui": _text(latest.get("ui") or observation.get("visual_ui")),
                 "own_active": own, "opponent_active": opponent,
-                "own_hp": _text(latest.get("our_hp") or (state.get("observed_hp") or {}).get("own")),
-                "opponent_hp": _text(latest.get("opponent_hp") or (state.get("observed_hp") or {}).get("opponent")),
+                "own_hp": _text(latest.get("our_hp") or hp.get("own")),
+                "opponent_hp": _text(latest.get("opponent_hp") or hp.get("opponent")),
                 "last_event_candidate": _text(state.get("last_event")),
             },
             "selection": {"our_three": selected, "lead": _text(state.get("lead")),
@@ -188,7 +191,7 @@ class MatchEvidenceBuffer:
             },
             "proposal": {"action": recommended,
                          "certainty": "AI_HYPOTHESIS_UNVERIFIED" if recommended else "UNKNOWN",
-                         "displayed_at": captured_at or _time() if recommended else None},
+                         "displayed_at": timestamp if recommended else None},
             "execution": {"action": _action(confirmed) if confirmed else {},
                           "certainty": confirmation},
             "field_candidate": _bounded_mapping(state.get("battlefield"), limit=6),
