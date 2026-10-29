@@ -32,8 +32,8 @@ def synthetic_frame():
     frame[424:430, 200:440] = (245, 10, 10)
     frame[456:463, 200:440] = (245, 10, 10)
     # Long lines, punctuation at right edge, and second line survive.
-    frame[431:453, 150:950] = (10, 30, 220)
-    frame[465:487, 180:950] = (10, 210, 30)
+    frame[434:453, 150:540] = (10, 30, 220)
+    frame[466:487, 180:540] = (10, 210, 30)
     # Bright neutral leading glyphs used by the per-frame layout safety gate.
     frame[434:450, 160:190] = 235
     frame[467:482, 160:190] = 235
@@ -58,14 +58,24 @@ class BattleMessageRubyTests(unittest.TestCase):
         frame = synthetic_frame()
         crop, data = prepare_battle_message(
             frame, sample(), _REGION, preview_unvalidated=True)
-        self.assertEqual(data["preprocess"], "BODY_LINES_PREVIEW_ONLY")
-        self.assertEqual(data["body_rois"], [
-            [141, 430, 540, 454], [141, 464, 540, 489]])
-        self.assertEqual(crop.shape, (59, 399, 3))
+        self.assertEqual(data["preprocess"], "RUBY_MASK_PREVIEW_ONLY")
+        self.assertEqual(data["ruby_mask_rois"], [
+            [141, 423, 540, 432], [141, 454, 540, 464]])
+        self.assertEqual(crop.shape, (93, 399, 3))
+        original = sample().crop(frame, _REGION)
+        # All main body pixels, including the full last punctuation at X539,
+        # must remain byte-for-byte unchanged. Only ruby bands may change.
+        self.assertTrue(np.array_equal(crop[22:42], original[22:42]))
+        self.assertTrue(np.array_equal(crop[54:77], original[54:77]))
         self.assertTrue(np.any(np.all(crop == (10, 30, 220), axis=2)))
         self.assertTrue(np.any(np.all(crop == (10, 210, 30), axis=2)))
         self.assertFalse(np.any(np.all(crop == (245, 10, 10), axis=2)))
-        self.assertTrue(np.array_equal(crop[1, 539 - 141], frame[431, 539]))
+        self.assertTrue(np.array_equal(crop[35, 539 - 141], frame[447, 539]))
+        changed = np.any(crop != original, axis=2)
+        protected = np.ones(changed.shape, dtype=bool)
+        protected[423-412:432-412] = False
+        protected[454-412:464-412] = False
+        self.assertFalse(np.any(changed & protected))
         self.assertFalse(data["game_validated"])
 
     def test_normalized_rows_at_three_same_aspect_resolutions(self):
@@ -77,11 +87,12 @@ class BattleMessageRubyTests(unittest.TestCase):
                 crop, data = prepare_battle_message(
                     img, sample(True), _REGION)
                 self.assertTrue(data["ruby_excluded"])
-                self.assertEqual(data["preprocess"], "BODY_LINES_CALIBRATED")
-                self.assertEqual(len(data["body_rois"]), 2)
-                self.assertEqual(data["body_rois"], [
-                    [round(v * scale) for v in (141, 430, 540, 454)],
-                    [round(v * scale) for v in (141, 464, 540, 489)]])
+                self.assertEqual(data["preprocess"], "RUBY_MASK_CALIBRATED")
+                self.assertEqual(len(data["ruby_mask_rois"]), 2)
+                self.assertEqual(data["ruby_mask_rois"], [
+                    [round(v * scale) for v in (141, 423, 540, 432)],
+                    [round(v * scale) for v in (141, 454, 540, 464)]])
+                self.assertEqual(crop.shape, sample(True).crop(img, _REGION).shape)
                 self.assertLessEqual(crop.shape[1], 798)
 
     def test_unsafe_geometry_never_performs_body_extraction(self):
@@ -115,9 +126,9 @@ class BattleMessageRubyTests(unittest.TestCase):
                 frame[np.all(frame == 180, axis=2)] = background
                 cropped, parsed = prepare_battle_message(
                     frame, sample(True), _REGION)
-                self.assertEqual(parsed["preprocess"], "BODY_LINES_CALIBRATED")
+                self.assertEqual(parsed["preprocess"], "RUBY_MASK_CALIBRATED")
                 self.assertTrue(parsed["ruby_excluded"])
-                self.assertEqual(cropped.shape[:2], (59, 399))
+                self.assertEqual(cropped.shape[:2], (93, 399))
 
     def test_second_line_only_shifted_out_of_body_band_falls_back(self):
         # Review P1: first line is still perfectly aligned and must not
@@ -135,15 +146,18 @@ class BattleMessageRubyTests(unittest.TestCase):
         self.assertFalse(info["ruby_excluded"])
         self.assertTrue(np.array_equal(cropped, original))
 
-    def test_legitimate_single_line_keeps_full_roi_without_second_line(self):
-        # A genuine one-line message is valid input. Fallback is not a
-        # recognition failure and must still read it once through existing OCR.
+    def test_legitimate_single_line_masks_both_ruby_rows_without_body_loss(self):
+        # One-line messages get the same two-band mask, not the legacy
+        # full-ROI fallback. An absent second line is not a failure.
         frame = synthetic_frame()
-        frame[456:489, 141:540] = 180
+        frame[454:489, 141:540] = 180
         crop, info = prepare_battle_message(frame, sample(True), _REGION)
-        self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
-        self.assertFalse(info["ruby_excluded"])
-        self.assertTrue(np.array_equal(crop, sample(True).crop(frame, _REGION)))
+        self.assertEqual(info["preprocess"], "RUBY_MASK_CALIBRATED")
+        self.assertTrue(info["ruby_excluded"])
+        self.assertEqual(len(info["ruby_mask_rois"]), 2)
+        self.assertEqual(crop.shape, (93, 399, 3))
+        self.assertTrue(np.array_equal(
+            crop[434-412:454-412], frame[434:454, 141:540]))
         engine = CountingEngine("効果はいまひとつだ")
         reader = AsyncBattleEventReader(sample(True), ocr_engine=engine)
         try:
@@ -158,8 +172,40 @@ class BattleMessageRubyTests(unittest.TestCase):
             self.assertEqual(len(engine.calls), 1)
             self.assertEqual(engine.calls[0][1].shape[:2], (93, 399))
             self.assertEqual(records[0].observations[0].status, "CANDIDATE")
+            self.assertEqual(records[0].observations[0].preprocess_status,
+                             "RUBY_MASK_CALIBRATED")
         finally:
             reader.stop()
+
+    def test_second_body_shifted_up_into_ruby_band_falls_back(self):
+        # A changed line baseline must NOT be erased by the second mask.
+        frame = synthetic_frame()
+        moved = frame.copy()
+        main = moved[466:487, 141:540].copy()
+        moved[466:487, 141:540] = 180
+        moved[455:476, 141:540] = main
+        crop, info = prepare_battle_message(moved, sample(True), _REGION)
+        self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
+        self.assertFalse(info["ruby_excluded"])
+        self.assertTrue(np.array_equal(crop, sample(True).crop(moved, _REGION)))
+
+    def test_mask_preserves_main_body_and_punctuation_for_one_and_two_lines(self):
+        for one_line in (True, False):
+            with self.subTest(one_line=one_line):
+                frame = synthetic_frame()
+                if one_line:
+                    frame[454:489, 141:540] = 180
+                frame[445, 538:540] = 255  # rightmost punctuation
+                before = sample(True).crop(frame, _REGION)
+                after, data = prepare_battle_message(frame, sample(True), _REGION)
+                self.assertTrue(data["ruby_excluded"])
+                # Any change outside the two ruby masks is forbidden.
+                allowed = np.zeros(before.shape[:2], dtype=bool)
+                allowed[423-412:432-412] = True
+                allowed[454-412:464-412] = True
+                changed = np.any(before != after, axis=2)
+                self.assertFalse(np.any(changed & ~allowed))
+                self.assertEqual(after[445-412, -1, 0], 255)
 
     def test_same_dimension_shifted_text_abstains(self):
         image = synthetic_frame()
@@ -210,8 +256,8 @@ class BattleMessageRubyTests(unittest.TestCase):
                                               ruby_preview=True)
         self.assertEqual(len(engine.calls), 1)
         self.assertEqual(enabled["rows"][0]["preprocess"],
-                         "BODY_LINES_PREVIEW_ONLY")
-        self.assertEqual(engine.calls[0][1].shape[:2], (59, 399))
+                         "RUBY_MASK_PREVIEW_ONLY")
+        self.assertEqual(engine.calls[0][1].shape[:2], (93, 399))
         self.assertEqual(enabled["rows"][0]["parsed"], engine.text)
         self.assertFalse(enabled["rows"][0]["game_validated"])
         self.assertGreaterEqual(enabled["rows"][0]["preprocess_ms"], 0)
@@ -231,7 +277,7 @@ class BattleMessageRubyTests(unittest.TestCase):
         frame = synthetic_frame()
         for validated, expected_size, expected_state in (
             (False, (93, 399), "UNVALIDATED_LIVE_DISABLED"),
-            (True, (59, 399), "BODY_LINES_CALIBRATED"),
+            (True, (93, 399), "RUBY_MASK_CALIBRATED"),
         ):
             with self.subTest(validated=validated):
                 engine = CountingEngine("ゲンガーとの勝負に負けた！")
