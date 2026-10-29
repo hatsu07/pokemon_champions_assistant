@@ -58,7 +58,10 @@ class OcrSentLedger:
             if field.endswith(event_fields):
                 # Same visual display is one event; absent IDs are distinct.
                 episode = row.get("display_id") or f"single:{index}"
-                group = (field, str(episode))
+                # Even a mistaken visual episode ID must not collapse
+                # opposite messages (e.g. stat went up versus down).
+                raw = str(row.get("raw_text", row.get("candidate", "")))
+                group = (field, str(episode), _compare_text(raw))
                 event_groups.setdefault(group, []).append(row)
             else:
                 hud_groups.setdefault(field, []).append(row)
