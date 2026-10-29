@@ -21,14 +21,15 @@ RESULT_SCREENを高信頼で2フレーム連続検出 → その時点より前�
 
 ## 遅延の現状と追加計測
 
-実機1試合のログでは、ローカルONNX画面分類は十数ms程度だが、GPTへの判断依頼で20〜50秒台に達する例があり、古い結果が破棄された。OCR候補は最大約380件、PREPは以前のソフト期限後も継続していた。データ量とAPI処理がそれぞれどれだけ遅延したかは確定できない。
+実機1試合のログでは、ローカルONNX画面分類は十数ms程度だが、GPTへの判断依頼で20〜50秒台に達する例があり、古い結果が破棄された。OCR候補は最大約380件、PREPはソフト期限後も継続していた。これ自体は従来設計どおりであり、調査中も仕様を変更しない。対面18件はPREP開始前にキャッシュから抽出されており、追加GPTに渡した勝ち筋3役等の補完が遅い可能性が高いが、認証・API・結果検証の内訳は当該ログだけでは特定不能。
 
 今回追加する主要な診断イベント:
 - AI_TURN_PAYLOAD_SIZE: GPT入力総バイト、OCR候補件数、未確定質問数。
 - AI_API_STAGE / OCR_TURN_TIMING: 通信待機、前後処理、例外型。
 - AI_OCR_OWN_ACTIVE_BLOCK_DETAIL: 交代時の空欄・不一致・棄却された状態変更理由。
-- PREP_START / PREP_WORKER_RESULT_DIAGNOSTIC: 40秒予算、キャッシュ有無、評価数、入力文字数、モデル応答時間。
-- PREP_HARD_DEADLINE_INCOMPLETE / PREP_RESPONSE_AFTER_CUTOFF_DROPPED: 期限超過時の不採用。
+- PREP_START / PREP_STAGE / PREP_WORKER_RESULT_DIAGNOSTIC: ソフト目標の残時間、キャッシュ有無、勝ち筋3役の充足、認証時間、GPT処理時間、評価数、入力文字数。期限経過では勝手に破棄しない。
+- PREP_SOFT_DEADLINE_EXCEEDED_CONTINUING（既存）: ソフト期限を超えても計算継続する事実。
+- PREP_RESPONSE_AFTER_CANCELLATION_DROPPED: 次のAI依頼／手動停止が中断した場合だけ、結果を不採用。
 - RESULT_SCREEN_OCR_GPT_GATE / RESULT_OCR_BARRIER_WAIT / RESULT_OCR_BARRIER_RELEASED: 判定トリガーと戦闘OCR待ち。
 - AUTO_STOP_REQUESTED / SHUTDOWN_REQUESTED / SHUTDOWN_WORKERS_DRAINED / WINDOW_CLOSE_WAITING_FOR_WORKERS / AI_RESPONSE_AFTER_STOP_DROPPED: 停止要求と通信ワーカー終了時間。
 
@@ -38,4 +39,8 @@ RESULT_SCREENを高信頼で2フレーム連続検出 → その時点より前�
 
 ## 検証
 
-自動テストは実機の時間内成功率を証明しない。Windows実機で、未検証ONNXからのRESULT_SCREEN→GPT→WIN/LOSS、判定不能時の表示、停止・閉じる、40秒PREP、交代時のOCR空欄応答、OCR入力件数とAPI待ちを確認する。元の対戦画像やOCR本文はGitHubに登録しない。
+自動テストは実機の時間内成功率を証明しない。Windows実機で、未検証ONNXからのRESULT_SCREEN→GPT→WIN/LOSS、判定不能時の表示、停止・閉じる、ソフト期限超過後のPREP継続、交代時のOCR空欄応答、OCR入力件数とAPI待ちを確認する。元の対戦画像やOCR本文はGitHubに登録しない。
+
+## 追加精査：380件は１ターン発生件数ではない
+
+実機ログのOCR_AI_SELECTIONでは、判断ごとの総候補数が 13 → 65 → 93 → 175 → 243 → 261 → 329 → 339 → 380 と増加した。この値は過去の未確認OCR候補を含み、ターン単独の発生数を意味しない。最後の判断時、AI_INPUTの `ocr_candidate_count` は64件となっており、OCR_TURN_COMPACTIONの圧縮・既読管理が介在する。380件すべてが最終的なGPT入力ではない。重複OCRカウンタも増えているため、今後は発生件数・蓄積件数・送信件数を分離した指標で測定する。
