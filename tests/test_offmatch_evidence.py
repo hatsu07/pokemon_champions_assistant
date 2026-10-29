@@ -158,6 +158,9 @@ class EvidenceArchiveTest(unittest.TestCase):
                     db.commit()
                     self.assertEqual(
                         self.archive.verify("match-1")["status"], "CORRUPT")
+                    # verify() opens the archive and re-installs its immutable
+                    # schema triggers. Drop one again ONLY for test restoration.
+                    db.execute("DROP TRIGGER IF EXISTS no_p1_match_update")
                     db.execute(
                         f"UPDATE p1_evidence_match SET {column}=? WHERE match_id=?",
                         (original[columns.index(column)], "match-1"))
