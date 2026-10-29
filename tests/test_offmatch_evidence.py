@@ -125,6 +125,66 @@ class EvidenceArchiveTest(unittest.TestCase):
                 db.execute("DELETE FROM p1_evidence_events")
         self.assertEqual(self.archive.verify("match-1")["status"],"VALID")
 
+    def test_verify_rejects_metadata_only_corruption(self):
+        # Simulate offline disk/backup corruption. Production UPDATE triggers
+        # normally forbid edits; bypass them ONLY in this synthetic test to
+        # prove verify() validates the archived SHA independently.
+        self.finish_match()
+        buf = MatchEvidenceBuffer(match_id="match-1", context=self.context)
+        self.assertTrue(buf.capture(self.state, self.report))
+        self.archive.save_ended(buf.finish())
+        self.assertEqual(self.archive.verify("match-1")["status"], "VALID")
+        with closing(sqlite3.connect(self.store.db_path)) as db:
+            original = db.execute(
+                "SELECT metadata_json, status, dropped_count, metadata_sha "
+                "FROM p1_evidence_match WHERE match_id='match-1'"
+            ).fetchone()
+            db.execute("DROP TRIGGER no_p1_match_update")
+            db.commit()
+            changed_context = json.loads(original[0])
+            changed_context["tactical_version"] = "tampered-after-match"
+            mutations = [
+                ("metadata_json", json.dumps(changed_context, ensure_ascii=False)),
+                ("status", "PARTIAL_CAPTURE"),
+                ("dropped_count", 10),
+                ("metadata_sha", "0" * 64),
+            ]
+            columns = ("metadata_json", "status", "dropped_count", "metadata_sha")
+            for column, mutation in mutations:
+                with self.subTest(column=column):
+                    # Each verification re-opens the archive and reinstalls
+                    # the UPDATE guard. Disable it only around this deliberate
+                    # synthetic corruption, never in application code.
+                    db.execute("DROP TRIGGER IF EXISTS no_p1_match_update")
+                    db.execute(
+                        f"UPDATE p1_evidence_match SET {column}=? WHERE match_id=?",
+                        (mutation, "match-1"))
+                    db.commit()
+                    self.assertEqual(
+                        self.archive.verify("match-1")["status"], "CORRUPT")
+                    # verify() opens the archive and re-installs its immutable
+                    # schema triggers. Drop one again ONLY for test restoration.
+                    db.execute("DROP TRIGGER IF EXISTS no_p1_match_update")
+                    db.execute(
+                        f"UPDATE p1_evidence_match SET {column}=? WHERE match_id=?",
+                        (original[columns.index(column)], "match-1"))
+                    db.commit()
+                    self.assertEqual(self.archive.verify("match-1")["status"],
+                                     "VALID")
+
+    def test_verify_rejects_corrupt_event_sha_even_with_unchanged_json(self):
+        self.finish_match()
+        buf = MatchEvidenceBuffer(match_id="match-1", context=self.context)
+        self.assertTrue(buf.capture(self.state, self.report))
+        self.archive.save_ended(buf.finish())
+        with closing(sqlite3.connect(self.store.db_path)) as db:
+            db.execute("DROP TRIGGER no_p1_event_update")
+            db.execute(
+                "UPDATE p1_evidence_events SET event_sha=? WHERE match_id=?",
+                ("0" * 64, "match-1"))
+            db.commit()
+        self.assertEqual(self.archive.verify("match-1")["status"], "CORRUPT")
+
     def test_legacy_database_migration_is_non_destructive_and_backup_exists(self):
         self.finish_match()
         with closing(sqlite3.connect(self.store.db_path)) as db:
