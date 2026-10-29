@@ -200,7 +200,10 @@ class MatchEvidenceBuffer:
                          "displayed_at": timestamp if recommended else None},
             "execution": {"action": _action(confirmed) if confirmed else {},
                           "certainty": confirmation},
-            "field_candidate": {key: _text((state.get("battlefield") or {}).get(key))\n                                for key in ("weather", "terrain", "effects")}\n            if isinstance(state.get("battlefield"), dict) else {},
+            "field_candidate": {
+                key: _text(state["battlefield"].get(key))
+                for key in ("weather", "terrain", "effects")
+            } if isinstance(state.get("battlefield"), dict) else {},
             "result": _text(state.get("result")) if status in _RESULT_STATUSES else "UNKNOWN",
         }
         # No OCR raw text, image bytes, bearer credentials, arbitrary history,
