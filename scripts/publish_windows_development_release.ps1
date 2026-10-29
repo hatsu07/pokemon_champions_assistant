@@ -88,7 +88,7 @@ if ($null -eq $release) {
         "workflow_run_id=$env:GITHUB_RUN_ID",
         'release_kind=windows-development-only',
         '',
-        'Two ZIPs: desktop GUI and dataset collector. GPU diagnostics remain integrated in the assistant.',
+        'Two ZIPs: desktop GUI and dataset collector. Developer-only Run-GPU-Diagnostics.cmd is excluded from the release ZIP; the opt-in GPU diagnostic CLI remains available.',
         'Only offline GUI smoke tests were performed.',
         'No raw screenshots, private battle logs or credentials are included.',
         'Trained screen-model accuracy, device capture and live battles are NOT validated.'

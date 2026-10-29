@@ -61,6 +61,45 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
                 "title=Windows DEVELOPMENT v0.1.0-dev.12",
             ])
 
+    def test_gpu_diagnostic_cmd_is_excluded_but_developer_cli_is_retained(self):
+        """Issue #110: assert both Windows packaging paths enforce exclusion."""
+        pr_workflow = (ROOT / ".github/workflows/windows-validation-artifact.yml").read_text(
+            encoding="utf-8")
+        release_workflow = (ROOT / ".github/workflows/windows-development-release.yml").read_text(
+            encoding="utf-8")
+        for workflow in (pr_workflow, release_workflow):
+            with self.subTest(workflow="development" if workflow == release_workflow else "PR"):
+                self.assertNotIn(
+                    "Copy-Item -LiteralPath \"scripts/Run-GPU-Diagnostics.cmd\"",
+                    workflow)
+                self.assertIn("Verify developer-only GPU diagnostics launcher is NOT packaged",
+                              workflow)
+                self.assertIn('-Filter "Run-GPU-Diagnostics.cmd" -Recurse -File',
+                              workflow)
+                self.assertIn("Developer-only Run-GPU-Diagnostics.cmd must not be included",
+                              workflow)
+                # GPU-free CLI contract is intentionally retained as a release gate.
+                self.assertIn("Smoke bundled GPU diagnostic CLI without actual GPU inference",
+                              workflow)
+                self.assertIn("'--gpu-diagnostic-smoke'", workflow)
+        # Archive entries must be checked in addition to the PyInstaller output.
+        self.assertIn('$app -eq "PokemonChampionsAssistant"', release_workflow)
+        self.assertIn('$zip.Entries', release_workflow)
+        self.assertIn('-ieq "Run-GPU-Diagnostics.cmd"', release_workflow)
+        self.assertIn('GPU diagnostic launcher found inside release ZIP',
+                      release_workflow)
+
+        entry = (ROOT / "scripts/windows_desktop_entry.py").read_text(
+            encoding="utf-8")
+        self.assertIn('"--gpu-diagnostics"', entry)
+        self.assertIn('"--gpu-diagnostic-smoke"', entry)
+        self.assertTrue((ROOT / "scripts/Run-GPU-Diagnostics.cmd").is_file())
+
+        notes = (ROOT / "scripts/publish_windows_development_release.ps1").read_text(
+            encoding="utf-8")
+        self.assertIn("Run-GPU-Diagnostics.cmd is excluded", notes)
+        self.assertIn("opt-in GPU diagnostic CLI remains available", notes)
+
     def test_windows_workflow_and_publisher_use_versioned_name_everywhere(self):
         yaml = (ROOT / ".github/workflows/windows-development-release.yml").read_text(encoding="utf-8")
         publisher = (ROOT / "scripts/publish_windows_development_release.ps1").read_text(encoding="utf-8")

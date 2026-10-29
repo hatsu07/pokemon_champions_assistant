@@ -124,12 +124,12 @@ jobs:
           --hidden-import PIL.ImageGrab --collect-binaries cv2 --collect-all onnxruntime --collect-data champions_assist --collect-all PySide6
           --add-data "build\\desktop-assets\\masters;masters" --add-data "build\\ocr-v6;ocr-v6"
           scripts/windows_desktop_entry.py
-      - name: Add opt-in GPU diagnostics launcher to portable Windows distribution
+      - name: Verify developer-only GPU diagnostics launcher is NOT packaged
         shell: pwsh
         run: |
-          Copy-Item -LiteralPath "scripts/Run-GPU-Diagnostics.cmd" -Destination "dist/PokemonChampionsAssistant/Run-GPU-Diagnostics.cmd"
-          if (-not (Test-Path -LiteralPath "dist/PokemonChampionsAssistant/Run-GPU-Diagnostics.cmd")) {
-            throw "GPU stress launcher not packaged"
+          $packaged = @(Get-ChildItem -LiteralPath "dist/PokemonChampionsAssistant" -Filter "Run-GPU-Diagnostics.cmd" -Recurse -File)
+          if ($packaged.Count -ne 0) {
+            throw "Developer-only Run-GPU-Diagnostics.cmd must not be included in the Assistant distribution"
           }
       - name: Confirm bundled OCR bytes match validated staging files
         shell: pwsh

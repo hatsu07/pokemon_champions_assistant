@@ -4,26 +4,41 @@ This offline diagnostic compares PP-OCRv6 recognition and the six-class
 screen classifier on the affected NVIDIA DirectML machine. It is not a
 battle recognition accuracy test or a permanent workaround.
 
-## Run from the Assistant ZIP (no standalone GPU diagnostic ZIP)
+## Developer-only execution from the Assistant ZIP (no separate GPU ZIP)
 
-1. Download `PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip`
-   from the Windows DEVELOPMENT prerelease created after the required CI passes.
-   Historical releases may still contain a separate GPU diagnostic ZIP; new releases do not.
-2. Extract the Assistant ZIP to a new folder. Check `BUILD_REVISION.txt`.
-3. Save other work and stop the live match monitor. Native GPU failures
-   can terminate the diagnostic process or disturb the driver.
-4. Double-click Run-GPU-Diagnostics.cmd. This Phase-1 launcher defaults to
-   **E only**, avoiding repeated known crashes from condition D. It runs
-   3 independent trials
-   per condition, 20 inferences per trial on DirectML GPU 0.
-5. Inspect the automatically opened folder:
-   %LOCALAPPDATA%\PokemonChampionsAssistant\diagnostics\gpu-stress-*
-   Share summary.json and the case JSONL files. If a crash occurs,
-   also inspect runtime-*-native.log and Windows Application Error
-   event 1000. Review local stack paths for privacy before sharing.
+**This is not a normal user workflow.** New Windows DEVELOPMENT Assistant ZIPs
+deliberately **exclude `Run-GPU-Diagnostics.cmd`**. The explicit diagnostic
+CLI in `PokemonChampionsAssistant.exe` remains available to developers.
+Previously published releases are not changed.
 
-The test does not send screenshots, prompts or API calls. Inputs are
-deterministic synthetic arrays. No screen capture is performed.
+1. Download `PokemonChampionsAssistant-v0.1.0-dev.N-windows-x64.zip` from
+   the Windows DEVELOPMENT prerelease and extract it to a new folder.
+   Check `BUILD_REVISION.txt`.
+2. Save other work and **stop the live match monitor**. Native DirectML/NVIDIA
+   failures can terminate the diagnostic process or disturb the GPU driver.
+3. From PowerShell, change to the extracted folder containing
+   `PokemonChampionsAssistant.exe`, then explicitly run:
+
+   ```powershell
+   .\PokemonChampionsAssistant.exe --gpu-diagnostics --gpu-id 0 --gpu-diagnostic-modes multiprocess --iterations 20 --trials 3
+   ```
+
+   This runs condition E (two independent EXE processes on DirectML GPU 0)
+   in three trials of 20 inferences each. The GUI-subsystem EXE reports
+   completion in a Windows dialog; do not expect terminal output.
+   Developers who prefer the old CMD wrapper can use the checked-in
+   `scripts/Run-GPU-Diagnostics.cmd` from the **source repository**, copied
+   manually next to the EXE. It is not shipped in the ZIP.
+4. Examine the files in:
+   `%LOCALAPPDATA%\PokemonChampionsAssistant\diagnostics\gpu-stress-*`.
+   The CLI does not automatically open this folder; open it manually.
+   Before sharing `summary.json`, case JSONL files or
+   `runtime-*-native.log`, review any local stack paths for privacy.
+   Windows Application Error event 1000 may provide crash evidence.
+
+The test uses deterministic synthetic arrays. It does **not** capture game
+screens, transmit prompts, or call ChatGPT APIs. It is an opt-in stress test
+and not a measure of battle recognition accuracy.
 
 ## The five conditions
 
@@ -58,12 +73,18 @@ as the normal GUI, including the recorded trial opt-in. Missing screen model wei
 or otherwise incompatible weights are NOT fabricated or silently replaced. These cases are SKIPPED_NO_SCREEN_MODEL, not GPU passes.
 The --screen-model override still requires validation.
 
-Advanced example (from the extracted folder):
-Run-GPU-Diagnostics.cmd --gpu-id 0 --iterations 100 --trials 5
+Advanced example (PowerShell in the extracted EXE folder):
 
-To explicitly rerun A through E in a single set of conditions (warning: D is
-known to crash on the affected NVIDIA PC):
-Run-GPU-Diagnostics.cmd --gpu-diagnostic-modes rec,classifier,serial,parallel,multiprocess
+```powershell
+.\PokemonChampionsAssistant.exe --gpu-diagnostics --gpu-id 0 --gpu-diagnostic-modes multiprocess --iterations 100 --trials 5
+```
+
+To explicitly rerun A through E (warning: condition D has crashed on the
+affected NVIDIA machine):
+
+```powershell
+.\PokemonChampionsAssistant.exe --gpu-diagnostics --gpu-id 0 --gpu-diagnostic-modes rec,classifier,serial,parallel,multiprocess --iterations 20 --trials 3
+```
 
 Keep the same GPU, driver, model, and input in all five cases. Do not
 immediately raise the trial count if the system repeatedly crashes.

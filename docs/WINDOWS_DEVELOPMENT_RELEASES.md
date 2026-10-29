@@ -22,7 +22,7 @@
 
 **最新の判別**：GitHub Releasesの上から順に新しいリリース。**最上段の最大開発版番号**を選ぶ。GitHubはプレリリースに通常の `Latest` バッジを付けないため、無理に正式版へ昇格させない。コミットSHAは非表示にせず、配布物の `BUILD_REVISION.txt` およびRelease説明に監査用として残す。過去の `development-windows-<40桁SHA>` リリースはリンク互換性のため残し、期限到来後に既存の厳格なcleanupで整理する。
 
-GPU診断はAssistant ZIP内の `Run-GPU-Diagnostics.cmd` で明示起動できる機能として維持する。**GPU診断単独ZIPは今後作成・配布しない**（過去Releaseは削除しない）。Windows CIではGPU推論を試験せず、実機での再現実験は別。手順は `docs/WINDOWS_GPU_DIAGNOSTICS_RUNBOOK.md`。
+通常のAssistant配布ZIPには **`Run-GPU-Diagnostics.cmd` を含めない**。これは開発者向けの任意GPU負荷診断用ランチャーであり、対戦支援の実行には不要。診断コードと明示的な `PokemonChampionsAssistant.exe --gpu-diagnostics ...` CLI経路は維持し、必要時のみ開発者が実機で実行する。**GPU診断単独ZIPは作成・配布しない**（過去Releaseは変更しない）。Windows CIはGPUを使わない診断CLIスモークを維持するが、DirectML実推論は検証しない。手順は `docs/WINDOWS_GPU_DIAGNOSTICS_RUNBOOK.md`。
 
 いずれも**DEVELOPMENT_ONLY**。正式MSI、実対戦検証済み、学習済みONNXモデル搭載を意味しない。ZIP内にはEXE、`_internal`、`BUILD_REVISION.txt`があり、二重ZIPにはしない。実画像・認証情報・個人ログを含めない。
 
