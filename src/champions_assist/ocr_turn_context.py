@@ -16,7 +16,8 @@ from unicodedata import normalize
 from .ocr_ai_evidence import select_ai_ocr_evidence
 
 
-def _visually_same_ocr_fact(row: dict, field: str, value: str) -> bool:
+def _visually_same_ocr_fact(row: dict, field: str, value: str,
+                            observation: dict | None = None) -> bool:
     """Validate unambiguous source-side, mechanic and value correspondence.
 
     Unrecognized OCR remains unresolved. Never promote an unrelated visible
@@ -44,6 +45,19 @@ def _visually_same_ocr_fact(row: dict, field: str, value: str) -> bool:
     prefix = "opponent" if opponent else "our"
     if not field.startswith(prefix+"_"):
         return False
+    # If the past message identifies a specific actor, do not attach that
+    # actor's move/boost/item to a different current Pokémon of the same side.
+    actor_prefix = "相手の" if opponent else "こちらの"
+    tail = raw.split(actor_prefix,1)[-1] if actor_prefix in raw else raw
+    subject = tail.split("の",1)[0] if "の" in tail else ""
+    if subject and subject not in ("攻撃","こうげき","防御","ぼうぎょ",
+                                  "特攻","とくこう","特防","とくぼう",
+                                  "素早さ","すばやさ","命中","めいちゅう",
+                                  "回避","かいひ","持ち物","もちもの",
+                                  "道具","どうぐ") and observation is not None:
+        current = observation.get("opponent_active" if opponent else "our_active")
+        if _compare_text(str(current or "")) != subject:
+            return False
     if field == prefix+"_stat_changes":
         from .battle_evidence import _visual_stages
         stages = _visual_stages(value)
@@ -371,7 +385,7 @@ class OcrSentLedger:
                 and obs["our_active"] == updated.get("our_active")
                 and obs["opponent_active"] == updated.get("opponent_active")):
             return None
-        if updated.get("_ai_ocr_unresolved"):
+        if updated.get("_ai_ocr_unresolved") or obs.get("uncertain_slots"):
             return None
         if overflow:
             # A NEW stable visual baseline is sufficient only for actors
@@ -461,7 +475,7 @@ class OcrSentLedger:
                     return None
             else:
                 if not proof or not all(
-                        _visually_same_ocr_fact(row, item, obs[item])
+                        _visually_same_ocr_fact(row, item, obs[item], obs)
                         for item in proof):
                     return None
         return epoch
