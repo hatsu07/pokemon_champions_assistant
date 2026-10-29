@@ -182,7 +182,9 @@ class OcrAiContextRegression(unittest.TestCase):
         self.assertEqual(tracker.ingest((row("f1",1.0,"visual-1"),),turn_epoch=8),1)
         self.assertEqual(tracker.ingest((row("f2",1.6,"visual-1"),),turn_epoch=8),0)
         self.assertEqual(tracker.ingest((row("f3",12.0,"visual-2"),),turn_epoch=8),1)
-        self.assertEqual(len(tracker.snapshot()["local_observations"]),2)
+        # Raw timeline preserves all three observations, including the
+        # continuous same-display reading suppressed only for local consumers.
+        self.assertEqual(len(tracker.snapshot()["local_observations"]),3)
 
     def test_completed_ocr_output_queue_does_not_discard_old_results(self):
         reader=AsyncBattleEventReader(None)
