@@ -498,8 +498,14 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertTrue(_text_action_eligible("TURN_ACTION",state,assets))
         state["our_active"]=""
         self.assertFalse(_text_action_eligible("TURN_ACTION",state,assets))
-        self.assertTrue(_text_action_eligible(
+        # A generic OCR entry is not necessarily enough to identify own lead.
+        self.assertFalse(_text_action_eligible(
             "TURN_ACTION",state,assets,local_rows=rows(1)))
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=[{
+                "field":"screen_text.own_active_name",
+                "frame_id":"own-name-1","raw_text":"ゲンガー",
+                "observed_at":1.0,"confidence":0.9}]))
 
     def test_processed_frame_cannot_ack_gpt_retained_uncertainty(self):
         assets=fixture_assets()
