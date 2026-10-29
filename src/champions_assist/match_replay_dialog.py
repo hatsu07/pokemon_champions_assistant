@@ -2782,26 +2782,17 @@ class MatchReplayDialog(QDialog):
             self._render({"status":"PREP_UNAVAILABLE",
                           "reason":"OWN_MATRIX_MISMATCH"})
             return
-        # PREP is bounded independently to the actual 40-second acceptance
-        # limit; no late GPT answer may be promoted to completed PREP.
+        # The selection countdown limits what we can promise to the player;
+        # it must not kill a pending PREP request or discard a valid reply.
         # The next outgoing AI message is the only automatic supersession.
-        self._prep_budget_seconds=min(40.0,prep_budget_before_battle(
-            self._selection_screen_started,now=monotonic()))
-        if self._prep_budget_seconds<=0.0:
-            self.state["prep_status"]="INCOMPLETE_DEADLINE"
-            self._trace_event("PREP_NO_TIME_REMAINING",
-                              budget_ms=0)
-            self._render({"status":"PREP_DEADLINE_EXCEEDED",
-                          "message":"PREPの時間が残っていないため追加AI依頼を開始しません。"})
-            return
+        self._prep_budget_seconds=prep_budget_before_battle(
+            self._selection_screen_started,now=monotonic())
+        if self._prep_budget_seconds<=2.0:
+            self._trace_event("PREP_SOFT_BUDGET_EXPIRED_CONTINUING")
         self._prep_cancel_event.clear()
         if not provisional:
             self.state["prep_status"]="RUNNING"
         self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000),
-                          stage="CACHE_ROLES_OR_18_MATCHUPS",
-                          cache_available=bool(self.assets.matchup_cache_index),
-                          matrix_compatible=bool(self.state.get("matrix_compatible")),
-                          matrix_provisional=bool(self.state.get("matrix_provisional")),
                           status="PROVISIONAL" if provisional else "ACTUAL",
                           known_opponents=(
                               len(prep_state.get("opponent_six",[]))-
@@ -2812,8 +2803,9 @@ class MatchReplayDialog(QDialog):
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=prep_state, job="prep",
-            # Match PREP socket timeout to its bounded acceptance window.
-            prep_seconds=max(1.0,self._prep_budget_seconds),
+            # Network failure still needs a finite socket timeout. It is NOT
+            # the local game-clock target and late valid results are accepted.
+            prep_seconds=max(120.0,self._prep_budget_seconds),
             cancel_event=self._prep_cancel_event,
         )
         self._prep_worker.moveToThread(self._prep_thread)
@@ -2834,8 +2826,8 @@ class MatchReplayDialog(QDialog):
                           if unknown_count else
                           "提案選出に基づく18対面PREPを先行計算中。"
                           if provisional else "実際の選出で18対面PREPを計算中。")
-                          +f"（残り {self._prep_budget_seconds:.1f}秒・"
-                          "40秒で打ち切り）"})
+                          +f"（目標残り {self._prep_budget_seconds:.1f}秒・"
+                          "超過後も次のAI依頼まで継続）"})
         self._prep_thread.start()
 
     def _interrupt_prep(self):
@@ -2849,24 +2841,21 @@ class MatchReplayDialog(QDialog):
     def _prep_deadline(self):
         if self._prep_thread is None:
             return
-        # The socket may finish later, but its response cannot complete
-        # the 40-second PREP. Keep previously cached 18 matchup evidence.
-        self._prep_cancel_event.set()
-        self._trace_event("PREP_HARD_DEADLINE_INCOMPLETE",
-                          running_worker=True,
-                          budget_ms=round(self._prep_budget_seconds*1000),
-                          cached_matchups=(self.state or {}).get("prep",{}).get("cached_matchups",0))
+        # Advisory timer: never cancel or discard PREP merely for 40s expiry.
+        self._trace_event("PREP_SOFT_DEADLINE_EXCEEDED_CONTINUING")
         if self.state is not None and self.state.get("phase")=="PREP":
-            self.state["prep_status"]="INCOMPLETE_DEADLINE"
-            self._render({"status":"PREP_DEADLINE_EXCEEDED",
-                          "message":"40秒PREPを終了。未完成部分は完了扱いしません。"})
+            self._render({"status":"PREP_OVERTIME_RUNNING",
+                          "message":"PREPの目標時間を超過しましたが、"
+                          "次のAI依頼まで計算と有効回答の受付を継続します。"})
 
     @Slot(object)
     def _on_prep_result(self, payload):
         self._prep_timer.stop()
         if self._prep_cancel_event.is_set() or self.state is None:
+            # A new AI request or explicit Stop supersedes PREP, not
+            # a soft timer; preserve diagnostics for real cancellation.
             report=payload.get("report") or {}
-            self._trace_event("PREP_RESPONSE_AFTER_CUTOFF_DROPPED",
+            self._trace_event("PREP_RESPONSE_AFTER_CANCELLATION_DROPPED",
                               status=report.get("status","UNKNOWN"),
                               reason=report.get("reason","UNKNOWN"),
                               stage=report.get("request_stage","UNKNOWN"),
