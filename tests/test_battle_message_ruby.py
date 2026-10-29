@@ -23,7 +23,7 @@ _REGION = FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505),
 
 def sample(validated=False):
     return ScreenFieldProfile((960, 572), (_REGION,),
-                              "SYNTHETIC_ISSUE_124", validated)
+                              "SYNTHETIC_ISSUE_124", validated, validated)
 
 
 def synthetic_frame():
@@ -88,6 +88,9 @@ class BattleMessageRubyTests(unittest.TestCase):
         for img, profile, region, status in (
             (frame, sample(), _REGION, "UNVALIDATED_LIVE_DISABLED"),
             (frame, sample(True), wrong_region, "UNRECOGNIZED_UI_GEOMETRY"),
+            (frame, ScreenFieldProfile((960, 572), (_REGION,),
+                  "GENERAL_VALIDATION_ONLY", True, False), _REGION,
+             "RUBY_BANDS_UNVALIDATED_LIVE_DISABLED"),
             (np.pad(frame, ((20, 20), (0, 0), (0, 0))),
              sample(True), _REGION, "VIEWPORT_MISMATCH"),
         ):
