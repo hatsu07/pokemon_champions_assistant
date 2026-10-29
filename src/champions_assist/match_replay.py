@@ -1317,7 +1317,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      local_field_candidates: list[dict] | None = None,
                      expected_screen_label: str | None = None,
                      diagnostic_sink=None, sent_ocr_ledger=None,
-                     ocr_request_id: str | None=None) -> tuple[dict, dict]:
+                     ocr_request_id: str | None=None,
+                     ocr_quarantined_return: dict | None=None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1408,12 +1409,19 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                                      separators=(",",":"),default=str).encode("utf-8"))
         prompt["local_field_candidates_unverified"]=transport_ocr
         # A successful NEW-actor baseline is not confirmation of previously
-        # quarantined actors. Reappearance (also Mega/form spelling) requires
-        # the same explicit visual warning as a still-open global safety gate.
+        # quarantined actors. Reappearance (also Mega/form spelling), including
+        # one first noticed by a *rejected* OCR-only response, needs an explicit
+        # warning in the existing one-frame image fallback.
+        suspected_quarantine=dict(ocr_quarantined_return or {})
+        candidate_state=dict(state)
+        for side,field in (("our","our_active"),("opponent","opponent_active")):
+            if suspected_quarantine.get(side):
+                candidate_state[field]=suspected_quarantine[side]
         quarantined_active=bool(
             sent_ocr_ledger is not None
-            and sent_ocr_ledger.quarantined_actor_is_active(state))
+            and sent_ocr_ledger.quarantined_actor_is_active(candidate_state))
         prompt["stale_visual_quarantined_actor_active"]=quarantined_active
+        prompt["ocr_quarantined_return_unverified"]=suspected_quarantine
         prompt["unverified_stale_ocr_requires_visual"]=bool(
             sent_ocr_ledger is not None
             and (sent_ocr_ledger.needs_visual_confirmation()
@@ -1421,7 +1429,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         # Only a bounded, unverified subset is shown again for visual
         # reconciliation. No lost OCR is automatically treated as true.
         prompt["stale_visual_overflow_actor_quarantine"]=(
-            sent_ocr_ledger.visual_overflow_actors(state)
+            sent_ocr_ledger.visual_overflow_actors(candidate_state)
             if sent_ocr_ledger is not None else {})
         prompt["stale_visual_proof_to_reconcile"]=([
             {"source_row_key":_row_key(row),
@@ -1518,6 +1526,11 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "boosts or move locks reset, or treat a guessed old event as "
                 "confirmed. Use confirmed_source_fields only with an exact "
                 "visible observation field and a matching nonempty value. "
+                "ocr_quarantined_return_unverified identifies a Pokémon "
+                "whose return was inferred from unverified OCR in a rejected "
+                "text-only answer. It is a SUSPECT, NOT a confirmed current "
+                "active: trust the CURRENT image instead of prior state or "
+                "OCR, and preserve old unknown moves, boosts, locks and items. "
                 "If stale_visual_quarantined_actor_active is true, an actor "
                 "with UNKNOWN old OCR mechanics is on-screen again, even if "
                 "a prior *different* matchup was safely rebaselined. Treat "
@@ -2182,6 +2195,37 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         proposed=answer.get("state_updates",[]) if combined else []
         action=answer["action"] if combined else answer
         updated,audit=apply_ai_ocr_updates(state,proposed,candidates,assets)
+        def blocked_quarantined_return() -> tuple[dict,dict] | None:
+            # The pre-dispatch gate checks the OLD opponent. Fresh OCR can
+            # introduce a quarantined actor mid-request. Never adopt an action
+            # calculated without its missing history.
+            if (sent_ocr_ledger is None or
+                    not sent_ocr_ledger.quarantined_actor_is_active(updated)):
+                return None
+            from .ocr_turn_context import _same_quarantined_actor
+            isolated=sent_ocr_ledger.visual_overflow_actors(updated)
+            suspects={
+                side:str(updated.get(key) or "")
+                for side,key in (("our","our_active"),("opponent","opponent_active"))
+                if any(_same_quarantined_actor(name,updated.get(key) or "")
+                       for name in isolated.get(side,()))
+            }
+            if diagnostic_sink is not None:
+                diagnostic_sink("OCR_QUARANTINED_ACTOR_RETURNED",{
+                    "prior_our_active":state.get("our_active") or "",
+                    "prior_opponent_active":state.get("opponent_active") or "",
+                    "suspected_actor_candidates":suspects,
+                    "text_action_discarded":True,
+                    "fallback":"CURRENT_IMAGE_OR_NO_ACTION"})
+            # Retain the previous VERIFIED state, not the OCR interpretation;
+            # pass suspects to image separately as UNVERIFIED labels.
+            return state,{"status":"BLOCKED","recommendation":"",
+                          "reason":"OCR_QUARANTINED_ACTOR_RETURNED",
+                          "quarantined_actor_candidates":suspects,
+                          "transport":"OCR_TEXT_ONLY","images_sent":0}
+        quarantine_block=blocked_quarantined_return()
+        if quarantine_block is not None:
+            return quarantine_block
         if diagnostic_sink is not None:
             for row in audit:
                 diagnostic_sink("AI_OCR_STATE_DECISION",row)
@@ -2255,6 +2299,11 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             return updated,{"status":"BLOCKED","recommendation":"",
                             "reason":"AI_OCR_OWN_ACTIVE_UNVERIFIED",
                             "transport":"OCR_TEXT_ONLY","images_sent":0}
+        # Final check immediately before action validation. A future
+        # carryover/actor reconciliation must not re-enable an unsafe tactic.
+        quarantine_block=blocked_quarantined_return()
+        if quarantine_block is not None:
+            return quarantine_block
         obs["our_active"]=updated.get("our_active","")
         obs["opponent_active"]=updated.get("opponent_active","")
         if switch_only and action.get("action_kind") not in ("SWITCH","NO_ACTION"):
