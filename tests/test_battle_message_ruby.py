@@ -119,6 +119,48 @@ class BattleMessageRubyTests(unittest.TestCase):
                 self.assertTrue(parsed["ruby_excluded"])
                 self.assertEqual(cropped.shape[:2], (59, 399))
 
+    def test_second_line_only_shifted_out_of_body_band_falls_back(self):
+        # Review P1: first line is still perfectly aligned and must not
+        # validate a damaged/moved second line. Full viewport stays 960x572.
+        frame = synthetic_frame()
+        shifted = frame.copy()
+        line = shifted[464:489, 141:540].copy()
+        shifted[464:489, 141:540] = 180
+        shifted[493:518, 141:540] = line
+        self.assertTrue(sample(True).compatible(shifted))
+        original = sample(True).crop(shifted, _REGION)
+        cropped, info = prepare_battle_message(
+            shifted, sample(True), _REGION)
+        self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
+        self.assertFalse(info["ruby_excluded"])
+        self.assertTrue(np.array_equal(cropped, original))
+
+    def test_legitimate_single_line_keeps_full_roi_without_second_line(self):
+        # A genuine one-line message is valid input. Fallback is not a
+        # recognition failure and must still read it once through existing OCR.
+        frame = synthetic_frame()
+        frame[456:489, 141:540] = 180
+        crop, info = prepare_battle_message(frame, sample(True), _REGION)
+        self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
+        self.assertFalse(info["ruby_excluded"])
+        self.assertTrue(np.array_equal(crop, sample(True).crop(frame, _REGION)))
+        engine = CountingEngine("効果はいまひとつだ")
+        reader = AsyncBattleEventReader(sample(True), ocr_engine=engine)
+        try:
+            self.assertTrue(reader.offer(frame, label="BATTLE_EVENT"))
+            deadline = monotonic() + 3
+            records = ()
+            while monotonic() < deadline and not records:
+                records = reader.drain()
+                if not records:
+                    sleep(0.01)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(len(engine.calls), 1)
+            self.assertEqual(engine.calls[0][1].shape[:2], (93, 399))
+            self.assertEqual(records[0].observations[0].status, "CANDIDATE")
+        finally:
+            reader.stop()
+
     def test_same_dimension_shifted_text_abstains(self):
         image = synthetic_frame()
         for delta in (-10, -5, 5, 10):
