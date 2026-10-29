@@ -235,7 +235,12 @@ class Issue125TransportTests(unittest.TestCase):
         records = [
             ocr("f1", "ゆけっ！ゲンガー！"),
             ocr("f2", "相手のマスカーニャを繰り出した！", timestamp=10.2),
+        ] + [
+            ocr(f"f{i}", "ゆけっ！ゲンガー！",
+                display_id="own-intro:display-1", timestamp=10.2 + i / 10)
+            for i in range(3, 15)
         ]
+        self.assertEqual(len(records), 14)
         self.assertTrue(_text_action_eligible(
             "TURN_ACTION", state, assets, local_rows=records))
         reply = {
@@ -263,13 +268,40 @@ class Issue125TransportTests(unittest.TestCase):
             )
         self.assertEqual(len(calls), 1)
         prompt = json.loads(calls[0]["content"][0]["text"])
-        self.assertEqual(len(prompt["ocr_candidates_unverified"]), 2)
+        packed = prompt["ocr_candidates_unverified"]
+        self.assertLess(len(packed), 14)
+        frame_proof=set()
+        for item in packed:
+            frame_proof.update(item.get("source_frames", [item["frame_id"]]))
+        self.assertEqual(frame_proof,{f"f{i}" for i in range(1, 15)})
         self.assertEqual(len(prompt["registered_selected_moves"]), 3)
         self.assertEqual(report["images_sent"], 0)
         self.assertEqual(after["our_active"], "ゲンガー")
         self.assertEqual(after["opponent_active"], "マスカーニャ")
         self.assertEqual(report["status"], "TEST_ONLY")
         self.assertEqual(report["recommendation"], "じしん。")
+
+    def test_newly_identified_lead_still_rejects_unregistered_move(self):
+        assets, state = battle()
+        source = [ocr("f1", "ゆけっ！ゲンガー！")]
+        response = {
+            "state_updates": [event("own", "ゲンガー", "f1")],
+            "interpreted_own_active": "ゲンガー",
+            "interpreted_opponent_active": "",
+            "pending_ocr_questions": [], "processed_ocr_frames": [],
+            "action": {"action_kind": "MOVE", "move": "登録されていない技",
+                       "switch_target": "", "warning": ""},
+        }
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=response):
+            after, report = run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=source,
+                client_factory=lambda **kwargs: object())
+        self.assertEqual(after["our_active"], "ゲンガー")
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertNotIn("登録されていない技",report.get("recommendation", ""))
 
     def test_unknown_actor_without_ocr_still_needs_image(self):
         assets, state = battle()
