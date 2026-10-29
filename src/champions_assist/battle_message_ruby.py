@@ -16,7 +16,8 @@ _EXPECTED_REGION = (141, 412, 540, 505)
 # Half-open reference bands: small ruby glyphs above body rows whose observed
 # main text begins at approximately Y434 and Y466 on the three sample frames.
 # Masking both bands is independent of the number of actual message lines.
-_RUBY_BANDS = ((423, 432), (454, 464))
+# The first body can begin at Y431; never mask Y430 or Y431.
+_RUBY_BANDS = ((423, 430), (454, 464))
 
 
 def _has_black_capture_bars(image: np.ndarray) -> bool:
@@ -74,6 +75,39 @@ def _current_frame_body_anchor_matches(image: np.ndarray) -> bool:
     )
 
 
+def _ruby_band_has_body_like_strokes(image: np.ndarray) -> bool:
+    """Abstain when a ruby mask contains a dense, extended bright text run.
+
+    Inspect the *whole* message width, not just the left-hand anchor. Tiny
+    kana may appear in these bands, but contiguous full-size body text must
+    never be painted over. This deliberately rejects some long/bright ruby
+    strings; rejected images still receive the ordinary one-call OCR path.
+    """
+    height, width = image.shape[:2]
+    x0 = round(_EXPECTED_REGION[0] * width / _REFERENCE[0])
+    x1 = round(_EXPECTED_REGION[2] * width / _REFERENCE[0])
+    for top, bottom in _RUBY_BANDS:
+        y0 = round(top * height / _REFERENCE[1])
+        y1 = round(bottom * height / _REFERENCE[1])
+        band = image[y0:y1, x0:x1]
+        if band.size == 0:
+            return True
+        lo = band.min(axis=2).astype(np.int16)
+        hi = band.max(axis=2).astype(np.int16)
+        # The background color changes with the battle animation. Bright
+        # neutral glyphs must be distinct from the local median background.
+        floor = max(170, min(245, round(float(np.median(lo)) + 35)))
+        white_strokes = (lo >= floor) & ((hi - lo) <= 75)
+        per_row = white_strokes.sum(axis=1)
+        # Counts are normalized to the reference viewport; the ROI has the
+        # same relative width at different render resolutions.
+        scale = width / _REFERENCE[0]
+        if ((per_row >= round(32 * scale)).sum() >= max(2, round(3 * height / _REFERENCE[1]))
+                or int(white_strokes.sum()) >= round(220 * scale * height / _REFERENCE[1])):
+            return True
+    return False
+
+
 def prepare_battle_message(
     image: np.ndarray, profile: ScreenFieldProfile, region: FieldRegion,
     *, preview_unvalidated: bool = False, enabled: bool = True,
@@ -118,6 +152,9 @@ def prepare_battle_message(
         return original, info
     if not _current_frame_body_anchor_matches(image):
         info["preprocess"] = "BODY_ANCHOR_MISMATCH"
+        return original, info
+    if _ruby_band_has_body_like_strokes(image):
+        info["preprocess"] = "RUBY_BAND_BODY_RISK"
         return original, info
 
     # Never crop or reflow either main text line. Start with the existing
