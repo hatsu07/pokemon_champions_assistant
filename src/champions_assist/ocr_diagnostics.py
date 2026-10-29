@@ -13,12 +13,14 @@ from .calibrated_screen_fields import (
 )
 from .ocr import OcrEngine
 from .ocr_onnx import make_onnx_ocr
+from .battle_message_ruby import prepare_battle_message
 from .crash_diagnostics import record_exception
 
 
 def inspect_battle_event_image(
     image: np.ndarray, profile: ScreenFieldProfile,
     *, engine: OcrEngine | None = None, device: str = "auto", gpu_id: int = 0,
+    ruby_preview: bool = True,
 ) -> dict:
     if not profile.compatible(image):
         return {"status": "IMAGE_ROI_GEOMETRY_MISMATCH", "rows": []}
@@ -29,7 +31,9 @@ def inspect_battle_event_image(
                 or "BATTLE_EVENT" not in region.applicable_labels
                 or region.kind not in ("HP_FRACTION", "HP_PERCENT", "MESSAGE")):
             continue
-        crop = profile.crop(image, region)
+        crop, preprocessing = prepare_battle_message(
+            image, profile, region, preview_unvalidated=True,
+            enabled=ruby_preview)
         started = perf_counter()
         try:
             reading = reader.read(crop, roi_name=region.name)
@@ -48,6 +52,7 @@ def inspect_battle_event_image(
             row = dict(name=region.name, kind=region.kind, crop=crop,
                        text="", confidence=None, parsed=None,
                        error=getattr(exc, "code", type(exc).__name__))
+        row.update(preprocessing)
         row["elapsed_ms"] = round((perf_counter() - started) * 1000)
         rows.append(row)
     return {"status": "OCR_DIAGNOSTIC_COMPLETE", "rows": rows,
