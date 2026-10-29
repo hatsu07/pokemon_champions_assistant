@@ -6,6 +6,7 @@ A missing GPU runtime, invalid viewport, optional bounded queue or stale generat
 fails closed to labelled CANDIDATE data and optional existing image fallback.
 """
 from __future__ import annotations
+from uuid import uuid4
 
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
@@ -86,6 +87,7 @@ class AsyncBattleEventReader:
         self._out: Queue[_Result]=Queue(maxsize=max_results or 0)
         self._stop=Event()
         self._signatures: dict[str,np.ndarray]={}
+        self._display_source=uuid4().hex[:12]
         self._display_episodes: dict[str,int]={}
         self._display_last_time: dict[str,float]={}
         self._display_last_label: dict[str,str]={}
@@ -208,7 +210,7 @@ class AsyncBattleEventReader:
                 new_display_time[key]=captured_at
                 new_display_labels[key]=label
                 crops.append((region.name,region.kind,crop.copy(),
-                              f"{key}:visual-{episode}"))
+                              f"{self._display_source}:{key}:visual-{episode}"))
                 updated[key]=small
         if not crops:
             self.skipped+=1
