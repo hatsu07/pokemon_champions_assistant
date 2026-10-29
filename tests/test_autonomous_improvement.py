@@ -137,6 +137,48 @@ class AutonomousResearchTest(unittest.TestCase):
         self.assertIn("differ", suggestion["risk"])
         self.assertEqual(suggestion["kind"], "TACTICAL_HYPOTHESIS")
 
+    def test_production_postmatch_worker_aggregates_after_review_without_extra_api(self):
+        from unittest.mock import patch
+        from champions_assist.desktop import _PostmatchReviewWorker
+        for index in range(3):
+            self.record(f"m{index}")
+        captured=[]
+        worker=_PostmatchReviewWorker(self.root, "m2", self.root, "fake-model", "auto")
+        worker.result_ready.connect(captured.append)
+        with patch("champions_assist.siwc_auth.ProtectedSessionStore"), patch(
+            "champions_assist.siwc_auth.ChatGPTSignIn") as auth, patch(
+            "champions_assist.postmatch_learning.request_review",
+            return_value={"status":"STORED_UNVERIFIED_REVIEW","match_id":"m2"}
+        ) as request:
+            auth.return_value.access_token.return_value="token-for-mock-only"
+            worker.run()
+        request.assert_called_once()
+        self.assertEqual(len(captured),1)
+        self.assertEqual(captured[0]["improvement_research"]["candidate_count"],1)
+        self.assertEqual(len(self.research.history(team_id=TEAM)),1)
+
+    def test_research_exception_does_not_change_successful_saved_review(self):
+        from unittest.mock import patch
+        from champions_assist.desktop import _PostmatchReviewWorker
+        self.record("m1")
+        worker=_PostmatchReviewWorker(self.root, "m1", self.root, "fake-model", "auto")
+        captured=[]
+        worker.result_ready.connect(captured.append)
+        with patch("champions_assist.siwc_auth.ProtectedSessionStore"), patch(
+            "champions_assist.siwc_auth.ChatGPTSignIn") as auth, patch(
+            "champions_assist.postmatch_learning.request_review",
+            return_value={"status":"STORED_UNVERIFIED_REVIEW","match_id":"m1"}
+        ), patch(
+            "champions_assist.autonomous_improvement.AutonomousImprovementStore.aggregate_after_review",
+            side_effect=RuntimeError("research unavailable")
+        ):
+            auth.return_value.access_token.return_value="token-for-mock-only"
+            worker.run()
+        self.assertEqual(captured[0]["status"],"STORED_UNVERIFIED_REVIEW")
+        self.assertEqual(captured[0]["improvement_research"]["status"],
+                         "RESEARCH_FAILED_REVIEW_RETAINED")
+        self.assertIsNotNone(self.learning.postmatch_review("m1"))
+
     def test_provisional_never_modifies_legacy_review_rows(self):
         for index in range(3):
             self.record(f"m{index}")
