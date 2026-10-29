@@ -63,7 +63,7 @@ def compact_ocr_transport(rows: list[dict]) -> list[dict]:
     """
     groups: list[dict] = []
     positions: dict[tuple[str, str], int] = {}
-    for row in rows:
+    for sequence, row in enumerate(rows):
         display_id = row.get("display_id")
         field = str(row.get("field") or "")
         raw = str(row.get("raw_text", row.get("candidate", "")))
@@ -81,20 +81,23 @@ def compact_ocr_transport(rows: list[dict]) -> list[dict]:
                 if "_source_texts" not in group:
                     group["_source_texts"] = [{
                         "text": prior, "frame_id": group["frame_id"],
+                        "sequence_index": group["_first_sequence"],
                         "observed_at": group.get("observed_at"),
                         "confidence": group.get("confidence"),
                     }]
                 group["_source_texts"].append({
                     "text": raw, "frame_id": row["frame_id"],
+                    "sequence_index": sequence,
                     "observed_at": row.get("observed_at"),
                     "confidence": row.get("confidence"),
                 })
                 continue
         if key is not None:
             positions[key] = len(groups)
-        groups.append(dict(row))
+        groups.append(dict(row, _first_sequence=sequence))
 
     for group in groups:
+        group.pop("_first_sequence", None)
         observations = group.pop("_source_texts", None)
         if observations is None:
             continue
@@ -132,6 +135,7 @@ def compact_ocr_transport(rows: list[dict]) -> list[dict]:
         }
         group["source_observations"] = [
             {"frame_id": o["frame_id"],
+             "sequence_index": o["sequence_index"],
              "observed_at": o["observed_at"],
              "confidence": o["confidence"]}
             for o in observations
