@@ -231,20 +231,35 @@ _AI_SENSITIVE_KEYS = frozenset({
     "authorization", "clientsecret", "secret", "secretkey",
     "password", "privatekey", "credentials",
 })
+# Normalize snake_case, camelCase, hyphens and namespaced credential keys
+# to the same alphanumeric representation. Match whole secret key families
+# rather than only the exact spellings that have appeared in review.
 _AI_SENSITIVE_SUFFIXES = (
-    # Normalizing every non-alphanumeric character makes both api_token
-    # and userAccessToken end in "token". Never enumerate only known prefixes.
-    "token", "apikey", "authkey", "authorization", "clientsecret",
-    "secret", "password", "privatekey", "credential", "credentials",
+    "token", "apikey", "authkey", "authorization", "authorizationcode",
+    "authcode", "oauthcode", "clientsecret", "secret", "password",
+    "privatekey", "credential", "credentials", "codeverifier",
 )
-# A request may contain an OCR JSON string, or even a malformed/embedded
-# JSON fragment: never write a string that might contain a credential field.
+_AI_SENSITIVE_PREFIXES = (
+    "authorization", "oauthcode", "authcode", "authkey",
+)
+# Unstructured OCR text must be treated conservatively: a quoted "authKey"
+# field may appear inside a sentence that is not valid JSON. No word
+# boundaries, because keys may be camelCased or namespaced.
 _AI_SENSITIVE_TEXT = re.compile(
-    # A non-JSON OCR fragment may contain CamelCase keys or escaped JSON.
-    # No left word boundary: "userAccessToken" must be recognized.
-    r"(?i)(?:token|api[_\s-]*key|authorization|secret|password|"
-    r"credentials?|private[_\s-]*key|bearer)"
+    r"(?i)(?:token|api[_\s-]*(?:key|token|secret)|"
+    r"auth[_\s-]*(?:key|code|token|secret)|"
+    r"authorization|oauth[_\s-]*(?:key|code|token|secret)|"
+    r"client[_\s-]*secret|code[_\s-]*verifier|secret|"
+    r"password|credentials?|private[_\s-]*key|bearer)"
 )
+
+
+def _is_sensitive_ai_key(name: str) -> bool:
+    normalized=re.sub(r"[^a-z0-9]", "", name.casefold())
+    return (normalized in _AI_SENSITIVE_KEYS
+            or normalized.endswith(_AI_SENSITIVE_SUFFIXES)
+            or normalized.startswith(_AI_SENSITIVE_PREFIXES))
+
 
 
 def _sanitize_ai_exchange(value, *, depth=0):
@@ -260,9 +275,7 @@ def _sanitize_ai_exchange(value, *, depth=0):
         out = {}
         for key, item in value.items():
             name=str(key)
-            normalized=re.sub(r"[^a-z0-9]", "", name.casefold())
-            if (normalized in _AI_SENSITIVE_KEYS
-                    or normalized.endswith(_AI_SENSITIVE_SUFFIXES)):
+            if _is_sensitive_ai_key(name):
                 out[name]="[REDACTED]"
             else:
                 out[name]=_sanitize_ai_exchange(item,depth=depth+1)
