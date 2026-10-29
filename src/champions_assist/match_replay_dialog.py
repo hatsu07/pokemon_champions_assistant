@@ -32,6 +32,7 @@ from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile, confirmed_auto_move_notice
 from .local_event_worker import AsyncBattleEventReader
+from .ocr_turn_context import OcrSentLedger
 from .battle_state_tracker import LocalBattleStateTracker
 from .live_state_updates import apply_local_ocr
 from .local_event_image_policy import event_image_plan
@@ -125,7 +126,7 @@ class _ReplayWorker(QObject):
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
                  local_field_candidates=None,diagnostic_sink=None,
-                 exchange_sink=None,
+                 exchange_sink=None,sent_ocr_ledger=None,
                  selection_seconds=120.0, prep_seconds=120.0,battle_seconds=120.0,
                  result_messages=None, result_screen=None):
         super().__init__()
@@ -136,6 +137,7 @@ class _ReplayWorker(QObject):
         self.local_field_candidates=list(local_field_candidates or [])
         self.diagnostic_sink=diagnostic_sink
         self.exchange_sink=exchange_sink
+        self.sent_ocr_ledger=sent_ocr_ledger
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -218,7 +220,9 @@ class _ReplayWorker(QObject):
                 auth_ms=round((perf_counter()-auth_started)*1000)
                 self.progress.emit(
                     "OCRテキストによるAI判断中（結果待ち）"
-                    if _text_action_eligible(self.screen_label,self.state,self.assets)
+                    if _text_action_eligible(
+                        self.screen_label,self.state,self.assets,
+                        local_rows=self.local_field_candidates)
                     else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
@@ -231,7 +235,9 @@ class _ReplayWorker(QObject):
                         total_seconds=self.selection_seconds)
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
-                    if _text_action_eligible(self.screen_label,self.state,self.assets):
+                    if _text_action_eligible(
+                            self.screen_label,self.state,self.assets,
+                            local_rows=local_candidates):
                         next_state,report=run_replay_text_action(
                             state=self.state,assets=self.assets,
                             access_token=token,model=self.selected_model,
@@ -239,7 +245,8 @@ class _ReplayWorker(QObject):
                             total_seconds=self.battle_seconds,
                             expected_screen_label=self.screen_label,
                             local_field_candidates=local_candidates,
-                            diagnostic_sink=self.diagnostic_sink)
+                            diagnostic_sink=self.diagnostic_sink,
+                            sent_ocr_ledger=self.sent_ocr_ledger)
                     else:
                         next_state,report=run_replay_batch(
                             self.frames[-1:],state=self.state,assets=self.assets,
@@ -248,7 +255,8 @@ class _ReplayWorker(QObject):
                             total_seconds=self.battle_seconds,
                             local_field_candidates=local_candidates,
                             expected_screen_label=self.screen_label,
-                            diagnostic_sink=self.diagnostic_sink)
+                            diagnostic_sink=self.diagnostic_sink,
+                            sent_ocr_ledger=self.sent_ocr_ledger)
                         report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
@@ -341,6 +349,7 @@ class MatchReplayDialog(QDialog):
         self._last_local_ocr_status="NOT_RUNNING"
         self._local_event_reader=None
         self._local_battle_tracker=LocalBattleStateTracker()
+        self._ocr_sent_ledger=OcrSentLedger()
         self._ocr_capture_epochs={}
         self._auto_move_epochs=set()
         self._active_state_revision=None
@@ -663,6 +672,7 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self._stop_local_event_reader()
             self._local_battle_tracker.clear()
+            self._ocr_sent_ledger=OcrSentLedger()
             self._ocr_capture_epochs.clear()
             self._auto_move_epochs.clear()
             self._active_state_revision=None
@@ -796,6 +806,7 @@ class MatchReplayDialog(QDialog):
         self._field_profile=None
         self._stop_local_event_reader()
         self._local_battle_tracker.clear()
+        self._ocr_sent_ledger=OcrSentLedger()
         self._ocr_capture_epochs.clear()
         self._auto_move_epochs.clear()
         self._active_state_revision=None
@@ -1540,7 +1551,8 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
-        text_only=_text_action_eligible(screen_label,self.state,self.assets)
+        text_only=_text_action_eligible(
+            screen_label,self.state,self.assets,local_rows=local_candidates)
         planned_image_count=0 if text_only else len(frames)
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
@@ -1634,6 +1646,7 @@ class MatchReplayDialog(QDialog):
             field_profile=self._field_profile,
             local_field_candidates=local_candidates,
             diagnostic_sink=diagnostic_sink,
+            sent_ocr_ledger=self._ocr_sent_ledger,
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
         )
@@ -2404,6 +2417,10 @@ class MatchReplayDialog(QDialog):
                             "verified":report.get("transport")!="OCR_TEXT_ONLY",
                             "last_confirmed_turn":self._turn_epoch})
             self.state=payload["state"]
+            # This independently records successful sends by retired workers.
+            self.state["_ai_ocr_presented_keys"]=sorted(
+                set(self.state.get("_ai_ocr_presented_keys") or ()) |
+                self._ocr_sent_ledger.snapshot())
             observed=report.get("screen")
             if observed and observed!="UNKNOWN":
                 self._last_observed_ui=observed
