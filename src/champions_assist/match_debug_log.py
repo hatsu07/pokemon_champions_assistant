@@ -222,10 +222,65 @@ class MatchDebugLog:
 AI_EXCHANGE_MAX_BYTES = 32 * 1024 * 1024
 AI_EXCHANGE_EVENT_MAX_BYTES = 3 * 1024 * 1024
 AI_EXCHANGE_KEEP_FILES = 10
-_AI_SECRET = re.compile(
-    r'(?i)(?:sk-[a-z0-9_-]{8,}|bearer\s+[a-z0-9._-]{8,}'
-    r'|(?:api[_ -]?key|access[_ -]?token|authorization)\s*[:=]\s*[^\s"]+)'
+_AI_CREDENTIAL = re.compile(
+    r"(?i)(?:sk-[a-z0-9_-]{8,}|bearer\s+[a-z0-9._~+/-]{8,})"
 )
+_AI_SENSITIVE_KEYS = frozenset({
+    "token", "accesstoken", "refreshtoken", "idtoken", "authtoken",
+    "oauthtoken", "sessiontoken", "bearertoken", "apikey", "authkey",
+    "authorization", "clientsecret", "secret", "secretkey",
+    "password", "privatekey", "credentials",
+})
+# A request may contain an OCR JSON string, or even a malformed/embedded
+# JSON fragment: never write a string that might contain a credential field.
+_AI_SENSITIVE_TEXT = re.compile(
+    r"(?i)(?<![a-z0-9])(?:access[_\s-]*token|refresh[_\s-]*token|"
+    r"id[_\s-]*token|auth[_\s-]*token|oauth[_\s-]*token|"
+    r"session[_\s-]*token|bearer[_\s-]*token|api[_\s-]*key|"
+    r"auth[_\s-]*key|authorization|client[_\s-]*secret|"
+    r"secret[_\s-]*key|private[_\s-]*key|password|credentials)"
+    r"(?![a-z0-9])"
+)
+
+
+def _sanitize_ai_exchange(value, *, depth=0):
+    """Fail closed on embedded credentials before serializing private JSONL.
+
+    Scrub mapping keys recursively, including JSON embedded in input text.
+    An unparseable string mentioning credential keys is removed in full
+    rather than relying on fragile post-JSON regex substitutions.
+    """
+    if depth > 24:
+        return "[REDACTED_NESTING]"
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            name=str(key)
+            normalized=re.sub(r"[^a-z0-9]", "", name.casefold())
+            if normalized in _AI_SENSITIVE_KEYS:
+                out[name]="[REDACTED]"
+            else:
+                out[name]=_sanitize_ai_exchange(item,depth=depth+1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_ai_exchange(item,depth=depth+1) for item in value]
+    if isinstance(value, str):
+        clean=_AI_CREDENTIAL.sub("[REDACTED]",value)
+        if not _AI_SENSITIVE_TEXT.search(clean):
+            return clean
+        try:
+            decoded=json.loads(clean)
+        except (TypeError, ValueError):
+            return "[REDACTED_SENSITIVE_TEXT]"
+        # JSON scalar strings or nested quoted strings could otherwise recurse
+        # indefinitely. For ambiguous content, withhold the whole string.
+        if not isinstance(decoded,(dict,list)):
+            return "[REDACTED_SENSITIVE_TEXT]"
+        sanitized=_sanitize_ai_exchange(decoded,depth=depth+1)
+        return json.dumps(sanitized,ensure_ascii=False,separators=(",",":"))
+    if value is None or isinstance(value,(bool,int,float)):
+        return value
+    return "[REDACTED_UNSUPPORTED_VALUE]"
 
 
 class PrivateAiExchangeLog:
@@ -261,11 +316,11 @@ class PrivateAiExchangeLog:
             return
         record = {"schema": "champions-private-ai-transcript-v1",
                   "utc": datetime.now(timezone.utc).isoformat(),
-                  "event": event, "payload": payload}
+                  "event": event, "payload": _sanitize_ai_exchange(payload)}
         try:
             line = json.dumps(record, ensure_ascii=False,
                               separators=(",", ":"), default=str)
-            line = _AI_SECRET.sub("[REDACTED]", line) + "\n"
+            line = _AI_CREDENTIAL.sub("[REDACTED]", line) + "\n"
             encoded = line.encode("utf-8")
             if len(encoded) > AI_EXCHANGE_EVENT_MAX_BYTES:
                 encoded = (json.dumps({
