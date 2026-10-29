@@ -208,3 +208,95 @@ class MatchDebugLog:
             if names:
                 fields["opponent_six_validated"]=names
         return self.write(event,**fields)
+
+
+# Explicitly opted-in text-only GPT transcript. Separate from the bounded
+# default diagnostics; never persist screenshots, HTTP headers or API tokens.
+# The opt-in recorder runs on its own bounded queue, outside the Qt GUI thread.
+AI_EXCHANGE_MAX_BYTES = 32 * 1024 * 1024
+AI_EXCHANGE_EVENT_MAX_BYTES = 3 * 1024 * 1024
+AI_EXCHANGE_KEEP_FILES = 10
+_AI_SECRET = re.compile(
+    r"(?i)(?:sk-[a-z0-9_-]{8,}|bearer\\s+[a-z0-9._-]{8,}"
+    r"|(?:api[_ -]?key|access[_ -]?token|authorization)\\s*[:=]\\s*[^\\s\\\"]+)"
+)
+
+
+class PrivateAiExchangeLog:
+    """User-opted-in local GPT text transcript; off by default.
+
+    May contain player names, opponent names, OCR strings and team details.
+    Requests omit image bytes and network/auth parameters by construction.
+    """
+
+    def __init__(self, app_root, *, match_id):
+        root = Path(app_root) / "debug-logs" / "ai-exchanges"
+        root.mkdir(parents=True, exist_ok=True)
+        self.path = root / (match_id + ".jsonl")
+        for old in sorted(root.glob("capture-*.jsonl"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)[
+                              AI_EXCHANGE_KEEP_FILES-1:]:
+            if old != self.path:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        self.queue = Queue(maxsize=256)
+        self.capped = False
+        self.failed = False
+        self._worker = Thread(target=self._drain, daemon=True,
+                              name="champions-ai-exchange-log")
+        self._worker.start()
+
+    def write(self, event, payload):
+        if event not in ("GPT_REQUEST", "GPT_RESPONSE", "GPT_ERROR"):
+            return
+        if self.capped or self.failed:
+            return
+        record = {"schema": "champions-private-ai-transcript-v1",
+                  "utc": datetime.now(timezone.utc).isoformat(),
+                  "event": event, "payload": payload}
+        try:
+            line = json.dumps(record, ensure_ascii=False,
+                              separators=(",", ":"), default=str)
+            line = _AI_SECRET.sub("[REDACTED]", line) + "\\n"
+            encoded = line.encode("utf-8")
+            if len(encoded) > AI_EXCHANGE_EVENT_MAX_BYTES:
+                encoded = (json.dumps({
+                    "schema": record["schema"], "utc": record["utc"],
+                    "event": "GPT_EVENT_TOO_LARGE",
+                    "original_event": event,
+                    "original_bytes": len(encoded)
+                }, ensure_ascii=False) + "\\n").encode("utf-8")
+            self.queue.put_nowait(encoded)
+        except (Full, OSError, TypeError, ValueError):
+            # A diagnostic failure must not block the live battle.
+            self.failed = True
+
+    def _drain(self):
+        written = 0
+        try:
+            with self.path.open("ab") as out:
+                while True:
+                    encoded = self.queue.get()
+                    try:
+                        if encoded is None:
+                            return
+                        if written + len(encoded) > AI_EXCHANGE_MAX_BYTES:
+                            self.capped = True
+                            continue
+                        out.write(encoded)
+                        out.flush()
+                        written += len(encoded)
+                    finally:
+                        self.queue.task_done()
+        except OSError:
+            self.failed = True
+
+    def close(self):
+        # Never block a live GUI on disk I/O during shutdown.
+        try:
+            self.queue.put_nowait(None)
+        except Full:
+            pass
+        self._worker.join(timeout=0.5)
