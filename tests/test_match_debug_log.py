@@ -6,7 +6,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from champions_assist.match_debug_log import MatchDebugLog
+from champions_assist.match_debug_log import MatchDebugLog, PrivateAiExchangeLog
+from champions_assist.selection_vision import _stream_json, start_ai_exchange_trace, stop_ai_exchange_trace
+from types import SimpleNamespace
 
 
 class MatchDebugDiagnosticsTests(unittest.TestCase):
@@ -36,6 +38,274 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
             self.assertEqual(ocr["ocr_jobs_enqueued"],5)
             self.assertEqual(ocr["ocr_results_dropped"],1)
             self.assertEqual(ocr["ocr_candidates_sent"],4)
+
+    def test_private_exchange_opt_in_logs_text_but_no_image_or_api_key(self):
+        with tempfile.TemporaryDirectory() as root:
+            logfile=PrivateAiExchangeLog(root,match_id="capture-"+"e"*32)
+            class Stream:
+                def __enter__(self): return self
+                def __exit__(self,*args): return False
+                def __iter__(self):
+                    yield SimpleNamespace(type="response.output_text.delta",
+                                          delta='{"result":"WIN"}')
+                    yield SimpleNamespace(type="response.completed")
+            client=SimpleNamespace(responses=SimpleNamespace(
+                create=lambda **kwargs:Stream()))
+            trace=start_ai_exchange_trace(logfile.write)
+            try:
+                result=_stream_json(
+                    client,model="test",name="test_result",
+                    schema={"type":"object","properties":{
+                        "result":{"type":"string"}},"required":["result"]},
+                    instructions="Do not leak sk-verysecret01234567890",
+                    content=[{"type":"input_text","text":"OCR sample"},
+                             {"type":"input_image","image_url":"data:image/jpeg;base64,SUPERSECRET"}])
+            finally:
+                stop_ai_exchange_trace(trace)
+            logfile.queue.join()
+            logfile.close()
+            lines=[json.loads(line) for line in logfile.path.read_text(
+                encoding="utf-8").splitlines()]
+            self.assertEqual(result,{"result":"WIN"})
+            self.assertEqual([row["event"] for row in lines],
+                             ["GPT_REQUEST","GPT_RESPONSE"])
+            serialized=json.dumps(lines,ensure_ascii=False)
+            self.assertIn("OCR sample",serialized)
+            self.assertIn("WIN",serialized)
+            self.assertNotIn("SUPERSECRET",serialized)
+            self.assertNotIn("verysecret01234567890",serialized)
+            self.assertIn("[REDACTED]",serialized)
+
+    def test_private_gpt_log_masks_recursive_and_embedded_json_tokens(self):
+        with tempfile.TemporaryDirectory() as root:
+            log=PrivateAiExchangeLog(root,match_id="capture-"+"a"*32)
+            embedded=json.dumps({
+                "battle":"safe OCR", "auth":{"access_token":"NESTED_ACCESS_123456"},
+                "session":{"refresh_token":"NESTED_REFRESH_123456"},
+                "messages":["unchanged",{"authorization":"Bearer SECRETAUTH123456"},
+                            {"token":"GENERIC_TOKEN_123456"}]
+            },ensure_ascii=False)
+            log.write("GPT_REQUEST",{
+                "api_key":"DIRECT_API_SECRET_123456",
+                "meta":{"client_secret":"CLIENT_SECRET_123456",
+                        "openai_api_key":"NAMESPACED_API_KEY_123456",
+                        "content":"safe metadata"},
+                "content":[
+                    {"type":"input_text","text":embedded},
+                    {"type":"input_text",
+                     "text":'prefix {"access_token":"RAW_INLINE_123456"} suffix'},
+                    {"type":"input_text",
+                     "text":r'{\\\"refresh_token\\\":\\\"ESCAPED_123456\\\"}'},
+                    {"type":"input_text","text":"safe battle OCR string"},
+                ],
+                "notes":"sk-verysecret1234567890",
+            })
+            log.write("GPT_RESPONSE",{
+                "answer":{"result":"UNKNOWN",
+                          "credentials":{"password":"PASSWORD_123456"}},
+                "safe_result":"UNKNOWN",
+            })
+            log.queue.join()
+            log.close()
+            raw=log.path.read_text(encoding="utf-8")
+            rows=[json.loads(line) for line in raw.splitlines()]
+            self.assertEqual([row["event"] for row in rows],
+                             ["GPT_REQUEST","GPT_RESPONSE"])
+            for secret in (
+                "DIRECT_API_SECRET_123456","CLIENT_SECRET_123456",
+                "NESTED_ACCESS_123456","NESTED_REFRESH_123456",
+                "SECRETAUTH123456","RAW_INLINE_123456",
+                "ESCAPED_123456","PASSWORD_123456",
+                "verysecret1234567890", "NAMESPACED_API_KEY_123456",
+                "GENERIC_TOKEN_123456",
+            ):
+                self.assertNotIn(secret,raw)
+            self.assertIn("safe battle OCR string",raw)
+            self.assertIn("safe metadata",raw)
+            embedded_saved=json.loads(rows[0]["payload"]["content"][0]["text"])
+            self.assertEqual(embedded_saved["battle"],"safe OCR")
+            self.assertEqual(embedded_saved["auth"]["access_token"],"[REDACTED]")
+            self.assertEqual(rows[0]["payload"]["api_key"],"[REDACTED]")
+            self.assertEqual(rows[0]["payload"]["content"][1]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(rows[1]["payload"]["safe_result"],"UNKNOWN")
+
+    def test_private_gpt_log_redacts_api_token_camelcase_and_json_text(self):
+        # Regression for PR #121 review: do not use raw-text word
+        # boundaries as the gate to parse JSON credential fields.
+        secret_api="EXAMPLE_API_TOKEN_VALUE12345"
+        secret_camel="EXAMPLE_CAMEL_ACCESS_VALUE12345"
+        secret_response="EXAMPLE_RESPONSE_TOKEN_VALUE12345"
+        with tempfile.TemporaryDirectory() as root:
+            log=PrivateAiExchangeLog(root,match_id="capture-"+"b"*32)
+            nested={"api_token":secret_api,
+                    "userAccessToken":secret_camel,
+                    "safe_event":"マスカーニャが登場した"}
+            json_text=json.dumps(nested,ensure_ascii=False)
+            # A string containing JSON and its double-encoded form must
+            # both be scrubbed; direct dicts and model answers as well.
+            log.write("GPT_REQUEST",{
+                "content":[{"type":"input_text","text":json_text},
+                           {"type":"input_text","text":json.dumps(json_text)},
+                           {"type":"input_text",
+                            "text":"  "+json.dumps({"userAccessToken":secret_camel})},
+                           {"type":"input_text","text":"OCR unchanged"}],
+                "structured":{"api_token":secret_api,
+                              "userAccessToken":secret_camel,
+                              "event":"safe"},
+            })
+            log.write("GPT_RESPONSE",{
+                "answer":{"userAccessToken":secret_response,
+                          "nested_json":json.dumps({"api_token":secret_api}),
+                          "result":"UNKNOWN"}
+            })
+            log.queue.join()
+            log.close()
+            disk=log.path.read_text(encoding="utf-8")
+            for secret in (secret_api,secret_camel,secret_response):
+                self.assertNotIn(secret,disk)
+            rows=[json.loads(line) for line in disk.splitlines()]
+            self.assertEqual(len(rows),2)
+            request=rows[0]["payload"]
+            embedded=json.loads(request["content"][0]["text"])
+            self.assertEqual(embedded["api_token"],"[REDACTED]")
+            self.assertEqual(embedded["userAccessToken"],"[REDACTED]")
+            self.assertEqual(embedded["safe_event"],"マスカーニャが登場した")
+            double_encoded=json.loads(request["content"][1]["text"])
+            self.assertEqual(json.loads(double_encoded)["api_token"],"[REDACTED]")
+            leading=json.loads(request["content"][2]["text"])
+            self.assertEqual(leading["userAccessToken"],"[REDACTED]")
+            self.assertEqual(request["structured"]["api_token"],"[REDACTED]")
+            self.assertEqual(request["structured"]["userAccessToken"],"[REDACTED]")
+            self.assertEqual(request["content"][3]["text"],"OCR unchanged")
+            response=rows[1]["payload"]["answer"]
+            self.assertEqual(response["userAccessToken"],"[REDACTED]")
+            self.assertEqual(json.loads(response["nested_json"])["api_token"],
+                             "[REDACTED]")
+            self.assertEqual(response["result"],"UNKNOWN")
+
+    def test_private_gpt_log_redacts_authorization_code_and_authkey(self):
+        # Regression for the latest PR #121 review. Both valid JSON
+        # fields and invalid/embedded JSON fragments must be safe on disk.
+        secrets = {
+            "authorization_code": "OAUTH_CODE_SECRET_VALUE_123456",
+            "userAuthorizationCode": "NAMESPACED_CODE_SECRET_VALUE_123456",
+            "authKey": "AUTH_KEY_SECRET_VALUE_123456",
+            "oauth_code": "OAUTH_SHORT_CODE_SECRET_VALUE_123456",
+            "code_verifier": "PKCE_VERIFIER_SECRET_VALUE_123456",
+        }
+        with tempfile.TemporaryDirectory() as root:
+            log = PrivateAiExchangeLog(root, match_id="capture-"+"c"*32)
+            log.write("GPT_REQUEST", {
+                "content": [
+                    {"type": "input_text",
+                     "text": json.dumps({
+                         "authorization_code": secrets["authorization_code"],
+                         "authKey": secrets["authKey"],
+                         "safe": "Pokemon turn advice",
+                     })},
+                    {"type": "input_text",
+                     "text": 'prefix {"authKey":"'+secrets["authKey"]+'"} suffix'},
+                    {"type": "input_text",
+                     "text": 'prefix {"authorization_code":"'
+                             +secrets["authorization_code"]+'"} suffix'},
+                    {"type": "input_text", "text": "safe turn context"},
+                ],
+                "metadata": {
+                    "userAuthorizationCode": secrets["userAuthorizationCode"],
+                    "oauth_code": secrets["oauth_code"],
+                    "code_verifier": secrets["code_verifier"],
+                    "name": "safe metadata",
+                },
+            })
+            log.write("GPT_RESPONSE", {
+                "output": json.dumps({
+                    "authorization_code": secrets["authorization_code"],
+                    "authKey": secrets["authKey"],
+                    "status": "UNKNOWN",
+                }),
+            })
+            log.queue.join()
+            log.close()
+            on_disk=log.path.read_text(encoding="utf-8")
+            for secret in secrets.values():
+                self.assertNotIn(secret,on_disk)
+            rows=[json.loads(line) for line in on_disk.splitlines()]
+            self.assertEqual([row["event"] for row in rows],
+                             ["GPT_REQUEST","GPT_RESPONSE"])
+            request=rows[0]["payload"]
+            decoded=json.loads(request["content"][0]["text"])
+            self.assertEqual(decoded["authorization_code"],"[REDACTED]")
+            self.assertEqual(decoded["authKey"],"[REDACTED]")
+            self.assertEqual(decoded["safe"],"Pokemon turn advice")
+            self.assertEqual(request["content"][1]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(request["content"][2]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(request["content"][3]["text"],"safe turn context")
+            for key in ("userAuthorizationCode","oauth_code","code_verifier"):
+                self.assertEqual(request["metadata"][key],"[REDACTED]")
+            self.assertEqual(request["metadata"]["name"],"safe metadata")
+            response=json.loads(rows[1]["payload"]["output"])
+            self.assertEqual(response["authorization_code"],"[REDACTED]")
+            self.assertEqual(response["authKey"],"[REDACTED]")
+            self.assertEqual(response["status"],"UNKNOWN")
+
+    def test_cloud_access_keys_are_masked_in_saved_gpt_jsonl(self):
+        # These are representative cloud credentials, not a guarantee that
+        # arbitrary secrets in OCR/LLM text can be detected.
+        secret_access="AWS_SECRET_ACCESS_SAMPLE_123456"
+        key_id="AWS_ACCESS_KEY_ID_SAMPLE_123456"
+        azure_key="AZURE_STORAGE_ACCESS_KEY_123456"
+        with tempfile.TemporaryDirectory() as root:
+            logfile=PrivateAiExchangeLog(root,match_id="capture-"+"d"*32)
+            source={"aws_secret_access_key":secret_access,
+                    "aws_access_key_id":key_id,
+                    "azure_storage_account_key":azure_key,
+                    "safe_event":"交代しました"}
+            logfile.write("GPT_REQUEST",{
+                "content":[
+                    {"type":"input_text","text":json.dumps(source,ensure_ascii=False)},
+                    {"type":"input_text",
+                     "text":'prefix {"aws_access_key_id":"'+key_id+'"} suffix'},
+                    {"type":"input_text","text":"no sensitive material"},
+                ],
+                "metadata":{"aws_secret_access_key":secret_access,
+                            "aws_access_key_id":key_id,
+                            "safe":"still visible"},
+            })
+            logfile.write("GPT_RESPONSE",{
+                "answer":json.dumps({
+                    "aws_secret_access_key":secret_access,
+                    "aws_access_key_id":key_id,
+                    "status":"UNKNOWN"}),
+            })
+            logfile.queue.join()
+            logfile.close()
+            disk=logfile.path.read_text(encoding="utf-8")
+            for secret in (secret_access,key_id,azure_key):
+                self.assertNotIn(secret,disk)
+            records=[json.loads(line) for line in disk.splitlines()]
+            self.assertEqual(len(records),2)
+            request=records[0]["payload"]
+            parsed=json.loads(request["content"][0]["text"])
+            for key in ("aws_secret_access_key","aws_access_key_id",
+                        "azure_storage_account_key"):
+                self.assertEqual(parsed[key],"[REDACTED]")
+            self.assertEqual(parsed["safe_event"],"交代しました")
+            self.assertEqual(request["content"][1]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(request["content"][2]["text"],
+                             "no sensitive material")
+            self.assertEqual(request["metadata"]["aws_secret_access_key"],
+                             "[REDACTED]")
+            self.assertEqual(request["metadata"]["aws_access_key_id"],
+                             "[REDACTED]")
+            self.assertEqual(request["metadata"]["safe"],"still visible")
+            response=json.loads(records[1]["payload"]["answer"])
+            self.assertEqual(response["aws_secret_access_key"],"[REDACTED]")
+            self.assertEqual(response["aws_access_key_id"],"[REDACTED]")
+            self.assertEqual(response["status"],"UNKNOWN")
 
     def test_unsafe_content_is_stripped_from_disk_and_only_codes_remain(self):
         with tempfile.TemporaryDirectory() as root:

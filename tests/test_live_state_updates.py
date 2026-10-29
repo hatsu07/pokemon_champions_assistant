@@ -425,13 +425,16 @@ class LiveStateOcrTests(unittest.TestCase):
         # the original AI request/response/validation diagnostics.
         self.assertEqual([e[0] for e in events],
                          ["OCR_TURN_COMPACTION","AI_INPUT",
+                          "AI_TURN_PAYLOAD_SIZE","AI_API_STAGE",
                           "AI_RESPONSE_RAW","AI_VALIDATION",
                           "OCR_TURN_TIMING"])
         self.assertEqual(events[1][1]["active_own"],"マスカーニャ")
-        self.assertEqual(events[2][1]["switch_target"],"マリルリ")
-        self.assertIn("validation_code",events[3][1])
+        self.assertEqual(events[4][1]["switch_target"],"マリルリ")
+        self.assertIn("validation_code",events[5][1])
         self.assertIn("api_rows_sent",events[0][1])
-        self.assertIn("turn_elapsed_ms",events[4][1])
+        self.assertIn("new_rows",events[2][1])
+        self.assertIn("api_elapsed_ms",events[3][1])
+        self.assertIn("turn_elapsed_ms",events[6][1])
 
 
 if __name__=="__main__":

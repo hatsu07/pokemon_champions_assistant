@@ -336,6 +336,45 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                              "living_selected_bench_candidates"])
         self.assertEqual(after["our_active"],"")
 
+    def test_forced_switch_blank_actor_ok_with_confirmed_faint(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        state["our_active"]="ゲンガー"
+        state["awaiting_replacement"]=True
+        state["battle_evidence"]["hp_by_pokemon"]["own"]["ゲンガー"]="0/120"
+        answer=model_reply([],own="")
+        answer["action"]={"action_kind":"SWITCH","move":"",
+                          "switch_target":"ドドゲザン","warning":""}
+        with patch("champions_assist.match_replay._stream_json",return_value=answer):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="SWITCH_SELECTION",
+                local_field_candidates=rows(3),
+                client_factory=lambda **kwargs:object())
+        self.assertNotEqual(report.get("reason"),"AI_OCR_OWN_ACTIVE_UNVERIFIED")
+        self.assertEqual(after["our_active"],"ゲンガー")
+
+    def test_voluntary_switch_blank_actor_still_blocks(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        state["awaiting_replacement"]=False
+        state["battle_evidence"]["hp_by_pokemon"]["own"]["ゲンガー"]="90/120"
+        answer=model_reply([],own="")
+        answer["action"]={"action_kind":"SWITCH","move":"",
+                          "switch_target":"ドドゲザン","warning":""}
+        events=[]
+        with patch("champions_assist.match_replay._stream_json",return_value=answer):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="SWITCH_SELECTION",
+                local_field_candidates=rows(3),
+                client_factory=lambda **kwargs:object(),
+                diagnostic_sink=lambda e,v:events.append(e))
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"AI_OCR_OWN_ACTIVE_UNVERIFIED")
+        self.assertEqual(after["our_active"],"ゲンガー")
+        self.assertIn("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",events)
+
     def test_unknown_own_without_confirmed_faint_requires_visual_fallback(self):
         assets=fixture_assets()
         state=battle_state(assets)

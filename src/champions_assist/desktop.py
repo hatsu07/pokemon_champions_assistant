@@ -774,6 +774,7 @@ class DesktopMainWindow(QMainWindow):
     def _build_unified_ui(self) -> None:
         """Real user-facing UI, driven exclusively by MatchReplayDialog.state."""
         self._close_pending=False
+        self._close_hidden_pending=False
         from .match_replay_dialog import MatchReplayDialog
         from .app_config import default_app_root
 
@@ -1046,7 +1047,13 @@ class DesktopMainWindow(QMainWindow):
             self.recommendation_label.setText("行動推奨なし：" + str(report.get("reason") or status))
         elif status == "MATCH_END":
             self.recommendation_label.setText(suggestion or "対戦終了")
-        elif status in ("OBSERVED", "RESULT_UNCONFIRMED"):
+        elif status=="RESULT_VERIFICATION_PENDING":
+            self.recommendation_label.setText(
+                "結果画面検出・直前の戦闘OCRをGPTで判定中")
+        elif status=="RESULT_UNCONFIRMED":
+            self.recommendation_label.setText(
+                "結果画面検出・勝敗未確定："+str(report.get("reason") or "GPTの根拠不足"))
+        elif status=="OBSERVED":
             if report.get("screen")=="COMMAND_MENU":
                 self.recommendation_label.setText(
                     "『たたかう』を選択し、技一覧を表示してください。"
@@ -1279,6 +1286,7 @@ class DesktopMainWindow(QMainWindow):
             return
         panel=self._match_panel
         if (panel._thread is None and panel._prep_thread is None
+                and not panel._retired_workers
                 and (self._postmatch_worker is None
                      or not self._postmatch_worker.isRunning())):
             QTimer.singleShot(0,self.close)
@@ -1571,11 +1579,20 @@ class DesktopMainWindow(QMainWindow):
                 self._match_panel.request_shutdown("close")
             if (self._match_panel._thread is not None or
                     self._match_panel._prep_thread is not None or
+                    self._match_panel._retired_workers or
                     (self._postmatch_worker is not None
                      and self._postmatch_worker.isRunning())):
-                # Cancel new capture/replies now, close automatically as soon
-                # as QThreads have finished. Never force-destroy live workers.
+                # Stop new work and hide the UI promptly, then drain workers
+                # safely without QThread.terminate(). Still fully exit later.
+                self._match_panel._trace_event("WINDOW_CLOSE_WAITING_FOR_WORKERS",
+                    active_thread=self._match_panel._thread is not None,
+                    prep_thread=self._match_panel._prep_thread is not None,
+                    retired_threads=len(self._match_panel._retired_workers),
+                    postmatch_thread=(self._postmatch_worker is not None
+                                      and self._postmatch_worker.isRunning()))
                 event.ignore()
+                self._close_hidden_pending=True
+                self.hide()
                 return
         else:
             # A closed legacy dashboard must not render a queued presentation
@@ -1586,6 +1603,9 @@ class DesktopMainWindow(QMainWindow):
                 pass
         self.preferences.save(self, compact=self.compact_box.isChecked(), always_on_top=self.on_top_box.isChecked())
         super().closeEvent(event)
+        if self._unified and self._close_hidden_pending:
+            self._close_hidden_pending=False
+            QTimer.singleShot(0,QApplication.instance().quit)
 
 
 def ensure_application() -> QApplication:

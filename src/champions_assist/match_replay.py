@@ -1574,16 +1574,24 @@ def run_replay_text_result(*, state: dict, messages: list[str],
             instructions=(
                 "Use ONLY the supplied local OCR text. Determine whether the "
                 "human player won or lost the entire Pokémon Champions match, "
-                "not whether one Pokémon fainted. UNKNOWN for any unclear, "
+                "not whether one Pokémon fainted. Game/system result "
+                "'○○との勝負に勝った' means HUMAN WIN and "
+                "'○○との勝負に負けた' means HUMAN LOSS; do not "
+                "invert it as opponent dialogue. UNKNOWN for any unclear, "
                 "truncated, contradictory, or non-final message. Quote an "
                 "EXACT substring from one supplied OCR message as evidence; "
-                "never invent winner labels or infer from party HP. No images."),
+                "quote the entire 'との勝負に勝った/負けた' phrase when present, "
+                "not just its final word. Never invent winner labels or "
+                "infer from party HP. No images."),
             content=[{"type":"input_text","text":payload}])
         result=answer.get("result","UNKNOWN")
         evidence=str(answer.get("evidence") or "").strip()
-        # Enforce that the AI grounded its decision in an actual OCR snippet.
+        # Check both the GPT's exact quote and the complete source OCR.
+        # Quoting only "勝った" cannot conceal a contradictory full message.
         if (result not in ("WIN","LOSS") or not evidence
+                or not _result_quote_direction_consistent(result,evidence)
                 or not any(evidence in m and possible_result_message(m)
+                           and _result_quote_direction_consistent(result,m)
                            for m in recent)):
             return updated,{"status":"RESULT_UNCONFIRMED",
                             "reason":"NO_GROUNDED_EXPLICIT_RESULT",
@@ -1665,20 +1673,36 @@ def select_screen_result_evidence(rows: list[dict], *,
 
 
 def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
-    """Fail closed on an explicit opposite outcome; never infer a result.
+    """Fail closed on player-perspective game/system match-result OCR.
 
-    Only an independent GPT decision can end the match. This check merely
-    rejects contradictory grounded quotations (e.g. WIN citing 敗北).
-    Ambiguous or two-sided messages require human confirmation.
+    '○○との勝負に勝った/負けた' is a result for the HUMAN player,
+    not the speech of an opponent. GPT decides; this guard checks only
+    whether its answer is consistent with the quoted OCR.
     """
-    phrase=" ".join(evidence.casefold().split())
-    win_cues=("勝利","勝った","勝ちました","you win","相手が降参","相手が投了")
-    loss_cues=("敗北","負けた","負けました","you lose","自分が降参")
-    matches_win=any(cue in phrase for cue in win_cues)
-    matches_loss=any(cue in phrase for cue in loss_cues)
-    if matches_win==matches_loss:
+    import re
+    if result not in ("WIN","LOSS"):
         return False
-    return matches_win if result=="WIN" else matches_loss if result=="LOSS" else False
+    phrase=re.sub(r"\s+","",unicodedata.normalize("NFKC",str(evidence).casefold()))
+    outcome_words=re.findall(r"との勝負に(勝った|負けた)",phrase)
+    if outcome_words:
+        # Two opposite result messages in one OCR source are ambiguous.
+        if len(set(outcome_words)) != 1:
+            return False
+        player_result="WIN" if outcome_words[0]=="勝った" else "LOSS"
+        contrary=(("敗北","負けた","負けました","youlose","自分が降参")
+                  if player_result=="WIN"
+                  else ("勝利","勝った","勝ちました","youwin","相手が降参","相手が投了"))
+        return result==player_result and not any(cue in phrase for cue in contrary)
+    if "との勝負に" in phrase:
+        # Incomplete battle result: do not decide based on a fragment.
+        return False
+    # Existing explicit result labels remain valid. Isolated "勝った" or
+    # "負けた" without the game-result context is not enough.
+    win_cues=("勝利","勝ちました","youwin","相手が降参","相手が投了")
+    loss_cues=("敗北","負けました","youlose","自分が降参")
+    has_win=any(cue in phrase for cue in win_cues)
+    has_loss=any(cue in phrase for cue in loss_cues)
+    return has_win != has_loss and (has_win if result=="WIN" else has_loss)
 
 
 def run_replay_screen_result(*, state: dict,
@@ -1732,11 +1756,17 @@ def run_replay_screen_result(*, state: dict,
                 "messages captured BEFORE the result screen. Do not assume "
                 "the result screen itself has been OCR-read. Return "
                 "WIN or LOSS ONLY if one cited OCR phrase explicitly identifies "
-                "the HUMAN player's final MATCH outcome. A Pokemon fainting, "
+                "the HUMAN player's final MATCH outcome. The game's system "
+                "result '○○との勝負に勝った' means the HUMAN player WON "
+                "(WIN); '○○との勝負に負けた' means the HUMAN player "
+                "LOST (LOSS). This is NOT the opponent's speech. Never "
+                "invert the result direction. If OCR is ambiguous, UNKNOWN. "
+                "A Pokemon fainting, "
                 "a partial turn, an opponent's move, or a vague win phrase is "
                 "NOT enough. If contradictory, missing, or uncertain, return "
-                "UNKNOWN. Quote an exact OCR substring as evidence and its "
-                "real input frame_id. Do not invent proof or infer from HP."),
+                "UNKNOWN. Quote the complete 'との勝負に勝った/負けた' "
+                "phrase when present, not only '勝った/負けた'; cite its "
+                "real input frame_id. Never invent proof or infer from HP."),
             content=[{"type":"input_text","text":prompt}])
         result=answer.get("result","UNKNOWN")
         evidence=str(answer.get("evidence") or "").strip()
@@ -1747,6 +1777,8 @@ def run_replay_screen_result(*, state: dict,
                           and row["confidence"] is not None
                           and row["confidence"]>=0.72
                           and possible_result_message(evidence)
+                          and _result_quote_direction_consistent(
+                              result,row["raw_text"])
                           for row in recent))
         if (result not in ("WIN","LOSS") or not grounded
                 or not _result_quote_direction_consistent(result,evidence)):
@@ -1875,9 +1907,19 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
         "no_visible_party_confirmation":switch_only,
     }
+    prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
     if diagnostic_sink is not None:
         from .live_diagnostics import ai_input_digest
         diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
+        diagnostic_sink("AI_TURN_PAYLOAD_SIZE",{
+            "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
+            "ocr_rows":len(candidates),
+            "ocr_json_bytes":context_stats["api_json_bytes"],
+            "new_rows":context_stats["new_rows_sent"],
+            "unresolved_rows":context_stats["unresolved_rows_resent"],
+            "prior_rows_not_resent":context_stats["prior_observations_not_resent"],
+            "pending_questions":len(pending_ocr),
+            "screen_label":expected_screen_label})
     if client_factory is None:
         from openai import OpenAI
         client_factory=OpenAI
@@ -1892,7 +1934,17 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
-                "Interpret OCR frames as observed events, return state_updates and action together. "
+                "Interpret the NEW OCR frames in time order and return "
+                "state_updates and next action together in ONE response. "
+                "Explicitly reconcile active Pokémon, switch-out, send-out, "
+                "faints, HP, moves, boosts, item/status/ability and mega "
+                "changes against the prior state. Report each confirmed "
+                "change as a state_update with source frame IDs and certainty. "
+                "After applying them, return interpreted_own_active and "
+                "interpreted_opponent_active. If a previously verified active "
+                "has not been replaced by proven evidence, retain it even if "
+                "its name is not printed on the current menu. Do not guess "
+                "missing facts or erase a grounded actor with a blank. "
                 "Evaluate moves for interpreted_own_active after the updates. "
                 "Cite actual OCR frame IDs in evidence_frames for each update. "
                 "Never treat previous recommended moves or switches as executed. "
@@ -1930,16 +1982,23 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "For SWITCH_ONLY return SWITCH with one living selected "
                 "bench member or NO_ACTION; never MOVE/PIVOT. In a confirmed "
                 "forced replacement, the fainted own active may be unknown. "
-                "If so, interpreted_own_active must stay empty unless OCR "
-                "actually proves its identity; choose using the selected "
+                "If there is grounded evidence of a fainted active but "
+                "its identity cannot be proved, interpreted_own_active may "
+                "stay empty. For voluntary switches with a known living "
+                "active, keep that name unless a confirmed event changes it. "
+                "Choose using the selected "
                 "living bench and opponent instead of guessing an actor. "
                 "A switch-screen classifier does not confirm which selected "
                 "party entries are visible. "
                 "If materially uncertain use NO_ACTION; no invented data."
             ),
-            content=[{"type":"input_text","text":json.dumps(
-                prompt,ensure_ascii=False,separators=(",",":"))}])
+            content=[{"type":"input_text","text":prompt_text}])
         ai_elapsed_ms=round((perf_counter()-api_started)*1000)
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_API_STAGE",{
+                "api_elapsed_ms":ai_elapsed_ms,
+                "pre_api_elapsed_ms":round((api_started-started)*1000),
+                "validation_pending":True})
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
@@ -1958,7 +2017,22 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                          row.get("side")=="own" and
                          row.get("kind") in ("SWITCH","SWITCH_OUT","FAINT","MEGA")
                          for row in audit)
-        own_mismatch=(combined and
+        # An explicitly confirmed faint replacement can leave an outgoing
+        # actor unnamed; a voluntary switch with a living actor cannot.
+        evidence=(state.get("battle_evidence") or {})
+        hp=(evidence.get("hp_by_pokemon") or {}).get("own") or {}
+        fainted=(evidence.get("fainted") or {}).get("own") or {}
+        current_name=state.get("our_active") or ""
+        possible_fainted=([current_name] if current_name else
+                          list(state.get("selected_three") or ()))
+        has_faint_proof=any(
+            fainted.get(name) or str(hp.get(name,"")).startswith(("0/","0 /"))
+            or str(hp.get(name,"")).casefold() in ("0","0hp","0%","ひんし","fainted")
+            for name in possible_fainted)
+        actor_blank_allowed=bool(switch_only and state.get("awaiting_replacement")
+                                 and has_faint_proof
+                                 and not _canonical(answer.get("interpreted_own_active","")))
+        own_mismatch=(combined and not actor_blank_allowed and
             _canonical(answer.get("interpreted_own_active",""))!=
             _canonical(updated.get("our_active","")))
         opponent_mismatch=(combined and
@@ -1989,6 +2063,18 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             block_ack=own_conflict or own_mismatch,
             commit_presentation=not (own_conflict or own_mismatch))
         if own_conflict or own_mismatch:
+            if diagnostic_sink is not None:
+                diagnostic_sink("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{
+                    "own_conflict":bool(own_conflict),
+                    "own_mismatch":bool(own_mismatch),
+                    "confirmed_faint":bool(has_faint_proof),
+                    "awaiting_replacement":bool(state.get("awaiting_replacement")),
+                    "internal_own":updated.get("our_active") or "",
+                    "model_own":answer.get("interpreted_own_active") or "",
+                    "screen_label":expected_screen_label,
+                    "rejected_updates":[{"kind":row.get("kind"),"reason":row.get("reason")}
+                       for row in audit if row.get("status")=="REJECTED"
+                       and row.get("side")=="own"][:12]})
             # A blocked actor interpretation cannot consume the evidence;
             # keep newly returned unresolved questions, but re-present the
             # raw candidates next turn rather than treating them as handled.

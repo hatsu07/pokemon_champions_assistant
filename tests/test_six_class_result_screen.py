@@ -96,6 +96,7 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             _thread=None,
             _trace_event=MagicMock(),
             _set_ai_status=MagicMock(),
+            _render=MagicMock(),
             store_root=Path("."),
             model="test",
             reasoning_effort="low",
@@ -194,6 +195,48 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
         self.assertEqual(model.call_count,1)
         self.assertIn("capture-999",panel._ocr_capture_epochs)
 
+    def test_enabled_but_stalled_pre_result_ocr_allows_manual_fallback(self):
+        panel=self.fixture(pending=("capture-200",))
+        # Even though reader.enabled stays true, its pre-result work is stuck.
+        # The UI must not be trapped in 250-ms retries indefinitely.
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \
+             patch("champions_assist.match_replay_dialog.monotonic",
+                   side_effect=(100.0,119.9,120.1)), \
+             patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
+            panel._attempt_result_screen_verification()
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,2)
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,2)
+            model.assert_not_called()
+        self.assertFalse(panel._result_screen_sent)
+        self.assertEqual(panel._render.call_args.args[0],
+                         {"status":"RESULT_UNCONFIRMED",
+                          "reason":"PRE_RESULT_BATTLE_OCR_STALLED"})
+        self.assertTrue(any(
+            call.args[0]=="PRE_RESULT_BATTLE_OCR_STALLED"
+            for call in panel._trace_event.call_args_list))
+        self.assertTrue(panel._local_event_reader.enabled)
+
+    def test_pre_result_ocr_progress_resets_stall_watchdog(self):
+        panel=self.fixture(pending=("capture-200","capture-201"))
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \
+             patch("champions_assist.match_replay_dialog.monotonic",
+                   side_effect=(100.0,119.0,138.9,139.1)):
+            panel._attempt_result_screen_verification()
+            panel._ocr_capture_epochs.pop("capture-200")
+            panel._attempt_result_screen_verification()
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,3)
+            panel._render.assert_not_called()
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,3)
+        self.assertEqual(panel._render.call_args.args[0]["reason"],
+                         "PRE_RESULT_BATTLE_OCR_STALLED")
+        self.assertEqual(
+            len([call for call in panel._trace_event.call_args_list
+                 if call.args[0]=="RESULT_OCR_BARRIER_PROGRESS"]),2)
+
     def test_no_prior_message_ocr_does_not_call_gpt(self):
         panel=self.fixture(pending=())
         from unittest.mock import patch
@@ -217,6 +260,9 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             timer.assert_not_called()
             model.assert_not_called()
         panel._set_ai_status.assert_called_once()
+        panel._render.assert_called_once()
+        self.assertEqual(panel._render.call_args.args[0]["status"],
+                         "RESULT_UNCONFIRMED")
 
     def test_late_result_gpt_cannot_override_human_confirmed_result(self):
         from unittest.mock import MagicMock
@@ -319,6 +365,58 @@ class ScreenResultEvidenceTests(unittest.TestCase):
             {"result":"LOSS","evidence":"勝利しました",
              "evidence_frame_id":"capture-201"},
             [self.row("capture-201","対戦に勝利しました",19.)])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_player_perspective_result_win(self):
+        # The game shows the match outcome as the player's own result.
+        row=self.row("capture-201","ハツとの 勝負に 勝った!",19.)
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"ハツとの 勝負に 勝った!",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"ENDED")
+        self.assertEqual(changed["result"],"WIN")
+
+    def test_player_perspective_result_loss(self):
+        row=self.row("capture-201","ハツとの 勝負に 負けた!",19.)
+        changed,report,_=self.call(
+            {"result":"LOSS","evidence":"ハツとの 勝負に 負けた!",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"ENDED")
+        self.assertEqual(changed["result"],"LOSS")
+
+    def test_wrong_gpt_win_on_player_loss_is_unconfirmed(self):
+        # Regression: the previous regex inverted "との勝負に負けた".
+        row=self.row("capture-201","私は相手との勝負に負けた",19.)
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"私は相手との勝負に負けた",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_wrong_gpt_loss_on_player_win_is_unconfirmed(self):
+        row=self.row("capture-201","相手との 勝負に 勝った!",19.)
+        changed,report,_=self.call(
+            {"result":"LOSS","evidence":"相手との 勝負に 勝った!",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_unreadable_or_two_sided_game_result_is_unconfirmed(self):
+        for ocr in ("ハツとの 勝負に 勝っ", "ハツとの勝負に勝った／負けた",
+                    "ハツとの勝負に勝った。でも対戦に敗北しました"):
+            changed,report,_=self.call(
+                {"result":"WIN","evidence":ocr,
+                 "evidence_frame_id":"capture-201"},
+                [self.row("capture-201",ocr,19.)])
+            self.assertEqual(changed["phase"],"BATTLE")
+            self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_short_quote_cannot_hide_opposite_result_in_source(self):
+        row=self.row("capture-201","相手との勝負に負けた。勝利しましたとの誤読",19.)
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"勝利しました",
+             "evidence_frame_id":"capture-201"},[row])
         self.assertEqual(changed["phase"],"BATTLE")
         self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
 

@@ -588,6 +588,49 @@ class TextOnlyLivePathTests(unittest.TestCase):
         self.assertEqual(report["images_sent"],0)
         self.assertEqual(sent[0]["type"],"input_text")
 
+    def test_ocr_text_result_player_perspective_win_and_loss(self):
+        # Secondary direct-text result path must use the same direction
+        # check as the stable RESULT_SCREEN path.
+        for message, outcome in (
+                ("ライバルとの 勝負に 勝った!", "WIN"),
+                ("ライバルとの 勝負に 負けた!", "LOSS")):
+            with self.subTest(message=message):
+                with patch("champions_assist.match_replay._stream_json",
+                           return_value={"result":outcome,"evidence":message}):
+                    changed,report=run_replay_text_result(
+                        state=self.state,messages=[message],
+                        access_token="mock",model="test",
+                        client_factory=lambda **_:object())
+                self.assertEqual(report["status"],"MATCH_END")
+                self.assertEqual(changed["result"],outcome)
+
+    def test_ocr_text_result_rejects_reversed_gpt_result(self):
+        for message, wrong_result in (
+                ("ライバルとの勝負に負けた", "WIN"),
+                ("ライバルとの勝負に勝った", "LOSS")):
+            with self.subTest(message=message):
+                with patch("champions_assist.match_replay._stream_json",
+                           return_value={"result":wrong_result,
+                                         "evidence":message}):
+                    changed,report=run_replay_text_result(
+                        state=self.state,messages=[message],
+                        access_token="mock",model="test",
+                        client_factory=lambda **_:object())
+                self.assertEqual(changed["phase"],"BATTLE")
+                self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_ocr_text_result_rejects_only_short_match_result_fragment(self):
+        message="相手との 勝負に 負け"
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value={"result":"LOSS","evidence":message}) as model:
+            changed,report=run_replay_text_result(
+                state=self.state,messages=[message],
+                access_token="mock",model="test",
+                client_factory=lambda **_:object())
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+        model.assert_not_called()
+
     def test_ocr_result_model_without_grounded_exact_quote_is_not_accepted(self):
         with patch("champions_assist.match_replay._stream_json",
                    return_value={"result":"LOSS","evidence":"負けました"}):

@@ -817,7 +817,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(self.window._close_pending)
         self.assertEqual(panel._shutdown_intent,"close")
         self.assertTrue(panel._cancel_event.is_set())
-        self.assertTrue(self.window.isVisible())
+        self.assertFalse(self.window.isVisible())
         panel._cleanup()
         QCoreApplication.processEvents()
         QCoreApplication.processEvents()
@@ -1209,7 +1209,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIs(loaded,model)
         self.assertEqual(status,"MODEL_READY_CPU")
         self.assertIs(panel._screen_model,model)
-        self.assertIn("5分類ONNX利用中",panel.local_classifier_label.text())
+        self.assertIn("6分類ONNX利用中",panel.local_classifier_label.text())
         stored=json.loads(
             (panel.store_root/"screen_classifier_choice.json").read_text())
         self.assertEqual(stored["model_path"],str(model_path.resolve()))
@@ -1283,6 +1283,16 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         self.assertTrue(panel.manual_batch_button.isHidden())
         self.assertTrue(panel.prep_button.isHidden())
+        self.assertTrue(panel._manual_result_controls.isHidden())
+        self.assertFalse(panel._manual_result_available)
+        self.assertFalse(panel.full_ai_log_check.isChecked())
+        self.assertIn("機密情報に注意",panel.full_ai_log_check.text())
+        self.assertNotIn("認証情報なし",panel.full_ai_log_check.text())
+        self.assertIn("HTTP認証情報",panel.full_ai_log_check.toolTip())
+        self.assertIn("完全除去は保証しません",panel.full_ai_log_check.toolTip())
+        self.assertIn("共有前に",panel.private_ai_log_warning.text())
+        self.assertEqual(panel.private_ai_log_warning.objectName(),
+                         "privateAiLogPrivacyWarning")
         self.assertEqual(panel.classifier_choose_button.objectName(),
                          "chooseScreenClassifier")
         self.assertEqual(panel.prep_banner.objectName(),"live_prep_progress")
@@ -1519,17 +1529,45 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         panel._auto_running=False
 
-    def test_manual_match_result_triggers_ended_state_without_images(self):
+    def test_manual_result_only_after_result_screen_unknown(self):
         panel=self.window._match_panel
         panel.state={"phase":"BATTLE","result":"UNKNOWN",
                      "matrix_compatible":False}
         with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.Yes):
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            panel._finish_match_manually("WIN")
+            confirm.assert_not_called()
+            self.assertEqual(panel.state["phase"],"BATTLE")
+            panel._result_screen_candidate={"frame":"capture-100",
+                                            "time":10.0,
+                                            "pending_ocr_frames":()}
+            panel._render({"status":"RESULT_UNCONFIRMED",
+                           "reason":"NO_GROUNDED_FINAL_MATCH_RESULT"})
+            self.assertTrue(panel._manual_result_available)
+            self.assertFalse(panel._manual_result_controls.isHidden())
             panel._finish_match_manually("WIN")
         self.assertEqual(panel.state["phase"],"ENDED")
         self.assertEqual(panel.state["result"],"WIN")
         self.assertEqual(panel.entries[-1]["status"],"MATCH_END")
-        self.assertEqual(panel.entries[-1]["images_sent"],0)
+        self.assertEqual(panel.entries[-1]["result_source"],
+                         "PLAYER_EXPLICIT_CONFIRMATION")
+        self.assertTrue(panel._manual_result_controls.isHidden())
+
+    def test_result_controls_do_not_show_after_gpt_ended_or_false_alarm(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","result":"UNKNOWN",
+                     "matrix_compatible":False}
+        panel._result_screen_candidate={"frame":"capture-100","time":10.0}
+        panel._render({"status":"RESULT_UNCONFIRMED"})
+        self.assertFalse(panel._manual_result_controls.isHidden())
+        panel._result_screen_candidate=None
+        panel._render({"status":"SUPERSEDED",
+                       "warning":"RESULT_SCREEN_NO_LONGER_CURRENT"})
+        self.assertTrue(panel._manual_result_controls.isHidden())
+        panel.state["phase"]="ENDED"
+        panel.state["result"]="WIN"
+        panel._render({"status":"MATCH_END"})
+        self.assertTrue(panel._manual_result_controls.isHidden())
 
     def test_local_classifier_triggers_on_two_stable_selection_frames(self):
         from champions_assist.screen_classifier import ScreenPrediction
@@ -1552,6 +1590,29 @@ class UnifiedMainWindowTests(unittest.TestCase):
             queue.assert_called_once()
         self.assertIn("TEAM_SELECTION",panel.local_classifier_label.text())
         self.assertIn("ONNX_CPU",panel.local_classifier_label.text())
+        panel._stop_auto()
+
+    def test_trial_result_screen_starts_same_gpt_verification(self):
+        from types import SimpleNamespace
+        from champions_assist.screen_classifier import ScreenPrediction
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        frame=np.full((120,200,3),60,dtype=np.uint8)
+        panel._screen_model=SimpleNamespace(
+            experimental=True,provider="CPUExecutionProvider",
+            predict=lambda image:ScreenPrediction("RESULT_SCREEN",.99,.98,2.0))
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame), \
+             patch.object(panel._turn_buffer,"observe",return_value=None), \
+             patch.object(panel,"_note_stable_result_screen") as note:
+            panel._capture_next()
+            note.assert_not_called()
+            panel._capture_next()
+            note.assert_called_once()
+        self.assertTrue(any(x["event"]=="RESULT_SCREEN_OCR_GPT_GATE"
+                            for x in panel._timing_trace))
         panel._stop_auto()
 
     def test_live_training_capture_is_off_by_default_and_uses_existing_frame(self):
