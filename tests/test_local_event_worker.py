@@ -207,7 +207,8 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         hp="screen_text.own_hp_fraction"
         msg="screen_text.battle_message"
         self.assertEqual(tracker.ingest((read(hp,"65/120",1,{"current":65,"maximum":120}),)),1)
-        self.assertEqual(tracker.ingest((read(hp,"65/120",2,{"current":65,"maximum":120}),)),0)
+        # Without a visual display ID this may be an independent event.
+        self.assertEqual(tracker.ingest((read(hp,"65/120",2,{"current":65,"maximum":120}),)),1)
         self.assertEqual(tracker.ingest((read(hp,"50/120",3,{"current":50,"maximum":120}),)),1)
         self.assertEqual(tracker.conflicts,0)
         tracker.ingest((read(msg,"かみなり",4,"かみなり"),))
@@ -218,6 +219,31 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         self.assertEqual(snapshot["conflict_count"],0)
         self.assertEqual(snapshot["local_observations"][-1]["raw_text"],"かみなり")
         self.assertTrue(snapshot["no_confirmed_game_mechanics"])
+
+    def test_distinct_visual_episodes_preserve_identical_battle_messages(self):
+        tracker=LocalBattleStateTracker()
+        def reading(frame, display, time):
+            return LocalFieldRead(
+                field="screen_text.battle_message", value="ガブリアスのじしん！",
+                frame_id=frame, timestamp=time, confidence=0.96,
+                roi="battle_message", source="test", text="ガブリアスのじしん！",
+                display_id=display)
+        # Same text and within 1.5 seconds, but they are different UI events.
+        self.assertEqual(tracker.ingest(
+            (reading("f1", "visual-1", 10.0),), turn_epoch=2),1)
+        self.assertEqual(tracker.ingest(
+            (reading("f2", "visual-2", 10.6),), turn_epoch=2),1)
+        self.assertEqual([row["frame_id"] for row in
+            tracker.snapshot()["local_observations"]],["f1","f2"])
+        # A continued reading of the SAME visual episode remains deduplicable.
+        self.assertEqual(tracker.ingest(
+            (reading("f3", "visual-2", 10.9),), turn_epoch=2),0)
+        self.assertEqual(tracker.duplicates,1)
+        # Without display IDs, do not discard distinct OCR observations.
+        self.assertEqual(tracker.ingest(
+            (reading("f4", "", 11.0),), turn_epoch=2),1)
+        self.assertEqual(tracker.ingest(
+            (reading("f5", "", 11.4),), turn_epoch=2),1)
 
     def test_event_ocr_writes_no_tactical_api_calls(self):
         profile,image,engine=fixture()
