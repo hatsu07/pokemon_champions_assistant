@@ -31,6 +31,18 @@ class SampleScreenFieldTests(unittest.TestCase):
             restored = ScreenFieldProfile.from_json(path)
             self.assertEqual(restored.reference_resolution, (960,572))
             self.assertEqual(restored.regions, self.profile.regions)
+            self.assertFalse(restored.ruby_body_rows_validated)
+            original["validated_on_game_capture"] = True
+            original["ruby_body_rows_validated"] = True
+            path.write_text(json.dumps(original), encoding="utf-8")
+            confirmed = ScreenFieldProfile.from_json(path)
+            self.assertTrue(confirmed.ruby_body_rows_validated)
+            self.assertTrue(confirmed.validated_on_game_capture)
+            original["ruby_body_rows_validated"] = "true"
+            path.write_text(json.dumps(original), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                ScreenFieldProfile.from_json(path)
+            original["ruby_body_rows_validated"] = False
             original["regions"][0]["bounds_px"] = [-1, 5, 20, 30]
             path.write_text(json.dumps(original), encoding="utf-8")
             with self.assertRaises(ValueError):
