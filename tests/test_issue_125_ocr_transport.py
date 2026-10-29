@@ -465,6 +465,30 @@ class Issue125TransportTests(unittest.TestCase):
                 local_field_candidates=event,sent_ocr_ledger=ledger,
                 client_factory=lambda **kw: object())
         self.assertEqual(blocked["status"],"BLOCKED")
+        captured=[]
+        def image_model(_client,**kwargs):
+            captured.append(kwargs)
+            return {
+                "observation":frame("COMMAND_MENU",our_active="ゲンガー",
+                                    opponent_active="マスカーニャ"),
+                "action":{"action_kind":"NO_ACTION","move":"",
+                          "switch_target":"","warning":""},
+                "selection":{"selected_three":[],"lead":""},
+                "pending_ocr_questions":[],"processed_ocr_frames":[],
+            }
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=image_model):
+            _, image_report = run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],state=state,
+                assets=assets,access_token="unused",model="mock",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=event,
+                sent_ocr_ledger=ledger,
+                client_factory=lambda **kw:object())
+        self.assertEqual(image_report["images_sent"],1)
+        self.assertEqual(len(captured),1)
+        image_prompt=json.loads(captured[0]["content"][0]["text"])
+        self.assertTrue(image_prompt["unverified_stale_ocr_requires_visual"])
 
     def test_exclusive_reservation_old_worker_retirement_cross_schedule(self):
         assets, state = battle()
