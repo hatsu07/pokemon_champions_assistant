@@ -591,6 +591,171 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertTrue(ledger.needs_visual_confirmation())
         self.assertEqual(len(rows),300)
 
+    def test_image_reconciliation_restores_text_after_two_lost_replies(self):
+        """A→B both lost; current validated HUD resolves ALL selected proof."""
+        assets,state=battle()
+        state["our_active"]="ゲンガー"
+        state["opponent_active"]="マスカーニャ"
+        ledger=OcrSentLedger()
+        proof=[
+            ocr("own-name","ゲンガー",field="screen_text.own_active_name"),
+            ocr("opp-name","マスカーニャ",
+                field="screen_text.opponent_active_name"),
+            ocr("own-hp","185/185",field="screen_text.own_hp_fraction"),
+            ocr("opp-hp","100%",field="screen_text.opponent_hp_percent"),
+        ]
+        keys=[_row_key(row) for row in proof]
+        ledger.mark_sent(keys,request_id="req-A",rows=proof)
+        ledger.mark_stale("req-A")
+        ledger.mark_sent(keys,request_id="req-B",rows=proof)
+        ledger.mark_stale("req-B")
+        self.assertTrue(ledger.needs_visual_confirmation())
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=proof,
+            sent_ocr_ledger=ledger))
+        screen=frame("COMMAND_MENU",our_active="ゲンガー",
+                     opponent_active="マスカーニャ",
+                     our_hp="185/185",opponent_hp="100%")
+        field_by_row={
+            "own-name":"our_active",
+            "opp-name":"opponent_active",
+            "own-hp":"our_hp",
+            "opp-hp":"opponent_hp",
+        }
+        image_reply={
+            "observation":screen,
+            "action":{"action_kind":"NO_ACTION","move":"",
+                      "switch_target":"","warning":""},
+            "selection":{"selected_three":[],"lead":""},
+            "pending_ocr_questions":[],"processed_ocr_frames":[],
+            "stale_visual_check":{
+                "confirmed_source_fields":[
+                    {"source_row_key":_row_key(row),
+                     "field":field_by_row[row["frame_id"]]}
+                    for row in proof],
+                "unresolved_source_row_keys":[],
+            },
+        }
+        requests=[]
+        def current_image_model(_client,**kwargs):
+            requests.append(kwargs)
+            return image_reply
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=current_image_model):
+            updated,report=run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],
+                state=state,assets=assets,access_token="unused",model="mock",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=proof,sent_ocr_ledger=ledger,
+                ocr_request_id="req-C",
+                client_factory=lambda **kw:object())
+        self.assertEqual(len(requests),1)
+        self.assertEqual(report["images_sent"],1)
+        self.assertNotEqual(report["status"],"BLOCKED")
+        prompt=json.loads(requests[0]["content"][0]["text"])
+        self.assertTrue(prompt["unverified_stale_ocr_requires_visual"])
+        self.assertEqual(
+            {row["source_row_key"] for row in prompt[
+                "stale_visual_proof_to_reconcile"]},set(keys))
+        self.assertEqual(
+            len(requests[0]["content"]) -
+            sum(part["type"]!="input_image"
+                for part in requests[0]["content"]),1)
+        epoch=ledger.confirmed_visual_recovery_epoch(report,updated)
+        self.assertIsNotNone(epoch)
+        ledger.mark_adopted("req-C",visual_confirmed=True,
+                            recovery_epoch=epoch)
+        self.assertFalse(ledger.needs_visual_confirmation())
+        self.assertEqual(ledger.reinspection_keys(),set())
+        # Normal text-only tactical path can be used on the NEXT turn.
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",updated,assets,local_rows=proof,
+            sent_ocr_ledger=ledger))
+        self.assertEqual(len(ledger.snapshot()),len(keys))
+
+    def test_unresolved_lost_battle_event_keeps_image_safety_gate(self):
+        """Image response != proof: stale move/boost remains unknown."""
+        assets,state=battle()
+        state["our_active"]="ゲンガー"
+        state["opponent_active"]="マスカーニャ"
+        ledger=OcrSentLedger()
+        move=ocr("old-move","マスカーニャのとんぼがえり！",
+                 display_id="old-visual-1")
+        key=_row_key(move)
+        ledger.mark_sent([key],request_id="req-A",rows=[move])
+        ledger.mark_stale("req-A")
+        ledger.mark_sent([key],request_id="req-B",rows=[move])
+        ledger.mark_stale("req-B")
+        self.assertTrue(ledger.needs_visual_confirmation())
+        img=frame("COMMAND_MENU",our_active="ゲンガー",
+                  opponent_active="マスカーニャ",our_hp="185/185",
+                  opponent_hp="100%")
+        image_report={
+            "status":"NO_ACTION","images_sent":1,
+            "observation":img,
+            "stale_visual_check":{
+                "confirmed_source_fields":[],
+                "unresolved_source_row_keys":[key],
+            },
+        }
+        self.assertIsNone(
+            ledger.confirmed_visual_recovery_epoch(image_report,state))
+        ledger.mark_adopted("req-C",visual_confirmed=False)
+        self.assertTrue(ledger.needs_visual_confirmation())
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=[move],
+            sent_ocr_ledger=ledger))
+        # A fabricated "resolved" claim tied only to an actor name also fails.
+        image_report["stale_visual_check"]={
+            "confirmed_source_fields":[
+                {"source_row_key":key,"field":"opponent_active"}],
+            "unresolved_source_row_keys":[],
+        }
+        self.assertIsNone(
+            ledger.confirmed_visual_recovery_epoch(image_report,state))
+        # Image explicitly listing a retained unresolved OCR question fails too.
+        img["opponent_used_move"]="とんぼがえり"
+        image_report["stale_visual_check"]={
+            "confirmed_source_fields":[
+                {"source_row_key":key,"field":"opponent_used_move"}],
+            "unresolved_source_row_keys":[],
+        }
+        state_with_pending=dict(state,_ai_ocr_unresolved=[{
+            "source_frames":["old-move"],
+            "question":"技使用・こだわり固定が未確認",
+            "importance":"CRITICAL","recheck_when":"次の画面",
+            "verified":False}])
+        self.assertIsNone(ledger.confirmed_visual_recovery_epoch(
+            image_report,state_with_pending))
+        # Missing visible UI is not a verified image even with a claimed field.
+        image_report["observation"]=dict(img,visual_ui="UNKNOWN")
+        self.assertIsNone(
+            ledger.confirmed_visual_recovery_epoch(image_report,state))
+
+    def test_visual_safety_recovery_rejects_old_epoch(self):
+        ledger=OcrSentLedger()
+        proof=ocr("own-hp","185/185",field="screen_text.own_hp_fraction")
+        key=_row_key(proof)
+        ledger.mark_sent([key],request_id="A",rows=[proof])
+        ledger.mark_stale("A")
+        ledger.mark_sent([key],request_id="B",rows=[proof])
+        ledger.mark_stale("B")
+        state={"phase":"BATTLE","our_active":"ゲンガー",
+               "opponent_active":"マスカーニャ"}
+        report={"status":"NO_ACTION","images_sent":1,
+                "observation":frame("COMMAND_MENU",
+                    our_active="ゲンガー",opponent_active="マスカーニャ",
+                    our_hp="185/185"),
+                "stale_visual_check":{
+                    "confirmed_source_fields":[
+                        {"source_row_key":key,"field":"our_hp"}],
+                    "unresolved_source_row_keys":[]}}
+        epoch=ledger.confirmed_visual_recovery_epoch(report,state)
+        self.assertIsNotNone(epoch)
+        ledger.mark_adopted("C",visual_confirmed=True,
+                            recovery_epoch=epoch+1)
+        self.assertTrue(ledger.needs_visual_confirmation())
+
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
         hp=[ocr("hp","185/185",field="screen_text.own_hp_fraction")]
