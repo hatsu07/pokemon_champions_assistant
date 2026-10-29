@@ -648,6 +648,7 @@ class _PostmatchReviewWorker(QThread):
         super().__init__(parent)
         self.data_root,self.match_id=data_root,match_id
         self.app_root,self.model,self.effort=app_root,model,effort
+        self.p2_gate_path = None
 
     def run(self):
         try:
@@ -672,6 +673,24 @@ class _PostmatchReviewWorker(QThread):
                         "status":"RESEARCH_FAILED_REVIEW_RETAINED",
                         "reason":type(research_error).__name__,
                         "candidate_count":0}
+                # P2: ONLY after a completed single-match review plus a newly
+                # recorded multi-match P1 batch; never part of live decisions.
+                # A failed/cancelled second review must not destroy P1 data.
+                if (result.get("improvement_research",{}).get("status")
+                        == "STORED_PROVISIONAL_UNVERIFIED"
+                        and not self.isInterruptionRequested()):
+                    try:
+                        from .postmatch_causal_analysis import PostmatchCausalStore
+                        result["causal_research"]=PostmatchCausalStore(
+                            self.data_root).analyze_after_review(
+                                match_id=self.match_id,model=self.model,
+                                access_token=token,gate_file=self.p2_gate_path,
+                                reasoning_effort=self.effort,
+                                cancel=self.isInterruptionRequested)
+                    except Exception as causal_error:
+                        result["causal_research"]={
+                            "status":"FAILED_HOLD", "calls_used":0,
+                            "reason":type(causal_error).__name__}
             self.result_ready.emit(result)
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
@@ -997,6 +1016,13 @@ class DesktopMainWindow(QMainWindow):
         """One replay snapshot drives advice, labels, evidence and SQLite history."""
         panel = self._match_panel
         phase = state.get("phase", "S00_WAIT_START")
+        # A second-match start cancels any *optional P2* stream for the
+        # previous match. Qt's interruption flag is only read in that worker.
+        worker = getattr(self, "_postmatch_worker", None)
+        if (worker is not None and panel.match_id
+                and panel.match_id != getattr(worker, "match_id", None)
+                and hasattr(worker, "requestInterruption")):
+            worker.requestInterruption()
         # P1 issue #114: freeze *each received* recommendation and observation
         # now, never reconstruct it from a later end-of-battle state. The
         # bounded buffer is memory-only until the confirmed MATCH_END.
@@ -1004,9 +1030,15 @@ class DesktopMainWindow(QMainWindow):
         if panel.match_id and (getattr(self, "_p1_buffer", None) is None
                                or self._p1_buffer.match_id != panel.match_id):
             from .offmatch_evidence import MatchEvidenceBuffer
+            context = dict(getattr(self, "_p1_context", {}))
+            # The four-file gate SHA is already held in memory by the match
+            # preloader. Freeze exactly THAT version without a LIVE file read.
+            if panel.assets is not None:
+                context["frozen_assets_sha"] = dict(
+                    context.get("frozen_assets_sha") or {})
+                context["frozen_assets_sha"]["gate"] = panel.assets.gate_sha256
             self._p1_buffer = MatchEvidenceBuffer(
-                match_id=panel.match_id,
-                context=getattr(self, "_p1_context", {}))
+                match_id=panel.match_id, context=context)
         if getattr(self, "_p1_buffer", None) is not None and state:
             self._p1_buffer.capture(state, report)
         # A model timeout can leave the internal phase at MATCHMAKING after
@@ -1281,6 +1313,9 @@ class DesktopMainWindow(QMainWindow):
         worker=_PostmatchReviewWorker(
             self.settings_service.settings.storage.data_root,
             match_id,default_app_root(),model,prefs.reasoning_effort(),self)
+        worker.p2_gate_path = str(
+            self.settings_service.master_directory /
+            "Pokemon_Champions_MC_live_decision_gate.txt")
         self._postmatch_worker=worker
         self._set_postmatch_status("レビュー実行中（AI通信）",match_id)
         self.postmatch_retry_button.setEnabled(False)
@@ -1309,6 +1344,15 @@ class DesktopMainWindow(QMainWindow):
                 elif research.get("status")=="RESEARCH_FAILED_REVIEW_RETAINED":
                     self.postmatch_detail.appendPlainText(
                         "改善研究の保存失敗（対戦後レビューは保存済み）")
+                causal=result.get("causal_research") or {}
+                if causal.get("status")=="STORED_HOLD_UNVERIFIED":
+                    self.postmatch_detail.appendPlainText(
+                        "P2複数試合の原因・O/X分析: "
+                        +str(causal.get("findings",0))
+                        +"件（仮説・HOLD・次戦自動適用なし）")
+                elif causal.get("status") in ("FAILED_HOLD","CANCELLED_HOLD"):
+                    self.postmatch_detail.appendPlainText(
+                        "P2研究は保留（対戦後レビュー・P1履歴は保持）")
             except (OSError,ValueError,RuntimeError) as exc:
                 self._set_postmatch_status(
                     "失敗（レビューSQLite読戻し）",match_id,
