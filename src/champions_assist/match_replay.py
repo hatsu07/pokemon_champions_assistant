@@ -1687,9 +1687,9 @@ def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
         if len(set(outcome_words)) != 1:
             return False
         player_result="WIN" if outcome_words[0]=="勝った" else "LOSS"
-        contrary=(("敗北","負けました","youlose","自分が降参")
+        contrary=(("敗北","負けた","負けました","youlose","自分が降参")
                   if player_result=="WIN"
-                  else ("勝利","勝ちました","youwin","相手が降参","相手が投了"))
+                  else ("勝利","勝った","勝ちました","youwin","相手が降参","相手が投了"))
         return result==player_result and not any(cue in phrase for cue in contrary)
     if "との勝負に" in phrase:
         # Incomplete battle result: do not decide based on a fragment.
