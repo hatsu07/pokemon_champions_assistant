@@ -7,10 +7,11 @@ from unittest.mock import patch
 
 from champions_assist.match_replay import (
     new_replay, run_replay_text_action, run_replay_batch,
-    _text_action_eligible,
+    _text_action_eligible, _turn_api_budget,
 )
 from champions_assist.ocr_turn_context import (
     OcrSentLedger, build_ocr_turn_context, compact_ocr_transport, _row_key,
+    bounded_same_turn_ocr_proof,
 )
 from tests.test_match_replay import fixture_assets, frame
 from champions_assist.local_event_worker import LocalFieldRead
@@ -1234,6 +1235,192 @@ class Issue125TransportTests(unittest.TestCase):
                     self.assertEqual(sum(
                         part["type"]=="input_image"
                         for part in image_calls[0]["content"]),1)
+
+    def test_same_turn_rejected_text_proof_reaches_image_with_original_keys(self):
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="ルカリオ")
+        ledger=OcrSentLedger()
+        readings=[
+            ocr("frame-switch","相手はマスカーニャを繰り出した！"),
+            ocr("frame-move","相手のマスカーニャはとんぼがえりを使った！"),
+            ocr("frame-item","相手の持ち物はきあいのタスキ！"),
+            ocr("frame-boost","相手の攻撃が上がった！"),
+        ]
+        ledger.mark_sent([_row_key(x) for x in readings],
+                         request_id="text-request",rows=readings)
+        original=ledger.snapshot()
+        prompt_log=[]
+        answer={
+            "observation":frame("COMMAND_MENU",our_active="ゲンガー",
+                                opponent_active="マスカーニャ"),
+            "action":{"action_kind":"NO_ACTION","move":"",
+                      "switch_target":"","warning":""},
+            "selection":{"selected_three":[],"lead":""},
+            "processed_ocr_frames":[],"pending_ocr_questions":[],
+            "stale_visual_check":{"confirmed_source_fields":[],
+                "unresolved_source_row_keys":[],
+                "full_state_rebaseline":False},
+        }
+        def image_model(_client,**kwargs):
+            prompt_log.append(json.loads(kwargs["content"][0]["text"]))
+            kwargs["on_request_sent"]()
+            return answer
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=image_model):
+            _,report=run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],
+                state=state,assets=assets,access_token="unused",
+                model="mock",expected_screen_label="TURN_ACTION",
+                local_field_candidates=readings,sent_ocr_ledger=ledger,
+                ocr_request_id="text-request",
+                ocr_quarantined_return={"opponent":"マスカーニャ"},
+                ocr_fallback_sent_rows=ledger.sent_rows_for_request(
+                    "text-request"),
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["images_sent"],1)
+        self.assertEqual(len(prompt_log),1)
+        prompt=prompt_log[0]
+        echoed=prompt["rejected_text_same_turn_ocr_unverified"]
+        self.assertEqual([x["source_row_key"] for x in echoed],
+                         [_row_key(x) for x in readings])
+        self.assertEqual([x["frame_id"] for x in echoed],
+                         [x["frame_id"] for x in readings])
+        self.assertTrue(all(x["verified"] is False for x in echoed))
+        self.assertFalse(prompt["rejected_text_same_turn_ocr_incomplete"])
+        self.assertEqual(prompt["local_field_candidates_unverified"],[])
+        self.assertEqual(ledger.snapshot(),original)
+        self.assertEqual(len(ledger.sent_rows_for_request("text-request")),4)
+
+    def test_oversized_rejected_text_proof_is_bounded_and_blocks_tactic(self):
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="ルカリオ")
+        ledger=OcrSentLedger()
+        rows=[ocr(f"event-{i}","相手の攻撃が上がった！"+"x"*60,
+                  timestamp=10+i*.1) for i in range(220)]
+        keys=[_row_key(x) for x in rows]
+        ledger.mark_sent(keys,request_id="oversized-text",rows=rows)
+        original=ledger.snapshot()
+        echoed,meta=bounded_same_turn_ocr_proof(
+            ledger.sent_rows_for_request("oversized-text"))
+        self.assertLessEqual(len(echoed),24)
+        self.assertLessEqual(len(json.dumps(
+            echoed,ensure_ascii=False,separators=(",",":")).encode("utf8")),
+            8192)
+        self.assertEqual(meta["important_unique_rows"],220)
+        self.assertTrue(meta["incomplete"])
+        self.assertGreater(meta["omitted_important_rows"],0)
+        observed=[]
+        answer={
+            "observation":frame("COMMAND_MENU",our_active="ゲンガー",
+                                opponent_active="ルカリオ"),
+            "action":{"action_kind":"MOVE","move":"シャドーボール",
+                      "switch_target":"","warning":""},
+            "selection":{"selected_three":[],"lead":""},
+            "processed_ocr_frames":[],"pending_ocr_questions":[],
+            "stale_visual_check":{"confirmed_source_fields":[],
+                "unresolved_source_row_keys":[],
+                "full_state_rebaseline":False},
+        }
+        def fake_image(_client,**kwargs):
+            observed.append(json.loads(kwargs["content"][0]["text"]))
+            kwargs["on_request_sent"]()
+            return answer
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=fake_image):
+            updated,report=run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],
+                state=state,assets=assets,access_token="unused",
+                model="mock",expected_screen_label="TURN_ACTION",
+                local_field_candidates=rows,
+                sent_ocr_ledger=ledger,ocr_request_id="oversized-text",
+                ocr_fallback_sent_rows=ledger.sent_rows_for_request(
+                    "oversized-text"),
+                client_factory=lambda **kwargs:object())
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],
+                         "OCR_FALLBACK_IMPORTANT_PROOF_TRUNCATED")
+        self.assertFalse(report.get("recommendation"))
+        self.assertEqual(updated["opponent_active"],"ルカリオ")
+        self.assertTrue(observed[0]["rejected_text_same_turn_ocr_incomplete"])
+        self.assertEqual(ledger.snapshot(),original)
+
+    def test_shared_turn_deadline_and_sequential_worker_fallback(self):
+        from champions_assist.match_replay_dialog import _ReplayWorker
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="ルカリオ")
+        self.assertEqual(_turn_api_budget(145.0,now=100.0),45.0)
+        self.assertEqual(_turn_api_budget(
+            145.0,now=141.5,minimum_seconds=5.0),0.0)
+        self.assertEqual(_turn_api_budget(145.0,now=145.0),0.0)
+        for elapsed,returned_status,expected_reason,expect_image in [
+            (32.0,"BLOCKED",None,True),
+            (42.0,"BLOCKED","TURN_45S_FALLBACK_BUDGET_EXHAUSTED",False),
+            (46.0,"ADVICE","TURN_45S_REPLY_TOO_LATE",False),
+        ]:
+            with self.subTest(elapsed=elapsed):
+                clock=[100.0]
+                calls=[]
+                ledger=OcrSentLedger()
+                readings=[ocr("ocr-switch","相手はマスカーニャを繰り出した！")]
+                def text_stub(**kwargs):
+                    calls.append(("text",kwargs["total_seconds"]))
+                    ledger.mark_sent([_row_key(readings[0])],
+                        request_id="req-X",rows=readings)
+                    clock[0]+=elapsed
+                    if returned_status=="ADVICE":
+                        return dict(state,opponent_active="マスカーニャ"),{
+                            "status":"ADVICE","recommendation":"シャドーボール。"}
+                    return state,{"status":"BLOCKED",
+                        "reason":"OCR_QUARANTINED_ACTOR_RETURNED",
+                        "quarantined_actor_candidates":{
+                            "opponent":"マスカーニャ"}}
+                def image_stub(*args,**kwargs):
+                    calls.append(("image",kwargs["total_seconds"]))
+                    self.assertEqual(
+                        [x["frame_id"] for x in kwargs[
+                            "ocr_fallback_sent_rows"]],["ocr-switch"])
+                    clock[0]+=2.0
+                    return state,{"status":"NO_ACTION",
+                                  "recommendation":"","images_sent":1}
+                class FakeAuth:
+                    def __init__(self,*a,**kw):pass
+                    def access_token(self):return "unused"
+                outputs=[]
+                worker=_ReplayWorker(
+                    app_root="/tmp",selected_model="test",
+                    assets=assets,state=state,job="batch",
+                    frames=[np.zeros((20,20,3),dtype=np.uint8)],
+                    screen_label="TURN_ACTION",
+                    local_field_candidates=readings,
+                    sent_ocr_ledger=ledger,ocr_request_id="req-X",
+                    turn_deadline_monotonic=145.0,battle_seconds=120.0)
+                worker.finished.connect(outputs.append)
+                with patch("champions_assist.match_replay_dialog.ChatGPTSignIn",
+                           FakeAuth), patch(
+                           "champions_assist.match_replay_dialog.ProtectedSessionStore",
+                           lambda *_:None), patch(
+                           "champions_assist.match_replay_dialog.monotonic",
+                           side_effect=lambda:clock[0]), patch(
+                           "champions_assist.match_replay_dialog._text_action_eligible",
+                           return_value=True), patch(
+                           "champions_assist.match_replay_dialog.run_replay_text_action",
+                           side_effect=text_stub), patch(
+                           "champions_assist.match_replay_dialog.run_replay_batch",
+                           side_effect=image_stub):
+                    worker.run()
+                self.assertEqual(len(outputs),1)
+                self.assertEqual(calls[0],("text",45.0))
+                report=outputs[0]["report"]
+                if expect_image:
+                    self.assertEqual(calls[1],("image",13.0))
+                    self.assertEqual(report["status"],"NO_ACTION")
+                else:
+                    self.assertEqual(len(calls),1)
+                    self.assertEqual(report["status"],"DEADLINE_EXCEEDED")
+                    self.assertEqual(report["reason"],expected_reason)
+                    self.assertFalse(report.get("recommendation"))
+                    self.assertEqual(outputs[0]["state"]["opponent_active"],
+                                     "ルカリオ")
 
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
