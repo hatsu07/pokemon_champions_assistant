@@ -50,7 +50,13 @@ def _current_frame_body_anchor_matches(image: np.ndarray) -> bool:
     patch = cv2.resize(patch, (65, 73), interpolation=cv2.INTER_AREA)
     lo = patch.min(axis=2).astype(np.int16)
     hi = patch.max(axis=2).astype(np.int16)
-    active = ((lo >= 160) & ((hi - lo) <= 75)).sum(axis=1) >= 4
+    # A fixed absolute threshold sees a uniformly light synthetic/game
+    # background as "text". Use non-body rows to estimate the local neutral
+    # floor, and require a meaningful brightness delta over that floor.
+    # Never treat failure of this plausibility gate as a validated OCR event.
+    background = float(np.median(lo[np.r_[0:9, 33:43, 67:73], :]))
+    text_floor = max(155, min(230, round(background + 35)))
+    active = ((lo >= text_floor) & ((hi - lo) <= 75)).sum(axis=1) >= 4
     runs = []
     start = None
     for offset, present in enumerate([*active, False]):
