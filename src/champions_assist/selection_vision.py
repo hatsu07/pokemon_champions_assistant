@@ -8,11 +8,23 @@ from __future__ import annotations
 from .reasoning_config import reasoning_request_kwargs
 from dataclasses import dataclass, replace
 import json
+from contextvars import ContextVar
 from time import perf_counter
 from typing import Any, Callable, Mapping
 from .preload import FrozenMatchAssets
 from .species_name_aliases import selection_base_name
 from .matrix_compatibility import matrix_matches_registered_team, provisional_matrix_matches_registered_team
+
+# Only an explicitly enabled, per-match, per-worker local recorder receives
+# text request/response data. Never include screenshots or API credentials.
+_AI_EXCHANGE_SINK = ContextVar("champions_ai_exchange_sink", default=None)
+
+def start_ai_exchange_trace(sink):
+    return _AI_EXCHANGE_SINK.set(sink)
+
+def stop_ai_exchange_trace(token):
+    _AI_EXCHANGE_SINK.reset(token)
+
 
 class SelectionBlocked(ValueError):
     pass
@@ -651,6 +663,20 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
         text={"format": {"type": "json_schema", "name": name,
                           "strict": True, "schema": schema}},
     )
+    recorder=_AI_EXCHANGE_SINK.get()
+    if recorder is not None:
+        try:
+            recorder("GPT_REQUEST",{
+                "name":name,"model":model,"reasoning_effort":reasoning_effort,
+                "instructions":instructions,
+                "content":[{"type":"input_text","text":row.get("text","")}
+                           if row.get("type")=="input_text"
+                           else {"type":"input_image","omitted":"IMAGE_NOT_LOGGED"}
+                           for row in content],
+                "schema":schema,
+            })
+        except Exception:
+            pass  # diagnostics never break live decisions
     pieces = []
     completed = False
     with stream:
@@ -670,7 +696,15 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
         raise SelectionBlocked("MODEL_STREAM_INCOMPLETE")
     if timing_sink is not None:
         timing_sink["stream_complete_ms"]=round((perf_counter()-started)*1000)
-    return json.loads("".join(pieces))
+    output=json.loads("".join(pieces))
+    if recorder is not None:
+        try:
+            recorder("GPT_RESPONSE",{
+                "name":name,"model":model,"answer":output,
+                "elapsed_ms":round((perf_counter()-started)*1000)})
+        except Exception:
+            pass
+    return output
 
 def selection_image_content(image, *, introduction: str,
                             include_full: bool = False) -> list[dict]:
