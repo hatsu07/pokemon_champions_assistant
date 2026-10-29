@@ -2787,8 +2787,13 @@ class MatchReplayDialog(QDialog):
         # The next outgoing AI message is the only automatic supersession.
         self._prep_budget_seconds=min(40.0,prep_budget_before_battle(
             self._selection_screen_started,now=monotonic()))
-        if self._prep_budget_seconds<=2.0:
-            self._trace_event("PREP_SOFT_BUDGET_EXPIRED_CONTINUING")
+        if self._prep_budget_seconds<=0.0:
+            self.state["prep_status"]="INCOMPLETE_DEADLINE"
+            self._trace_event("PREP_NO_TIME_REMAINING",
+                              budget_ms=0)
+            self._render({"status":"PREP_DEADLINE_EXCEEDED",
+                          "message":"PREPの時間が残っていないため追加AI依頼を開始しません。"})
+            return
         self._prep_cancel_event.clear()
         if not provisional:
             self.state["prep_status"]="RUNNING"
@@ -2829,8 +2834,8 @@ class MatchReplayDialog(QDialog):
                           if unknown_count else
                           "提案選出に基づく18対面PREPを先行計算中。"
                           if provisional else "実際の選出で18対面PREPを計算中。")
-                          +f"（目標残り {self._prep_budget_seconds:.1f}秒・"
-                          "超過後も次のAI依頼まで継続）"})
+                          +f"（残り {self._prep_budget_seconds:.1f}秒・"
+                          "40秒で打ち切り）"})
         self._prep_thread.start()
 
     def _interrupt_prep(self):
