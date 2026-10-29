@@ -212,6 +212,14 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
                       if isinstance(f,str) and f}
     pending = sanitize_pending_questions(prior,available | previously_cited)
     retained_frames = {f for item in pending for f in item["source_frames"]}
+    # Explicit, bounded reinspection is separate from automatic re-sending.
+    # It can restore proof from a stale/blocked answer without rewriting the
+    # sent ledger or inventing a locally confirmed battle fact.
+    requested_frames = {
+        frame for frame in (state.get("_ai_ocr_reinspect_frames") or ())
+        if isinstance(frame,str) and frame in available
+    }
+    retained_frames.update(requested_frames)
     previous = set(state.get("_ai_ocr_presented_keys") or ())
     if sent_ledger is not None:
         previous.update(sent_ledger.snapshot())
@@ -230,6 +238,7 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
         "unresolved_rows_resent": len(selected)-new_count,
         "prior_observations_not_resent": len(all_rows)-len(selected),
         "unresolved_questions": len(pending),
+        "reinspection_frames_requested": len(requested_frames),
         "ledger_json_bytes": before_bytes,
         "api_json_bytes": after_bytes,
         "ledger_not_mutated": True,
