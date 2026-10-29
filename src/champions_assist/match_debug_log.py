@@ -265,7 +265,7 @@ class PrivateAiExchangeLog:
         try:
             line = json.dumps(record, ensure_ascii=False,
                               separators=(",", ":"), default=str)
-            line = _AI_SECRET.sub("[REDACTED]", line) + "\\n"
+            line = _AI_SECRET.sub("[REDACTED]", line) + "\n"
             encoded = line.encode("utf-8")
             if len(encoded) > AI_EXCHANGE_EVENT_MAX_BYTES:
                 encoded = (json.dumps({
@@ -273,7 +273,7 @@ class PrivateAiExchangeLog:
                     "event": "GPT_EVENT_TOO_LARGE",
                     "original_event": event,
                     "original_bytes": len(encoded)
-                }, ensure_ascii=False) + "\\n").encode("utf-8")
+                }, ensure_ascii=False) + "\n").encode("utf-8")
             self.queue.put_nowait(encoded)
         except (Full, OSError, TypeError, ValueError):
             # A diagnostic failure must not block the live battle.
