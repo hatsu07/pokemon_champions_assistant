@@ -73,8 +73,8 @@ jobs:
                   target=root/label/f"{session}__{label_index}.png"
                   target.parent.mkdir(parents=True,exist_ok=True)
                   pixel=bytes((label_index*29,session_index*45,80))
-                  raw=(b"\\x00"+pixel*24)*24
-                  png=(b"\\x89PNG\\r\\n\\x1a\\n"+
+                  raw=(b"\x00"+pixel*24)*24
+                  png=(b"\x89PNG\r\n\x1a\n"+
                        chunk(b"IHDR",struct.pack(">2I5B",24,24,8,2,0,0,0))+
                        chunk(b"IDAT",zlib.compress(raw))+
                        chunk(b"IEND",b""))
@@ -84,8 +84,7 @@ jobs:
       - name: Run the production Docker wrapper entrypoint with synthetic CPU training
         shell: bash
         run: |
-          TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" \\
-            ./scripts/train_screen_classifier_docker.sh --epochs 1 --archive-output
+          TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" ./scripts/train_screen_classifier_docker.sh --epochs 1 --archive-output
           shopt -s nullglob
           runs=(private-training/output/run-*/)
           test "${#runs[@]}" -eq 1
