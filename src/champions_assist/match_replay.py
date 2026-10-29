@@ -247,6 +247,10 @@ def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenM
     """
     if screen_label not in ("TURN_ACTION","SWITCH_SELECTION"):
         return False
+    # A second lost OCR reinspection cannot be treated as a successful
+    # tactical review; require current visual confirmation instead.
+    if sent_ocr_ledger is not None and sent_ocr_ledger.needs_visual_confirmation():
+        return False
     own=state.get("our_active") or ""
     opponent=state.get("opponent_active") or ""
     if screen_label=="TURN_ACTION":
@@ -1369,7 +1373,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         # New readings are never arbitrarily cut by count; prior observations
         # recur only when the previous GPT requested unresolved source proof.
         selected_ocr,pending_ocr,ocr_meta=build_ocr_turn_context(
-            state,local_field_candidates,sent_ledger=sent_ocr_ledger)
+            state,local_field_candidates,sent_ledger=sent_ocr_ledger,
+            request_id=ocr_request_id)
         transport_ocr=compact_ocr_transport(selected_ocr)
         compact_before=len(json.dumps(selected_ocr,ensure_ascii=False,
                                       separators=(",",":"),default=str).encode("utf-8"))
@@ -1427,6 +1432,11 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         image_prepare_ms=round((perf_counter()-started)*1000)
         api_started=perf_counter()
         stages={}
+        if (sent_ocr_ledger is not None
+                and sent_ocr_ledger.is_stale(ocr_request_id)):
+            sent_ocr_ledger.release(ocr_request_id)
+            return deepcopy(state),{"status":"CANCELLED",
+                                    "reason":"OCR_WORKER_RETIRED_BEFORE_HTTP"}
         answer=_stream_json(
             client,model=model,reasoning_effort=reasoning_effort,
             timing_sink=stages,on_request_sent=mark_ocr_sent,
@@ -1539,6 +1549,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         )
         return updated,result
     except Exception as exc:
+        if sent_ocr_ledger is not None:
+            sent_ocr_ledger.release(ocr_request_id)
         return deepcopy(state),{"status":"ERROR","reason":type(exc).__name__,
                                 "elapsed_ms":round((perf_counter()-started)*1000)}
 
@@ -1888,7 +1900,18 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     from .ocr_turn_context import (
         build_ocr_turn_context, apply_model_ocr_carryover, compact_ocr_transport)
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
-        state,local_field_candidates,sent_ledger=sent_ocr_ledger)
+        state,local_field_candidates,sent_ledger=sent_ocr_ledger,
+        request_id=ocr_request_id)
+    # A request whose actor identity depended on reserved/stale OCR cannot
+    # silently execute with an empty candidate set.
+    if current == "" and not any(
+            __import__("champions_assist.ocr_turn_context",
+                       fromlist=["_own_actor_identification_candidate"])
+            ._own_actor_identification_candidate(row) for row in candidates):
+        if sent_ocr_ledger is not None:
+            sent_ocr_ledger.release(ocr_request_id)
+        return state,{"status":"BLOCKED",
+                      "reason":"ACTOR_OCR_RESERVED_OR_UNAVAILABLE","images_sent":0}
     transport_ocr=compact_ocr_transport(candidates)
     compact_before=len(json.dumps(candidates,ensure_ascii=False,
                                   separators=(",",":"),default=str).encode("utf-8"))
@@ -1983,6 +2006,12 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                               base_url="https://api.openai.com/v1",
                               timeout=total_seconds,max_retries=0)
         api_started=perf_counter()
+        if (sent_ocr_ledger is not None
+                and sent_ocr_ledger.is_stale(ocr_request_id)):
+            sent_ocr_ledger.release(ocr_request_id)
+            return state,{"status":"CANCELLED",
+                          "reason":"OCR_WORKER_RETIRED_BEFORE_HTTP",
+                          "images_sent":0}
         answer=_stream_json(
             client,model=model,schema=AI_OCR_TURN_SCHEMA,
             name="champions_text_only_state_and_action",
@@ -2202,6 +2231,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         result["action_basis"]="SELECTED_BENCH_UNVERIFIED_VISIBILITY" if switch_only else "REGISTERED_MOVES"
         return updated,result
     except Exception as exc:
+        if sent_ocr_ledger is not None:
+            sent_ocr_ledger.release(ocr_request_id)
         if diagnostic_sink is not None:
             diagnostic_sink("AI_VALIDATION",{
                 "validation_code":type(exc).__name__,
