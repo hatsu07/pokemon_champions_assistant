@@ -34,6 +34,9 @@ def synthetic_frame():
     # Long lines, punctuation at right edge, and second line survive.
     frame[431:453, 150:950] = (10, 30, 220)
     frame[465:487, 180:950] = (10, 210, 30)
+    # Bright neutral leading glyphs used by the per-frame layout safety gate.
+    frame[434:450, 160:190] = 235
+    frame[467:482, 160:190] = 235
     return frame
 
 
@@ -57,12 +60,12 @@ class BattleMessageRubyTests(unittest.TestCase):
             frame, sample(), _REGION, preview_unvalidated=True)
         self.assertEqual(data["preprocess"], "BODY_LINES_PREVIEW_ONLY")
         self.assertEqual(data["body_rois"], [
-            [141, 430, 950, 454], [141, 464, 950, 489]])
-        self.assertEqual(crop.shape, (59, 809, 3))
+            [141, 430, 540, 454], [141, 464, 540, 489]])
+        self.assertEqual(crop.shape, (59, 399, 3))
         self.assertTrue(np.any(np.all(crop == (10, 30, 220), axis=2)))
         self.assertTrue(np.any(np.all(crop == (10, 210, 30), axis=2)))
         self.assertFalse(np.any(np.all(crop == (245, 10, 10), axis=2)))
-        self.assertTrue(np.array_equal(crop[1, 949 - 141], frame[431, 949]))
+        self.assertTrue(np.array_equal(crop[1, 539 - 141], frame[431, 539]))
         self.assertFalse(data["game_validated"])
 
     def test_normalized_rows_at_three_same_aspect_resolutions(self):
@@ -77,9 +80,9 @@ class BattleMessageRubyTests(unittest.TestCase):
                 self.assertEqual(data["preprocess"], "BODY_LINES_CALIBRATED")
                 self.assertEqual(len(data["body_rois"]), 2)
                 self.assertEqual(data["body_rois"], [
-                    [round(v * scale) for v in (141, 430, 950, 454)],
-                    [round(v * scale) for v in (141, 464, 950, 489)]])
-                self.assertLessEqual(crop.shape[1], 1618)
+                    [round(v * scale) for v in (141, 430, 540, 454)],
+                    [round(v * scale) for v in (141, 464, 540, 489)]])
+                self.assertLessEqual(crop.shape[1], 798)
 
     def test_unsafe_geometry_never_performs_body_extraction(self):
         frame = synthetic_frame()
@@ -99,6 +102,28 @@ class BattleMessageRubyTests(unittest.TestCase):
             self.assertEqual(info["preprocess"], status)
             self.assertGreater(crop.size, 0)
 
+    def test_same_dimension_shifted_text_abstains(self):
+        image = synthetic_frame()
+        for delta in (-10, -5, 5, 10):
+            shifted = np.roll(image, delta, axis=0)
+            self.assertTrue(sample(True).compatible(shifted))
+            crop, info = prepare_battle_message(shifted, sample(True), _REGION)
+            self.assertFalse(info["ruby_excluded"])
+            self.assertEqual(info["preprocess"], "BODY_ANCHOR_MISMATCH")
+            self.assertEqual(crop.shape[:2], (93, 399))
+
+    def test_unchanged_message_right_animation_does_not_retrigger_ocr(self):
+        image = synthetic_frame()
+        engine = CountingEngine("効果はいまひとつだ")
+        reader = AsyncBattleEventReader(sample(True), ocr_engine=engine)
+        try:
+            self.assertTrue(reader.offer(image, label="BATTLE_EVENT"))
+            changed = image.copy()
+            changed[430:485, 600:920] = (255, 0, 255)
+            self.assertFalse(reader.offer(changed, label="BATTLE_EVENT"))
+        finally:
+            reader.stop()
+
     def test_black_bars_disable_body_extraction(self):
         frame = synthetic_frame()
         frame[:8] = 0
@@ -115,7 +140,7 @@ class BattleMessageRubyTests(unittest.TestCase):
         self.assertEqual(len(engine.calls), 1)
         self.assertEqual(enabled["rows"][0]["preprocess"],
                          "BODY_LINES_PREVIEW_ONLY")
-        self.assertEqual(engine.calls[0][1].shape[:2], (59, 809))
+        self.assertEqual(engine.calls[0][1].shape[:2], (59, 399))
         self.assertEqual(enabled["rows"][0]["parsed"], engine.text)
         self.assertFalse(enabled["rows"][0]["game_validated"])
         engine.calls.clear()
@@ -129,7 +154,7 @@ class BattleMessageRubyTests(unittest.TestCase):
         frame = synthetic_frame()
         for validated, expected_size, expected_state in (
             (False, (93, 399), "UNVALIDATED_LIVE_DISABLED"),
-            (True, (59, 809), "BODY_LINES_CALIBRATED"),
+            (True, (59, 399), "BODY_LINES_CALIBRATED"),
         ):
             with self.subTest(validated=validated):
                 engine = CountingEngine("ゲンガーとの勝負に負けた！")
