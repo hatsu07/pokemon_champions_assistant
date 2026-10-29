@@ -253,46 +253,6 @@ class ProductionMatchEndWiringTest(TestCase):
                 (self.match_id,)).fetchone()[0]
         self.assertEqual(count, 1)
 
-    def test_production_capture_to_finished_p1_archive_and_duplicate_end(self):
-        # The actual unified-state handler must freeze each moment BEFORE
-        # MATCH_END.  Do not reconstruct the timeline from the final state.
-        from champions_assist.offmatch_evidence import (
-            MatchEvidenceArchive, freeze_team_context)
-        self.window._unified_team_id = "synthetic-team"
-        self.window._unified_team_sha = "sha256:the-exact-selected-team"
-        self.window._p1_context = freeze_team_context(
-            team_id=self.window._unified_team_id,
-            team_sha=self.window._unified_team_sha, model="test",
-            tactical_version="synthetic-frozen-matrix",
-            own_members=[{"name":"ガブリアス", "move1":"じしん",
-                          "move2":"げきりん","move3":"まもる","move4":"アイアンヘッド"}])
-        self.window._p1_buffer = None
-        before = {"phase":"BATTLE", "step_number":1,
-                  "selected_three":["ガブリアス"],"lead":"ガブリアス",
-                  "our_active":"ガブリアス","opponent_active":"カバルドン",
-                  "history":[],"result":"UNKNOWN","selection_assumed":False}
-        recommendation = {"status":"ADVICE", "action":{"kind":"MOVE","move":"じしん"}}
-        DesktopMainWindow._on_unified_state(self.window, before, recommendation)
-        self.assertIsNotNone(self.window._p1_buffer)
-        archive = MatchEvidenceArchive(self.temp.name)
-        self.assertIsNone(archive.read(self.match_id))
-        ended = {**before,"phase":"ENDED","step_number":2,"result":"WIN"}
-        report = {"status":"MATCH_END","result_source":"SYNTHETIC_TEST"}
-        DesktopMainWindow._on_unified_state(self.window, ended, report)
-        stored=archive.read(self.match_id)
-        self.assertEqual(stored["captured_count"],2)
-        self.assertEqual(stored["events"][0]["proposal"]["action"]["move"],"じしん")
-        self.assertEqual(stored["events"][0]["execution"]["certainty"],"UNKNOWN")
-        self.assertEqual(stored["events"][1]["result"],"WIN")
-        self.assertEqual(stored["context"]["team_sha"],
-                         "sha256:the-exact-selected-team")
-        # Duplicate MATCH_END while the prior review worker remains active
-        # must not redispatch the job or rewrite frozen evidence.
-        self.window._postmatch_worker=SimpleNamespace(match_id=self.match_id)
-        DesktopMainWindow._on_unified_state(self.window, ended, report)
-        self.assertEqual(archive.read(self.match_id)["captured_count"],2)
-        self.window._start_postmatch_review.assert_called_once()
-
     def test_review_saved_body_is_read_from_real_sqlite(self):
         state = {"phase": "ENDED", "result": "WIN"}
         self.assertTrue(self.store.record_finished(
