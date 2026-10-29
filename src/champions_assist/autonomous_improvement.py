@@ -38,7 +38,7 @@ def _clean(value: object) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(ch for ch in value if ch.isprintable()
-                    and ch not in "<>\\r\\n|").strip()[:_MAX_TEXT]
+                    and ch not in "<>|").strip()[:_MAX_TEXT]
 
 
 def _stamp() -> str:
