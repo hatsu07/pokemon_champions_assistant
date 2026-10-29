@@ -286,8 +286,9 @@ class ProductionMatchEndWiringTest(TestCase):
         self.assertEqual(stored["events"][1]["result"],"WIN")
         self.assertEqual(stored["context"]["team_sha"],
                          "sha256:the-exact-selected-team")
-        # Duplicate MATCH_END neither changes the old capture-time evidence
-        # nor dispatches a second review.
+        # Duplicate MATCH_END while the prior review worker remains active
+        # must not redispatch the job or rewrite frozen evidence.
+        self.window._postmatch_worker=SimpleNamespace(match_id=self.match_id)
         DesktopMainWindow._on_unified_state(self.window, ended, report)
         self.assertEqual(archive.read(self.match_id)["captured_count"],2)
         self.window._start_postmatch_review.assert_called_once()
