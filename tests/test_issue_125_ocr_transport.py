@@ -1,6 +1,7 @@
 """Issue #125 transport/first-turn OCR regressions. No network, no image model."""
 import json
 import unittest
+from threading import Event, Thread
 import numpy as np
 from unittest.mock import patch
 
@@ -384,7 +385,7 @@ class Issue125TransportTests(unittest.TestCase):
         replay,_,stats=build_ocr_turn_context(
             state,records,sent_ledger=ledger)
         self.assertEqual([r["frame_id"] for r in replay],
-                         ["event-0","event-1","hp-8","hp-9"])
+                         ["event-0","event-8","hp-8","hp-9"])
         self.assertEqual(stats["new_rows_sent"],0)
         self.assertEqual(stats["stale_reinspection_rows"],4)
         seen=[]
@@ -413,7 +414,7 @@ class Issue125TransportTests(unittest.TestCase):
         for group in seen[0]["ocr_candidates_unverified"]:
             sent_frames.update(group.get("source_frames",[group["frame_id"]]))
         self.assertEqual(sent_frames,
-                         {"event-0","event-1","hp-8","hp-9"})
+                         {"event-0","event-8","hp-8","hp-9"})
         self.assertEqual(build_ocr_turn_context(
             state,records,sent_ledger=ledger)[0],[])
         ledger.mark_stale("req-B")
@@ -431,6 +432,140 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertEqual(ledger.reinspection_keys(),set())
         ledger.mark_stale("req-B")
         self.assertEqual(ledger.reinspection_keys(),set())
+
+    def test_second_discard_blocks_text_and_requires_visual_confirmation(self):
+        assets, state = battle()
+        state["our_active"] = "ゲンガー"
+        state["opponent_active"] = "マスカーニャ"
+        ledger = OcrSentLedger()
+        event = [ocr("e-1", "マスカーニャのとんぼがえり！",
+                     display_id="e:1"),
+                 ocr("h-1", "161/185",field="screen_text.own_hp_fraction")]
+        source = [_row_key(row) for row in event]
+        ledger.mark_sent(source,request_id="A",rows=event)
+        ledger.mark_stale("A")
+        self.assertEqual(set(_row_key(r) for r in build_ocr_turn_context(
+            state,event,sent_ledger=ledger)[0]), set(source))
+        ledger.mark_sent(source,request_id="B",rows=event)
+        self.assertEqual(ledger.reinspection_keys(),set())
+        ledger.mark_stale("B")
+        self.assertTrue(ledger.needs_visual_confirmation())
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=event,
+            sent_ocr_ledger=ledger))
+        selected,_,_=build_ocr_turn_context(state,event,sent_ledger=ledger)
+        self.assertEqual(selected,[])  # no third unbounded OCR retransmission
+        # The GUI dispatches the existing single-current-frame image path
+        # rather than issuing text from unknown boosts/locks.
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=AssertionError("text-only must be blocked")):
+            _, blocked = run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=event,sent_ocr_ledger=ledger,
+                client_factory=lambda **kw: object())
+        self.assertEqual(blocked["status"],"BLOCKED")
+
+    def test_exclusive_reservation_old_worker_retirement_cross_schedule(self):
+        assets, state = battle()
+        state["our_active"] = "ゲンガー"
+        state["opponent_active"] = "マスカーニャ"
+        ledger = OcrSentLedger()
+        readings = [
+            ocr("frame-a","ゆけっ！ゲンガー！"),
+            ocr("frame-b","マスカーニャのとんぼがえり！")]
+        a_reservation = Event()
+        continue_old = Event()
+        outcomes = []
+        answer = {
+            "state_updates":[],
+            "interpreted_own_active":"ゲンガー",
+            "interpreted_opponent_active":"マスカーニャ",
+            "processed_ocr_frames":[],"pending_ocr_questions":[],
+            "action":{"action_kind":"NO_ACTION","move":"",
+                      "switch_target":"","warning":""},
+        }
+        def fake_model(_client, **kw):
+            a_reservation.set()  # req-A assembled prompt and reserved OCR
+            self.assertTrue(continue_old.wait(timeout=5))
+            kw["on_request_sent"]()  # old HTTP accepted *after* B selection
+            return answer
+        def worker_a():
+            result = run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=readings,
+                sent_ocr_ledger=ledger,ocr_request_id="req-A",
+                client_factory=lambda **kw:object())
+            outcomes.append(result[1])
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=fake_model):
+            thread = Thread(target=worker_a,daemon=True)
+            thread.start()
+            try:
+                self.assertTrue(a_reservation.wait(timeout=5))
+                ledger.mark_stale("req-A")
+                self.assertTrue(ledger.needs_visual_confirmation())
+                # req-B is planned while old A has not yet confirmed send.
+                chosen,_,info=build_ocr_turn_context(
+                    state,readings,sent_ledger=ledger,request_id="req-B")
+                self.assertEqual(chosen,[])
+                self.assertEqual(info["api_rows_sent"],0)
+                self.assertFalse(_text_action_eligible(
+                    "TURN_ACTION",state,assets,local_rows=readings,
+                    sent_ocr_ledger=ledger))
+            finally:
+                continue_old.set()
+                thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(outcomes),1)
+        self.assertEqual(ledger.snapshot(),set(_row_key(r) for r in readings))
+        self.assertEqual(ledger.reinspection_keys(),
+                         set(_row_key(r) for r in readings))
+        ledger.release("req-B")
+        # Neither the pending reservation nor confirmed send may be claimed
+        # by a fresh outgoing OCR request without explicit stale inspection.
+        candidate,_,_=build_ocr_turn_context(
+            state,readings,sent_ledger=ledger,request_id="req-C")
+        self.assertEqual(len(candidate),len(readings))  # explicit reinspect
+        ledger.release("req-C")
+
+    def test_retired_before_http_releases_reservation_without_sending(self):
+        assets, state = battle()
+        state["our_active"]="ゲンガー"
+        state["opponent_active"]="マスカーニャ"
+        ledger=OcrSentLedger()
+        proof=[ocr("one","ゆけっ！ゲンガー！")]
+        # Another worker selects evidence but is retired prior to transport.
+        self.assertEqual(len(ledger.reserve("A",proof)),1)
+        ledger.mark_stale("A")
+        ledger.release("A")
+        self.assertEqual(ledger.snapshot(),set())
+        self.assertEqual(len(ledger.reserve("B",proof)),1)
+        ledger.release("B")
+
+    def test_missing_display_id_burst_reinspection_is_bounded(self):
+        ledger=OcrSentLedger()
+        rows=[
+            ocr(f"frame-{i}","マスカーニャのとんぼがえり！",
+                timestamp=10+i*.05)
+            for i in range(300)
+        ]
+        # Archive remains complete; the lack of visual display IDs must
+        # neither infer one shared event nor flood a second GPT request.
+        ledger.mark_sent([_row_key(r) for r in rows],
+                         request_id="A",rows=rows)
+        ledger.mark_stale("A")
+        chosen,_,stats=build_ocr_turn_context(
+            {},rows,sent_ledger=ledger)
+        self.assertLessEqual(len(chosen),ledger.MAX_REINSPECT_ROWS)
+        self.assertLessEqual(len(json.dumps(chosen,ensure_ascii=False,
+                                            separators=(",",":")).encode("utf8")),
+                             ledger.MAX_REINSPECT_BYTES)
+        self.assertEqual(stats["new_rows_sent"],0)
+        self.assertEqual(stats["ledger_rows_available"],300)
+        self.assertTrue(ledger.needs_visual_confirmation())
+        self.assertEqual(len(rows),300)
 
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
