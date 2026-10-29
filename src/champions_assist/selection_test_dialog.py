@@ -491,6 +491,8 @@ class SelectionTestDialog(QDialog):
         self.turn_image=None
         self.switch_image=None
         self.event_image=None
+        self.event_ocr_button.setEnabled(False)
+        self.event_ocr_status.setText("OCR：画像未選択")
         self.turn_choose_button.setEnabled(False)
         self.turn_run_button.setEnabled(False)
         self.switch_run_button.setEnabled(False)
