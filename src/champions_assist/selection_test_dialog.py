@@ -758,7 +758,10 @@ class SelectionTestDialog(QDialog):
                         else f"{result['confidence']:.2f}")
             details=QLabel(
                 f"{result['name']} ({result['kind']}) / "
-                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\n"
+                f"総時間 {result['elapsed_ms']}ms / "
+                f"前処理 {result.get('preprocess_ms', '不明')}ms / "
+                f"OCR本体 {result.get('ocr_elapsed_ms', '不明')}ms"
+                f" / 信頼度 {confidence}\n"
                 f"認識: {result['text'] or '（空）'}\n"
                 f"解析: {str(result['parsed']) if result['parsed'] is not None else '未確定'}"
                 f" / エラー: {result['error'] or 'なし'}\n"
