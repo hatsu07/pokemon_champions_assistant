@@ -239,11 +239,11 @@ def _bench_candidates(state: dict) -> list[str]:
 
 def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenMatchAssets,
                           local_rows=None, sent_ocr_ledger=None) -> bool:
-    """Screen-specific eligibility; replacement need not have an active own actor.
+    """Allow unknown lead from genuinely available OCR, never empty text.
 
-    For an unknown own actor, only a confirmed forced-replacement situation
-    with at least one known fainted selected teammate can skip the image.
-    An ordinary voluntary switch with unknown current actor is not safe.
+    When req-A has already sent all raw OCR but its answer was discarded,
+    req-B must take the existing image fallback (or abstain), not invent an
+    actor from an empty new-OCR prompt. Forced-switch rules remain separate.
     """
     if screen_label not in ("TURN_ACTION","SWITCH_SELECTION"):
         return False
