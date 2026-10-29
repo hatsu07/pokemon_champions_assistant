@@ -167,6 +167,13 @@ class OcrSentLedger:
         self._overflow_identity_unknown = False
         self._stale_actor_context: dict[str, dict | None] = {}
 
+    def sent_rows_for_request(self, request_id: str | None) -> list[dict]:
+        """Only the current request's actually sent OCR, never entire history."""
+        if not request_id:
+            return []
+        with self._lock:
+            return [dict(row) for row in self._request_rows.get(request_id, ())]
+
     def snapshot(self) -> set[str]:
         with self._lock:
             return set(self._keys)
@@ -731,6 +738,48 @@ def has_ocr_transport_evidence(state: dict, local_rows, *,
                and _row_key(row) not in unavailable
                and _own_actor_identification_candidate(row)
                for row in all_rows)
+
+
+def bounded_same_turn_ocr_proof(rows, *, max_rows: int = 24,
+                                max_bytes: int = 8192) -> tuple[list[dict], dict]:
+    """Echo the rejected request's important sent OCR, always UNVERIFIED.
+
+    This is separate from normal transport and never ACKs or resends history.
+    If important evidence cannot all fit, downstream action must be blocked.
+    """
+    raw = list(rows or ())
+    critical = ("battle_message","system_message","effect_popup",
+                "item_popup","item_message","hp_fraction","hp_percent",
+                "active_name","pokemon_name","own_status","opponent_status")
+    important = [r for r in raw if isinstance(r,dict) and (
+        str(r.get("field") or "").endswith(critical)
+        or any(word in str(r.get("raw_text") or r.get("candidate") or "")
+               for word in ("交代","繰り出","つかった","使った",
+                            "上がっ","下がっ","持ち物","こだわり")))]
+    selected,seen=[],set()
+    total_bytes=0
+    for row in important:
+        key=_row_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        proof={"source_row_key":key,"frame_id":row.get("frame_id"),
+               "field":row.get("field"),
+               "raw_text":str(row.get("raw_text",row.get("candidate",""))),
+               "observed_at":row.get("observed_at"),
+               "confidence":row.get("confidence"),"verified":False}
+        size=_json_bytes(proof)
+        if len(selected)<max_rows and total_bytes+size<=max_bytes:
+            selected.append(proof)
+            total_bytes+=size
+    omitted=len(seen)-len(selected)
+    return selected,{"raw_request_rows":len(raw),
+                     "important_unique_rows":len(seen),
+                     "echoed_rows":len(selected),
+                     "omitted_important_rows":omitted,
+                     "proof_utf8_bytes":total_bytes,
+                     "incomplete":bool(omitted),
+                     "sent_was_not_verified":True}
 
 
 def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None,
