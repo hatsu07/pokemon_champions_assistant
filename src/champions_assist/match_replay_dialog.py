@@ -324,6 +324,12 @@ class _ReplayWorker(QObject):
                 "status":"ERROR","reason":str(exc) if isinstance(exc,SignInError)
                 else type(exc).__name__}})
         finally:
+            # A claimed OCR row must never remain locked if auth, prompt
+            # assembly or the HTTP request fails before the dispatch callback.
+            # This executes only when THIS worker has finished sending/failed;
+            # retirement alone cannot release an in-flight reservation.
+            if self.sent_ocr_ledger is not None:
+                self.sent_ocr_ledger.release(self.ocr_request_id)
             stop_ai_exchange_trace(trace_token)
 
 
