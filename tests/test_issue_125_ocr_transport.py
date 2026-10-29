@@ -763,6 +763,160 @@ class Issue125TransportTests(unittest.TestCase):
                             recovery_epoch=epoch)
         self.assertTrue(ledger.needs_visual_confirmation())
 
+    def test_visual_recovery_refuses_unrelated_field_to_old_event(self):
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="マスカーニャ")
+        examples=[
+            ("相手の攻撃が上がった！","our_status","どく"),
+            ("相手のマスカーニャのとんぼがえりを使った！",
+             "our_hp","130/185"),
+            ("相手の持ち物はきあいのタスキ",
+             "opponent_ability_revealed","へんげんじざい"),
+        ]
+        for raw,wrong_field,wrong_value in examples:
+            with self.subTest(raw=raw):
+                ledger=OcrSentLedger()
+                row=ocr("old",raw,field="screen_text.battle_message")
+                key=_row_key(row)
+                ledger.mark_sent([key],request_id="A",rows=[row])
+                ledger.mark_stale("A")
+                ledger.mark_sent([key],request_id="B",rows=[row])
+                ledger.mark_stale("B")
+                self.assertTrue(ledger.needs_visual_confirmation())
+                obs=frame("COMMAND_MENU",our_active="ゲンガー",
+                          opponent_active="マスカーニャ")
+                obs[wrong_field]=wrong_value
+                report={"status":"NO_ACTION","images_sent":1,
+                        "observation":obs,
+                        "stale_visual_check":{
+                            "confirmed_source_fields":[
+                                {"source_row_key":key,"field":wrong_field}],
+                            "unresolved_source_row_keys":[],
+                            "full_state_rebaseline":False}}
+                self.assertIsNone(
+                    ledger.confirmed_visual_recovery_epoch(report,state))
+                ledger.mark_adopted("C",visual_confirmed=False)
+                self.assertTrue(ledger.needs_visual_confirmation())
+
+    def test_visual_recovery_requires_matching_side_stat_direction_move_and_item(self):
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="マスカーニャ")
+        cases=[
+            ("相手の攻撃が上がった！","opponent_stat_changes",
+             "A:+1","A:-1"),
+            ("相手のマスカーニャのとんぼがえりを使った！",
+             "opponent_used_move","とんぼがえり","はたきおとす"),
+            ("相手の持ち物はきあいのタスキ",
+             "opponent_item_revealed","きあいのタスキ","こだわりスカーフ"),
+        ]
+        for raw,field,good,bad in cases:
+            with self.subTest(raw=raw):
+                ledger=OcrSentLedger()
+                row=ocr("source-1",raw,field="screen_text.battle_message")
+                key=_row_key(row)
+                ledger.mark_sent([key],request_id="A",rows=[row])
+                ledger.mark_stale("A")
+                ledger.mark_sent([key],request_id="B",rows=[row])
+                ledger.mark_stale("B")
+                obs=frame("COMMAND_MENU",our_active="ゲンガー",
+                          opponent_active="マスカーニャ")
+                report={"status":"NO_ACTION","images_sent":1,
+                        "observation":obs,
+                        "stale_visual_check":{
+                            "confirmed_source_fields":[
+                                {"source_row_key":key,"field":field}],
+                            "unresolved_source_row_keys":[],
+                            "full_state_rebaseline":False}}
+                obs[field]=bad
+                self.assertIsNone(
+                    ledger.confirmed_visual_recovery_epoch(report,state))
+                obs[field]=good
+                epoch=ledger.confirmed_visual_recovery_epoch(report,state)
+                self.assertIsNotNone(epoch)
+                ledger.mark_adopted("C",visual_confirmed=True,
+                                    recovery_epoch=epoch)
+                self.assertFalse(ledger.needs_visual_confirmation())
+
+    def test_overflow_is_quarantined_until_complete_new_active_image_state(self):
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="マスカーニャ")
+        ledger=OcrSentLedger()
+        rows=[ocr(f"old-{i}",f"戦闘イベント{i}！",
+                  timestamp=10+i*.1) for i in range(45)]
+        ledger.mark_sent([_row_key(r) for r in rows],
+                         request_id="req-A",rows=rows)
+        ledger.mark_stale("req-A",battle_context=state)
+        self.assertTrue(ledger.needs_visual_confirmation())
+        self.assertEqual(ledger.visual_guard_rows(),[])
+        self.assertEqual(ledger.visual_overflow_actors(),
+                         {"our":["ゲンガー"],"opponent":["マスカーニャ"]})
+        updated=dict(state,our_active="ドドゲザン",
+                     opponent_active="ルカリオ")
+        # Full fresh baseline: stage zero is a POSITIVE visual observation,
+        # never inferred from a missing status/boost overlay.
+        stages="A:+0,B:+0,C:+0,D:+0,S:+0,ACC:+0,EVA:+0"
+        obs=frame("COMMAND_MENU",our_active="ドドゲザン",
+                  opponent_active="ルカリオ",
+                  our_hp="207/207",opponent_hp="100%",
+                  our_status="なし",opponent_status="なし",
+                  our_current_type="あく/はがね",
+                  opponent_current_type="かくとう/はがね",
+                  our_temporary_effects="なし",
+                  opponent_temporary_effects="なし",
+                  our_stat_changes=stages,opponent_stat_changes=stages,
+                  battlefield_weather="なし",battlefield_terrain="なし",
+                  battlefield_effects="なし")
+        report={"status":"NO_ACTION","images_sent":1,"observation":obs,
+                "stale_visual_check":{
+                    "confirmed_source_fields":[],
+                    "unresolved_source_row_keys":[],
+                    "full_state_rebaseline":False}}
+        self.assertIsNone(
+            ledger.confirmed_visual_recovery_epoch(report,updated))
+        report["stale_visual_check"]["full_state_rebaseline"]=True
+        obs["opponent_stat_changes"]=""
+        self.assertIsNone(
+            ledger.confirmed_visual_recovery_epoch(report,updated))
+        obs["opponent_stat_changes"]=stages
+        obs["opponent_active"]="マスカーニャ"
+        self.assertIsNone(
+            ledger.confirmed_visual_recovery_epoch(report,updated))
+        obs["opponent_active"]="ルカリオ"
+        epoch=ledger.confirmed_visual_recovery_epoch(report,updated)
+        self.assertIsNotNone(epoch)
+        # The lost source events are still unknown; quarantine persists.
+        ledger.mark_adopted("req-C",visual_confirmed=True,
+                            recovery_epoch=epoch)
+        self.assertFalse(ledger.needs_visual_confirmation())
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",updated,assets,local_rows=[],
+            sent_ocr_ledger=ledger))
+        returned=dict(updated,opponent_active="マスカーニャ")
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",returned,assets,local_rows=[],
+            sent_ocr_ledger=ledger))
+        self.assertEqual(len(ledger.snapshot()),len(rows))
+        # No false proof verification, regardless of baseline recovery.
+        self.assertEqual(ledger.reinspection_keys(),set(
+            ledger.reinspection_keys()))
+
+    def test_overflow_missing_prior_actor_identity_never_resets_guard(self):
+        ledger=OcrSentLedger()
+        rows=[ocr(f"old-{i}",f"戦闘イベント{i}！") for i in range(35)]
+        ledger.mark_sent([_row_key(r) for r in rows],request_id="A",rows=rows)
+        ledger.mark_stale("A")  # no trustworthy actor snapshot
+        self.assertTrue(ledger.needs_visual_confirmation())
+        self.assertEqual(ledger.visual_guard_rows(),[])
+        self.assertIsNone(ledger.confirmed_visual_recovery_epoch(
+            {"status":"NO_ACTION","images_sent":1,
+             "observation":frame("COMMAND_MENU",our_active="ドドゲザン",
+                                   opponent_active="ルカリオ"),
+             "stale_visual_check":{"full_state_rebaseline":True,
+                 "confirmed_source_fields":[],
+                 "unresolved_source_row_keys":[]}},
+            {"phase":"BATTLE","our_active":"ドドゲザン",
+             "opponent_active":"ルカリオ"}))
+
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
         hp=[ocr("hp","185/185",field="screen_text.own_hp_fraction")]
