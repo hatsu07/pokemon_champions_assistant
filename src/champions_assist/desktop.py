@@ -1177,9 +1177,13 @@ class DesktopMainWindow(QMainWindow):
                     try:
                         from .offmatch_evidence import MatchEvidenceArchive
                         if buffer.context.get("team_id")==self._unified_team_id:
-                            MatchEvidenceArchive(
+                            archived = MatchEvidenceArchive(
                                 self.settings_service.settings.storage.data_root
                             ).save_ended(buffer.finish())
+                            if archived.get("status") not in (
+                                    "STORED_UNVERIFIED", "ALREADY_STORED"):
+                                self.header_labels["records"].setText(
+                                    "P1証拠未保存: " + str(archived.get("status")))
                     except Exception as evidence_error:
                         self.header_labels["records"].setText(
                             "P1証拠保存失敗: " + type(evidence_error).__name__)
