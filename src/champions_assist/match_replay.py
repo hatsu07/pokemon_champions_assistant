@@ -1672,6 +1672,12 @@ def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
     Ambiguous or two-sided messages require human confirmation.
     """
     phrase=" ".join(evidence.casefold().split())
+    # In an opponent's dialogue, "Xとの勝負に負けた" means the
+    # *speaker* lost. This explicit opposite-perspective phrase can
+    # support a human WIN, never a human LOSS without further proof.
+    import re
+    if re.search(r"との.{0,18}勝負に.{0,8}負けた",phrase):
+        return result=="WIN"
     win_cues=("勝利","勝った","勝ちました","you win","相手が降参","相手が投了")
     loss_cues=("敗北","負けた","負けました","you lose","自分が降参")
     matches_win=any(cue in phrase for cue in win_cues)
@@ -1732,7 +1738,11 @@ def run_replay_screen_result(*, state: dict,
                 "messages captured BEFORE the result screen. Do not assume "
                 "the result screen itself has been OCR-read. Return "
                 "WIN or LOSS ONLY if one cited OCR phrase explicitly identifies "
-                "the HUMAN player's final MATCH outcome. A Pokemon fainting, "
+                "the HUMAN player's final MATCH outcome. Identify the speaker "
+                "and whether an opponent says THEY lost to the human player. "
+                "A bare '負けた' does not itself mean the human lost; "
+                "when the speaker is ambiguous return UNKNOWN. "
+                "A Pokemon fainting, "
                 "a partial turn, an opponent's move, or a vague win phrase is "
                 "NOT enough. If contradictory, missing, or uncertain, return "
                 "UNKNOWN. Quote an exact OCR substring as evidence and its "
@@ -1875,9 +1885,19 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
         "no_visible_party_confirmation":switch_only,
     }
+    prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
     if diagnostic_sink is not None:
         from .live_diagnostics import ai_input_digest
         diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
+        diagnostic_sink("AI_TURN_PAYLOAD_SIZE",{
+            "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
+            "ocr_rows":len(candidates),
+            "ocr_json_bytes":context_stats["api_json_bytes"],
+            "new_rows":context_stats["new_rows_sent"],
+            "unresolved_rows":context_stats["unresolved_rows_resent"],
+            "prior_rows_not_resent":context_stats["prior_observations_not_resent"],
+            "pending_questions":len(pending_ocr),
+            "screen_label":expected_screen_label})
     if client_factory is None:
         from openai import OpenAI
         client_factory=OpenAI
@@ -1892,7 +1912,17 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
-                "Interpret OCR frames as observed events, return state_updates and action together. "
+                "Interpret the NEW OCR frames in time order and return "
+                "state_updates and next action together in ONE response. "
+                "Explicitly reconcile active Pokémon, switch-out, send-out, "
+                "faints, HP, moves, boosts, item/status/ability and mega "
+                "changes against the prior state. Report each confirmed "
+                "change as a state_update with source frame IDs and certainty. "
+                "After applying them, return interpreted_own_active and "
+                "interpreted_opponent_active. If a previously verified active "
+                "has not been replaced by proven evidence, retain it even if "
+                "its name is not printed on the current menu. Do not guess "
+                "missing facts or erase a grounded actor with a blank. "
                 "Evaluate moves for interpreted_own_active after the updates. "
                 "Cite actual OCR frame IDs in evidence_frames for each update. "
                 "Never treat previous recommended moves or switches as executed. "
@@ -1930,16 +1960,23 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "For SWITCH_ONLY return SWITCH with one living selected "
                 "bench member or NO_ACTION; never MOVE/PIVOT. In a confirmed "
                 "forced replacement, the fainted own active may be unknown. "
-                "If so, interpreted_own_active must stay empty unless OCR "
-                "actually proves its identity; choose using the selected "
+                "If there is grounded evidence of a fainted active but "
+                "its identity cannot be proved, interpreted_own_active may "
+                "stay empty. For voluntary switches with a known living "
+                "active, keep that name unless a confirmed event changes it. "
+                "Choose using the selected "
                 "living bench and opponent instead of guessing an actor. "
                 "A switch-screen classifier does not confirm which selected "
                 "party entries are visible. "
                 "If materially uncertain use NO_ACTION; no invented data."
             ),
-            content=[{"type":"input_text","text":json.dumps(
-                prompt,ensure_ascii=False,separators=(",",":"))}])
+            content=[{"type":"input_text","text":prompt_text}])
         ai_elapsed_ms=round((perf_counter()-api_started)*1000)
+        if diagnostic_sink is not None:
+            diagnostic_sink("AI_API_STAGE",{
+                "api_elapsed_ms":ai_elapsed_ms,
+                "pre_api_elapsed_ms":round((api_started-started)*1000),
+                "validation_pending":True})
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
@@ -1958,7 +1995,22 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                          row.get("side")=="own" and
                          row.get("kind") in ("SWITCH","SWITCH_OUT","FAINT","MEGA")
                          for row in audit)
-        own_mismatch=(combined and
+        # An explicitly confirmed faint replacement can leave an outgoing
+        # actor unnamed; a voluntary switch with a living actor cannot.
+        evidence=(state.get("battle_evidence") or {})
+        hp=(evidence.get("hp_by_pokemon") or {}).get("own") or {}
+        fainted=(evidence.get("fainted") or {}).get("own") or {}
+        current_name=state.get("our_active") or ""
+        possible_fainted=([current_name] if current_name else
+                          list(state.get("selected_three") or ()))
+        has_faint_proof=any(
+            fainted.get(name) or str(hp.get(name,"")).startswith(("0/","0 /"))
+            or str(hp.get(name,"")).casefold() in ("0","0hp","0%","ひんし","fainted")
+            for name in possible_fainted)
+        actor_blank_allowed=bool(switch_only and state.get("awaiting_replacement")
+                                 and has_faint_proof
+                                 and not _canonical(answer.get("interpreted_own_active","")))
+        own_mismatch=(combined and not actor_blank_allowed and
             _canonical(answer.get("interpreted_own_active",""))!=
             _canonical(updated.get("our_active","")))
         opponent_mismatch=(combined and
@@ -1989,6 +2041,18 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             block_ack=own_conflict or own_mismatch,
             commit_presentation=not (own_conflict or own_mismatch))
         if own_conflict or own_mismatch:
+            if diagnostic_sink is not None:
+                diagnostic_sink("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{
+                    "own_conflict":bool(own_conflict),
+                    "own_mismatch":bool(own_mismatch),
+                    "confirmed_faint":bool(has_faint_proof),
+                    "awaiting_replacement":bool(state.get("awaiting_replacement")),
+                    "internal_own":updated.get("our_active") or "",
+                    "model_own":answer.get("interpreted_own_active") or "",
+                    "screen_label":expected_screen_label,
+                    "rejected_updates":[{"kind":row.get("kind"),"reason":row.get("reason")}
+                       for row in audit if row.get("status")=="REJECTED"
+                       and row.get("side")=="own"][:12]})
             # A blocked actor interpretation cannot consume the evidence;
             # keep newly returned unresolved questions, but re-present the
             # raw candidates next turn rather than treating them as handled.
