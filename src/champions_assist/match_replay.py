@@ -1343,6 +1343,22 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
     state=deepcopy(state)
     if not images or len(images)>4:
         return deepcopy(state), {"status":"BLOCKED","reason":"INVALID_IMAGE_BATCH"}
+    # This information is known before image encoding, client construction,
+    # OCR reservations and HTTP dispatch. Do not consume the shared 45-second
+    # turn budget on an image whose tactical reply MUST be rejected anyway.
+    fallback_echo,fallback_stats=bounded_same_turn_ocr_proof(
+        ocr_fallback_sent_rows)
+    if diagnostic_sink is not None and ocr_fallback_sent_rows is not None:
+        diagnostic_sink("OCR_REJECTED_TEXT_FALLBACK_PROOF",fallback_stats)
+    if fallback_stats["incomplete"]:
+        if diagnostic_sink is not None:
+            diagnostic_sink("OCR_FALLBACK_PROOF_INCOMPLETE",fallback_stats)
+        return state,{"status":"BLOCKED",
+            "reason":"OCR_FALLBACK_IMPORTANT_PROOF_TRUNCATED",
+            "recommendation":"","images_sent":0,
+            "fallback_ocr_stats":fallback_stats,
+            "transport":"VISION_EXCEPTION_NOT_SENT",
+            "elapsed_ms":round((perf_counter()-started)*1000)}
     if client_factory is None:
         from openai import OpenAI
         client_factory=OpenAI
@@ -1418,13 +1434,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
                                      separators=(",",":"),default=str).encode("utf-8"))
         prompt["local_field_candidates_unverified"]=transport_ocr
-        fallback_echo,fallback_stats=bounded_same_turn_ocr_proof(
-            ocr_fallback_sent_rows)
         prompt["rejected_text_same_turn_ocr_unverified"]=fallback_echo
         prompt["rejected_text_same_turn_ocr_stats"]=fallback_stats
-        prompt["rejected_text_same_turn_ocr_incomplete"]=fallback_stats["incomplete"]
-        if diagnostic_sink is not None and ocr_fallback_sent_rows is not None:
-            diagnostic_sink("OCR_REJECTED_TEXT_FALLBACK_PROOF",fallback_stats)
+        prompt["rejected_text_same_turn_ocr_incomplete"]=False
         # A successful NEW-actor baseline is not confirmation of previously
         # quarantined actors. Reappearance (also Mega/form spelling), including
         # one first noticed by a *rejected* OCR-only response, needs an explicit
@@ -1617,13 +1629,6 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
         obs=answer["observation"]
-        if fallback_stats["incomplete"]:
-            if diagnostic_sink is not None:
-                diagnostic_sink("OCR_FALLBACK_PROOF_INCOMPLETE",fallback_stats)
-            return deepcopy(state),{"status":"BLOCKED",
-                "reason":"OCR_FALLBACK_IMPORTANT_PROOF_TRUNCATED",
-                "recommendation":"","images_sent":len(images),
-                "fallback_ocr_stats":fallback_stats}
         if switch_only and obs.get("visual_ui")!="PARTY_MENU":
             return deepcopy(state),{"status":"BLOCKED",
                 "reason":"SWITCH_SCREEN_RECOGNITION_MISMATCH",
