@@ -817,7 +817,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(self.window._close_pending)
         self.assertEqual(panel._shutdown_intent,"close")
         self.assertTrue(panel._cancel_event.is_set())
-        self.assertTrue(self.window.isVisible())
+        # Explicit Close hides the window while a blocking HTTP worker
+        # finishes cooperatively; no unsafe QThread termination.
+        self.assertFalse(self.window.isVisible())
         panel._cleanup()
         QCoreApplication.processEvents()
         QCoreApplication.processEvents()
@@ -1209,7 +1211,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIs(loaded,model)
         self.assertEqual(status,"MODEL_READY_CPU")
         self.assertIs(panel._screen_model,model)
-        self.assertIn("5分類ONNX利用中",panel.local_classifier_label.text())
+        self.assertIn("6分類ONNX利用中",panel.local_classifier_label.text())
         stored=json.loads(
             (panel.store_root/"screen_classifier_choice.json").read_text())
         self.assertEqual(stored["model_path"],str(model_path.resolve()))
@@ -1283,6 +1285,8 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         self.assertTrue(panel.manual_batch_button.isHidden())
         self.assertTrue(panel.prep_button.isHidden())
+        self.assertTrue(panel.confirm_win_button.isHidden())
+        self.assertTrue(panel.confirm_loss_button.isHidden())
         self.assertEqual(panel.classifier_choose_button.objectName(),
                          "chooseScreenClassifier")
         self.assertEqual(panel.prep_banner.objectName(),"live_prep_progress")
@@ -1450,19 +1454,24 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
-    def test_prep_soft_deadline_keeps_late_result_until_next_ai_request(self):
+    def test_prep_hard_deadline_discards_late_roles_without_discarding_cache(self):
         panel=self.window._match_panel
-        panel.state={"phase":"PREP","prep_status":"RUNNING"}
+        panel.state={"phase":"PREP","prep_status":"RUNNING",
+                     "prep":{"cached_matchups":18}}
         panel._prep_thread=object()
+        panel._prep_budget_seconds=40.0
         panel._prep_cancel_event.clear()
         try:
             panel._prep_deadline()
-            self.assertFalse(panel._prep_cancel_event.is_set())
-            self.assertEqual(panel.state["prep_status"],"RUNNING")
+            self.assertTrue(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["prep_status"],"INCOMPLETE_DEADLINE")
+            self.assertEqual(panel.state["prep"]["cached_matchups"],18)
             panel._on_prep_result({
                 "state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
                 "report":{"status":"PREP_STRUCTURE_OK"}})
-            self.assertEqual(panel.state["prep_status"],"STRUCTURE_COMPLETE")
+            self.assertEqual(panel.state["prep_status"],"INCOMPLETE_DEADLINE")
+            self.assertTrue(any(event["event"]=="PREP_HARD_DEADLINE_INCOMPLETE"
+                                for event in panel._timing_trace))
         finally:
             panel._prep_thread=None
 
@@ -1552,6 +1561,29 @@ class UnifiedMainWindowTests(unittest.TestCase):
             queue.assert_called_once()
         self.assertIn("TEAM_SELECTION",panel.local_classifier_label.text())
         self.assertIn("ONNX_CPU",panel.local_classifier_label.text())
+        panel._stop_auto()
+
+    def test_experimental_result_screen_starts_same_gpt_ocr_gate(self):
+        from types import SimpleNamespace
+        from champions_assist.screen_classifier import ScreenPrediction
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        frame=np.full((120,200,3),60,dtype=np.uint8)
+        panel._screen_model=SimpleNamespace(
+            experimental=True,provider="CPUExecutionProvider",
+            predict=lambda image:ScreenPrediction("RESULT_SCREEN",.99,.98,2.0))
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame), \\
+             patch.object(panel._turn_buffer,"observe",return_value=None), \\
+             patch.object(panel,"_note_stable_result_screen") as start_gpt:
+            panel._capture_next()
+            start_gpt.assert_not_called()
+            panel._capture_next()
+            start_gpt.assert_called_once()
+        self.assertTrue(any(x["event"]=="RESULT_SCREEN_OCR_GPT_GATE"
+                            and x["experimental"] for x in panel._timing_trace))
         panel._stop_auto()
 
     def test_live_training_capture_is_off_by_default_and_uses_existing_frame(self):
