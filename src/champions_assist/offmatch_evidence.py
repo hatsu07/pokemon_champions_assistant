@@ -170,7 +170,7 @@ class MatchEvidenceBuffer:
             "step": step if type(step) is int and 0 <= step < 1000000 else None,
             "report_status": status,
             "turn_id": _text(state.get("turn_id") or state.get("turn") or state.get("game_turn_seq")) or "UNKNOWN",
-            "frame_id": _text(report.get("frame_id") or report.get("capture_frame_id")) or "UNKNOWN",
+            "frame_id": _text(str(report.get("frame_id") or report.get("capture_frame_id") or report.get("capture_seq") or "")) or "UNKNOWN",
             "report_source": _text(report.get("result_source")) or "UNKNOWN",
             "observation": {
                 "certainty": evidence_source, "ui": _text(latest.get("ui") or observation.get("visual_ui")),
@@ -182,6 +182,12 @@ class MatchEvidenceBuffer:
             "selection": {"our_three": selected, "lead": _text(state.get("lead")),
                           "certainty": "AI_VISUAL_CANDIDATE" if state.get("selection_assumed")
                           else "UNKNOWN" if not selected else "USER_CONFIRMED"},
+            "selection_proposal": {
+                "our_three": _names(report.get("selected_three"), 3),
+                "lead": _text(report.get("lead")),
+                "certainty": "AI_HYPOTHESIS_UNVERIFIED"
+                if status in _ADVICE_STATUSES else "UNKNOWN",
+            },
             "legal_options": {
                 "registered_moves": registered_moves,
                 "switch_candidates": switch_candidates,
@@ -194,7 +200,7 @@ class MatchEvidenceBuffer:
                          "displayed_at": timestamp if recommended else None},
             "execution": {"action": _action(confirmed) if confirmed else {},
                           "certainty": confirmation},
-            "field_candidate": _bounded_mapping(state.get("battlefield"), limit=6),
+            "field_candidate": {key: _text((state.get("battlefield") or {}).get(key))\n                                for key in ("weather", "terrain", "effects")}\n            if isinstance(state.get("battlefield"), dict) else {},
             "result": _text(state.get("result")) if status in _RESULT_STATUSES else "UNKNOWN",
         }
         # No OCR raw text, image bytes, bearer credentials, arbitrary history,
