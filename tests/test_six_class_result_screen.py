@@ -195,6 +195,48 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
         self.assertEqual(model.call_count,1)
         self.assertIn("capture-999",panel._ocr_capture_epochs)
 
+    def test_enabled_but_stalled_pre_result_ocr_allows_manual_fallback(self):
+        panel=self.fixture(pending=("capture-200",))
+        # Even though reader.enabled stays true, its pre-result work is stuck.
+        # The UI must not be trapped in 250-ms retries indefinitely.
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \\
+             patch("champions_assist.match_replay_dialog.monotonic",
+                   side_effect=(100.0,119.9,120.1)), \\
+             patch("champions_assist.match_replay_dialog._ReplayWorker") as model:
+            panel._attempt_result_screen_verification()
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,2)
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,2)
+            model.assert_not_called()
+        self.assertFalse(panel._result_screen_sent)
+        self.assertEqual(panel._render.call_args.args[0],
+                         {"status":"RESULT_UNCONFIRMED",
+                          "reason":"PRE_RESULT_BATTLE_OCR_STALLED"})
+        self.assertTrue(any(
+            call.args[0]=="PRE_RESULT_BATTLE_OCR_STALLED"
+            for call in panel._trace_event.call_args_list))
+        self.assertTrue(panel._local_event_reader.enabled)
+
+    def test_pre_result_ocr_progress_resets_stall_watchdog(self):
+        panel=self.fixture(pending=("capture-200","capture-201"))
+        with patch("champions_assist.match_replay_dialog.QTimer.singleShot") as timer, \\
+             patch("champions_assist.match_replay_dialog.monotonic",
+                   side_effect=(100.0,119.0,138.9,139.1)):
+            panel._attempt_result_screen_verification()
+            panel._ocr_capture_epochs.pop("capture-200")
+            panel._attempt_result_screen_verification()
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,3)
+            panel._render.assert_not_called()
+            panel._attempt_result_screen_verification()
+            self.assertEqual(timer.call_count,3)
+        self.assertEqual(panel._render.call_args.args[0]["reason"],
+                         "PRE_RESULT_BATTLE_OCR_STALLED")
+        self.assertEqual(
+            len([call for call in panel._trace_event.call_args_list
+                 if call.args[0]=="RESULT_OCR_BARRIER_PROGRESS"]),2)
+
     def test_no_prior_message_ocr_does_not_call_gpt(self):
         panel=self.fixture(pending=())
         from unittest.mock import patch
