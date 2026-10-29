@@ -249,6 +249,7 @@ _AI_SENSITIVE_FRAGMENTS = (
     "secret", "token", "password", "credential", "authorization",
     "accesskey", "apikey", "authkey", "privatekey", "clientsecret",
     "codeverifier", "oauthcode", "authcode",
+    "accountkey", "storageaccountkey",
 )
 # Unstructured OCR text must be treated conservatively: a quoted "authKey"
 # field may appear inside a sentence that is not valid JSON. No word
@@ -258,7 +259,7 @@ _AI_SENSITIVE_TEXT = re.compile(
     r"auth[_\s-]*(?:key|code|token|secret)|"
     r"authorization|oauth[_\s-]*(?:key|code|token|secret)|"
     r"client[_\s-]*secret|code[_\s-]*verifier|"
-    r"access[_\s-]*key(?:[_\s-]*id)?|secret|"
+    r"access[_\s-]*key(?:[_\s-]*id)?|storage[_\s-]*account[_\s-]*key|secret|"
     r"password|credentials?|private[_\s-]*key|bearer)"
 )
 
