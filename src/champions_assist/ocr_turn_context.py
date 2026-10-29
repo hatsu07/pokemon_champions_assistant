@@ -100,36 +100,34 @@ class OcrSentLedger:
                         "item_popup", "item_message")
         event_groups: dict[tuple, list[dict]] = {}
         hud_groups: dict[str, list[dict]] = {}
-        for index, row in enumerate(rows):
+        last_unknown_key = None
+        unknown_run = 0
+        for row in rows:
             field = str(row.get("field") or "")
             if field.endswith(event_fields):
                 raw = _compare_text(str(row.get(
                     "raw_text", row.get("candidate", ""))))
                 display = row.get("display_id")
-                # No display ID: group adjacent exact text only for sampling;
-                # preserve a new group on changes, including opposite messages.
                 if display:
-                    episode = ("verified", str(display))
+                    group = (field, ("visual", str(display)), raw)
+                    last_unknown_key = None
                 else:
-                    previous = rows[index-1] if index else None
-                    prev_field = str(previous.get("field") or "") if previous else ""
-                    prev_raw = _compare_text(str(previous.get(
-                        "raw_text", previous.get("candidate", "")))) if previous else ""
-                    prev_id = previous.get("display_id") if previous else None
-                    if previous is not None and not prev_id and (
-                            prev_field == field and prev_raw == raw):
-                        episode = ("unknown", index-1)
-                        # Use the previous group ID to continue a run.
-                        if index >= 2:
-                            for group_key, group_rows in reversed(list(event_groups.items())):
-                                if group_rows[-1] is previous:
-                                    episode = group_key[1]
-                                    break
-                    else:
-                        episode = ("unknown", index)
-                event_groups.setdefault((field, episode, raw), []).append(row)
+                    # Sampling a repeated exact OCR read is NOT evidence that
+                    # two game events were identical. Never interpret here.
+                    candidate = (field, raw)
+                    if candidate != last_unknown_key:
+                        unknown_run += 1
+                    last_unknown_key = candidate
+                    group = (field, ("unknown-run", unknown_run), raw)
+                event_groups.setdefault(group, []).append(row)
             else:
+                last_unknown_key = None
                 hud_groups.setdefault(field, []).append(row)
+        # Missing display identity and repeated text may hide distinct game
+        # events; if we sampled more than two, require image verification.
+        uncertain_unknown_runs = any(
+            len(group) > 2 and key[1][0] == "unknown-run"
+            for key, group in event_groups.items())
         chosen: list[dict] = []
         for group in event_groups.values():
             chosen.extend(group[:1] + group[-1:] if len(group) > 1 else group)
@@ -145,7 +143,7 @@ class OcrSentLedger:
             if key not in seen:
                 unique.append(row)
                 seen.add(key)
-        overflow = False
+        overflow = uncertain_unknown_runs
         if len(unique) > OcrSentLedger.MAX_REINSPECT_ROWS:
             overflow = True
             unique = unique[-OcrSentLedger.MAX_REINSPECT_ROWS:]
@@ -184,6 +182,10 @@ class OcrSentLedger:
             return
         with self._lock:
             self._stale_requests.add(request_id)
+            # If this worker reserved proof but has not confirmed HTTP send,
+            # the next worker must not silently act from incomplete OCR.
+            if self._reserved.get(request_id) and request_id not in self._request_rows:
+                self._needs_visual_confirmation = True
             # Do not release a reservation here: its worker may already be
             # in client.responses.create(). Only that worker may release it.
             self._stage_stale(request_id)
