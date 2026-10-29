@@ -130,6 +130,60 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
                              "[REDACTED_SENSITIVE_TEXT]")
             self.assertEqual(rows[1]["payload"]["safe_result"],"UNKNOWN")
 
+    def test_private_gpt_log_redacts_api_token_camelcase_and_json_text(self):
+        # Regression for PR #121 review: do not use raw-text word
+        # boundaries as the gate to parse JSON credential fields.
+        secret_api="EXAMPLE_API_TOKEN_VALUE12345"
+        secret_camel="EXAMPLE_CAMEL_ACCESS_VALUE12345"
+        secret_response="EXAMPLE_RESPONSE_TOKEN_VALUE12345"
+        with tempfile.TemporaryDirectory() as root:
+            log=PrivateAiExchangeLog(root,match_id="capture-"+"b"*32)
+            nested={"api_token":secret_api,
+                    "userAccessToken":secret_camel,
+                    "safe_event":"マスカーニャが登場した"}
+            json_text=json.dumps(nested,ensure_ascii=False)
+            # A string containing JSON and its double-encoded form must
+            # both be scrubbed; direct dicts and model answers as well.
+            log.write("GPT_REQUEST",{
+                "content":[{"type":"input_text","text":json_text},
+                           {"type":"input_text","text":json.dumps(json_text)},
+                           {"type":"input_text",
+                            "text":"  "+json.dumps({"userAccessToken":secret_camel})},
+                           {"type":"input_text","text":"OCR unchanged"}],
+                "structured":{"api_token":secret_api,
+                              "userAccessToken":secret_camel,
+                              "event":"safe"},
+            })
+            log.write("GPT_RESPONSE",{
+                "answer":{"userAccessToken":secret_response,
+                          "nested_json":json.dumps({"api_token":secret_api}),
+                          "result":"UNKNOWN"}
+            })
+            log.queue.join()
+            log.close()
+            disk=log.path.read_text(encoding="utf-8")
+            for secret in (secret_api,secret_camel,secret_response):
+                self.assertNotIn(secret,disk)
+            rows=[json.loads(line) for line in disk.splitlines()]
+            self.assertEqual(len(rows),2)
+            request=rows[0]["payload"]
+            embedded=json.loads(request["content"][0]["text"])
+            self.assertEqual(embedded["api_token"],"[REDACTED]")
+            self.assertEqual(embedded["userAccessToken"],"[REDACTED]")
+            self.assertEqual(embedded["safe_event"],"マスカーニャが登場した")
+            double_encoded=json.loads(request["content"][1]["text"])
+            self.assertEqual(json.loads(double_encoded)["api_token"],"[REDACTED]")
+            leading=json.loads(request["content"][2]["text"])
+            self.assertEqual(leading["userAccessToken"],"[REDACTED]")
+            self.assertEqual(request["structured"]["api_token"],"[REDACTED]")
+            self.assertEqual(request["structured"]["userAccessToken"],"[REDACTED]")
+            self.assertEqual(request["content"][3]["text"],"OCR unchanged")
+            response=rows[1]["payload"]["answer"]
+            self.assertEqual(response["userAccessToken"],"[REDACTED]")
+            self.assertEqual(json.loads(response["nested_json"])["api_token"],
+                             "[REDACTED]")
+            self.assertEqual(response["result"],"UNKNOWN")
+
     def test_unsafe_content_is_stripped_from_disk_and_only_codes_remain(self):
         with tempfile.TemporaryDirectory() as root:
             logfile=MatchDebugLog(root)
