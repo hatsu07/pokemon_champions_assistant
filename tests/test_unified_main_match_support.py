@@ -817,7 +817,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(self.window._close_pending)
         self.assertEqual(panel._shutdown_intent,"close")
         self.assertTrue(panel._cancel_event.is_set())
-        self.assertTrue(self.window.isVisible())
+        self.assertFalse(self.window.isVisible())
         panel._cleanup()
         QCoreApplication.processEvents()
         QCoreApplication.processEvents()
@@ -1209,7 +1209,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIs(loaded,model)
         self.assertEqual(status,"MODEL_READY_CPU")
         self.assertIs(panel._screen_model,model)
-        self.assertIn("5分類ONNX利用中",panel.local_classifier_label.text())
+        self.assertIn("6分類ONNX利用中",panel.local_classifier_label.text())
         stored=json.loads(
             (panel.store_root/"screen_classifier_choice.json").read_text())
         self.assertEqual(stored["model_path"],str(model_path.resolve()))
@@ -1283,6 +1283,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         self.assertTrue(panel.manual_batch_button.isHidden())
         self.assertTrue(panel.prep_button.isHidden())
+        self.assertTrue(panel._manual_result_controls.isHidden())
+        self.assertFalse(panel._manual_result_available)
+        self.assertFalse(panel.full_ai_log_check.isChecked())
         self.assertEqual(panel.classifier_choose_button.objectName(),
                          "chooseScreenClassifier")
         self.assertEqual(panel.prep_banner.objectName(),"live_prep_progress")
@@ -1519,17 +1522,45 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         panel._auto_running=False
 
-    def test_manual_match_result_triggers_ended_state_without_images(self):
+    def test_manual_result_only_after_result_screen_unknown(self):
         panel=self.window._match_panel
         panel.state={"phase":"BATTLE","result":"UNKNOWN",
                      "matrix_compatible":False}
         with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.Yes):
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            panel._finish_match_manually("WIN")
+            confirm.assert_not_called()
+            self.assertEqual(panel.state["phase"],"BATTLE")
+            panel._result_screen_candidate={"frame":"capture-100",
+                                            "time":10.0,
+                                            "pending_ocr_frames":()}
+            panel._render({"status":"RESULT_UNCONFIRMED",
+                           "reason":"NO_GROUNDED_FINAL_MATCH_RESULT"})
+            self.assertTrue(panel._manual_result_available)
+            self.assertFalse(panel._manual_result_controls.isHidden())
             panel._finish_match_manually("WIN")
         self.assertEqual(panel.state["phase"],"ENDED")
         self.assertEqual(panel.state["result"],"WIN")
         self.assertEqual(panel.entries[-1]["status"],"MATCH_END")
-        self.assertEqual(panel.entries[-1]["images_sent"],0)
+        self.assertEqual(panel.entries[-1]["result_source"],
+                         "PLAYER_EXPLICIT_CONFIRMATION")
+        self.assertTrue(panel._manual_result_controls.isHidden())
+
+    def test_result_controls_do_not_show_after_gpt_ended_or_false_alarm(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","result":"UNKNOWN",
+                     "matrix_compatible":False}
+        panel._result_screen_candidate={"frame":"capture-100","time":10.0}
+        panel._render({"status":"RESULT_UNCONFIRMED"})
+        self.assertFalse(panel._manual_result_controls.isHidden())
+        panel._result_screen_candidate=None
+        panel._render({"status":"SUPERSEDED",
+                       "warning":"RESULT_SCREEN_NO_LONGER_CURRENT"})
+        self.assertTrue(panel._manual_result_controls.isHidden())
+        panel.state["phase"]="ENDED"
+        panel.state["result"]="WIN"
+        panel._render({"status":"MATCH_END"})
+        self.assertTrue(panel._manual_result_controls.isHidden())
 
     def test_local_classifier_triggers_on_two_stable_selection_frames(self):
         from champions_assist.screen_classifier import ScreenPrediction
