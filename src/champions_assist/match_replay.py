@@ -237,6 +237,15 @@ def _bench_candidates(state: dict) -> list[str]:
             if _canonical(x)!=own and _canonical(x) not in fainted]
 
 
+def _turn_api_budget(deadline_monotonic: float | None, *,
+                     now: float, minimum_seconds: float = 0.0) -> float:
+    """Shared battle-turn API budget, NOT a fresh timeout for each call."""
+    if deadline_monotonic is None:
+        return float("inf")
+    remaining=max(0.0,float(deadline_monotonic)-float(now))
+    return remaining if remaining>=minimum_seconds else 0.0
+
+
 def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenMatchAssets,
                           local_rows=None, sent_ocr_ledger=None) -> bool:
     """Allow unknown lead from genuinely available OCR, never empty text.
