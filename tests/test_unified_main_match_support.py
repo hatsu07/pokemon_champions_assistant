@@ -1585,6 +1585,29 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIn("ONNX_CPU",panel.local_classifier_label.text())
         panel._stop_auto()
 
+    def test_trial_result_screen_starts_same_gpt_verification(self):
+        from types import SimpleNamespace
+        from champions_assist.screen_classifier import ScreenPrediction
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","matrix_compatible":False}
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        frame=np.full((120,200,3),60,dtype=np.uint8)
+        panel._screen_model=SimpleNamespace(
+            experimental=True,provider="CPUExecutionProvider",
+            predict=lambda image:ScreenPrediction("RESULT_SCREEN",.99,.98,2.0))
+        with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
+                   return_value=frame), \
+             patch.object(panel._turn_buffer,"observe",return_value=None), \
+             patch.object(panel,"_note_stable_result_screen") as note:
+            panel._capture_next()
+            note.assert_not_called()
+            panel._capture_next()
+            note.assert_called_once()
+        self.assertTrue(any(x["event"]=="RESULT_SCREEN_OCR_GPT_GATE"
+                            for x in panel._timing_trace))
+        panel._stop_auto()
+
     def test_live_training_capture_is_off_by_default_and_uses_existing_frame(self):
         from champions_assist.background_training_capture import CaptureStats
         panel=self.window._match_panel
