@@ -37,7 +37,8 @@ from .live_state_updates import apply_local_ocr
 from .local_event_image_policy import event_image_plan
 from .observation_events import ScreenLexicon
 from .auto_match_capture import capture_for_chatgpt, FrameChangeGate, AutoCaptureUnavailable
-from .match_debug_log import MatchDebugLog
+from .match_debug_log import MatchDebugLog, PrivateAiExchangeLog
+from .selection_vision import start_ai_exchange_trace, stop_ai_exchange_trace
 from .live_diagnostics import current_state_digest
 from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
@@ -121,6 +122,7 @@ class _ReplayWorker(QObject):
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
                  local_field_candidates=None,diagnostic_sink=None,
+                 exchange_sink=None,
                  selection_seconds=120.0, prep_seconds=120.0,battle_seconds=120.0,
                  result_messages=None, result_screen=None):
         super().__init__()
@@ -130,6 +132,7 @@ class _ReplayWorker(QObject):
         self.field_profile=field_profile
         self.local_field_candidates=list(local_field_candidates or [])
         self.diagnostic_sink=diagnostic_sink
+        self.exchange_sink=exchange_sink
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
@@ -147,6 +150,7 @@ class _ReplayWorker(QObject):
 
     @Slot()
     def run(self):
+        trace_token=start_ai_exchange_trace(self.exchange_sink)
         try:
             auth=ChatGPTSignIn(ProtectedSessionStore(self.app_root))
             if self.job=="prep":
@@ -275,6 +279,8 @@ class _ReplayWorker(QObject):
             self.finished.emit({"state":self.state,"report":{
                 "status":"ERROR","reason":str(exc) if isinstance(exc,SignInError)
                 else type(exc).__name__}})
+        finally:
+            stop_ai_exchange_trace(trace_token)
 
 
 class MatchReplayDialog(QDialog):
@@ -331,6 +337,7 @@ class MatchReplayDialog(QDialog):
         self._result_ocr_candidate=None
         self._result_screen_candidate=None
         self._result_screen_sent=False
+        self._manual_result_available=False
         self._revision_retry_keys=set()
         self._last_advised_switch=None
         self._automatic_probe=AutomaticVisualProbe(
@@ -388,6 +395,8 @@ class MatchReplayDialog(QDialog):
         self._trace_origin=monotonic()
         self._timing_trace=[]
         self._debug_log=None
+        self._exchange_log=None
+        self._shutdown_requested_at=None
         self._active_request_started=None
         self._active_request_frame=None
         self._latest_recognition_screen=None
@@ -455,16 +464,20 @@ class MatchReplayDialog(QDialog):
             "padding: 12px; background: #1d4ed8; color: white;}")
         self.action_banner.setWordWrap(True)
         panel.addWidget(self.action_banner)
-        result_controls=QHBoxLayout()
-        self.confirm_win_button=QPushButton("対戦終了：勝利を手動確定")
-        self.confirm_loss_button=QPushButton("対戦終了：敗北を手動確定")
+        self._manual_result_controls=QWidget(self)
+        self._manual_result_controls.setObjectName("unconfirmedResultControls")
+        result_controls=QHBoxLayout(self._manual_result_controls)
+        result_controls.addWidget(QLabel("勝敗未確定：ゲーム内の結果を確認"))
+        self.confirm_win_button=QPushButton("勝利を登録")
+        self.confirm_loss_button=QPushButton("敗北を登録")
         self.confirm_win_button.clicked.connect(
             lambda:self._finish_match_manually("WIN"))
         self.confirm_loss_button.clicked.connect(
             lambda:self._finish_match_manually("LOSS"))
         result_controls.addWidget(self.confirm_win_button)
         result_controls.addWidget(self.confirm_loss_button)
-        panel.addLayout(result_controls)
+        panel.addWidget(self._manual_result_controls)
+        self._manual_result_controls.hide()
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         self.ai_status_label=QLabel(self._ai_last_status)
@@ -474,6 +487,14 @@ class MatchReplayDialog(QDialog):
         self.debug_log_status=QLabel("自動デバッグログ: 対戦開始時に保存（画像・認証情報なし）")
         self.debug_log_status.setWordWrap(True)
         panel.addWidget(self.debug_log_status)
+        self.full_ai_log_check=QCheckBox(
+            "詳細デバッグ：GPTへの送信テキストと回答をローカル保存（画像・認証情報なし）")
+        self.full_ai_log_check.setObjectName("fullAiExchangeLogOptIn")
+        self.full_ai_log_check.setChecked(False)
+        self.full_ai_log_check.setToolTip(
+            "対戦開始時に有効。OCR本文やゲーム内名、自軍構築を含みます。"
+            "保存先debug-logs/ai-exchanges、最大32MB/試合、最大10試合。")
+        panel.addWidget(self.full_ai_log_check)
         self.menu_detection_label=QLabel("メニュー登録: なし")
         self.menu_detection_label.setWordWrap(True)
         panel.addWidget(self.menu_detection_label)
@@ -577,12 +598,20 @@ class MatchReplayDialog(QDialog):
         if self._debug_log is not None:
             self._debug_log.write("PREVIOUS_SESSION_CLOSED")
             self._debug_log.close()
+        if self._exchange_log is not None:
+            self._exchange_log.close()
+            self._exchange_log=None
         new_id="capture-"+uuid4().hex
         self._debug_log=None
         try:
             self._debug_log=MatchDebugLog(self.store_root,match_id=new_id,
                                           async_mode=True)
             self.debug_log_status.setText("自動デバッグログ保存先: "+str(self._debug_log.path))
+            if self.full_ai_log_check.isChecked():
+                self._exchange_log=PrivateAiExchangeLog(self.store_root,match_id=new_id)
+                self.debug_log_status.setText(
+                    "自動ログ: "+str(self._debug_log.path)
+                    +" / 詳細GPTログ: "+str(self._exchange_log.path))
         except OSError:
             # Logging must NEVER prevent starting the match.
             self.debug_log_status.setText("自動デバッグログ: 保存先に書き込めません（支援は継続）")
@@ -620,6 +649,7 @@ class MatchReplayDialog(QDialog):
             self._result_ocr_candidate=None
             self._result_screen_candidate=None
             self._result_screen_sent=False
+            self._manual_result_available=False
             self._revision_retry_keys.clear()
             self._last_advised_switch=None
             self.match_id=new_id
@@ -742,6 +772,7 @@ class MatchReplayDialog(QDialog):
         self._result_ocr_candidate=None
         self._result_screen_candidate=None
         self._result_screen_sent=False
+        self._manual_result_available=False
         self._revision_retry_keys.clear()
         self._last_advised_switch=None
         self.assets=None
