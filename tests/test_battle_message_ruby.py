@@ -102,6 +102,23 @@ class BattleMessageRubyTests(unittest.TestCase):
             self.assertEqual(info["preprocess"], status)
             self.assertGreater(crop.size, 0)
 
+    def test_light_background_requires_distinct_body_strokes(self):
+        # A bright, uniform UI background is not a line of white body glyphs.
+        # This regresses the six BODY_ANCHOR_MISMATCH failures in CI #1173.
+        blank = np.full((572, 960, 3), 180, np.uint8)
+        _, missing = prepare_battle_message(blank, sample(True), _REGION)
+        self.assertEqual(missing["preprocess"], "BODY_ANCHOR_MISMATCH")
+        self.assertFalse(missing["ruby_excluded"])
+        for background in (70, 180, 215):
+            with self.subTest(background=background):
+                frame = synthetic_frame()
+                frame[np.all(frame == 180, axis=2)] = background
+                cropped, parsed = prepare_battle_message(
+                    frame, sample(True), _REGION)
+                self.assertEqual(parsed["preprocess"], "BODY_LINES_CALIBRATED")
+                self.assertTrue(parsed["ruby_excluded"])
+                self.assertEqual(cropped.shape[:2], (59, 399))
+
     def test_same_dimension_shifted_text_abstains(self):
         image = synthetic_frame()
         for delta in (-10, -5, 5, 10):
