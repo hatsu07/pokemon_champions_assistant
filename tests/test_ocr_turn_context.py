@@ -362,6 +362,29 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertEqual(changed["our_active"],"ゲンガー")
         self.assertNotIn(("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{}),messages)
 
+    def test_voluntary_switch_blank_gpt_actor_cannot_bypass_identity(self):
+        assets=fixture_assets()
+        state=battle_state(assets)
+        state["awaiting_replacement"]=False
+        state["battle_evidence"]["hp_by_pokemon"]["own"]["ゲンガー"]="90/120"
+        answer=model_reply([],own="")
+        answer["action"]={"action_kind":"SWITCH","move":"",
+                          "switch_target":"ドドゲザン","warning":""}
+        logs=[]
+        with patch("champions_assist.match_replay._stream_json",return_value=answer):
+            after,report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="SWITCH_SELECTION",
+                local_field_candidates=rows(3),
+                client_factory=lambda **kwargs:object(),
+                diagnostic_sink=lambda event,details:logs.append((event,details)))
+        self.assertEqual(report["status"],"BLOCKED")
+        self.assertEqual(report["reason"],"AI_OCR_OWN_ACTIVE_UNVERIFIED")
+        self.assertEqual(after["our_active"],"ゲンガー")
+        self.assertTrue(any(event=="AI_OCR_OWN_ACTIVE_BLOCK_DETAIL"
+                            and not detail["confirmed_faint_replacement"]
+                            for event,detail in logs))
+
     def test_unknown_own_without_confirmed_faint_requires_visual_fallback(self):
         assets=fixture_assets()
         state=battle_state(assets)
