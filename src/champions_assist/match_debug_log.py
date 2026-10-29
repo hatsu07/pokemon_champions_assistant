@@ -231,6 +231,10 @@ _AI_SENSITIVE_KEYS = frozenset({
     "authorization", "clientsecret", "secret", "secretkey",
     "password", "privatekey", "credentials",
 })
+_AI_SENSITIVE_SUFFIXES = (
+    "accesstoken", "refreshtoken", "authtoken", "sessiontoken",
+    "apikey", "clientsecret", "privatekey",
+)
 # A request may contain an OCR JSON string, or even a malformed/embedded
 # JSON fragment: never write a string that might contain a credential field.
 _AI_SENSITIVE_TEXT = re.compile(
@@ -238,7 +242,8 @@ _AI_SENSITIVE_TEXT = re.compile(
     r"id[_\s-]*token|auth[_\s-]*token|oauth[_\s-]*token|"
     r"session[_\s-]*token|bearer[_\s-]*token|api[_\s-]*key|"
     r"auth[_\s-]*key|authorization|client[_\s-]*secret|"
-    r"secret[_\s-]*key|private[_\s-]*key|password|credentials)"
+    r"secret[_\s-]*key|private[_\s-]*key|password|credentials|"
+    r"token|secret)"
     r"(?![a-z0-9])"
 )
 
@@ -257,7 +262,8 @@ def _sanitize_ai_exchange(value, *, depth=0):
         for key, item in value.items():
             name=str(key)
             normalized=re.sub(r"[^a-z0-9]", "", name.casefold())
-            if normalized in _AI_SENSITIVE_KEYS:
+            if (normalized in _AI_SENSITIVE_KEYS
+                    or normalized.endswith(_AI_SENSITIVE_SUFFIXES)):
                 out[name]="[REDACTED]"
             else:
                 out[name]=_sanitize_ai_exchange(item,depth=depth+1)
