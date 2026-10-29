@@ -207,7 +207,7 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         hp="screen_text.own_hp_fraction"
         msg="screen_text.battle_message"
         self.assertEqual(tracker.ingest((read(hp,"65/120",1,{"current":65,"maximum":120}),)),1)
-        # Without a visual display ID this may be an independent event.
+        # Without a visual ID, the second reading is a possible NEW event.
         self.assertEqual(tracker.ingest((read(hp,"65/120",2,{"current":65,"maximum":120}),)),1)
         self.assertEqual(tracker.ingest((read(hp,"50/120",3,{"current":50,"maximum":120}),)),1)
         self.assertEqual(tracker.conflicts,0)
@@ -239,6 +239,8 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         self.assertEqual(tracker.ingest(
             (reading("f3", "visual-2", 10.9),), turn_epoch=2),0)
         self.assertEqual(tracker.duplicates,1)
+        self.assertEqual([r["frame_id"] for r in
+            tracker.snapshot()["local_observations"]], ["f1","f2","f3"])
         # Without display IDs, do not discard distinct OCR observations.
         self.assertEqual(tracker.ingest(
             (reading("f4", "", 11.0),), turn_epoch=2),1)
