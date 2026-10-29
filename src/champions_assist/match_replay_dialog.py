@@ -612,7 +612,7 @@ class MatchReplayDialog(QDialog):
             self._stop_local_event_reader()
             self._local_battle_tracker.clear()
             self._ocr_capture_epochs.clear()
-        self._auto_move_epochs.clear()
+            self._auto_move_epochs.clear()
             self._active_state_revision=None
             self._active_request_id=None
             self._pending_result_messages=None
