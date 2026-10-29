@@ -72,7 +72,7 @@ if ((probe)); then
 fi
 exec docker compose --profile "$profile" run --rm --build \
     --user "$(id -u):$(id -g)" "$service" \
-    python scripts/train_screen_classifier.py \
+    python -m scripts.train_screen_classifier \
     --data-dir /training/screens \
     --output-dir "$output" \
     --epochs 12 \

@@ -16,7 +16,9 @@ from collections import Counter
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import tempfile
 import random
 import sys
 from time import monotonic
@@ -265,7 +267,110 @@ def build_training_manifest(
     }
 
 
+
+class TrainingPreflightError(RuntimeError):
+    """A training prerequisite or a safe output destination is missing."""
+
+
+def preflight_training_export():
+    """Fail before GPU work if the final ONNX embedding/import path is unusable."""
+    try:
+        import onnx  # noqa: F401 - ensure the final exporter can load it
+        import onnxruntime  # noqa: F401 - required for post-export model checks
+        from scripts.embed_screen_classifier_metadata import embed_manifest
+    except (ImportError, OSError) as exc:
+        raise TrainingPreflightError(
+            f"ONNX metadata/export dependency unavailable before training: {exc}"
+        ) from exc
+    print("[preflight] ONNX metadata import and runtime dependencies OK",flush=True)
+    return embed_manifest
+
+
+def ensure_fresh_output(output_dir: Path) -> None:
+    """Reject old outputs and test the real output mount before GPU training."""
+    output_dir.mkdir(parents=True,exist_ok=True)
+    for name in ("champions_screen_classifier.onnx","champions_screen_classifier.json"):
+        path=output_dir/name
+        if path.exists() or path.is_symlink():
+            raise TrainingPreflightError(
+                f"Existing training artifact would be overwritten: {path}. "
+                "Use --archive-output to create a new run directory."
+            )
+    # Production publishes via os.link() from a staging directory below this
+    # same output mount. Probe the actual WSL/Docker bind mount *before* epochs.
+    # TemporaryDirectory cleans up both probe files on success or failure.
+    with tempfile.TemporaryDirectory(prefix=".link-preflight-",dir=output_dir) as probe:
+        source=Path(probe)/"source"
+        destination=output_dir/(Path(probe).name+"-linked")
+        source.write_bytes(b"screen-classifier-link-probe")
+        linked=False
+        try:
+            os.link(source,destination)
+            linked=True
+        except OSError as exc:
+            raise TrainingPreflightError(
+                f"Training output mount does not support safe hard-link publication: "
+                f"{output_dir} ({exc}). Choose a hard-link-capable output mount."
+            ) from exc
+        finally:
+            if linked:
+                destination.unlink()
+    print("[preflight] output mount supports hard-link publication",flush=True)
+
+
+def verify_training_export(model_path: Path, manifest_path: Path) -> None:
+    """Verify the exact staged model and JSON before making either public."""
+    import onnx
+    import numpy as np
+    from champions_assist.screen_classifier import (
+        EMBEDDED_MANIFEST_KEY, ScreenClassifier,
+    )
+
+    manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest["sha256"]!=sha256(model_path.read_bytes()).hexdigest():
+        raise ValueError("TRAINING_OUTPUT_CHECKSUM_MISMATCH")
+    graph=onnx.load(str(model_path))
+    onnx.checker.check_model(graph)
+    metadata={prop.key:prop.value for prop in graph.metadata_props}
+    embedded=metadata.get(EMBEDDED_MANIFEST_KEY)
+    if not embedded or json.loads(embedded)!={key:value for key,value in manifest.items()
+                                              if key!="sha256"}:
+        raise ValueError("TRAINING_OUTPUT_EMBEDDED_METADATA_MISMATCH")
+    # Both documented loading contracts must work, even for a trial model.
+    sample=np.zeros((32,32,3),dtype=np.uint8)
+    for sidecar in (None,manifest_path):
+        classifier=ScreenClassifier(model_path,sidecar,experimental_for_labelling=True)
+        if classifier.predict(sample,raw_label=True).label not in LABELS:
+            raise ValueError("TRAINING_OUTPUT_INVALID_PREDICTION")
+
+
+def publish_training_export(staged_model: Path, staged_manifest: Path,
+                            output_dir: Path) -> None:
+    """Publish a verified pair without replacing any old file, even in a race.
+
+    Staging lives under output_dir so hard links are on the same filesystem.
+    Publish JSON first and ONNX last: SIGKILL between the two links cannot
+    leave a discoverable standalone ONNX without its completed sidecar.
+    If creating the second link fails, only links made by this call are removed.
+    """
+    created=[]
+    try:
+        for source,name in (
+            (staged_manifest,"champions_screen_classifier.json"),
+            (staged_model,"champions_screen_classifier.onnx"),
+        ):
+            target=output_dir/name
+            os.link(source,target)
+            created.append(target)
+    except BaseException:
+        for target in reversed(created):
+            target.unlink()
+        raise
+
+
 def train_model(args):
+    embed_manifest=preflight_training_export()
+    ensure_fresh_output(args.output_dir)
     import torch
     from torch import nn
     from torch.utils.data import DataLoader,Dataset
@@ -376,27 +481,30 @@ def train_model(args):
     # independently held-out result-screen precision gate.
     validated=(validated and metrics["RESULT_SCREEN"]["precision"]>=0.995
                and metrics["RESULT_SCREEN"]["false_positives"]==0)
-    args.output_dir.mkdir(parents=True,exist_ok=True)
-    model_path=args.output_dir/"champions_screen_classifier.onnx"
-    model_cpu=model.cpu()
-    torch.onnx.export(
-        model_cpu,torch.zeros(1,3,SIZE[1],SIZE[0]),str(model_path),
-        input_names=["rgb"],output_names=["logits"],opset_version=17)
-    manifest=build_training_manifest(
-        model_path=model_path, mean=mean, std=std,
-        metrics=metrics, held_out_sessions=len(held_out),
-        quality_gate_passed=validated,
-        approve_if_thresholds_pass=args.approve_if_thresholds_pass,
-        confidence=args.confidence, device=str(device),
-        pretrained=bool(args.pretrained),
-    )
-    # Future training outputs are directly selectable ONNX files with their
-    # own metadata. Keep the JSON for older clients and SHA-256 verification.
-    from scripts.embed_screen_classifier_metadata import embed_manifest
-    embed_manifest(model_path,manifest)
-    manifest["sha256"]=sha256(model_path.read_bytes()).hexdigest()
-    manifest_path=args.output_dir/"champions_screen_classifier.json"
-    manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
+    # Build, embed and verify both files in a hidden temporary directory.
+    # No final artifact is exposed until the complete pair passes validation.
+    with tempfile.TemporaryDirectory(prefix=".incomplete-screen-",dir=args.output_dir) as staging:
+        model_path=Path(staging)/"champions_screen_classifier.onnx"
+        model_cpu=model.cpu()
+        torch.onnx.export(
+            model_cpu,torch.zeros(1,3,SIZE[1],SIZE[0]),str(model_path),
+            input_names=["rgb"],output_names=["logits"],opset_version=17)
+        manifest=build_training_manifest(
+            model_path=model_path, mean=mean, std=std,
+            metrics=metrics, held_out_sessions=len(held_out),
+            quality_gate_passed=validated,
+            approve_if_thresholds_pass=args.approve_if_thresholds_pass,
+            confidence=args.confidence, device=str(device),
+            pretrained=bool(args.pretrained),
+        )
+        # Embedded metadata excludes the self-referential SHA-256; the sidecar
+        # hashes the final, already-embedded ONNX bytes.
+        embed_manifest(model_path,manifest)
+        manifest["sha256"]=sha256(model_path.read_bytes()).hexdigest()
+        manifest_path=Path(staging)/"champions_screen_classifier.json"
+        manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
+        verify_training_export(model_path,manifest_path)
+        publish_training_export(model_path,manifest_path,args.output_dir)
     result={
         "training_images":len(training),
         "held_out_images":len(testing),
@@ -439,6 +547,9 @@ def main(argv: Sequence[str] | None=None) -> int:
         return 0 if report["ready"] else 2
     try:
         train_model(args)
+    except TrainingPreflightError as exc:
+        print(f"TRAINING_PREFLIGHT_ERROR: {exc}",file=sys.stderr,flush=True)
+        return 2
     except DatasetValidationError as exc:
         print(json.dumps(exc.report,ensure_ascii=False,indent=2))
         return 2

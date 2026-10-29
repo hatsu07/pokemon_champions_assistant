@@ -3,13 +3,15 @@ name: Synthetic screen-classifier training
 on:
   workflow_dispatch:
   pull_request:
-    types: [ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review, synchronize]
     paths:
       - ".devcontainer/Dockerfile"
       - "compose.yaml"
       - "requirements-training.txt"
       - "requirements-training-gpu.txt"
       - "scripts/check_training_gpu.py"
+      - "scripts/embed_screen_classifier_metadata.py"
+      - "src/champions_assist/screen_classifier.py"
       - "scripts/train_screen_classifier.py"
       - "scripts/train_screen_classifier_docker.sh"
       - "tests/training_pipeline_integration.py"
@@ -22,7 +24,7 @@ jobs:
   synthetic-training-pipeline:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,3 +49,57 @@ jobs:
       - name: Train synthetic sessions and validate the ONNX model
         run: |
           TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" docker compose --profile training run --rm --user "$(id -u):$(id -g)" trainer python -m unittest tests.training_pipeline_integration -v
+      - name: Generate synthetic six-class frames for real wrapper smoke test
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import struct
+          import zlib
+
+          root=Path(os.environ["RUNNER_TEMP"])/"screen-training-data"
+          root.mkdir(parents=True,exist_ok=True)
+          if any(root.iterdir()):
+              raise SystemExit("Refusing to replace existing training data")
+          labels=("TEAM_SELECTION","TURN_ACTION","SWITCH_SELECTION",
+                  "BATTLE_EVENT","RESULT_SCREEN","OTHER")
+          def chunk(kind,data):
+              return (struct.pack(">I",len(data))+kind+data+
+                      struct.pack(">I",zlib.crc32(kind+data)&0xffffffff))
+          for session_index in range(4):
+              session=f"match20261023T130{session_index}00_abc123{session_index}"
+              for label_index,label in enumerate(labels):
+                  target=root/label/f"{session}__{label_index}.png"
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  pixel=bytes((label_index*29,session_index*45,80))
+                  raw=(b"\x00"+pixel*24)*24
+                  png=(b"\x89PNG\r\n\x1a\n"+
+                       chunk(b"IHDR",struct.pack(">2I5B",24,24,8,2,0,0,0))+
+                       chunk(b"IDAT",zlib.compress(raw))+
+                       chunk(b"IEND",b""))
+                  target.write_bytes(png)
+          print("Generated",len(list(root.rglob("*.png"))),"synthetic PNGs")
+          PY
+      - name: Run the production Docker wrapper entrypoint with synthetic CPU training
+        shell: bash
+        run: |
+          TRAINING_DATA_DIR="$RUNNER_TEMP/screen-training-data" ./scripts/train_screen_classifier_docker.sh --epochs 1 --archive-output
+          shopt -s nullglob
+          runs=(private-training/output/run-*/)
+          test "${#runs[@]}" -eq 1
+          python3 - "${runs[0]}" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          output=Path(sys.argv[1])
+          model=output/"champions_screen_classifier.onnx"
+          manifest=output/"champions_screen_classifier.json"
+          assert model.is_file() and manifest.is_file(), "Incomplete training output"
+          info=json.loads(manifest.read_text(encoding="utf-8"))
+          assert info["sha256"]==hashlib.sha256(model.read_bytes()).hexdigest()
+          assert info["schema_version"]==3
+          assert info["validated"] is False
+          print("Verified wrapper output:",output)
+          PY
