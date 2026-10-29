@@ -251,6 +251,24 @@ class _ReplayWorker(QObject):
                             diagnostic_sink=self.diagnostic_sink,
                             sent_ocr_ledger=self.sent_ocr_ledger,
                             ocr_request_id=self.ocr_request_id)
+                        if (report.get("status")=="BLOCKED" and
+                                report.get("reason")==
+                                "ACTOR_OCR_RESERVED_OR_UNAVAILABLE"):
+                            # No GPT text request was sent. A concurrent
+                            # worker reserved the necessary OCR; use the
+                            # one current screenshot instead of guessing.
+                            next_state,report=run_replay_batch(
+                                self.frames[-1:],state=self.state,
+                                assets=self.assets,access_token=token,
+                                model=self.selected_model,
+                                reasoning_effort=self.reasoning_effort,
+                                total_seconds=self.battle_seconds,
+                                local_field_candidates=local_candidates,
+                                expected_screen_label=self.screen_label,
+                                diagnostic_sink=self.diagnostic_sink,
+                                sent_ocr_ledger=self.sent_ocr_ledger,
+                                ocr_request_id=self.ocr_request_id)
+                            report["image_exception_reason"]="OCR_RESERVED_CONCURRENTLY"
                     else:
                         next_state,report=run_replay_batch(
                             self.frames[-1:],state=self.state,assets=self.assets,
