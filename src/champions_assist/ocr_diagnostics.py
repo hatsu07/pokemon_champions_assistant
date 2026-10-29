@@ -31,10 +31,11 @@ def inspect_battle_event_image(
                 or "BATTLE_EVENT" not in region.applicable_labels
                 or region.kind not in ("HP_FRACTION", "HP_PERCENT", "MESSAGE")):
             continue
+        started = perf_counter()
         crop, preprocessing = prepare_battle_message(
             image, profile, region, preview_unvalidated=True,
             enabled=ruby_preview)
-        started = perf_counter()
+        prepared_at = perf_counter()
         try:
             reading = reader.read(crop, roi_name=region.name)
             parsed = parse_field_text(region, reading.text, frame_id="diagnostic")
@@ -52,8 +53,11 @@ def inspect_battle_event_image(
             row = dict(name=region.name, kind=region.kind, crop=crop,
                        text="", confidence=None, parsed=None,
                        error=getattr(exc, "code", type(exc).__name__))
+        finished = perf_counter()
         row.update(preprocessing)
-        row["elapsed_ms"] = round((perf_counter() - started) * 1000)
+        row["preprocess_ms"] = round((prepared_at - started) * 1000, 2)
+        row["ocr_elapsed_ms"] = round((finished - prepared_at) * 1000, 2)
+        row["elapsed_ms"] = round((finished - started) * 1000, 2)
         rows.append(row)
     return {"status": "OCR_DIAGNOSTIC_COMPLETE", "rows": rows,
             "engine": getattr(reader, "engine_name", type(reader).__name__),
