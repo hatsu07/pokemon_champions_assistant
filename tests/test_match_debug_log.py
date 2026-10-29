@@ -76,6 +76,57 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
             self.assertNotIn("verysecret01234567890",serialized)
             self.assertIn("[REDACTED]",serialized)
 
+    def test_private_gpt_log_masks_recursive_and_embedded_json_tokens(self):
+        with tempfile.TemporaryDirectory() as root:
+            log=PrivateAiExchangeLog(root,match_id="capture-"+"a"*32)
+            embedded=json.dumps({
+                "battle":"safe OCR", "auth":{"access_token":"NESTED_ACCESS_123456"},
+                "session":{"refresh_token":"NESTED_REFRESH_123456"},
+                "messages":["unchanged",{"authorization":"Bearer SECRETAUTH123456"}]
+            },ensure_ascii=False)
+            log.write("GPT_REQUEST",{
+                "api_key":"DIRECT_API_SECRET_123456",
+                "meta":{"client_secret":"CLIENT_SECRET_123456",
+                        "content":"safe metadata"},
+                "content":[
+                    {"type":"input_text","text":embedded},
+                    {"type":"input_text",
+                     "text":'prefix {"access_token":"RAW_INLINE_123456"} suffix'},
+                    {"type":"input_text",
+                     "text":r'{\\\"refresh_token\\\":\\\"ESCAPED_123456\\\"}'},
+                    {"type":"input_text","text":"safe battle OCR string"},
+                ],
+                "notes":"sk-verysecret1234567890",
+            })
+            log.write("GPT_RESPONSE",{
+                "answer":{"result":"UNKNOWN",
+                          "credentials":{"password":"PASSWORD_123456"}},
+                "safe_result":"UNKNOWN",
+            })
+            log.queue.join()
+            log.close()
+            raw=log.path.read_text(encoding="utf-8")
+            rows=[json.loads(line) for line in raw.splitlines()]
+            self.assertEqual([row["event"] for row in rows],
+                             ["GPT_REQUEST","GPT_RESPONSE"])
+            for secret in (
+                "DIRECT_API_SECRET_123456","CLIENT_SECRET_123456",
+                "NESTED_ACCESS_123456","NESTED_REFRESH_123456",
+                "SECRETAUTH123456","RAW_INLINE_123456",
+                "ESCAPED_123456","PASSWORD_123456",
+                "verysecret1234567890",
+            ):
+                self.assertNotIn(secret,raw)
+            self.assertIn("safe battle OCR string",raw)
+            self.assertIn("safe metadata",raw)
+            embedded_saved=json.loads(rows[0]["payload"]["content"][0]["text"])
+            self.assertEqual(embedded_saved["battle"],"safe OCR")
+            self.assertEqual(embedded_saved["auth"]["access_token"],"[REDACTED]")
+            self.assertEqual(rows[0]["payload"]["api_key"],"[REDACTED]")
+            self.assertEqual(rows[0]["payload"]["content"][1]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(rows[1]["payload"]["safe_result"],"UNKNOWN")
+
     def test_unsafe_content_is_stripped_from_disk_and_only_codes_remain(self):
         with tempfile.TemporaryDirectory() as root:
             logfile=MatchDebugLog(root)
