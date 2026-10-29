@@ -1287,7 +1287,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      client_factory=None, reasoning_effort: str = "auto",
                      local_field_candidates: list[dict] | None = None,
                      expected_screen_label: str | None = None,
-                     diagnostic_sink=None, sent_ocr_ledger=None) -> tuple[dict, dict]:
+                     diagnostic_sink=None, sent_ocr_ledger=None,
+                     ocr_request_id: str | None=None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1378,7 +1379,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         def mark_ocr_sent():
             keys=set(ocr_meta["presented_keys"])
             if sent_ocr_ledger is not None:
-                sent_ocr_ledger.mark_sent(keys)
+                sent_ocr_ledger.mark_sent(
+                    keys,request_id=ocr_request_id,rows=selected_ocr)
             state["_ai_ocr_presented_keys"]=sorted(
                 set(state.get("_ai_ocr_presented_keys") or ()) | keys)
         prompt["ocr_pending_questions_unverified"]=pending_ocr
@@ -1842,7 +1844,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                            local_field_candidates: list[dict] | None=None,
                            total_seconds: float=30.0, client_factory=None,
                            reasoning_effort: str="low",
-                           diagnostic_sink=None, sent_ocr_ledger=None) -> tuple[dict,dict]:
+                           diagnostic_sink=None, sent_ocr_ledger=None,
+                           ocr_request_id: str | None=None) -> tuple[dict,dict]:
     """Normal live tactical path: zero screenshots, one compact JSON call.
 
     A screen classifier proves a menu KIND, not which Pokémon has HP or
@@ -1894,7 +1897,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     def mark_ocr_sent():
         keys=set(context_stats["presented_keys"])
         if sent_ocr_ledger is not None:
-            sent_ocr_ledger.mark_sent(keys)
+            sent_ocr_ledger.mark_sent(
+                keys,request_id=ocr_request_id,rows=candidates)
         state["_ai_ocr_presented_keys"]=sorted(
             set(state.get("_ai_ocr_presented_keys") or ()) | keys)
     if diagnostic_sink is not None:
