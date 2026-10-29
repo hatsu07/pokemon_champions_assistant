@@ -242,8 +242,8 @@ _AI_SENSITIVE_SUFFIXES = (
 _AI_SENSITIVE_TEXT = re.compile(
     # A non-JSON OCR fragment may contain CamelCase keys or escaped JSON.
     # No left word boundary: "userAccessToken" must be recognized.
-    r"(?i)(?:token|api[_\\s-]*key|authorization|secret|password|"
-    r"credentials?|private[_\\s-]*key|bearer)"
+    r"(?i)(?:token|api[_\s-]*key|authorization|secret|password|"
+    r"credentials?|private[_\s-]*key|bearer)"
 )
 
 
