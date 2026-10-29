@@ -152,6 +152,10 @@ class EvidenceArchiveTest(unittest.TestCase):
             columns = ("metadata_json", "status", "dropped_count", "metadata_sha")
             for column, mutation in mutations:
                 with self.subTest(column=column):
+                    # Each verification re-opens the archive and reinstalls
+                    # the UPDATE guard. Disable it only around this deliberate
+                    # synthetic corruption, never in application code.
+                    db.execute("DROP TRIGGER IF EXISTS no_p1_match_update")
                     db.execute(
                         f"UPDATE p1_evidence_match SET {column}=? WHERE match_id=?",
                         (mutation, "match-1"))
