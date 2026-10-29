@@ -60,7 +60,7 @@ class BattleMessageRubyTests(unittest.TestCase):
             frame, sample(), _REGION, preview_unvalidated=True)
         self.assertEqual(data["preprocess"], "RUBY_MASK_PREVIEW_ONLY")
         self.assertEqual(data["ruby_mask_rois"], [
-            [141, 423, 540, 432], [141, 454, 540, 464]])
+            [141, 423, 540, 430], [141, 454, 540, 464]])
         self.assertEqual(crop.shape, (93, 399, 3))
         original = sample().crop(frame, _REGION)
         # All main body pixels, including the full last punctuation at X539,
@@ -73,7 +73,7 @@ class BattleMessageRubyTests(unittest.TestCase):
         self.assertTrue(np.array_equal(crop[35, 539 - 141], frame[447, 539]))
         changed = np.any(crop != original, axis=2)
         protected = np.ones(changed.shape, dtype=bool)
-        protected[423-412:432-412] = False
+        protected[423-412:430-412] = False
         protected[454-412:464-412] = False
         self.assertFalse(np.any(changed & protected))
         self.assertFalse(data["game_validated"])
@@ -90,7 +90,7 @@ class BattleMessageRubyTests(unittest.TestCase):
                 self.assertEqual(data["preprocess"], "RUBY_MASK_CALIBRATED")
                 self.assertEqual(len(data["ruby_mask_rois"]), 2)
                 self.assertEqual(data["ruby_mask_rois"], [
-                    [round(v * scale) for v in (141, 423, 540, 432)],
+                    [round(v * scale) for v in (141, 423, 540, 430)],
                     [round(v * scale) for v in (141, 454, 540, 464)]])
                 self.assertEqual(crop.shape, sample(True).crop(img, _REGION).shape)
                 self.assertLessEqual(crop.shape[1], 798)
@@ -177,6 +177,28 @@ class BattleMessageRubyTests(unittest.TestCase):
         finally:
             reader.stop()
 
+    def test_body_boundary_y430_through_y434_cannot_be_overwritten(self):
+        # P1 regression: previously Y431 was included in first ruby mask.
+        frame = synthetic_frame()
+        frame[430:435, 240:260] = 255
+        image_before = sample(True).crop(frame, _REGION)
+        image_after, info = prepare_battle_message(frame, sample(True), _REGION)
+        self.assertEqual(info["preprocess"], "RUBY_MASK_CALIBRATED")
+        self.assertTrue(np.array_equal(
+            image_before[430-412:435-412, 240-141:260-141],
+            image_after[430-412:435-412, 240-141:260-141]))
+
+    def test_second_body_shifted_right_into_ruby_band_must_fall_back(self):
+        # P1 regression: left anchor shows only one line but second-line
+        # main-sized glyphs are present outside the left anchor at X240:360.
+        frame = synthetic_frame()
+        frame[454:489, 141:540] = 180
+        frame[455:463, 240:360] = 255
+        cropped, info = prepare_battle_message(frame, sample(True), _REGION)
+        self.assertFalse(info["ruby_excluded"])
+        self.assertEqual(info["preprocess"], "RUBY_BAND_BODY_RISK")
+        self.assertTrue(np.array_equal(cropped, sample(True).crop(frame, _REGION)))
+
     def test_second_body_shifted_up_into_ruby_band_falls_back(self):
         # A changed line baseline must NOT be erased by the second mask.
         frame = synthetic_frame()
@@ -201,7 +223,7 @@ class BattleMessageRubyTests(unittest.TestCase):
                 self.assertTrue(data["ruby_excluded"])
                 # Any change outside the two ruby masks is forbidden.
                 allowed = np.zeros(before.shape[:2], dtype=bool)
-                allowed[423-412:432-412] = True
+                allowed[423-412:430-412] = True
                 allowed[454-412:464-412] = True
                 changed = np.any(before != after, axis=2)
                 self.assertFalse(np.any(changed & ~allowed))
