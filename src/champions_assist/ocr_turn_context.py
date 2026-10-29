@@ -11,7 +11,6 @@ from hashlib import sha256
 import json
 from threading import Lock
 from unicodedata import normalize
-from difflib import SequenceMatcher
 
 from .ocr_ai_evidence import select_ai_ocr_evidence
 
@@ -36,12 +35,31 @@ def _compare_text(value: str) -> str:
     return "".join(normalize("NFKC", value).split())
 
 
-def compact_ocr_transport(rows: list[dict]) -> list[dict]:
-    """Compact ONLY independently linked display episodes; preserve every proof.
+def _levenshtein_similarity(a: str, b: str) -> float:
+    """Issue #125: normalized edit-distance similarity, not SequenceMatcher."""
+    if a == b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    previous = list(range(len(b) + 1))
+    for i, left in enumerate(a, 1):
+        current = [i]
+        for j, right in enumerate(b, 1):
+            current.append(min(
+                current[-1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + (left != right),
+            ))
+        previous = current
+    return 1.0 - previous[-1] / max(len(a), len(b))
 
-    Different display episodes are never coalesced, even with identical text.
-    The original rows are used independently for state-update verification.
-    If the capture pipeline lacks a display ID, preserve the row as-is.
+
+def compact_ocr_transport(rows: list[dict]) -> list[dict]:
+    """Transport-only visual-episode compression without discarding OCR proof.
+
+    Unknown display identity means no compression. Multiple distinct battles
+    showing the same text never share an episode ID. State verification always
+    receives the original, uncompressed rows.
     """
     groups: list[dict] = []
     positions: dict[tuple[str, str], int] = {}
@@ -54,38 +72,71 @@ def compact_ocr_transport(rows: list[dict]) -> list[dict]:
         if position is not None:
             group = groups[position]
             prior = str(group.get("raw_text") or "")
-            exact = _compare_text(prior) == _compare_text(raw)
-            # A fuzzy variant is never substituted for the original, and is
-            # permitted only for battle messages on the SAME visual episode.
+            a, b = _compare_text(prior), _compare_text(raw)
+            exact = a == b
             fuzzy = (field.endswith(("battle_message", "system_message"))
-                     and min(len(_compare_text(prior)), len(_compare_text(raw))) >= 8
-                     and SequenceMatcher(None, _compare_text(prior),
-                                         _compare_text(raw)).ratio() >= 0.90)
+                     and min(len(a), len(b)) >= 8
+                     and _levenshtein_similarity(a, b) >= 0.90)
             if exact or fuzzy:
-                if "source_frames" not in group:
-                    group["source_frames"] = [group["frame_id"]]
-                    group["observation_count"] = 1
-                    group["variants"] = []
-                    group["source_observations"] = [{
-                        "frame_id": group["frame_id"],
+                if "_source_texts" not in group:
+                    group["_source_texts"] = [{
+                        "text": prior, "frame_id": group["frame_id"],
                         "observed_at": group.get("observed_at"),
                         "confidence": group.get("confidence"),
                     }]
-                if raw != prior and raw not in group["variants"]:
-                    group["variants"].append(raw)
-                group["source_frames"].append(row["frame_id"])
-                group["source_observations"].append({
-                    "frame_id": row["frame_id"],
+                group["_source_texts"].append({
+                    "text": raw, "frame_id": row["frame_id"],
                     "observed_at": row.get("observed_at"),
                     "confidence": row.get("confidence"),
                 })
-                group["observation_count"] += 1
                 continue
         if key is not None:
             positions[key] = len(groups)
         groups.append(dict(row))
-    return groups
 
+    for group in groups:
+        observations = group.pop("_source_texts", None)
+        if observations is None:
+            continue
+        forms: dict[str, dict] = {}
+        for observation in observations:
+            raw = observation["text"]
+            if raw not in forms:
+                forms[raw] = {
+                    "count": 0, "peak_confidence": -1.0,
+                    "frames": [], "first": observation,
+                }
+            entry = forms[raw]
+            entry["count"] += 1
+            entry["frames"].append(observation["frame_id"])
+            confidence = observation.get("confidence")
+            if type(confidence) in (int, float):
+                entry["peak_confidence"] = max(
+                    entry["peak_confidence"], float(confidence))
+        ranking = sorted(forms, key=lambda text: (
+            -forms[text]["count"],
+            -forms[text]["peak_confidence"],
+            observations.index(forms[text]["first"]),
+        ))
+        representative = ranking[0]
+        representative_observation = forms[representative]["first"]
+        group["raw_text"] = representative
+        group["frame_id"] = representative_observation["frame_id"]
+        group["observed_at"] = representative_observation["observed_at"]
+        group["confidence"] = representative_observation["confidence"]
+        group["source_frames"] = [o["frame_id"] for o in observations]
+        group["observation_count"] = len(observations)
+        group["variants"] = ranking[1:]
+        group["variant_frames"] = {
+            text: forms[text]["frames"] for text in ranking
+        }
+        group["source_observations"] = [
+            {"frame_id": o["frame_id"],
+             "observed_at": o["observed_at"],
+             "confidence": o["confidence"]}
+            for o in observations
+        ]
+    return groups
 
 def _row_key(row: dict) -> str:
     """Opaque local presentation marker; raw text remains in the tracker."""
