@@ -97,6 +97,101 @@ class TrainingPipelineIntegrationTests(unittest.TestCase):
                 trainer.ensure_fresh_output(root)
             self.assertEqual(model.read_bytes(),b"old model")
 
+    def test_output_mount_hard_link_failure_aborts_before_training(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/"output"
+            with patch.object(trainer.os,"link",
+                              side_effect=OSError("hard links unavailable on this mount")):
+                with self.assertRaisesRegex(
+                    trainer.TrainingPreflightError,"does not support safe hard-link"
+                ):
+                    # No dataset, Torch or epochs available; preflight must win.
+                    trainer.train_model(SimpleNamespace(output_dir=output))
+            self.assertTrue(output.is_dir())
+            self.assertFalse(list(output.iterdir()),"Probe artifacts must be cleaned")
+            self.assertFalse((output/"champions_screen_classifier.onnx").exists())
+
+    def test_output_mount_hard_link_preflight_cleans_probe_on_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/"output"
+            trainer.ensure_fresh_output(output)
+            self.assertEqual(list(output.iterdir()),[])
+
+    def test_publish_order_places_json_before_discoverable_onnx(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            staged=root/"staging"
+            staged.mkdir()
+            model=staged/"champions_screen_classifier.onnx"
+            manifest=staged/"champions_screen_classifier.json"
+            model.write_bytes(b"complete model")
+            manifest.write_bytes(b'{"validated":false}')
+            actual_link=trainer.os.link
+            calls=[]
+
+            def recording_link(source,target):
+                # Just before the ONNX link, a forced process kill would leave
+                # JSON only. An ONNX-only loader cannot discover a model yet.
+                calls.append(Path(target).name)
+                if len(calls)==2:
+                    self.assertEqual(calls[0],"champions_screen_classifier.json")
+                    self.assertTrue((root/"champions_screen_classifier.json").exists())
+                    self.assertFalse((root/"champions_screen_classifier.onnx").exists())
+                return actual_link(source,target)
+
+            with patch.object(trainer.os,"link",side_effect=recording_link):
+                trainer.publish_training_export(model,manifest,root)
+            self.assertEqual(calls,[
+                "champions_screen_classifier.json","champions_screen_classifier.onnx"
+            ])
+            self.assertEqual((root/"champions_screen_classifier.onnx").read_bytes(),
+                             b"complete model")
+
+    def test_publish_rolls_back_json_if_onnx_link_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            staged=root/"staging"
+            staged.mkdir()
+            model=staged/"champions_screen_classifier.onnx"
+            manifest=staged/"champions_screen_classifier.json"
+            model.write_bytes(b"safe model")
+            manifest.write_bytes(b"safe JSON")
+            original=trainer.os.link
+            count=0
+
+            def fail_second_link(source,target):
+                nonlocal count
+                count+=1
+                if count==2:
+                    raise OSError("hard link failed after JSON publication")
+                return original(source,target)
+
+            with patch.object(trainer.os,"link",side_effect=fail_second_link):
+                with self.assertRaises(OSError):
+                    trainer.publish_training_export(model,manifest,root)
+            self.assertEqual(count,2)
+            self.assertFalse((root/"champions_screen_classifier.json").exists())
+            self.assertFalse((root/"champions_screen_classifier.onnx").exists())
+            self.assertEqual(model.read_bytes(),b"safe model")
+            self.assertEqual(manifest.read_bytes(),b"safe JSON")
+
+    def test_existing_model_is_preserved_if_second_publication_link_conflicts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            staged=root/"staging"
+            staged.mkdir()
+            model=staged/"champions_screen_classifier.onnx"
+            manifest=staged/"champions_screen_classifier.json"
+            model.write_bytes(b"new model")
+            manifest.write_bytes(b"new manifest")
+            existing=root/"champions_screen_classifier.onnx"
+            existing.write_bytes(b"old model")
+            with self.assertRaises(FileExistsError):
+                trainer.publish_training_export(model,manifest,root)
+            self.assertEqual(existing.read_bytes(),b"old model")
+            self.assertFalse((root/"champions_screen_classifier.json").exists())
+            self.assertEqual(manifest.read_bytes(),b"new manifest")
+
     def test_publish_rolls_back_only_new_files_if_manifest_conflicts(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
