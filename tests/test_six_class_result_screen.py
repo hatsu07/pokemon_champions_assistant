@@ -326,20 +326,56 @@ class ScreenResultEvidenceTests(unittest.TestCase):
         self.assertEqual(changed["phase"],"BATTLE")
         self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
 
-    def test_opponent_lost_dialogue_can_ground_human_win(self):
-        row=self.row("capture-201","ハツとの 勝負に 負けた!",19.)
+    def test_player_perspective_result_win(self):
+        # The game shows the match outcome as the player's own result.
+        row=self.row("capture-201","ハツとの 勝負に 勝った!",19.)
         changed,report,_=self.call(
-            {"result":"WIN","evidence":"ハツとの 勝負に 負けた!",
+            {"result":"WIN","evidence":"ハツとの 勝負に 勝った!",
              "evidence_frame_id":"capture-201"},[row])
         self.assertEqual(changed["phase"],"ENDED")
         self.assertEqual(changed["result"],"WIN")
 
-    def test_opponent_lost_dialogue_does_not_ground_human_loss(self):
+    def test_player_perspective_result_loss(self):
         row=self.row("capture-201","ハツとの 勝負に 負けた!",19.)
         changed,report,_=self.call(
             {"result":"LOSS","evidence":"ハツとの 勝負に 負けた!",
              "evidence_frame_id":"capture-201"},[row])
-        self.assertNotEqual(changed["phase"],"ENDED")
+        self.assertEqual(changed["phase"],"ENDED")
+        self.assertEqual(changed["result"],"LOSS")
+
+    def test_wrong_gpt_win_on_player_loss_is_unconfirmed(self):
+        # Regression: the previous regex inverted "との勝負に負けた".
+        row=self.row("capture-201","私は相手との勝負に負けた",19.)
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"私は相手との勝負に負けた",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_wrong_gpt_loss_on_player_win_is_unconfirmed(self):
+        row=self.row("capture-201","相手との 勝負に 勝った!",19.)
+        changed,report,_=self.call(
+            {"result":"LOSS","evidence":"相手との 勝負に 勝った!",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_unreadable_or_two_sided_game_result_is_unconfirmed(self):
+        for ocr in ("ハツとの 勝負に 勝っ", "ハツとの勝負に勝った／負けた",
+                    "ハツとの勝負に勝った。でも対戦に敗北しました"):
+            changed,report,_=self.call(
+                {"result":"WIN","evidence":ocr,
+                 "evidence_frame_id":"capture-201"},
+                [self.row("capture-201",ocr,19.)])
+            self.assertEqual(changed["phase"],"BATTLE")
+            self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_short_quote_cannot_hide_opposite_result_in_source(self):
+        row=self.row("capture-201","相手との勝負に負けた。勝利しましたとの誤読",19.)
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"勝利しました",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"BATTLE")
         self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
 
     def test_unknown_or_missing_evidence_preserves_match(self):
