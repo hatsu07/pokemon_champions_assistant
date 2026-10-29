@@ -101,6 +101,11 @@ class OcrSentLedger:
         self._needs_visual_confirmation = False
         self._visual_guard_rows: list[dict] | None = None
         self._visual_guard_epoch = 0
+        # Overflow never erases historical uncertainty. It is quarantined to
+        # actors active when the lost OCR request was retired. Returning one of
+        # those actors forces image/NO_ACTION again, not stale text reasoning.
+        self._quarantined_actors = {"our": set(), "opponent": set()}
+        self._overflow_identity_unknown = False
 
     def snapshot(self) -> set[str]:
         with self._lock:
@@ -119,6 +124,20 @@ class OcrSentLedger:
     def needs_visual_confirmation(self) -> bool:
         with self._lock:
             return self._needs_visual_confirmation
+
+    def quarantined_actor_is_active(self, state: dict) -> bool:
+        with self._lock:
+            return (str(state.get("our_active") or "") in
+                    self._quarantined_actors["our"] or
+                    str(state.get("opponent_active") or "") in
+                    self._quarantined_actors["opponent"])
+
+    def visual_overflow_actors(self) -> dict[str, list[str]]:
+        with self._lock:
+            if not self._needs_visual_confirmation or self._visual_guard_rows is not None:
+                return {}
+            return {key: sorted(value) for key, value in
+                    self._quarantined_actors.items()}
 
     def visual_guard_rows(self) -> list[dict]:
         """Bounded, still-unverified proof to reconcile against a NEW image."""
@@ -276,11 +295,22 @@ class OcrSentLedger:
                 if request_id in self._stale_requests:
                     self._stage_stale(request_id)
 
-    def mark_stale(self, request_id: str | None) -> None:
+    def mark_stale(self, request_id: str | None, *,
+                   battle_context: dict | None = None) -> None:
         if not request_id:
             return
         with self._lock:
             self._stale_requests.add(request_id)
+            # Preserve the affected actors BEFORE losing the original context.
+            # No context => no provable quarantine => remain in visual mode.
+            if battle_context is not None:
+                for side, field in (("our", "our_active"),
+                                    ("opponent", "opponent_active")):
+                    actor = str(battle_context.get(field) or "")
+                    if actor:
+                        self._quarantined_actors[side].add(actor)
+                    else:
+                        self._overflow_identity_unknown = True
             # If this worker reserved proof but has not confirmed HTTP send,
             # the next worker must not silently act from incomplete OCR.
             if self._reserved.get(request_id) and request_id not in self._request_rows:
@@ -303,9 +333,14 @@ class OcrSentLedger:
         Unresolved or fabricated source IDs block recovery.
         """
         with self._lock:
-            if not self._needs_visual_confirmation or not self._visual_guard_rows:
+            if not self._needs_visual_confirmation:
                 return None
-            rows = [dict(row) for row in self._visual_guard_rows]
+            overflow = self._visual_guard_rows is None
+            rows = ([dict(row) for row in self._visual_guard_rows]
+                    if self._visual_guard_rows is not None else [])
+            quarantine = {side: set(actors) for side, actors
+                          in self._quarantined_actors.items()}
+            context_missing = self._overflow_identity_unknown
             epoch = self._visual_guard_epoch
         if report.get("images_sent", 0) < 1 or report.get("status") in (
                 "BLOCKED","ERROR","SUPERSEDED","CANCELLED","DEADLINE_EXCEEDED"):
@@ -321,6 +356,45 @@ class OcrSentLedger:
             return None
         if updated.get("_ai_ocr_unresolved"):
             return None
+        if overflow:
+            # A NEW stable visual baseline is sufficient only for actors
+            # outside the quarantined past; it NEVER validates lost events.
+            # All volatile current-state mechanics and field conditions must
+            # be explicitly visible, including zeros/absence (not inferred).
+            if context_missing or not all(quarantine.values()):
+                return None
+            if (obs["our_active"] in quarantine["our"]
+                    or obs["opponent_active"] in quarantine["opponent"]):
+                return None
+            from .battle_evidence import _visual_stages
+            required_stages = {"A","B","C","D","S","ACC","EVA"}
+            for side in ("our","opponent"):
+                stages = _visual_stages(obs.get(side+"_stat_changes",""))
+                if stages is None or set(stages)!=required_stages:
+                    return None
+                if any(not isinstance(obs.get(side+"_"+field),str)
+                       or not obs[side+"_"+field].strip()
+                       or obs[side+"_"+field].strip().casefold()
+                          in ("unknown","none","?","不明")
+                       for field in ("hp","status","current_type",
+                                     "temporary_effects")):
+                    return None
+            if any(not isinstance(obs.get(key),str)
+                   or not obs[key].strip()
+                   or obs[key].strip().casefold()
+                      in ("unknown","none","?","不明")
+                   for key in ("battlefield_weather","battlefield_terrain",
+                               "battlefield_effects")):
+                return None
+            check = report.get("stale_visual_check") or {}
+            if (not isinstance(check,dict)
+                    or check.get("unresolved_source_row_keys")
+                    or check.get("confirmed_source_fields")
+                    or check.get("full_state_rebaseline") is not True):
+                return None
+            # Baseline is a narrow recovery for NEW active Pokémon. Previous
+            # actors are NOT cleared; their appearance reactivates image mode.
+            return epoch
         check = report.get("stale_visual_check") or {}
         if (not isinstance(check, dict) or
                 check.get("unresolved_source_row_keys")):
