@@ -16,38 +16,85 @@ from .ocr_ai_evidence import select_ai_ocr_evidence
 
 
 class OcrSentLedger:
-    """Transport facts plus one-shot proof reinspection after an unadopted reply.
+    """Match-local OCR transport, exclusive reservations and evidence safety.
 
-    A sent OCR row is NOT a confirmed battle event. Only a request whose reply
-    was lost/superseded exposes chosen original frames for ONE subsequent call.
-    Match-local threading lock handles late HTTP dispatch after UI retirement.
+    Reserved rows are NOT sent/confirmed. The reservation survives a logical
+    retirement until the old worker either releases it or the HTTP transport
+    confirms a send; newer workers must not transmit those same rows.
     """
+
+    # Reinspection is bounded, not a replay of the local OCR archive.
+    MAX_REINSPECT_ROWS = 24
+    MAX_REINSPECT_BYTES = 8192
 
     def __init__(self):
         self._lock = Lock()
         self._keys: set[str] = set()
+        self._reserved: dict[str, set[str]] = {}
         self._request_rows: dict[str, list[dict]] = {}
         self._stale_requests: set[str] = set()
         self._reinspect_keys: set[str] = set()
         self._reinspected_keys: set[str] = set()
+        self._needs_visual_confirmation = False
 
     def snapshot(self) -> set[str]:
         with self._lock:
             return set(self._keys)
 
+    def unavailable_keys(self, request_id: str | None = None) -> set[str]:
+        """All keys another in-flight request owns (never treated as sent)."""
+        with self._lock:
+            return {key for owner, keys in self._reserved.items()
+                    if owner != request_id for key in keys}
+
     def reinspection_keys(self) -> set[str]:
         with self._lock:
             return set(self._reinspect_keys)
 
-    @staticmethod
-    def _specific_reinspection_keys(rows: list[dict]) -> set[str]:
-        """Choose proof by OCR *region and display*, not Pokémon semantics.
+    def needs_visual_confirmation(self) -> bool:
+        with self._lock:
+            return self._needs_visual_confirmation
 
-        Preserve two readings per distinct battle message display, which can
-        be necessary for corroborating an actual switch. A missing display ID
-        is not merged with any other message. For HUD fields select the latest
-        reading and its predecessor so changes remain available. This is
-        scoped to the lost request, never the whole match history.
+    def is_stale(self, request_id: str | None) -> bool:
+        with self._lock:
+            return bool(request_id and request_id in self._stale_requests)
+
+    def reserve(self, request_id: str | None, rows: list[dict]) -> list[dict]:
+        """Atomically claim an OCR delta immediately before request assembly.
+
+        Late req-A and new req-B cannot reserve the same row. An older worker
+        that was already retired gets no transport evidence at all.
+        """
+        if not request_id:
+            return rows
+        with self._lock:
+            if request_id in self._stale_requests:
+                return []
+            owned_elsewhere = {
+                key for owner, keys in self._reserved.items()
+                if owner != request_id for key in keys
+            }
+            claimed = [row for row in rows
+                       if _row_key(row) not in owned_elsewhere]
+            self._reserved.setdefault(request_id, set()).update(
+                _row_key(row) for row in claimed)
+            return claimed
+
+    def release(self, request_id: str | None) -> None:
+        """Release only keys whose send has NOT been confirmed."""
+        if not request_id:
+            return
+        with self._lock:
+            self._reserved.pop(request_id, None)
+
+    @staticmethod
+    def _specific_reinspection_keys(rows: list[dict]) -> tuple[set[str], bool]:
+        """Sample ONE failed request, not all match history, without inventing
+        OCR meaning or equating repeated same text to the same battle event.
+
+        For missing display IDs consecutive exact strings can be *sampled*,
+        but never described as one event. The unabridged originals stay local.
+        If important proof exceeds budget, require visual confirmation.
         """
         event_fields = ("battle_message", "system_message", "effect_popup",
                         "item_popup", "item_message")
@@ -56,38 +103,76 @@ class OcrSentLedger:
         for index, row in enumerate(rows):
             field = str(row.get("field") or "")
             if field.endswith(event_fields):
-                # Same visual display is one event; absent IDs are distinct.
-                episode = row.get("display_id") or f"single:{index}"
-                # Even a mistaken visual episode ID must not collapse
-                # opposite messages (e.g. stat went up versus down).
-                raw = str(row.get("raw_text", row.get("candidate", "")))
-                group = (field, str(episode), _compare_text(raw))
-                event_groups.setdefault(group, []).append(row)
+                raw = _compare_text(str(row.get(
+                    "raw_text", row.get("candidate", ""))))
+                display = row.get("display_id")
+                # No display ID: group adjacent exact text only for sampling;
+                # preserve a new group on changes, including opposite messages.
+                if display:
+                    episode = ("verified", str(display))
+                else:
+                    previous = rows[index-1] if index else None
+                    prev_field = str(previous.get("field") or "") if previous else ""
+                    prev_raw = _compare_text(str(previous.get(
+                        "raw_text", previous.get("candidate", "")))) if previous else ""
+                    prev_id = previous.get("display_id") if previous else None
+                    if previous is not None and not prev_id and (
+                            prev_field == field and prev_raw == raw):
+                        episode = ("unknown", index-1)
+                        # Use the previous group ID to continue a run.
+                        if index >= 2:
+                            for group_key, group_rows in reversed(list(event_groups.items())):
+                                if group_rows[-1] is previous:
+                                    episode = group_key[1]
+                                    break
+                    else:
+                        episode = ("unknown", index)
+                event_groups.setdefault((field, episode, raw), []).append(row)
             else:
                 hud_groups.setdefault(field, []).append(row)
-        chosen: set[str] = set()
+        chosen: list[dict] = []
         for group in event_groups.values():
-            for row in (group[:2] if len(group) >= 2 else group):
-                chosen.add(_row_key(row))
+            chosen.extend(group[:1] + group[-1:] if len(group) > 1 else group)
         for group in hud_groups.values():
-            for row in group[-2:]:
-                chosen.add(_row_key(row))
-        return chosen
+            chosen.extend(group[-2:])
+        # Chronological order, preserving time information and distinct events.
+        ordinal = {id(row): n for n, row in enumerate(rows)}
+        chosen.sort(key=lambda row: ordinal[id(row)])
+        unique = []
+        seen: set[str] = set()
+        for row in chosen:
+            key = _row_key(row)
+            if key not in seen:
+                unique.append(row)
+                seen.add(key)
+        overflow = False
+        if len(unique) > OcrSentLedger.MAX_REINSPECT_ROWS:
+            overflow = True
+            unique = unique[-OcrSentLedger.MAX_REINSPECT_ROWS:]
+        while unique and _json_bytes(unique) > OcrSentLedger.MAX_REINSPECT_BYTES:
+            overflow = True
+            unique.pop(0)
+        return {_row_key(row) for row in unique}, overflow
 
     def _stage_stale(self, request_id: str) -> None:
         rows = self._request_rows.pop(request_id, [])
-        self._reinspect_keys.update(
-            self._specific_reinspection_keys(rows) - self._reinspected_keys)
+        keys, overflow = self._specific_reinspection_keys(rows)
+        if overflow or keys & self._reinspected_keys:
+            # The retry was already consumed, or the original set was too
+            # large to show safely. Do not issue a text-only tactical decision.
+            self._needs_visual_confirmation = True
+        self._reinspect_keys.update(keys - self._reinspected_keys)
 
     def mark_sent(self, keys, *, request_id: str | None = None,
                   rows: list[dict] | None = None) -> None:
         with self._lock:
             delivered = set(str(key) for key in keys if key)
             self._keys.update(delivered)
-            # Each row can be selectively re-shown once; it never becomes NEW.
             revisited = delivered & self._reinspect_keys
             self._reinspect_keys.difference_update(revisited)
             self._reinspected_keys.update(revisited)
+            if request_id:
+                self._reserved.pop(request_id, None)
             if request_id and rows:
                 self._request_rows[request_id] = [
                     dict(row) for row in rows if _row_key(row) in delivered]
@@ -99,14 +184,22 @@ class OcrSentLedger:
             return
         with self._lock:
             self._stale_requests.add(request_id)
+            # Do not release a reservation here: its worker may already be
+            # in client.responses.create(). Only that worker may release it.
             self._stage_stale(request_id)
 
-    def mark_adopted(self, request_id: str | None) -> None:
+    def mark_adopted(self, request_id: str | None, *,
+                     visual_confirmed: bool = False) -> None:
         if not request_id:
             return
         with self._lock:
             self._request_rows.pop(request_id, None)
+            self._reserved.pop(request_id, None)
             self._stale_requests.discard(request_id)
+            if visual_confirmed:
+                self._needs_visual_confirmation = False
+                self._reinspect_keys.clear()
+                self._reinspected_keys.clear()
 
 
 def _compare_text(value: str) -> str:
