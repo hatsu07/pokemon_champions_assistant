@@ -830,6 +830,12 @@ class Issue125TransportTests(unittest.TestCase):
                 obs[field]=bad
                 self.assertIsNone(
                     ledger.confirmed_visual_recovery_epoch(report,state))
+                if field == "opponent_used_move":
+                    obs[field]=good
+                    obs["opponent_active"]="ルカリオ"
+                    self.assertIsNone(
+                        ledger.confirmed_visual_recovery_epoch(report,state))
+                    obs["opponent_active"]="マスカーニャ"
                 obs[field]=good
                 epoch=ledger.confirmed_visual_recovery_epoch(report,state)
                 self.assertIsNotNone(epoch)
@@ -897,8 +903,7 @@ class Issue125TransportTests(unittest.TestCase):
             sent_ocr_ledger=ledger))
         self.assertEqual(len(ledger.snapshot()),len(rows))
         # No false proof verification, regardless of baseline recovery.
-        self.assertEqual(ledger.reinspection_keys(),set(
-            ledger.reinspection_keys()))
+        self.assertEqual(ledger.reinspection_keys(),set())
 
     def test_overflow_missing_prior_actor_identity_never_resets_guard(self):
         ledger=OcrSentLedger()
