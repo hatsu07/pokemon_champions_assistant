@@ -1034,9 +1034,9 @@ class MatchReplayDialog(QDialog):
         if self._screen_model is not None:
             source="指定したONNX" if self._screen_model_path else "同梱"
             if getattr(self._screen_model,"experimental",False):
-                return ("画面判別: 【未検証・試験モード】5分類ONNX / "+
+                return ("画面判別: 【未検証・試験モード】6分類ONNX / "+
                         source+" / "+self._screen_model_status)
-            return ("画面判別: 検証済み5分類ONNX利用中 / "+source+
+            return ("画面判別: 検証済み6分類ONNX利用中 / "+source+
                     " / "+self._screen_model_status)
         return ("画面判別: 未設定・利用不可（"+self._screen_model_status+
                 "）。開始前に警告、低頻度の画像変化検出を使用します。")
