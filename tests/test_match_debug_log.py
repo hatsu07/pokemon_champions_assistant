@@ -184,6 +184,73 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
                              "[REDACTED]")
             self.assertEqual(response["result"],"UNKNOWN")
 
+    def test_private_gpt_log_redacts_authorization_code_and_authkey(self):
+        # Regression for the latest PR #121 review. Both valid JSON
+        # fields and invalid/embedded JSON fragments must be safe on disk.
+        secrets = {
+            "authorization_code": "OAUTH_CODE_SECRET_VALUE_123456",
+            "userAuthorizationCode": "NAMESPACED_CODE_SECRET_VALUE_123456",
+            "authKey": "AUTH_KEY_SECRET_VALUE_123456",
+            "oauth_code": "OAUTH_SHORT_CODE_SECRET_VALUE_123456",
+            "code_verifier": "PKCE_VERIFIER_SECRET_VALUE_123456",
+        }
+        with tempfile.TemporaryDirectory() as root:
+            log = PrivateAiExchangeLog(root, match_id="capture-"+"c"*32)
+            log.write("GPT_REQUEST", {
+                "content": [
+                    {"type": "input_text",
+                     "text": json.dumps({
+                         "authorization_code": secrets["authorization_code"],
+                         "authKey": secrets["authKey"],
+                         "safe": "Pokemon turn advice",
+                     })},
+                    {"type": "input_text",
+                     "text": 'prefix {"authKey":"'+secrets["authKey"]+'"} suffix'},
+                    {"type": "input_text",
+                     "text": 'prefix {"authorization_code":"'
+                             +secrets["authorization_code"]+'"} suffix'},
+                    {"type": "input_text", "text": "safe turn context"},
+                ],
+                "metadata": {
+                    "userAuthorizationCode": secrets["userAuthorizationCode"],
+                    "oauth_code": secrets["oauth_code"],
+                    "code_verifier": secrets["code_verifier"],
+                    "name": "safe metadata",
+                },
+            })
+            log.write("GPT_RESPONSE", {
+                "output": json.dumps({
+                    "authorization_code": secrets["authorization_code"],
+                    "authKey": secrets["authKey"],
+                    "status": "UNKNOWN",
+                }),
+            })
+            log.queue.join()
+            log.close()
+            on_disk=log.path.read_text(encoding="utf-8")
+            for secret in secrets.values():
+                self.assertNotIn(secret,on_disk)
+            rows=[json.loads(line) for line in on_disk.splitlines()]
+            self.assertEqual([row["event"] for row in rows],
+                             ["GPT_REQUEST","GPT_RESPONSE"])
+            request=rows[0]["payload"]
+            decoded=json.loads(request["content"][0]["text"])
+            self.assertEqual(decoded["authorization_code"],"[REDACTED]")
+            self.assertEqual(decoded["authKey"],"[REDACTED]")
+            self.assertEqual(decoded["safe"],"Pokemon turn advice")
+            self.assertEqual(request["content"][1]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(request["content"][2]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(request["content"][3]["text"],"safe turn context")
+            for key in ("userAuthorizationCode","oauth_code","code_verifier"):
+                self.assertEqual(request["metadata"][key],"[REDACTED]")
+            self.assertEqual(request["metadata"]["name"],"safe metadata")
+            response=json.loads(rows[1]["payload"]["output"])
+            self.assertEqual(response["authorization_code"],"[REDACTED]")
+            self.assertEqual(response["authKey"],"[REDACTED]")
+            self.assertEqual(response["status"],"UNKNOWN")
+
     def test_unsafe_content_is_stripped_from_disk_and_only_codes_remain(self):
         with tempfile.TemporaryDirectory() as root:
             logfile=MatchDebugLog(root)
