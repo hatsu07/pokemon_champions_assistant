@@ -774,6 +774,7 @@ class DesktopMainWindow(QMainWindow):
     def _build_unified_ui(self) -> None:
         """Real user-facing UI, driven exclusively by MatchReplayDialog.state."""
         self._close_pending=False
+        self._close_hidden_pending=False
         from .match_replay_dialog import MatchReplayDialog
         from .app_config import default_app_root
 
@@ -1279,6 +1280,7 @@ class DesktopMainWindow(QMainWindow):
             return
         panel=self._match_panel
         if (panel._thread is None and panel._prep_thread is None
+                and not panel._retired_workers
                 and (self._postmatch_worker is None
                      or not self._postmatch_worker.isRunning())):
             QTimer.singleShot(0,self.close)
@@ -1584,6 +1586,7 @@ class DesktopMainWindow(QMainWindow):
                     postmatch_thread=(self._postmatch_worker is not None
                                       and self._postmatch_worker.isRunning()))
                 event.ignore()
+                self._close_hidden_pending=True
                 self.hide()
                 return
         else:
@@ -1595,6 +1598,11 @@ class DesktopMainWindow(QMainWindow):
                 pass
         self.preferences.save(self, compact=self.compact_box.isChecked(), always_on_top=self.on_top_box.isChecked())
         super().closeEvent(event)
+        if self._unified and self._close_hidden_pending:
+            # A previously hidden window does not necessarily emit Qt's
+            # lastWindowClosed signal. Exit only AFTER worker drains.
+            self._close_hidden_pending=False
+            QTimer.singleShot(0,QApplication.instance().quit)
 
 
 def ensure_application() -> QApplication:
