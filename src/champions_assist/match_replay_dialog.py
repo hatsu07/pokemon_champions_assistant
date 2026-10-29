@@ -2382,6 +2382,23 @@ class MatchReplayDialog(QDialog):
         elif (self._active_job=="batch" and self._active_turn_epoch is not None
               and self._turn_screen_seen_at is not None
               and monotonic()-self._turn_screen_seen_at
+                  >=_BATTLE_TURN_HARD_SECONDS
+              and report.get("status") in (
+                  "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
+              and report.get("recommendation")):
+            # Signal delivery can happen after the worker finished. A model
+            # recommendation must NEVER become actionable after turn expiry.
+            report={**report,"status":"DEADLINE_EXCEEDED",
+                    "recommendation":"","reason":"TURN_45S_GUI_RESULT_TOO_LATE",
+                    "turn_deadline_exceeded":True}
+            payload={"state":self.state,"report":report}
+            self._trace_event("TURN_45S_GUI_LATE_ADVICE_DROPPED",
+                turn_epoch=self._turn_epoch,
+                elapsed_ms=round((monotonic()-
+                    self._turn_screen_seen_at)*1000))
+        elif (self._active_job=="batch" and self._active_turn_epoch is not None
+              and self._turn_screen_seen_at is not None
+              and monotonic()-self._turn_screen_seen_at
                   >_CONSERVATIVE_AI_TURN_SECONDS
               and report.get("status") in (
                   "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
