@@ -288,7 +288,7 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertEqual(following["_ai_ocr_unresolved"][0]["source_frames"],[keep])
         self.assertEqual(report["images_sent"],1)
 
-    def test_rejected_tactical_action_does_not_retire_ocr_evidence(self):
+    def test_rejected_tactical_action_does_not_rollback_sent_evidence(self):
         assets=fixture_assets()
         state=battle_state(assets)
         proof=rows(7)
@@ -303,10 +303,10 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                 local_field_candidates=proof,
                 client_factory=lambda **kwargs:object())
         self.assertEqual(report["status"],"BLOCKED")
-        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(len(after.get("_ai_ocr_presented_keys",[])),7)
         self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
         reattempt,_,_=build_ocr_turn_context(after,proof)
-        self.assertEqual(len(reattempt),7)
+        self.assertEqual(len(reattempt),0)
 
     def test_forced_switch_can_use_text_when_own_actor_unknown_but_fainted_known(self):
         assets=fixture_assets()
@@ -450,8 +450,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         assets=fixture_assets()
         state=battle_state(assets)
         raw=rows(12)
-        # Old-format test/provider response contains no explicit OCR retention
-        # judgment. This should never mean the 12 readings are disposable.
+        # An HTTP response proves the 12 OCR rows were sent even if
+        # its obsolete schema cannot make an OCR relevance decision.
         legacy={"action_kind":"NO_ACTION","move":"",
                 "switch_target":"","warning":""}
         with patch("champions_assist.match_replay._stream_json",
@@ -461,10 +461,10 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                 model="test",expected_screen_label="TURN_ACTION",
                 local_field_candidates=raw,
                 client_factory=lambda **kwargs:object())
-        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(len(after.get("_ai_ocr_presented_keys",[])),12)
         self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
         selected,_,_=build_ocr_turn_context(after,raw)
-        self.assertEqual(len(selected),12)
+        self.assertEqual(len(selected),0)
         self.assertEqual(report["status"],"NO_ACTION")
 
     def test_legacy_ack_is_independent_from_relevance_compression(self):
@@ -486,7 +486,7 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                 model="test",expected_screen_label="TURN_ACTION",
                 local_field_candidates=raw,
                 client_factory=lambda **kwargs:object())
-        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(len(after.get("_ai_ocr_presented_keys",[])),4)
         self.assertEqual(after["_ai_ocr_ack_frames"],[raw[0]["frame_id"]])
         self.assertEqual(len(raw),4)
 
@@ -498,6 +498,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertTrue(_text_action_eligible("TURN_ACTION",state,assets))
         state["our_active"]=""
         self.assertFalse(_text_action_eligible("TURN_ACTION",state,assets))
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=rows(1)))
 
     def test_processed_frame_cannot_ack_gpt_retained_uncertainty(self):
         assets=fixture_assets()
@@ -531,7 +533,7 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                 client_factory=lambda **kwargs:object())
         self.assertEqual(report["reason"],"AI_OCR_OWN_ACTIVE_UNVERIFIED")
         self.assertEqual(after.get("_ai_ocr_ack_frames",[]),[])
-        self.assertEqual(after.get("_ai_ocr_presented_keys",[]),[])
+        self.assertEqual(len(after.get("_ai_ocr_presented_keys",[])),4)
         self.assertEqual(after["_ai_ocr_unresolved"][0]["source_frames"],[proof])
         self.assertEqual(after["our_active"],"ゲンガー")
 
