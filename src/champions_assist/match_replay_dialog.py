@@ -497,17 +497,27 @@ class MatchReplayDialog(QDialog):
         self.ai_status_label.setObjectName("ai_dispatch_status")
         self.ai_status_label.setWordWrap(True)
         panel.addWidget(self.ai_status_label)
-        self.debug_log_status=QLabel("自動デバッグログ: 対戦開始時に保存（画像・認証情報なし）")
+        self.debug_log_status=QLabel(
+            "自動デバッグログ: 画像本体・HTTP認証情報は保存しません。")
         self.debug_log_status.setWordWrap(True)
         panel.addWidget(self.debug_log_status)
         self.full_ai_log_check=QCheckBox(
-            "詳細デバッグ：GPTへの送信テキストと回答をローカル保存（画像・認証情報なし）")
+            "詳細デバッグ（任意）：GPT送信テキスト・回答を保存（機密情報に注意）")
         self.full_ai_log_check.setObjectName("fullAiExchangeLogOptIn")
         self.full_ai_log_check.setChecked(False)
         self.full_ai_log_check.setToolTip(
-            "対戦開始時に有効。OCR本文やゲーム内名、自軍構築を含みます。"
-            "保存先debug-logs/ai-exchanges、最大32MB/試合、最大10試合。")
+            "HTTP認証情報と画像本体は記録しません。"
+            "OCRやGPTへの指示、回答にはゲーム内名・構築・秘密情報が"
+            "含まれる可能性があり、任意の秘密情報の完全除去は保証しません。"
+            "共有前に必ずログ内容を確認してください。"
+            "保存先: debug-logs/ai-exchanges（最大32MB/試合・最大10試合）。")
         panel.addWidget(self.full_ai_log_check)
+        self.private_ai_log_warning=QLabel(
+            "注意：詳細GPTログはOCR・プロンプト内の任意の機密情報を"
+            "完全には除去できません。共有前に内容を確認してください。")
+        self.private_ai_log_warning.setObjectName("privateAiLogPrivacyWarning")
+        self.private_ai_log_warning.setWordWrap(True)
+        panel.addWidget(self.private_ai_log_warning)
         self.menu_detection_label=QLabel("メニュー登録: なし")
         self.menu_detection_label.setWordWrap(True)
         panel.addWidget(self.menu_detection_label)
@@ -596,7 +606,7 @@ class MatchReplayDialog(QDialog):
         self.output=QPlainTextEdit()
         self.output.setReadOnly(True)
         panel.addWidget(self.output,1)
-        self.export_button=QPushButton("テストログをJSON保存（画像本体・認証情報は含めない）")
+        self.export_button=QPushButton("テストログをJSON保存（共有前に内容を確認）")
         self.export_button.clicked.connect(self._export)
         panel.addWidget(self.export_button)
         self._render({"status":"NOT_STARTED"})
