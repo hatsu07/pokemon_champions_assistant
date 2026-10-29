@@ -1091,6 +1091,150 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertEqual(prompt["stale_visual_overflow_actor_quarantine"],{})
         self.assertEqual(len(ledger.snapshot()),len(keys))
 
+    def test_ocr_new_quarantined_actor_is_vetoed_before_text_move_adoption(self):
+        """Pre-state safe; post-OCR actor unsafe, including Mega/form aliases."""
+        for isolated,prior,detected,should_block in [
+            ("マスカーニャ","ルカリオ","マスカーニャ",True),
+            ("メガルカリオ","サーフゴー","ルカリオ",True),
+            ("マスカーニャ（フォルム表記）","ルカリオ","マスカーニャ",True),
+            ("マスカーニャ","ルカリオ","アシレーヌ",False),
+        ]:
+            with self.subTest(isolated=isolated,detected=detected):
+                assets,base=battle()
+                base.update(our_active="ドドゲザン",opponent_active=prior)
+                ledger=OcrSentLedger()
+                lost=[ocr(f"lost-{i}",f"イベント{i}！",
+                          timestamp=10+i*.1) for i in range(40)]
+                # During the original lost request, the opponent was isolated.
+                ledger.mark_sent([_row_key(r) for r in lost],
+                                 request_id="lost-A",rows=lost)
+                ledger.mark_stale("lost-A",battle_context={
+                    "our_active":"ゲンガー",
+                    "opponent_active":isolated})
+                self.assertTrue(ledger.needs_visual_confirmation())
+                stages="A:+0,B:+0,C:+0,D:+0,S:+0,ACC:+0,EVA:+0"
+                baseline=frame(
+                    "COMMAND_MENU",our_active="ドドゲザン",
+                    opponent_active=prior,our_hp="207/207",
+                    opponent_hp="100%",our_status="なし",
+                    opponent_status="なし",
+                    our_current_type="あく/はがね",
+                    opponent_current_type="不明以外の可視タイプ",
+                    our_temporary_effects="なし",
+                    opponent_temporary_effects="なし",
+                    our_stat_changes=stages,opponent_stat_changes=stages,
+                    battlefield_weather="なし",battlefield_terrain="なし",
+                    battlefield_effects="なし")
+                review={"status":"NO_ACTION","images_sent":1,
+                        "observation":baseline,
+                        "stale_visual_check":{
+                            "confirmed_source_fields":[],
+                            "unresolved_source_row_keys":[],
+                            "full_state_rebaseline":True}}
+                epoch=ledger.confirmed_visual_recovery_epoch(review,base)
+                self.assertIsNotNone(epoch)
+                ledger.mark_adopted("baseline",visual_confirmed=True,
+                                    recovery_epoch=epoch)
+                self.assertFalse(ledger.quarantined_actor_is_active(base))
+                self.assertTrue(_text_action_eligible(
+                    "TURN_ACTION",base,assets,local_rows=[],
+                    sent_ocr_ledger=ledger))
+                observed=[ocr("new-switch",f"相手は{detected}を繰り出した！")]
+                reply={
+                    "state_updates":[event("opponent",detected,"new-switch")],
+                    "interpreted_own_active":"ドドゲザン",
+                    "interpreted_opponent_active":detected,
+                    "pending_ocr_questions":[],
+                    "processed_ocr_frames":[],
+                    "action":{"action_kind":"MOVE","move":"じしん",
+                              "switch_target":"","warning":""},
+                }
+                calls=[]
+                def model(_client,**kw):
+                    calls.append(kw)
+                    kw["on_request_sent"]()
+                    return reply
+                with patch("champions_assist.match_replay._stream_json",
+                           side_effect=model):
+                    updated,report=run_replay_text_action(
+                        state=base,assets=assets,access_token="unused",
+                        model="test",expected_screen_label="TURN_ACTION",
+                        local_field_candidates=observed,
+                        sent_ocr_ledger=ledger,ocr_request_id="next-turn",
+                        client_factory=lambda **kw:object())
+                self.assertEqual(len(calls),1)
+                if should_block:
+                    self.assertEqual(report["status"],"BLOCKED")
+                    self.assertEqual(report["reason"],
+                                     "OCR_QUARANTINED_ACTOR_RETURNED")
+                    self.assertEqual(report.get("recommendation"),"")
+                    self.assertEqual(report.get("images_sent"),0)
+                    self.assertEqual(report["quarantined_actor_candidates"],
+                                     {"opponent":detected})
+                    # The OCR result is only a suspect; no tacit adoption.
+                    self.assertEqual(updated["opponent_active"],prior)
+                    self.assertEqual(updated["our_active"],"ドドゲザン")
+                    self.assertEqual(ledger.snapshot() &
+                        {_row_key(observed[0])},{_row_key(observed[0])})
+                else:
+                    self.assertEqual(report["status"],"TEST_ONLY")
+                    self.assertEqual(report["recommendation"],"じしん。")
+                    self.assertEqual(updated["opponent_active"],detected)
+
+                if isolated=="マスカーニャ" and detected=="マスカーニャ":
+                    # The real worker passes this rejected OCR candidate to
+                    # the existing one-frame image path, never as confirmed
+                    # current state.
+                    image_answer={
+                        "observation":frame(
+                            "COMMAND_MENU",our_active="ドドゲザン",
+                            opponent_active="マスカーニャ"),
+                        "action":{"action_kind":"NO_ACTION","move":"",
+                                  "switch_target":"","warning":""},
+                        "selection":{"selected_three":[],"lead":""},
+                        "processed_ocr_frames":[],
+                        "pending_ocr_questions":[],
+                        "stale_visual_check":{
+                            "confirmed_source_fields":[],
+                            "unresolved_source_row_keys":[],
+                            "full_state_rebaseline":False},
+                    }
+                    image_calls=[]
+                    def image_model(_client,**kw):
+                        image_calls.append(kw)
+                        kw["on_request_sent"]()
+                        return image_answer
+                    with patch("champions_assist.match_replay._stream_json",
+                               side_effect=image_model):
+                        _,image_report=run_replay_batch(
+                            [np.zeros((80,120,3),dtype=np.uint8)],
+                            state=base,assets=assets,access_token="unused",
+                            model="test",expected_screen_label="TURN_ACTION",
+                            local_field_candidates=observed,
+                            sent_ocr_ledger=ledger,
+                            ocr_request_id="image-fallback",
+                            ocr_quarantined_return=report[
+                                "quarantined_actor_candidates"],
+                            client_factory=lambda **kw:object())
+                    self.assertEqual(image_report["images_sent"],1)
+                    self.assertEqual(len(image_calls),1)
+                    payload=json.loads(image_calls[0]["content"][0]["text"])
+                    self.assertEqual(payload["replay_state"]["opponent_active"],
+                                     prior)
+                    self.assertEqual(
+                        payload["ocr_quarantined_return_unverified"],
+                        {"opponent":"マスカーニャ"})
+                    self.assertTrue(
+                        payload["stale_visual_quarantined_actor_active"])
+                    self.assertTrue(
+                        payload["unverified_stale_ocr_requires_visual"])
+                    self.assertIn("マスカーニャ",
+                        payload["stale_visual_overflow_actor_quarantine"][
+                            "opponent"])
+                    self.assertEqual(sum(
+                        part["type"]=="input_image"
+                        for part in image_calls[0]["content"]),1)
+
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
         hp=[ocr("hp","185/185",field="screen_text.own_hp_fraction")]
