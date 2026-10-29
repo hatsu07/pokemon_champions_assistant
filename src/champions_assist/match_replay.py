@@ -1370,6 +1370,10 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         selected_ocr,pending_ocr,ocr_meta=build_ocr_turn_context(
             state,local_field_candidates,sent_ledger=sent_ocr_ledger)
         transport_ocr=compact_ocr_transport(selected_ocr)
+        compact_before=len(json.dumps(selected_ocr,ensure_ascii=False,
+                                      separators=(",",":"),default=str).encode("utf-8"))
+        compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
+                                     separators=(",",":"),default=str).encode("utf-8"))
         prompt["local_field_candidates_unverified"]=transport_ocr
         def mark_ocr_sent():
             keys=set(ocr_meta["presented_keys"])
@@ -1384,7 +1388,11 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 key:value for key,value in ocr_meta.items()
                 if key not in ("presented_keys","ledger_frames")}
                 | {"transport":"VISION_EXCEPTION",
-                   "transport_groups":len(transport_ocr)})
+                   "transport_groups":len(transport_ocr),
+                   "transport_json_bytes_before":compact_before,
+                   "transport_json_bytes_after":compact_after,
+                   "transport_estimated_tokens_before":(compact_before+3)//4,
+                   "transport_estimated_tokens_after":(compact_after+3)//4})
         if phase in ("MATCHMAKING","SELECTION"):
             # Only registered-team derived rows; never include old-team tactics.
             opp=tuple(state.get("opponent_six") or ())
@@ -1879,6 +1887,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
         state,local_field_candidates,sent_ledger=sent_ocr_ledger)
     transport_ocr=compact_ocr_transport(candidates)
+    compact_before=len(json.dumps(candidates,ensure_ascii=False,
+                                  separators=(",",":"),default=str).encode("utf-8"))
+    compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
+                                 separators=(",",":"),default=str).encode("utf-8"))
     def mark_ocr_sent():
         keys=set(context_stats["presented_keys"])
         if sent_ocr_ledger is not None:
@@ -1888,7 +1900,12 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     if diagnostic_sink is not None:
         diagnostic_sink("OCR_TURN_COMPACTION",{
             key:value for key,value in context_stats.items()
-            if key not in ("presented_keys","ledger_frames")})
+            if key not in ("presented_keys","ledger_frames")}
+            | {"transport_groups":len(transport_ocr),
+               "transport_json_bytes_before":compact_before,
+               "transport_json_bytes_after":compact_after,
+               "transport_estimated_tokens_before":(compact_before+3)//4,
+               "transport_estimated_tokens_after":(compact_after+3)//4})
     prompt={
         "screen_kind":expected_screen_label,
         "choice_kind":"SWITCH_ONLY" if switch_only else "MOVE_OR_SWITCH",
@@ -1947,8 +1964,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
             "ocr_rows":len(candidates),
             "ocr_transport_groups":len(transport_ocr),
-            "ocr_json_bytes":len(json.dumps(transport_ocr,ensure_ascii=False,
-                                          separators=(",",":")).encode("utf-8")),
+            "ocr_json_bytes":compact_after,
+            "ocr_json_bytes_before_compaction":compact_before,
             "new_rows":context_stats["new_rows_sent"],
             "unresolved_rows":context_stats["unresolved_rows_resent"],
             "prior_rows_not_resent":context_stats["prior_observations_not_resent"],
@@ -2173,8 +2190,11 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "turn_within_45s":result["elapsed_ms"]<=45000,
                 "turn_p50_ms":p50,"turn_p95_ms":p95,
                 "sample_count":len(durations),
-                "ocr_json_bytes_before":context_stats["ledger_json_bytes"],
-                "ocr_json_bytes_sent":context_stats["api_json_bytes"]})
+                "ocr_json_bytes_before":compact_before,
+                "ocr_json_bytes_sent":compact_after,
+                "ocr_transport_group_count":len(transport_ocr),
+                "ocr_tokens_est_before":(compact_before+3)//4,
+                "ocr_tokens_est_after":(compact_after+3)//4})
         result["action_basis"]="SELECTED_BENCH_UNVERIFIED_VISIBILITY" if switch_only else "REGISTERED_MOVES"
         return updated,result
     except Exception as exc:
