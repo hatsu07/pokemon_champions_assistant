@@ -18,7 +18,7 @@ from .app_config import ConfigurationError
 from .matchup_learning_store import MatchupLearningStore
 
 SCHEMA = "champions-time-frozen-evidence-v1"
-MAX_EVENTS = 512
+MAX_EVENTS = 256
 MAX_EVENT_BYTES = 3072
 MAX_ARCHIVE_BYTES = 1024 * 1024
 MAX_LABEL = 120
@@ -99,7 +99,10 @@ def freeze_team_context(*, team_id: str, team_sha: str, model: str,
         members.append({"name": _text(entry.get("name")),
                         "moves": [_text(entry.get(f"move{i}")) for i in range(1, 5)],
                         "item": _text(entry.get("item")),
-                        "ability": _text(entry.get("ability"))})
+                        "ability": _text(entry.get("ability")),
+                        "nature": _text(entry.get("nature")),
+                        "ap": _text(entry.get("ap_h_a_b_c_d_s")),
+                        "form_change": _text(entry.get("form_change"))})
     return {
         "team_id": _text(team_id), "team_sha": _text(team_sha),
         "tactical_version": _text(tactical_version), "model": _text(model),
@@ -172,6 +175,9 @@ class MatchEvidenceBuffer:
             "turn_id": _text(state.get("turn_id") or state.get("turn") or state.get("game_turn_seq")) or "UNKNOWN",
             "frame_id": _text(str(report.get("frame_id") or report.get("capture_frame_id") or report.get("capture_seq") or "")) or "UNKNOWN",
             "report_source": _text(report.get("result_source")) or "UNKNOWN",
+            "opponent_control": _text(state.get("opponent_control_classification"))
+            if state.get("opponent_control_classification") in
+            ("HUMAN", "CPU_SUSPECTED", "UNKNOWN") else "UNKNOWN",
             "observation": {
                 "certainty": evidence_source, "ui": _text(latest.get("ui") or observation.get("visual_ui")),
                 "own_active": own, "opponent_active": opponent,
@@ -204,7 +210,7 @@ class MatchEvidenceBuffer:
                 key: _text(state["battlefield"].get(key))
                 for key in ("weather", "terrain", "effects")
             } if isinstance(state.get("battlefield"), dict) else {},
-            "result": _text(state.get("result")) if status in _RESULT_STATUSES else "UNKNOWN",
+            "result": _text(state.get("result")) if status == "MATCH_END" else "UNKNOWN",
         }
         # No OCR raw text, image bytes, bearer credentials, arbitrary history,
         # remote request payload or model reasoning can enter this allowlist.
