@@ -9,10 +9,72 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import re
 from threading import Lock
 from unicodedata import normalize
 
 from .ocr_ai_evidence import select_ai_ocr_evidence
+
+
+def _visually_same_ocr_fact(row: dict, field: str, value: str) -> bool:
+    """Validate unambiguous source-side, mechanic and value correspondence.
+
+    Unrecognized OCR remains unresolved. Never promote an unrelated visible
+    status/HP/ability into proof of a past move, stat change or held item.
+    """
+    origin = str(row.get("field") or "").split(".")[-1].lower()
+    raw = _compare_text(str(row.get("raw_text",row.get("candidate",""))))
+    visible = _compare_text(value)
+    if not raw or not visible:
+        return False
+    names = {
+        "own_active_name":"our_active","own_name":"our_active",
+        "own_species":"our_active","opponent_active_name":"opponent_active",
+        "opponent_name":"opponent_active","opponent_species":"opponent_active",
+        "own_hp_fraction":"our_hp","own_hp_percent":"our_hp",
+        "own_hp":"our_hp","opponent_hp_fraction":"opponent_hp",
+        "opponent_hp_percent":"opponent_hp","opponent_hp":"opponent_hp",
+    }
+    if origin in names:
+        return field == names[origin] and raw == visible
+    opponent = bool(re.search(r"(相手|あいて)", raw))
+    own = bool(re.search(r"(自分|味方|こちら)", raw))
+    if opponent == own:
+        return False
+    prefix = "opponent" if opponent else "our"
+    if not field.startswith(prefix+"_"):
+        return False
+    if field == prefix+"_stat_changes":
+        from .battle_evidence import _visual_stages
+        stages = _visual_stages(value)
+        if stages is None:
+            return False
+        labels = {
+            "攻撃":"A","こうげき":"A","防御":"B","ぼうぎょ":"B",
+            "特攻":"C","とくこう":"C","特防":"D","とくぼう":"D",
+            "素早さ":"S","すばやさ":"S","命中":"ACC","めいちゅう":"ACC",
+            "回避":"EVA","かいひ":"EVA"}
+        kinds = {key for name,key in labels.items() if name in raw}
+        if len(kinds)!=1:
+            return False
+        up=bool(re.search(r"(上がった|あがった|上昇した)",raw))
+        down=bool(re.search(r"(下がった|さがった|下降した)",raw))
+        if up == down:
+            return False
+        stage=stages.get(next(iter(kinds)))
+        return stage is not None and (stage>0 if up else stage<0)
+    if field == prefix+"_used_move":
+        match=re.search(r"の([^!！。]+?)を?(?:つかった|使った|使用した)[!！。]?$",raw)
+        return bool(match and _compare_text(match.group(1))==visible)
+    if field == prefix+"_item_revealed":
+        match=re.search(
+            r"(?:持ち物|もちもの|道具|どうぐ)(?:は|が|:|：)?"
+            r"([^!！。]+?)(?:だった|と判明|を持っていた|をもっていた)?[!！。]?$",raw)
+        return bool(match and _compare_text(match.group(1))==visible)
+    if field == prefix+"_status":
+        return any(token in raw and visible==token for token in (
+            "どく","もうどく","やけど","まひ","ねむり","こおり"))
+    return False
 
 
 class OcrSentLedger:
@@ -269,7 +331,6 @@ class OcrSentLedger:
         from .battle_evidence import OBSERVATION_FACT_FIELDS
         permitted = set(OBSERVATION_FACT_FIELDS) | {
             "our_active","opponent_active","our_hp","opponent_hp"}
-        tactical = set(OBSERVATION_FACT_FIELDS)
         by_key: dict[str, set[str]] = {}
         for entry in entries:
             if not isinstance(entry, dict):
@@ -307,10 +368,11 @@ class OcrSentLedger:
             elif field in ("opponent_active_name","opponent_name","opponent_species"):
                 if "opponent_active" not in proof:
                     return None
-            elif not proof & tactical:
-                # Any event/effect/unknown proof needs a concrete visible
-                # mechanic field, not a blanket "actors look right" assertion.
-                return None
+            else:
+                if not proof or not all(
+                        _visually_same_ocr_fact(row, item, obs[item])
+                        for item in proof):
+                    return None
         return epoch
 
     def mark_adopted(self, request_id: str | None, *,
