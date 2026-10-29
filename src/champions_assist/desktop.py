@@ -657,6 +657,21 @@ class _PostmatchReviewWorker(QThread):
             result=request_review(
                 data_root=self.data_root,match_id=self.match_id,
                 model=self.model,access_token=token,reasoning_effort=self.effort)
+            # Issue #92: a bounded after-match aggregation of saved GPT review
+            # hypotheses. No additional model request, LIVE master changes,
+            # or tactical-state queries are performed. A research failure must
+            # never invalidate a successfully stored postmatch review.
+            if result.get("status")=="STORED_UNVERIFIED_REVIEW":
+                try:
+                    from .autonomous_improvement import AutonomousImprovementStore
+                    research=AutonomousImprovementStore(self.data_root)
+                    result["improvement_research"]=research.aggregate_after_review(
+                        match_id=self.match_id)
+                except Exception as research_error:
+                    result["improvement_research"]={
+                        "status":"RESEARCH_FAILED_REVIEW_RETAINED",
+                        "reason":type(research_error).__name__,
+                        "candidate_count":0}
             self.result_ready.emit(result)
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
@@ -1234,6 +1249,14 @@ class DesktopMainWindow(QMainWindow):
         if result.get("status")=="STORED_UNVERIFIED_REVIEW":
             try:
                 self._show_saved_postmatch_review(match_id)
+                research=result.get("improvement_research") or {}
+                count=research.get("candidate_count",0)
+                if research.get("status")=="STORED_PROVISIONAL_UNVERIFIED":
+                    self.postmatch_detail.appendPlainText(
+                        f"複数試合の改善研究候補: {count}件（未検証・自動適用なし）")
+                elif research.get("status")=="RESEARCH_FAILED_REVIEW_RETAINED":
+                    self.postmatch_detail.appendPlainText(
+                        "改善研究の保存失敗（対戦後レビューは保存済み）")
             except (OSError,ValueError,RuntimeError) as exc:
                 self._set_postmatch_status(
                     "失敗（レビューSQLite読戻し）",match_id,
