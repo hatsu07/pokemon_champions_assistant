@@ -1285,8 +1285,8 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         self.assertTrue(panel.manual_batch_button.isHidden())
         self.assertTrue(panel.prep_button.isHidden())
-        self.assertTrue(panel.confirm_win_button.isHidden())
-        self.assertTrue(panel.confirm_loss_button.isHidden())
+        self.assertTrue(panel._manual_result_controls.isHidden())
+        self.assertFalse(panel._manual_result_available)
         self.assertEqual(panel.classifier_choose_button.objectName(),
                          "chooseScreenClassifier")
         self.assertEqual(panel.prep_banner.objectName(),"live_prep_progress")
@@ -1523,17 +1523,55 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._pending_batch=None
         panel._auto_running=False
 
-    def test_manual_match_result_triggers_ended_state_without_images(self):
+    def test_manual_match_result_available_only_after_automatic_failure(self):
         panel=self.window._match_panel
         panel.state={"phase":"BATTLE","result":"UNKNOWN",
                      "matrix_compatible":False}
         with patch.object(QMessageBox,"question",
-                          return_value=QMessageBox.StandardButton.Yes):
+                          return_value=QMessageBox.StandardButton.Yes) as confirm:
+            # No unconditional/manual override while the automatic verdict
+            # has not been attempted or has not failed.
+            panel._finish_match_manually("WIN")
+            confirm.assert_not_called()
+            self.assertEqual(panel.state["phase"],"BATTLE")
+            panel._result_screen_candidate={"frame":"capture-100",
+                                            "time":10.0,
+                                            "pending_ocr_frames":()}
+            panel._render({"status":"RESULT_UNCONFIRMED",
+                           "reason":"NO_GROUNDED_FINAL_MATCH_RESULT"})
+            self.assertTrue(panel._manual_result_available)
+            self.assertFalse(panel._manual_result_controls.isHidden())
             panel._finish_match_manually("WIN")
         self.assertEqual(panel.state["phase"],"ENDED")
         self.assertEqual(panel.state["result"],"WIN")
         self.assertEqual(panel.entries[-1]["status"],"MATCH_END")
+        self.assertEqual(panel.entries[-1]["result_source"],
+                         "PLAYER_EXPLICIT_CONFIRMATION")
+        self.assertTrue(panel._manual_result_controls.isHidden())
         self.assertEqual(panel.entries[-1]["images_sent"],0)
+
+    def test_conclusive_gpt_result_never_shows_manual_controls(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"ENDED","result":"LOSS",
+                     "matrix_compatible":False}
+        panel._result_screen_candidate={"frame":"capture-100","time":10.0}
+        panel._render({"status":"MATCH_END","screen":"RESULT_SCREEN",
+                       "recommendation":"敗北。"})
+        self.assertFalse(panel._manual_result_available)
+        self.assertTrue(panel._manual_result_controls.isHidden())
+
+    def test_inconclusive_manual_controls_hide_when_battle_resumes(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","result":"UNKNOWN",
+                     "matrix_compatible":False}
+        panel._result_screen_candidate={"frame":"capture-100","time":10.0}
+        panel._render({"status":"RESULT_UNCONFIRMED",
+                       "reason":"NO_RESULT_OCR_EVIDENCE"})
+        self.assertFalse(panel._manual_result_controls.isHidden())
+        panel._result_screen_candidate=None
+        panel._render({"status":"SUPERSEDED",
+                       "warning":"RESULT_SCREEN_NO_LONGER_CURRENT"})
+        self.assertTrue(panel._manual_result_controls.isHidden())
 
     def test_local_classifier_triggers_on_two_stable_selection_frames(self):
         from champions_assist.screen_classifier import ScreenPrediction
