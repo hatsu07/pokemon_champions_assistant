@@ -1407,13 +1407,21 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
                                      separators=(",",":"),default=str).encode("utf-8"))
         prompt["local_field_candidates_unverified"]=transport_ocr
+        # A successful NEW-actor baseline is not confirmation of previously
+        # quarantined actors. Reappearance (also Mega/form spelling) requires
+        # the same explicit visual warning as a still-open global safety gate.
+        quarantined_active=bool(
+            sent_ocr_ledger is not None
+            and sent_ocr_ledger.quarantined_actor_is_active(state))
+        prompt["stale_visual_quarantined_actor_active"]=quarantined_active
         prompt["unverified_stale_ocr_requires_visual"]=bool(
             sent_ocr_ledger is not None
-            and sent_ocr_ledger.needs_visual_confirmation())
+            and (sent_ocr_ledger.needs_visual_confirmation()
+                 or quarantined_active))
         # Only a bounded, unverified subset is shown again for visual
         # reconciliation. No lost OCR is automatically treated as true.
         prompt["stale_visual_overflow_actor_quarantine"]=(
-            sent_ocr_ledger.visual_overflow_actors()
+            sent_ocr_ledger.visual_overflow_actors(state)
             if sent_ocr_ledger is not None else {})
         prompt["stale_visual_proof_to_reconcile"]=([
             {"source_row_key":_row_key(row),
@@ -1510,6 +1518,15 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "boosts or move locks reset, or treat a guessed old event as "
                 "confirmed. Use confirmed_source_fields only with an exact "
                 "visible observation field and a matching nonempty value. "
+                "If stale_visual_quarantined_actor_active is true, an actor "
+                "with UNKNOWN old OCR mechanics is on-screen again, even if "
+                "a prior *different* matchup was safely rebaselined. Treat "
+                "past boosts, move locks, items, status, switches and forms "
+                "as UNRESOLVED; do NOT use the earlier fresh-actor baseline "
+                "as evidence about this returning actor. Only currently "
+                "visible game facts may support an action; otherwise return "
+                "NO_ACTION. Do not falsely set full_state_rebaseline true "
+                "for a quarantined active actor. "
                 "If stale_visual_overflow_actor_quarantine has actors and "
                 "stale_visual_proof_to_reconcile is empty, the lost history "
                 "exceeded the bounded proof budget. Do NOT claim old events "
