@@ -351,7 +351,7 @@ class TimingQtFlowTest(unittest.TestCase):
         }
         state=selection_test_prep_state(self.assets,partial)
         self.dialog.test_state=state
-        self.dialog.selection_started_at=time.perf_counter()-89.0
+        self.dialog.selection_started_at=time.perf_counter()-91.0
         self.dialog.selection_display_elapsed_ms=42000
         self.dialog.timing_requested_at=time.perf_counter()-2.0
         self.dialog.prep_limit_seconds=43.0
@@ -402,7 +402,7 @@ class TimingQtFlowTest(unittest.TestCase):
 
     def test_combined_ui_deadline_cannot_pass_even_if_prep_worker_says_pass(self):
         import time
-        self.dialog.selection_started_at=time.perf_counter()-89.0
+        self.dialog.selection_started_at=time.perf_counter()-91.0
         self.dialog.selection_display_elapsed_ms=20000
         self.dialog.test_state=selection_test_prep_state(self.assets,selection_fixture())
         self.dialog.timing_requested_at=time.perf_counter()-2.0
