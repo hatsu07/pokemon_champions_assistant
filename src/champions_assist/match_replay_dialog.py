@@ -153,12 +153,22 @@ class _ReplayWorker(QObject):
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
+                from time import perf_counter
+                auth_started=perf_counter()
+                self.progress.emit("PREP_AUTH_BEGIN")
+                token=auth.access_token()
+                self.progress.emit(
+                    "PREP_AUTH_COMPLETE:"+str(round((perf_counter()-auth_started)*1000)))
+                model_started=perf_counter()
+                self.progress.emit("PREP_MODEL_BEGIN")
                 next_state, report=run_replay_prep(
                     state=self.state, assets=self.assets,
-                    access_token=auth.access_token(),model=self.selected_model,
+                    access_token=token,model=self.selected_model,
                     reasoning_effort=self.reasoning_effort,
                     limit_seconds=self.prep_seconds,
                 )
+                self.progress.emit(
+                    "PREP_MODEL_COMPLETE:"+str(round((perf_counter()-model_started)*1000)))
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
@@ -2793,6 +2803,11 @@ class MatchReplayDialog(QDialog):
         if not provisional:
             self.state["prep_status"]="RUNNING"
         self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000),
+                          cached_matchups=(prep_state.get("prep") or {}).get("cached_matchups",0),
+                          win_roles_status=(prep_state.get("prep") or {}).get("win_roles_status","UNKNOWN"),
+                          cache_available=bool(self.assets.matchup_cache_index),
+                          matrix_compatible=bool(prep_state.get("matrix_compatible")),
+                          matrix_provisional=bool(prep_state.get("matrix_provisional")),
                           status="PROVISIONAL" if provisional else "ACTUAL",
                           known_opponents=(
                               len(prep_state.get("opponent_six",[]))-
@@ -2809,6 +2824,7 @@ class MatchReplayDialog(QDialog):
             cancel_event=self._prep_cancel_event,
         )
         self._prep_worker.moveToThread(self._prep_thread)
+        self._prep_worker.progress.connect(self._on_prep_progress)
         self._prep_thread.started.connect(self._prep_worker.run)
         self._prep_worker.finished.connect(self._on_prep_result)
         self._prep_worker.finished.connect(self._prep_thread.quit)
@@ -2829,6 +2845,20 @@ class MatchReplayDialog(QDialog):
                           +f"（目標残り {self._prep_budget_seconds:.1f}秒・"
                           "超過後も次のAI依頼まで継続）"})
         self._prep_thread.start()
+
+    @Slot(str)
+    def _on_prep_progress(self, marker: str):
+        """Record PREP stage timing without touching the battle state.
+
+        Qt delivers worker-thread progress asynchronously on the GUI thread.
+        No screenshot, OCR content, auth token or network payload is logged.
+        """
+        if not marker.startswith("PREP_"):
+            return
+        stage, _, elapsed = marker.partition(":")
+        elapsed_ms=int(elapsed) if elapsed.isdigit() else None
+        self._trace_event("PREP_STAGE",stage=stage,elapsed_ms=elapsed_ms,
+                          cancelled=self._prep_cancel_event.is_set())
 
     def _interrupt_prep(self):
         if self._prep_thread is None:
