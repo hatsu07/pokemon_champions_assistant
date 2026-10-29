@@ -66,6 +66,9 @@ _URGENT_SCREENS = frozenset(("TURN_ACTION", "SWITCH_SELECTION"))
 # Neither limit is a measured in-game countdown; real testing is essential.
 _TARGET_AI_TURN_SECONDS = 30.0
 _CONSERVATIVE_AI_TURN_SECONDS = 32.0
+# Only after a RESULT_SCREEN: stalled earlier OCR must not block human
+# outcome confirmation forever. This is NOT a turn/PREP deadline.
+_RESULT_OCR_STALL_SECONDS = 20.0
 _SCREEN_PRIORITY = {
     "TEAM_SELECTION": 1, "BATTLE_EVENT": 2,
     "TURN_ACTION": 3, "SWITCH_SELECTION": 3,
@@ -2666,13 +2669,21 @@ class MatchReplayDialog(QDialog):
         pending=[frame for frame in candidate["pending_ocr_frames"]
                  if frame in self._ocr_capture_epochs]
         if pending:
+            now=monotonic()
+            current_pending=tuple(pending)
+            if candidate.get("ocr_last_pending")!=current_pending:
+                # A completed pre-result OCR job constitutes real progress.
+                # Newer captures never extend this frozen dependency list.
+                candidate["ocr_last_pending"]=current_pending
+                candidate["ocr_last_progress_at"]=now
+                self._trace_event("RESULT_OCR_BARRIER_PROGRESS",
+                                  pending_count=len(pending))
             if not candidate.get("wait_logged"):
                 candidate["wait_logged"]=True
                 self._trace_event("RESULT_OCR_BARRIER_WAIT",pending_count=len(pending))
             reader=self._local_event_reader
             if reader is None or not reader.enabled:
-                # The OCR engine stopped before its queued work completed.
-                # Never silently present a partial result as fully reviewed.
+                # Disabled or failed reader: no independent winner evidence.
                 if not candidate.get("error_reported"):
                     candidate["error_reported"]=True
                     self._trace_event("PRE_RESULT_BATTLE_OCR_UNAVAILABLE",
@@ -2681,8 +2692,21 @@ class MatchReplayDialog(QDialog):
                     self._render({"status":"RESULT_UNCONFIRMED",
                                   "reason":"PRE_RESULT_BATTLE_OCR_UNAVAILABLE"})
                 return
-            # Battle has ended: do not impose a 45-second action deadline or
-            # a fabricated 1.5/3-second OCR cutoff. UI stays responsive.
+            # The OCR reader may remain enabled but stop making progress.
+            # Never wait indefinitely for an incomplete result-screen barrier.
+            # This health watchdog is separate from battle turns and PREP.
+            stalled_for=now-candidate.get("ocr_last_progress_at",now)
+            if stalled_for>=_RESULT_OCR_STALL_SECONDS:
+                if not candidate.get("ocr_stall_reported"):
+                    candidate["ocr_stall_reported"]=True
+                    self._trace_event("PRE_RESULT_BATTLE_OCR_STALLED",
+                                      pending_count=len(pending),
+                                      waited_ms=round(stalled_for*1000))
+                    self._set_ai_status("戦闘OCRの進捗が停止したため勝敗未確定です。")
+                    self._render({"status":"RESULT_UNCONFIRMED",
+                                  "reason":"PRE_RESULT_BATTLE_OCR_STALLED"})
+                return
+            # Continue waiting only while earlier OCR is making progress.
             QTimer.singleShot(250,self._attempt_result_screen_verification)
             return
         self._trace_event("RESULT_OCR_BARRIER_RELEASED",
