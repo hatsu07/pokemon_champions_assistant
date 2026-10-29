@@ -1611,7 +1611,8 @@ class MatchReplayDialog(QDialog):
         self._inflight_screen_label=screen_label
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
-            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
+            exchange_sink=(getattr(self,"_exchange_log",None).write
+                           if getattr(self,"_exchange_log",None) else None),
             app_root=self.store_root,selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="batch",
@@ -2719,7 +2720,8 @@ class MatchReplayDialog(QDialog):
                           pending_prior_ocr=0)
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
-            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
+            exchange_sink=(getattr(self,"_exchange_log",None).write
+                           if getattr(self,"_exchange_log",None) else None),
             app_root=self.store_root,selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="result_screen",
@@ -2753,7 +2755,8 @@ class MatchReplayDialog(QDialog):
                           message_count=len(messages))
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
-            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
+            exchange_sink=(getattr(self,"_exchange_log",None).write
+                           if getattr(self,"_exchange_log",None) else None),
             app_root=self.store_root,selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="result",
@@ -2848,7 +2851,8 @@ class MatchReplayDialog(QDialog):
                           unknown_opponents=len(prep_state.get("visual_unknown_opponents") or []))
         self._prep_thread=QThread(self)
         self._prep_worker=_ReplayWorker(
-            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
+            exchange_sink=(getattr(self,"_exchange_log",None).write
+                           if getattr(self,"_exchange_log",None) else None),
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=prep_state, job="prep",
