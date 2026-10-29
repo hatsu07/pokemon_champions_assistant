@@ -96,6 +96,7 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             _thread=None,
             _trace_event=MagicMock(),
             _set_ai_status=MagicMock(),
+            _render=MagicMock(),
             store_root=Path("."),
             model="test",
             reasoning_effort="low",
@@ -217,6 +218,9 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             timer.assert_not_called()
             model.assert_not_called()
         panel._set_ai_status.assert_called_once()
+        panel._render.assert_called_once()
+        self.assertEqual(panel._render.call_args.args[0]["status"],
+                         "RESULT_UNCONFIRMED")
 
     def test_late_result_gpt_cannot_override_human_confirmed_result(self):
         from unittest.mock import MagicMock
@@ -320,6 +324,22 @@ class ScreenResultEvidenceTests(unittest.TestCase):
              "evidence_frame_id":"capture-201"},
             [self.row("capture-201","対戦に勝利しました",19.)])
         self.assertEqual(changed["phase"],"BATTLE")
+        self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
+
+    def test_opponent_lost_dialogue_can_ground_human_win(self):
+        row=self.row("capture-201","ハツとの 勝負に 負けた!",19.)
+        changed,report,_=self.call(
+            {"result":"WIN","evidence":"ハツとの 勝負に 負けた!",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertEqual(changed["phase"],"ENDED")
+        self.assertEqual(changed["result"],"WIN")
+
+    def test_opponent_lost_dialogue_does_not_ground_human_loss(self):
+        row=self.row("capture-201","ハツとの 勝負に 負けた!",19.)
+        changed,report,_=self.call(
+            {"result":"LOSS","evidence":"ハツとの 勝負に 負けた!",
+             "evidence_frame_id":"capture-201"},[row])
+        self.assertNotEqual(changed["phase"],"ENDED")
         self.assertEqual(report["status"],"RESULT_UNCONFIRMED")
 
     def test_unknown_or_missing_evidence_preserves_match(self):
