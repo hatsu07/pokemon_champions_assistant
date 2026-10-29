@@ -249,7 +249,9 @@ def _text_action_eligible(screen_label: str | None, state: dict, assets: FrozenM
         return False
     # A second lost OCR reinspection cannot be treated as a successful
     # tactical review; require current visual confirmation instead.
-    if sent_ocr_ledger is not None and sent_ocr_ledger.needs_visual_confirmation():
+    if (sent_ocr_ledger is not None
+            and (sent_ocr_ledger.needs_visual_confirmation()
+                 or sent_ocr_ledger.quarantined_actor_is_active(state))):
         return False
     own=state.get("our_active") or ""
     opponent=state.get("opponent_active") or ""
@@ -1293,12 +1295,14 @@ _BATCH_SCHEMA = {
                         "required":["source_row_key","field"],
                     },
                 },
+                "full_state_rebaseline":{"type":"boolean"},
                 "unresolved_source_row_keys":{
                     "type":"array","items":{"type":"string"},
                 },
             },
             "required":["confirmed_source_fields",
-                        "unresolved_source_row_keys"],
+                        "unresolved_source_row_keys",
+                        "full_state_rebaseline"],
         },
     },
     "required":["observation","action","selection",
@@ -1408,6 +1412,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             and sent_ocr_ledger.needs_visual_confirmation())
         # Only a bounded, unverified subset is shown again for visual
         # reconciliation. No lost OCR is automatically treated as true.
+        prompt["stale_visual_overflow_actor_quarantine"]=(
+            sent_ocr_ledger.visual_overflow_actors()
+            if sent_ocr_ledger is not None else {})
         prompt["stale_visual_proof_to_reconcile"]=([
             {"source_row_key":_row_key(row),
              "frame_id":row.get("frame_id"),"field":row.get("field"),
@@ -1503,8 +1510,20 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "boosts or move locks reset, or treat a guessed old event as "
                 "confirmed. Use confirmed_source_fields only with an exact "
                 "visible observation field and a matching nonempty value. "
-                "For all ordinary images return empty arrays in "
-                "stale_visual_check. If unresolved proof affects action "
+                "If stale_visual_overflow_actor_quarantine has actors and "
+                "stale_visual_proof_to_reconcile is empty, the lost history "
+                "exceeded the bounded proof budget. Do NOT claim old events "
+                "are resolved. full_state_rebaseline may be true ONLY when "
+                "BOTH current actors differ from every quarantined actor on "
+                "their side, and the current image explicitly displays full "
+                "numeric stages (all seven incl +0), both HP, both status, "
+                "both types, both temporary effects and current weather, "
+                "terrain and battlefield effects. Never invent absent fields "
+                "from knowledge or default values. When these conditions "
+                "are not directly visible set full_state_rebaseline false and "
+                "NO_ACTION if action safety is uncertain. "
+                "For all ordinary images return empty arrays and false "
+                "in stale_visual_check. If unresolved proof affects action "
                 "safety, return NO_ACTION rather than guess. "
                 "In this SAME response, return processed_ocr_frames only for "
                 "fully understood source frames, and pending_ocr_questions "
