@@ -76,11 +76,15 @@ class TrainingPipelineIntegrationTests(unittest.TestCase):
             )
 
     def test_preflight_fails_before_training_when_embedding_import_is_unavailable(self):
-        with patch.dict("sys.modules",{"scripts.embed_screen_classifier_metadata":None}):
-            with self.assertRaisesRegex(
-                trainer.TrainingPreflightError,"metadata/export dependency unavailable"
-            ):
-                trainer.preflight_training_export()
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/"output"
+            with patch.dict("sys.modules",{"scripts.embed_screen_classifier_metadata":None}):
+                with self.assertRaisesRegex(
+                    trainer.TrainingPreflightError,"metadata/export dependency unavailable"
+                ):
+                    # Must fail before dataset scans, Torch setup or output creation.
+                    trainer.train_model(SimpleNamespace(output_dir=output))
+            self.assertFalse(output.exists())
 
     def test_existing_artifacts_are_never_overwritten(self):
         with tempfile.TemporaryDirectory() as temp:
