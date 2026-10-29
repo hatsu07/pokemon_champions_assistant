@@ -49,6 +49,21 @@ def _time() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _event_fingerprint(event: dict) -> str:
+    """Deduplicate the same screen/recommendation independently of UI clock.
+
+    The FIRST display time remains in the stored event. A later, otherwise
+    identical Qt redraw must not manufacture an independent observation.
+    """
+    content = {key: value for key, value in event.items()
+               if key not in ("_fingerprint", "captured_at")}
+    proposal = content.get("proposal")
+    if isinstance(proposal, dict):
+        content["proposal"] = {key:value for key,value in proposal.items()
+                               if key != "displayed_at"}
+    return _hash(content)
+
+
 def _names(value: Any, limit: int = 6) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -222,8 +237,7 @@ class MatchEvidenceBuffer:
             self.dropped_events += 1
             return False
         # Identical display events are deduplicated, independent of timestamp.
-        fingerprint = _hash({k:v for k,v in event.items()
-                             if k not in ("captured_at",)})
+        fingerprint = _event_fingerprint(event)
         if fingerprint in self._keys:
             return False
         if len(self.events) == MAX_EVENTS:
@@ -323,8 +337,7 @@ class MatchEvidenceArchive:
                     or len(_json(event).encode("utf-8")) > MAX_EVENT_BYTES + 128):
                 raise ConfigurationError("P1 event validation failed")
             fingerprint = event["_fingerprint"]
-            if fingerprint != _hash({k:v for k,v in event.items()
-                                      if k not in ("_fingerprint", "captured_at")}):
+            if fingerprint != _event_fingerprint(event):
                 raise ConfigurationError("P1 event fingerprint mismatched")
         payload = _json(archive)
         if len(payload.encode("utf-8")) > MAX_ARCHIVE_BYTES:
@@ -384,8 +397,7 @@ class MatchEvidenceArchive:
         if record is None:
             return {"status":"MISSING"}
         ok = len(record["events"]) == record["captured_count"]
-        ok = ok and all(e.get("_fingerprint") == _hash({
-            k:v for k,v in e.items() if k not in ("_fingerprint","captured_at")})
-            for e in record["events"])
+        ok = ok and all(e.get("_fingerprint") == _event_fingerprint(e)
+                        for e in record["events"])
         return {"status":"VALID" if ok else "CORRUPT",
                 "count":len(record["events"])}
