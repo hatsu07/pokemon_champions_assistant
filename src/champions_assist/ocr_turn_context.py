@@ -35,112 +35,71 @@ def _compare_text(value: str) -> str:
     return "".join(normalize("NFKC", value).split())
 
 
-def _levenshtein_similarity(a: str, b: str) -> float:
-    """Issue #125: normalized edit-distance similarity, not SequenceMatcher."""
-    if a == b:
-        return 1.0
-    if not a or not b:
-        return 0.0
-    previous = list(range(len(b) + 1))
-    for i, left in enumerate(a, 1):
-        current = [i]
-        for j, right in enumerate(b, 1):
-            current.append(min(
-                current[-1] + 1,
-                previous[j] + 1,
-                previous[j - 1] + (left != right),
-            ))
-        previous = current
-    return 1.0 - previous[-1] / max(len(a), len(b))
+def _json_bytes(value) -> int:
+    return len(json.dumps(value, ensure_ascii=False,
+                          separators=(",", ":"), default=str).encode("utf-8"))
 
 
 def compact_ocr_transport(rows: list[dict]) -> list[dict]:
-    """Transport-only visual-episode compression without discarding OCR proof.
+    """Lossless *transport* view: join only adjacent normalized exact matches.
 
-    Unknown display identity means no compression. Multiple distinct battles
-    showing the same text never share an episode ID. State verification always
-    receives the original, uncompressed rows.
+    A row is eligible for merging only when an independently determined visual
+    display ID is present and unchanged. Fuzzy matching is deliberately off:
+    '上がった'/'下がった' can be dangerously similar. If metadata makes a
+    group larger than its inputs, send the original rows instead.
     """
-    groups: list[dict] = []
-    positions: dict[tuple[str, str], int] = {}
-    for sequence, row in enumerate(rows):
-        display_id = row.get("display_id")
-        field = str(row.get("field") or "")
+    episodes: list[list[dict]] = []
+    for row in rows:
         raw = str(row.get("raw_text", row.get("candidate", "")))
-        key = (str(display_id), field) if display_id and field else None
-        position = positions.get(key) if key else None
-        if position is not None:
-            group = groups[position]
-            prior = str(group.get("raw_text") or "")
-            a, b = _compare_text(prior), _compare_text(raw)
-            exact = a == b
-            fuzzy = (field.endswith(("battle_message", "system_message"))
-                     and min(len(a), len(b)) >= 8
-                     and _levenshtein_similarity(a, b) >= 0.90)
-            if exact or fuzzy:
-                if "_source_texts" not in group:
-                    group["_source_texts"] = [{
-                        "text": prior, "frame_id": group["frame_id"],
-                        "sequence_index": group["_first_sequence"],
-                        "observed_at": group.get("observed_at"),
-                        "confidence": group.get("confidence"),
-                    }]
-                group["_source_texts"].append({
-                    "text": raw, "frame_id": row["frame_id"],
-                    "sequence_index": sequence,
-                    "observed_at": row.get("observed_at"),
-                    "confidence": row.get("confidence"),
-                })
-                continue
-        if key is not None:
-            positions[key] = len(groups)
-        groups.append(dict(row, _first_sequence=sequence))
+        previous = episodes[-1][-1] if episodes else None
+        if (previous and row.get("display_id")
+                and row["display_id"] == previous.get("display_id")
+                and row.get("field") == previous.get("field")
+                and _compare_text(raw) == _compare_text(str(
+                    previous.get("raw_text", previous.get("candidate", ""))))):
+            episodes[-1].append(row)
+        else:
+            episodes.append([row])
 
-    for group in groups:
-        group.pop("_first_sequence", None)
-        observations = group.pop("_source_texts", None)
-        if observations is None:
+    output = []
+    offset = 0
+    for episode in episodes:
+        if len(episode) == 1:
+            output.append(dict(episode[0]))
+            offset += 1
             continue
-        forms: dict[str, dict] = {}
-        for observation in observations:
-            raw = observation["text"]
-            if raw not in forms:
-                forms[raw] = {
-                    "count": 0, "peak_confidence": -1.0,
-                    "frames": [], "first": observation,
-                }
-            entry = forms[raw]
-            entry["count"] += 1
-            entry["frames"].append(observation["frame_id"])
-            confidence = observation.get("confidence")
-            if type(confidence) in (int, float):
-                entry["peak_confidence"] = max(
-                    entry["peak_confidence"], float(confidence))
-        ranking = sorted(forms, key=lambda text: (
-            -forms[text]["count"],
-            -forms[text]["peak_confidence"],
-            observations.index(forms[text]["first"]),
-        ))
-        representative = ranking[0]
-        representative_observation = forms[representative]["first"]
-        group["raw_text"] = representative
-        group["frame_id"] = representative_observation["frame_id"]
-        group["observed_at"] = representative_observation["observed_at"]
-        group["confidence"] = representative_observation["confidence"]
-        group["source_frames"] = [o["frame_id"] for o in observations]
-        group["observation_count"] = len(observations)
-        group["variants"] = ranking[1:]
-        group["variant_frames"] = {
-            text: forms[text]["frames"] for text in ranking
-        }
-        group["source_observations"] = [
-            {"frame_id": o["frame_id"],
-             "sequence_index": o["sequence_index"],
-             "observed_at": o["observed_at"],
-             "confidence": o["confidence"]}
-            for o in observations
-        ]
-    return groups
+        # Representative stays unverified. Raw variants stay available to GPT.
+        counts = {}
+        for row in episode:
+            raw = str(row.get("raw_text", row.get("candidate", "")))
+            counts[raw] = counts.get(raw, 0) + 1
+        representative = max(
+            episode, key=lambda r: (
+                counts[str(r.get("raw_text", r.get("candidate", "")))],
+                float(r.get("confidence") or 0)))
+        compact = dict(representative)
+        raw_rep = str(representative.get(
+            "raw_text", representative.get("candidate", "")))
+        compact["source_frames"] = [r["frame_id"] for r in episode]
+        compact["source_row_keys"] = [_row_key(r) for r in episode]
+        # Parallel arrays preserve exact one-to-one identity while avoiding
+        # the repetition of long JSON field names for each OCR reading.
+        compact["source_sequence_indices"] = list(range(offset, offset + len(episode)))
+        compact["source_observed_at"] = [r.get("observed_at") for r in episode]
+        compact["source_confidences"] = [r.get("confidence") for r in episode]
+        compact["observation_count"] = len(episode)
+        compact["variants"] = list(dict.fromkeys(
+            str(r.get("raw_text", r.get("candidate", "")))
+            for r in episode if str(r.get(
+                "raw_text", r.get("candidate", ""))) != raw_rep))
+        # Never grow a prompt merely to label a small number of observations.
+        # Original evidence remains in LocalBattleStateTracker either way.
+        if _json_bytes(compact) < _json_bytes(episode):
+            output.append(compact)
+        else:
+            output.extend(dict(r) for r in episode)
+        offset += len(episode)
+    return output
 
 def _row_key(row: dict) -> str:
     """Opaque local presentation marker; raw text remains in the tracker."""
