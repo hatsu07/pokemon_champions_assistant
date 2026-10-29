@@ -51,6 +51,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Official OCR bundle staging failed" }
           python scripts/check_onnx_ocr_bundle.py --model-dir build/ocr-v6
           if ($LASTEXITCODE -ne 0) { throw "Real OCR string validation failed" }
+      - name: Check Python source syntax before Windows Qt tests
+        shell: pwsh
+        run: |
+          python -m compileall -q src/champions_assist scripts tests
+          if ($LASTEXITCODE -ne 0) { throw "Python source syntax check failed" }
       - name: Run offline battle and settings tests on Windows
         shell: pwsh
         run: |
