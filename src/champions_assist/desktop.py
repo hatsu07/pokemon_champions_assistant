@@ -657,6 +657,21 @@ class _PostmatchReviewWorker(QThread):
             result=request_review(
                 data_root=self.data_root,match_id=self.match_id,
                 model=self.model,access_token=token,reasoning_effort=self.effort)
+            # Issue #92: a bounded after-match aggregation of saved GPT review
+            # hypotheses. No additional model request, LIVE master changes,
+            # or tactical-state queries are performed. A research failure must
+            # never invalidate a successfully stored postmatch review.
+            if result.get("status")=="STORED_UNVERIFIED_REVIEW":
+                try:
+                    from .autonomous_improvement import AutonomousImprovementStore
+                    research=AutonomousImprovementStore(self.data_root)
+                    result["improvement_research"]=research.aggregate_after_review(
+                        match_id=self.match_id)
+                except Exception as research_error:
+                    result["improvement_research"]={
+                        "status":"RESEARCH_FAILED_REVIEW_RETAINED",
+                        "reason":type(research_error).__name__,
+                        "candidate_count":0}
             self.result_ready.emit(result)
         except Exception as exc:
             from .team_ai_analysis import safe_ai_error
@@ -697,6 +712,8 @@ class DesktopMainWindow(QMainWindow):
         self._unified_event_number = 0
         self._unified_team_id = None
         self._unified_team_sha = ""
+        self._p1_context = {}
+        self._p1_buffer = None
         self._postmatch_worker = None
         self._postmatch_match_id = None
         self._postmatch_waiting_match_id = None
@@ -937,6 +954,27 @@ class DesktopMainWindow(QMainWindow):
         self._unified_team_id = team_id
         from hashlib import sha256
         self._unified_team_sha = sha256(Path(team_path).read_bytes()).hexdigest()
+        # P1: freeze provenance and legal *registered* moves before game start.
+        # The LIVE callback only creates bounded in-memory entries; no new
+        # file access, GPT transport, or SQLite writes in the battle loop.
+        from .offmatch_evidence import freeze_team_context
+        from .team_management import TeamDocument
+        from hashlib import sha256 as _sha256
+        manifest = json.loads(prepared.manifest_path.read_text(encoding="utf-8"))
+        file_hashes = {
+            "matrix": _sha256(prepared.matrix_path.read_bytes()).hexdigest(),
+            "lookup": _sha256(prepared.lookup_path.read_bytes()).hexdigest(),
+        }
+        self._p1_context = freeze_team_context(
+            team_id=team_id, team_sha=self._unified_team_sha, model=model,
+            regulation=TeamDocument.load(team_path).team_rows[0].get("reg", ""),
+            regulation_source="REGISTERED_TEAM_CSV_UNVERIFIED",
+            environment_source=manifest.get("environment_source_kind", ""),
+            environment_observed_at=manifest.get("environment_generated_at", ""),
+            tactical_version=manifest.get("fingerprint", ""),
+            frozen_assets_sha=file_hashes,
+            own_members=list(TeamDocument.load(team_path).members))
+        self._p1_buffer = None
         self._match_panel.matrix_source = str(prepared.matrix_path)
         self._match_panel.lookup_source = str(prepared.lookup_path)
         self._match_panel.live_assets_status = prepared.status
@@ -959,6 +997,18 @@ class DesktopMainWindow(QMainWindow):
         """One replay snapshot drives advice, labels, evidence and SQLite history."""
         panel = self._match_panel
         phase = state.get("phase", "S00_WAIT_START")
+        # P1 issue #114: freeze *each received* recommendation and observation
+        # now, never reconstruct it from a later end-of-battle state. The
+        # bounded buffer is memory-only until the confirmed MATCH_END.
+        # Simple legacy/isolated windows may not have prepared a team context.
+        if panel.match_id and (getattr(self, "_p1_buffer", None) is None
+                               or self._p1_buffer.match_id != panel.match_id):
+            from .offmatch_evidence import MatchEvidenceBuffer
+            self._p1_buffer = MatchEvidenceBuffer(
+                match_id=panel.match_id,
+                context=getattr(self, "_p1_context", {}))
+        if getattr(self, "_p1_buffer", None) is not None and state:
+            self._p1_buffer.capture(state, report)
         # A model timeout can leave the internal phase at MATCHMAKING after
         # the actual preview advanced. UI label marks this uncertainty.
         display_phase=report.get("display_phase") or phase
@@ -1120,6 +1170,23 @@ class DesktopMainWindow(QMainWindow):
                 inserted=learning.record_finished(
                     match_id=panel.match_id,team_id=self._unified_team_id,state=state,
                     team_signature=self._unified_team_sha,source=result_source)
+                # Postmatch-only SQLite archive. Failure cannot erase the
+                # finished match or prevent an already queued GPT review.
+                buffer=getattr(self, "_p1_buffer", None)
+                if buffer is not None and buffer.match_id==panel.match_id:
+                    try:
+                        from .offmatch_evidence import MatchEvidenceArchive
+                        if buffer.context.get("team_id")==self._unified_team_id:
+                            archived = MatchEvidenceArchive(
+                                self.settings_service.settings.storage.data_root
+                            ).save_ended(buffer.finish())
+                            if archived.get("status") not in (
+                                    "STORED_UNVERIFIED", "ALREADY_STORED"):
+                                self.header_labels["records"].setText(
+                                    "P1証拠未保存: " + str(archived.get("status")))
+                    except Exception as evidence_error:
+                        self.header_labels["records"].setText(
+                            "P1証拠保存失敗: " + type(evidence_error).__name__)
                 if learning.postmatch_review(panel.match_id) is not None:
                     self._show_saved_postmatch_review(panel.match_id)
                 elif inserted or learning.pending_match(panel.match_id) is not None:
@@ -1234,6 +1301,14 @@ class DesktopMainWindow(QMainWindow):
         if result.get("status")=="STORED_UNVERIFIED_REVIEW":
             try:
                 self._show_saved_postmatch_review(match_id)
+                research=result.get("improvement_research") or {}
+                count=research.get("candidate_count",0)
+                if research.get("status")=="STORED_PROVISIONAL_UNVERIFIED":
+                    self.postmatch_detail.appendPlainText(
+                        f"複数試合の改善研究候補: {count}件（未検証・自動適用なし）")
+                elif research.get("status")=="RESEARCH_FAILED_REVIEW_RETAINED":
+                    self.postmatch_detail.appendPlainText(
+                        "改善研究の保存失敗（対戦後レビューは保存済み）")
             except (OSError,ValueError,RuntimeError) as exc:
                 self._set_postmatch_status(
                     "失敗（レビューSQLite読戻し）",match_id,
