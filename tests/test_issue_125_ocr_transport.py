@@ -60,6 +60,8 @@ class Issue125TransportTests(unittest.TestCase):
         compact = compact_ocr_transport(records)
         self.assertEqual(len(compact), 4)
         self.assertEqual(compact[0]["source_frames"], ["f1", "f2", "f3"])
+        self.assertEqual([item["sequence_index"]
+                          for item in compact[0]["source_observations"]], [0, 1, 2])
         self.assertEqual(compact[0]["observation_count"], 3)
         self.assertIn("ゆげっ！ガブリアス！", compact[0]["variants"])
         self.assertEqual(compact[1]["frame_id"], "f4")
@@ -99,6 +101,11 @@ class Issue125TransportTests(unittest.TestCase):
             state, records + [ocr("f3", "新規")], sent_ledger=ledger)
         self.assertEqual([row["frame_id"] for row in next_rows], ["f3"])
         self.assertEqual(meta["prior_observations_not_resent"], 2)
+        # The archived raw proof remains available for explicit reinspection.
+        state["_ai_ocr_reinspect_frames"] = ["f1"]
+        revisited, _, _ = build_ocr_turn_context(
+            state, records, sent_ledger=ledger)
+        self.assertEqual([row["frame_id"] for row in revisited], ["f1"])
 
     def test_transport_keys_survive_invalid_tactic(self):
         assets, state = battle()
@@ -166,7 +173,8 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertEqual(report["images_sent"], 0)
         self.assertEqual(after["our_active"], "ゲンガー")
         self.assertEqual(after["opponent_active"], "マスカーニャ")
-        self.assertIn(report["status"], ("TEST_ONLY", "ACTION", "RECOMMENDED"))
+        self.assertEqual(report["status"], "TEST_ONLY")
+        self.assertEqual(report["recommendation"], "じしん。")
 
     def test_unknown_actor_without_ocr_still_needs_image(self):
         assets, state = battle()
