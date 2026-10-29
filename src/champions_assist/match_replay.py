@@ -1673,20 +1673,20 @@ def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
     would reject a correct GPT WIN. Unattributed phrases are left to GPT;
     do not silently infer winner from one substring in Python.
     """
+    import re
     phrase=" ".join(evidence.casefold().split())
-    own_win=("you win","あなたの勝ち","あなたが勝った","あなたは勝った",
-             "自分が勝った","プレイヤーの勝利")
-    own_loss=("you lose","あなたの負け","あなたが負けた",
-              "あなたは負けた","自分が負けた","プレイヤーの敗北")
-    confirms_win=any(cue in phrase for cue in own_win)
-    confirms_loss=any(cue in phrase for cue in own_loss)
-    if confirms_win and confirms_loss:
-        return False
-    if confirms_win and result!="WIN":
-        return False
-    if confirms_loss and result!="LOSS":
-        return False
-    return result in ("WIN","LOSS")
+    # NPC dialogue "○○との 勝負に 負けた" does not mean the human
+    # player lost. The GPT perspective judgment is authoritative here.
+    if re.search(r"との.{0,18}勝負に.{0,8}負けた",phrase):
+        return result in ("WIN","LOSS")
+    own_win=("勝利","勝った","勝ちました","you win",
+             "相手が降参","相手が投了")
+    own_loss=("敗北","負けた","負けました","you lose","自分が降参")
+    win_cited=any(cue in phrase for cue in own_win)
+    loss_cited=any(cue in phrase for cue in own_loss)
+    if win_cited==loss_cited:
+        return False  # no unambiguous outcome in the cited phrase
+    return win_cited if result=="WIN" else loss_cited if result=="LOSS" else False
 
 
 def run_replay_screen_result(*, state: dict,
