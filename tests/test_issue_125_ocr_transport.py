@@ -1,15 +1,17 @@
 """Issue #125 transport/first-turn OCR regressions. No network, no image model."""
 import json
 import unittest
+import numpy as np
 from unittest.mock import patch
 
 from champions_assist.match_replay import (
-    new_replay, run_replay_text_action, _text_action_eligible,
+    new_replay, run_replay_text_action, run_replay_batch,
+    _text_action_eligible,
 )
 from champions_assist.ocr_turn_context import (
-    OcrSentLedger, build_ocr_turn_context, compact_ocr_transport,
+    OcrSentLedger, build_ocr_turn_context, compact_ocr_transport, _row_key,
 )
-from tests.test_match_replay import fixture_assets
+from tests.test_match_replay import fixture_assets, frame
 
 
 def ocr(frame, text, *, display_id="", field="screen_text.battle_message",
@@ -42,32 +44,54 @@ def battle():
 
 class Issue125TransportTests(unittest.TestCase):
 
-    def test_compression_requires_a_visual_episode_and_keeps_original_proof(self):
+    def test_exact_only_compression_preserves_every_original_row_key(self):
         records = [
-            ocr("f1", "ゆけっ！ ガブリアス！", display_id="message:visual-7"),
-            ocr("f2", "ゆげっ！ガブリアス！", display_id="message:visual-7",
-                timestamp=10.4),
-            ocr("f3", "ゆけっ！ガブリアス！", display_id="message:visual-7",
-                timestamp=10.8),
-            ocr("f4", "ゆけっ！ガブリアス！", display_id="message:visual-8",
-                timestamp=11.1),
-            ocr("f5", "185/185", field="screen_text.own_hp_fraction",
-                timestamp=11.2),
-            ocr("f6", "185/185", field="screen_text.own_hp_fraction",
-                timestamp=11.6),
+            ocr(f"f{i}", "ゆけっ！ガブリアス！" if i % 2 else
+                "ゆけっ！ ガブリアス！",
+                display_id="message:visual-7", timestamp=10.0 + i * 0.1)
+            for i in range(8)
+        ]
+        records += [
+            ocr("f8", "ゆげっ！ガブリアス！",
+                display_id="message:visual-7", timestamp=11.0),
+            ocr("f9", "ゆけっ！ガブリアス！",
+                display_id="message:visual-8", timestamp=11.1),
+            ocr("f10", "185/185",
+                field="screen_text.own_hp_fraction", timestamp=11.2),
+            ocr("f11", "185/185",
+                field="screen_text.own_hp_fraction", timestamp=11.6),
         ]
         original = json.dumps(records, ensure_ascii=False)
         compact = compact_ocr_transport(records)
-        self.assertEqual(len(compact), 4)
-        self.assertEqual(compact[0]["source_frames"], ["f1", "f2", "f3"])
-        self.assertEqual([item["sequence_index"]
-                          for item in compact[0]["source_observations"]], [0, 1, 2])
-        self.assertEqual(compact[0]["observation_count"], 3)
-        self.assertIn("ゆげっ！ガブリアス！", compact[0]["variants"])
-        self.assertEqual(compact[1]["frame_id"], "f4")
-        self.assertEqual(compact[2]["frame_id"], "f5")
-        self.assertEqual(compact[3]["frame_id"], "f6")
+        self.assertEqual(len(compact), 5)
+        group = compact[0]
+        self.assertEqual(group["source_frames"], [f"f{i}" for i in range(8)])
+        self.assertEqual(group["source_row_keys"], [_row_key(r) for r in records[:8]])
+        self.assertEqual(group["source_sequence_indices"], list(range(8)))
+        self.assertEqual(group["observation_count"], 8)
+        self.assertEqual(len(group["source_observed_at"]), 8)
+        self.assertIn("ゆけっ！ ガブリアス！", [
+            group["raw_text"], *group["variants"]])
+        self.assertEqual(compact[1]["frame_id"], "f8")
+        self.assertEqual(compact[2]["frame_id"], "f9")
+        self.assertEqual(compact[3]["frame_id"], "f10")
+        self.assertEqual(compact[4]["frame_id"], "f11")
+        self.assertLess(len(json.dumps(compact, ensure_ascii=False)),
+                        len(original))
         self.assertEqual(json.dumps(records, ensure_ascii=False), original)
+
+    def test_fuzzy_or_opposite_messages_never_coalesce(self):
+        records = [
+            ocr("up", "相手の攻撃が上がった！", display_id="same-visual"),
+            ocr("down", "相手の攻撃が下がった！",
+                display_id="same-visual", timestamp=10.3),
+            ocr("misread", "相手の攻撃が上がつた！",
+                display_id="same-visual", timestamp=10.6),
+        ]
+        groups = compact_ocr_transport(records)
+        self.assertEqual(len(groups), 3)
+        self.assertEqual([r["frame_id"] for r in groups],
+                         ["up", "down", "misread"])
 
     def test_different_episode_even_same_message_is_not_merged(self):
         records = [
@@ -75,6 +99,23 @@ class Issue125TransportTests(unittest.TestCase):
             ocr("turn-2", "ガブリアスのじしん！", display_id="m:2"),
         ]
         self.assertEqual(len(compact_ocr_transport(records)), 2)
+
+    def test_compaction_does_not_expand_api_json_bytes(self):
+        for n in (0, 1, 2, 4, 20):
+            records = [
+                ocr(f"c{i}", "相手はマスカーニャを繰り出した！",
+                    display_id="same-display", timestamp=i / 10)
+                for i in range(n)
+            ]
+            original=json.dumps(records, ensure_ascii=False,
+                                separators=(",", ":")).encode("utf-8")
+            packed=json.dumps(compact_ocr_transport(records),
+                              ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            self.assertLessEqual(len(packed), len(original))
+            # Token count is model-dependent; report only a byte/4 proxy.
+            self.assertLessEqual((len(packed)+3)//4, (len(original)+3)//4)
+            if n == 20:
+                self.assertLess(len(compact_ocr_transport(records)), n)
 
     def test_sent_keys_survive_model_failure_and_do_not_recur(self):
         assets, state = battle()
@@ -101,11 +142,65 @@ class Issue125TransportTests(unittest.TestCase):
             state, records + [ocr("f3", "新規")], sent_ledger=ledger)
         self.assertEqual([row["frame_id"] for row in next_rows], ["f3"])
         self.assertEqual(meta["prior_observations_not_resent"], 2)
-        # The archived raw proof remains available for explicit reinspection.
-        state["_ai_ocr_reinspect_frames"] = ["f1"]
-        revisited, _, _ = build_ocr_turn_context(
-            state, records, sent_ledger=ledger)
-        self.assertEqual([row["frame_id"] for row in revisited], ["f1"])
+        # A known current actor can use already-verified state with new OCR.
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",state,assets,
+            local_rows=records,sent_ocr_ledger=ledger))
+
+    def test_stale_unknown_lead_never_sends_empty_ocr_text_prompt(self):
+        assets, state = battle()
+        ledger = OcrSentLedger()
+        readings = [
+            ocr("f1", "ゆけっ！ゲンガー！"),
+            ocr("f2", "相手のマスカーニャを繰り出した！", timestamp=10.2),
+        ]
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=readings,
+            sent_ocr_ledger=ledger))
+        # req-A was dispatched, but timeout/stale handling rejected its answer.
+        ledger.mark_sent(_row_key(row) for row in readings)
+        self.assertEqual(build_ocr_turn_context(
+            state,readings,sent_ledger=ledger)[0],[])
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=readings,
+            sent_ocr_ledger=ledger))
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=AssertionError("Must not create empty OCR request")):
+            _, blocked = run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="mock",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=readings,
+                sent_ocr_ledger=ledger,
+                client_factory=lambda **kw: object())
+        self.assertEqual(blocked["status"],"BLOCKED")
+
+        seen=[]
+        def image_reply(_client,**kwargs):
+            seen.append(kwargs)
+            return {
+                "observation":frame("COMMAND_MENU",our_active="ゲンガー",
+                                    opponent_active="マスカーニャ"),
+                "action":{"action_kind":"NO_ACTION","move":"",
+                          "switch_target":"","warning":""},
+                "selection":{"selected_three":[],"lead":""},
+                "pending_ocr_questions":[],"processed_ocr_frames":[],
+            }
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=image_reply):
+            _, report = run_replay_batch(
+                [np.zeros((80,120,3),dtype=np.uint8)],state=state,
+                assets=assets,access_token="unused",model="mock",
+                expected_screen_label="TURN_ACTION",
+                local_field_candidates=readings,
+                sent_ocr_ledger=ledger,
+                client_factory=lambda **kw: object())
+        self.assertEqual(len(seen),1)
+        self.assertEqual(sum(item["type"]=="input_image"
+                             for item in seen[0]["content"]),1)
+        prompt=json.loads(seen[0]["content"][0]["text"])
+        self.assertEqual(prompt["local_field_candidates_unverified"],[])
+        self.assertEqual(report["images_sent"],1)
+        self.assertEqual(len(ledger.snapshot()),2)
 
     def test_transport_keys_survive_invalid_tactic(self):
         assets, state = battle()
