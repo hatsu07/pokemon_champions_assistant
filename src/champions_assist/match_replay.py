@@ -1665,20 +1665,28 @@ def select_screen_result_evidence(rows: list[dict], *,
 
 
 def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
-    """Fail closed on an explicit opposite outcome; never infer a result.
+    """Sanity-check explicit PLAYER-perspective contradictions only.
 
-    Only an independent GPT decision can end the match. This check merely
-    rejects contradictory grounded quotations (e.g. WIN citing 敗北).
-    Ambiguous or two-sided messages require human confirmation.
+    GPT judges the human player's outcome from the quoted pre-result OCR.
+    Japanese NPC dialogue like "ハツとの勝負に負けた" describes the
+    *opponent* losing, so searching for "負けた" and forcing human LOSS
+    would reject a correct GPT WIN. Unattributed phrases are left to GPT;
+    do not silently infer winner from one substring in Python.
     """
     phrase=" ".join(evidence.casefold().split())
-    win_cues=("勝利","勝った","勝ちました","you win","相手が降参","相手が投了")
-    loss_cues=("敗北","負けた","負けました","you lose","自分が降参")
-    matches_win=any(cue in phrase for cue in win_cues)
-    matches_loss=any(cue in phrase for cue in loss_cues)
-    if matches_win==matches_loss:
+    own_win=("you win","あなたの勝ち","あなたが勝った","あなたは勝った",
+             "自分が勝った","プレイヤーの勝利")
+    own_loss=("you lose","あなたの負け","あなたが負けた",
+              "あなたは負けた","自分が負けた","プレイヤーの敗北")
+    confirms_win=any(cue in phrase for cue in own_win)
+    confirms_loss=any(cue in phrase for cue in own_loss)
+    if confirms_win and confirms_loss:
         return False
-    return matches_win if result=="WIN" else matches_loss if result=="LOSS" else False
+    if confirms_win and result!="WIN":
+        return False
+    if confirms_loss and result!="LOSS":
+        return False
+    return result in ("WIN","LOSS")
 
 
 def run_replay_screen_result(*, state: dict,
@@ -1732,7 +1740,11 @@ def run_replay_screen_result(*, state: dict,
                 "messages captured BEFORE the result screen. Do not assume "
                 "the result screen itself has been OCR-read. Return "
                 "WIN or LOSS ONLY if one cited OCR phrase explicitly identifies "
-                "the HUMAN player's final MATCH outcome. A Pokemon fainting, "
+                "the HUMAN player's final MATCH outcome. A line saying the "
+                "OPPONENT lost against the named human player implies human WIN; "
+                "a bare Japanese '負けた' may have the OPPOSITE perspective. "
+                "When speaker or player perspective cannot be established, "
+                "return UNKNOWN rather than guessing. A Pokemon fainting, "
                 "a partial turn, an opponent's move, or a vague win phrase is "
                 "NOT enough. If contradictory, missing, or uncertain, return "
                 "UNKNOWN. Quote an exact OCR substring as evidence and its "
