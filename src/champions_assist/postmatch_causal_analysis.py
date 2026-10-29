@@ -29,7 +29,7 @@ MAX_EVENTS_PER_MATCH = 5
 MAX_INPUT_CHARS = 23000
 MAX_OUTPUT_CHARS = 16000
 MAX_FINDINGS = 6
-MAX_CALLS_PER_BATCH = 1
+MAX_CALLS_PER_BATCH = 2  # one automatic try + at most one explicit retry
 CAUSES = ("TEAM", "SELECTION", "PLAY", "SUPPORT", "OCR_SYNC", "LUCK", "UNKNOWN")
 OWNERS = ("TEAM", "USER", "SUPPORT", "RECOGNITION", "UNDETERMINED")
 GATE_STATUSES = ("EXISTING_GATE_CANDIDATE", "UNRESOLVED", "UNKNOWN")
@@ -364,29 +364,43 @@ class PostmatchCausalStore:
         source = prepared["source"]
         if not model or not access_token:
             return {"status": "MODEL_OR_AUTH_UNAVAILABLE", "calls_used": 0}
+        attempt_number = 1
         with closing(self._db()) as db:
+            # Atomic reservation avoids two workers racing to spend the same
+            # batch's budget. Retry requires an explicit caller opt-in.
+            db.execute("BEGIN IMMEDIATE")
             existing = db.execute("""
-                SELECT status,analysis_json,calls_used FROM p2_causal_batches
+                SELECT status,calls_used FROM p2_causal_batches
                 WHERE research_sha=?""", (digest,)).fetchone()
-            if existing and (not allow_retry or existing[2] >= MAX_CALLS_PER_BATCH):
-                return {"status": existing[0], "research_sha": digest,
-                        "calls_used": existing[2], "created": False}
-            now = _now()
-            with db:
-                db.execute("""INSERT OR IGNORE INTO p2_causal_batches(
+            if existing:
+                status, used = existing
+                if status == "STORED_HOLD_UNVERIFIED" or not allow_retry:
+                    db.rollback()
+                    return {"status": status, "research_sha": digest,
+                            "calls_used": used, "created": False}
+                if status == "RESERVED_UNVERIFIED" or used >= MAX_CALLS_PER_BATCH:
+                    db.rollback()
+                    return {"status": "BUDGET_EXHAUSTED", "research_sha": digest,
+                            "calls_used": used}
+                attempt_number = used + 1
+                db.execute("""UPDATE p2_causal_batches
+                                  SET status='RESERVED_UNVERIFIED',
+                                      calls_used=?,attempted_at=?,completed_at=''
+                                WHERE research_sha=?""",
+                           (attempt_number,_now(),digest))
+            else:
+                db.execute("""INSERT INTO p2_causal_batches(
                     research_sha,team_id,team_signature,p1_batch_sha,
                     evidence_sha,model,gate_sha,status,analysis_json,
                     calls_used,attempted_at,completed_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (digest,prepared["team_id"],prepared["team_signature"],
                      prepared["p1_batch_sha"],_sha(source["matches"]),model,
-                     source["gate_sha"],"RESERVED_UNVERIFIED","{}",1,now,""))
-            if existing:
-                return {"status": "BUDGET_EXHAUSTED", "research_sha": digest,
-                        "calls_used": existing[2]}
+                     source["gate_sha"],"RESERVED_UNVERIFIED","{}",1,_now(),""))
+            db.commit()
         if cancel and cancel():
             return {"status": "CANCELLED_RESERVED", "research_sha": digest,
-                    "calls_used": 1}
+                    "calls_used": attempt_number}
         instructions = (
             "You are analyzing FINISHED Pokémon Champions singles battles, "
             "never advising during live play. The supplied capture snapshots "
@@ -455,7 +469,7 @@ class PostmatchCausalStore:
                             (_json(packet),_now(),digest))
             return {"status":"STORED_HOLD_UNVERIFIED",
                     "research_sha":digest, "findings":len(packet["findings"]),
-                    "sample_size":packet["sample_size"], "calls_used":1,
+                    "sample_size":packet["sample_size"], "calls_used":attempt_number,
                     "live_applied":False}
         except Exception as exc:
             # Reservation is intentional: an interrupted or failed charge
@@ -469,7 +483,7 @@ class PostmatchCausalStore:
                              else "FAILED_HOLD",_now(),digest))
             return {"status": ("CANCELLED_HOLD" if isinstance(exc,InterruptedError)
                                else "FAILED_HOLD"), "research_sha":digest,
-                    "reason":type(exc).__name__, "calls_used":1}
+                    "reason":type(exc).__name__, "calls_used":attempt_number}
 
     def read(self, research_sha: str) -> dict | None:
         with closing(self._db()) as db:
