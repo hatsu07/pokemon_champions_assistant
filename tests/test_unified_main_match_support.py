@@ -1575,8 +1575,8 @@ class UnifiedMainWindowTests(unittest.TestCase):
             experimental=True,provider="CPUExecutionProvider",
             predict=lambda image:ScreenPrediction("RESULT_SCREEN",.99,.98,2.0))
         with patch("champions_assist.match_replay_dialog.capture_for_chatgpt",
-                   return_value=frame), \\
-             patch.object(panel._turn_buffer,"observe",return_value=None), \\
+                   return_value=frame), \
+             patch.object(panel._turn_buffer,"observe",return_value=None), \
              patch.object(panel,"_note_stable_result_screen") as start_gpt:
             panel._capture_next()
             start_gpt.assert_not_called()
