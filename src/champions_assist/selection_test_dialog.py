@@ -744,7 +744,7 @@ class SelectionTestDialog(QDialog):
             "（結果は候補であり対戦状態へは反映しません）")
         for result in rows:
             container=QWidget()
-            # Vertical layout leaves the wide two-line body preview legible.
+            # Vertical layout leaves the original message ROI preview legible.
             layout=QVBoxLayout(container)
             crop=np.ascontiguousarray(result["crop"])
             h,w=crop.shape[:2]
@@ -766,7 +766,7 @@ class SelectionTestDialog(QDialog):
                 f"解析: {str(result['parsed']) if result['parsed'] is not None else '未確定'}"
                 f" / エラー: {result['error'] or 'なし'}\n"
                 f"ルビ除外: {result.get('preprocess', '情報なし')} / "
-                f"抽出ROI: {result.get('body_rois', [])} / "
+                f"ルビマスクROI: {result.get('ruby_mask_rois', [])} / "
                 f"ゲーム内校正: {bool(result.get('game_validated', False))}")
             details.setWordWrap(True)
             details.setTextInteractionFlags(
