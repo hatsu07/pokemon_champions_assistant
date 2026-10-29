@@ -272,6 +272,31 @@ class CausalResearchTests(unittest.TestCase):
         self.assertEqual(self.p2.read(result["research_sha"])["calls_used"],1)
         self.assertIsNotNone(self.learning.postmatch_review("match-2"))
 
+    def test_explicit_retry_once_then_budget_exhausted(self):
+        self.ready()
+        first=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory(fail=True))
+        self.assertEqual(first["status"],"FAILED_HOLD")
+        no_auto=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(no_auto["status"],"FAILED_HOLD")
+        self.assertEqual(len(self.clients),1)
+        second=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,
+            client_factory=self.factory(fail=True))
+        self.assertEqual(second["status"],"FAILED_HOLD")
+        self.assertEqual(second["calls_used"],2)
+        exhausted=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,
+            client_factory=self.factory())
+        self.assertEqual(exhausted["status"],"BUDGET_EXHAUSTED")
+        self.assertEqual(exhausted["calls_used"],2)
+        self.assertEqual(len(self.clients),2)
+
     def test_mixed_environment_or_partial_archive_holds_without_gpt(self):
         self.record("x0",environment_at="old")
         self.record("x1",environment_at="new")
