@@ -1,84 +1,78 @@
-# Issue #124: battle message ruby exclusion (provisional)
+# Issue #124: two-ruby-band masking for one- and two-line messages
 
-Only the **battle_message** local ROI is affected. The default path is deliberately
-unchanged until the *two body-row bands* are independently validated on the
-actual game viewport. This is a cropping/recognition improvement, **not** a
-match-result classifier or a new OCR engine.
+This change only affects the local `battle_message` region and **does not**
+interpret battle results or change the OCR engine. The same single PP-OCRv6
+read is used whether the message has one or two lines.
 
-## Diagnostic, including the three user screenshots
+## Algorithm and boundaries (reference 960×572)
 
-Open **テスト全般 → ローカルOCR診断**, select a local battle screenshot and
-enable **戦闘メッセージのルビ除去を試す**. The preview shows the
-*actual image sent to the OCR engine*, OCR text/confidence, extraction status,
-source ROIs and separate preprocessing, OCR and total execution times. Uncheck and run again to compare the
-old full-ROI OCR input. Each execution calls the current PP-OCRv6 ONNX OCR
-**once per region** (no combined double-OCR in live or diagnostic). It never
-sends to GPT, promotes a win/loss, or saves the raw image/text.
+- Keep the complete existing `battle_message` OCR ROI **X=[141,540),
+  Y=[412,505)**. Do not extract/stack/reflow the text lines.
+- Apply **both** half-open ruby masks **X=[141,540)**,
+  **Y=[423,432)** and **Y=[454,464)**, regardless of how many body lines exist.
+- Each thin stripe is replaced using per-column vertical interpolation
+  between adjacent, unmasked source rows (not a solid black rectangle).
+  Every byte outside the two ruby stripes remains unchanged. In particular,
+  the main text rows around Y434–453 and Y466–487 are retained.
+- The same normalized masks scale with the existing calibrated ROI and its
+  2× cap, including the original `profile.crop` behavior.
+- If the first-line anchor is not in its expected location, if an optional
+  second-line anchor is misaligned, or if an extra main-text run is detected
+  in the inspected region, **fall back to the original ROI** with one OCR.
+  A legitimate single line is allowed; absence of a second line does not
+  by itself disable masking.
 
-Use all three 960×572 samples: one and two body lines, lines extending as far
-as possible right, smaller kana/kanji and final punctuation. Visually compare
-both lines and every final glyph. Report deletions/truncation and ruby
-inclusions; inspect them **before** enabling live usage. On users' private
-copies, note baseline vs processed character error/ruby inclusion and
-elapsed milliseconds. No such real-image measurement is claimed by this PR.
+This is calibrated to the three privately shared game screenshots. It is
+not proof for every dynamic UI scale, long text, offscreen line, animation,
+or alternate language. The anchor check is conservative but not a complete
+independent layout classifier. **Do not weaken it to force masking.**
 
-Initial *hypotheses* in the 960×572 active viewport:
+## Diagnostic in テスト全般
 
-- Body #1: X [141,540), Y [430,454).
-- Body #2: X [141,540), Y [464,489).
-- Ruby rows: ~424–429 and 456–462, excluded by construction.
-- Two body bands are stacked with a background spacer into a **single** OCR
-  image. Relative coordinates follow uniform 1×, 1.5×, 2× resize.
-- No automatic OCR fallback comparison or extra GPT request occurs.
+Open **ローカルOCR診断**, select a game screenshot, and run with
+**戦闘メッセージのルビ除去を試す** checked and unchecked. The preview
+shows the exact OCR input, whether two-band masking was applied,
+`ruby_mask_rois`, OCR text and confidence, preprocessing time, OCR
+inference time, and combined time. Each run invokes the same OCR engine
+once per applicable ROI, sends no AI request, and never promotes the
+result to verified match state.
 
-The horizontal span [141,540) matches the original battle-message ROI on
-the three provided 960×572 screenshots. It avoids the unvalidated previous
-X950 extension, which could include moving animations and retrigger OCR.
-Longer messages **may be cut off at X540**; do not broaden the ROI until
-user-approved long-text screenshots establish a safe width and repeat
-the right-edge/noise test.
+For real-game quality evaluation, compare the one-line messages
+`効果は いまひとつだ` and `効果は かなりいまひとつだ` and the
+two-line `ハツとの / 勝負に 負けた！` message against baseline OCR.
+These example transcriptions are intended as **human checks**, not a
+claim of passing real PP-OCRv6 tests. Do not commit original screenshot
+bytes, OCR text or personal metadata to GitHub. Also test long text past
+the original ROI X=540 before extending the width: the crop can truncate
+text that lies outside X=540.
 
-## Live gating and private calibration
+## Live safety and state
 
-The existing local `screen_fields.json` schema version 1 gains optional
-`ruby_body_rows_validated` (default `false`). The live crop applies only when:
+The private `screen_fields.json` needs **both**
+`validated_on_game_capture=true` and
+`ruby_body_rows_validated=true` for live masking. The latter is kept as
+a backward-compatible profile name for explicit user calibration;
+the output metadata uses `ruby_mask_rois`. Default is false, so live
+continues through its previous full-ROI OCR route until actual game
+calibration is independently confirmed. Any incompatible geometry,
+obvious black bars or misplaced main-text anchor falls back to the
+existing OCR route. No duplicate OCR or GPT calls are added.
 
-1. `validated_on_game_capture` is `true` **and**
-   `ruby_body_rows_validated` is `true` (set only after a human checks the
-   full source image, cropped body lines, and language recognition);
-2. Reference resolution is 960×572; battle-message region is exactly
-   `(141,412,540,505)` and is not an independently offset region;
-3. Incoming active viewport matches the reference aspect (within tolerance),
-   has no obvious full-width/height black bars, and the bright-text left-prefix
-   **per-frame body anchors** match the measured baseline for **both**
-   message rows. Missing, shifted, scaled or ambiguous glyphs disable this
-   optimization. Genuine one-line messages are still passed **once** through
-   the existing full-ROI OCR path: a missing second row cannot prove that it
-   was never present rather than shifted out of bounds. This conservative
-   check is not a proof of unchanged UI alignment.
+Raw OCR is still `CANDIDATE` and must not assert WIN/LOSS. Unclear or
+conflicting results stay `RESULT_UNCONFIRMED` with manual confirmation.
+Do not infer Champions mechanics from an OCR text snippet.
 
-The JSON flag is a manual trusted calibration indicator, **not a promise of
-accuracy**. Frames with shifted UI, unrecognized geometry or missing calibration
-continue down the existing OCR path; they are not accepted as verified
-match results. In particular, black-bar detection is conservative but cannot
-prove absence of all kinds of overlay/offset. If the UI scale changes, clear
-the flag and recalibrate; never force an ROI if the image appears misaligned.
+## Tests and remaining acceptance checks
 
-The live worker records frame ID, observed time, prepared ROI and OCR duration
-in the local observation candidate. All local OCR still has `CANDIDATE` status;
-winning/losing still requires the independent result-screen and grounded text
-checks. In ambiguous, missing or conflicting cases it remains
-`RESULT_UNCONFIRMED`, with manual input.
+Synthetic regression tests cover one- and two-line ruby removal, mask-only
+pixel edits and rightmost body punctuation, resize normalization,
+shifted/extra second lines, one-line live/diagnostic OCR, and fallback
+on invalid calibration/aspect/black bars. Windows CI also checks the
+bundled GUI and offline OCR integration.
 
-## Test boundaries
-
-`tests/test_battle_message_ruby.py` uses synthetic pixels to confirm scaled
-coordinates, right-edge preservation up to X540, ruby exclusion, geometry/black-bar
-safety, same-size UI shifts, second-line-only displacement, legitimate one-line fallback, UI text scale changes, right-side motion,
-one read per region, candidate provenance, diagnostic toggling and total timing.
-`tests/test_diagnostics_tabs.py` checks the offscreen GUI route.
-
-Windows bundled ONNX inference and real Champions text recognition have to be
-tested separately using user-approved private samples. A passing synthetic
-test is **not** proof of improved win-detection accuracy, latency or zero
-wrong outcomes in production. Do not commit actual screenshot files.
+Still required before calling Issue #124 fully complete: real PP-OCRv6
+ON/OFF comparisons on private images (ruby inclusion, dropped/incorrect
+glyphs and punctuation, latency), game-window scale and offset variants,
+longest message endings, and real-game win/loss safety (zero reverse
+outcomes). Synthetic `CountingEngine` tests do **not** measure
+Japanese recognition accuracy or validate an actual match result.
