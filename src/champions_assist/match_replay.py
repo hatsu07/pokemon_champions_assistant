@@ -1318,7 +1318,8 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                      expected_screen_label: str | None = None,
                      diagnostic_sink=None, sent_ocr_ledger=None,
                      ocr_request_id: str | None=None,
-                     ocr_quarantined_return: dict | None=None) -> tuple[dict, dict]:
+                     ocr_quarantined_return: dict | None=None,
+                     ocr_fallback_sent_rows: list[dict] | None=None) -> tuple[dict, dict]:
     """One API call; command menus use the preloaded moves/bench candidates.
 
     Until the move or party submenu is seen, current PP and bench existence
@@ -1328,7 +1329,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
     from copy import deepcopy
     from .ocr_turn_context import (
         build_ocr_turn_context, apply_model_ocr_carryover,
-        compact_ocr_transport, _row_key)
+        compact_ocr_transport, bounded_same_turn_ocr_proof, _row_key)
     started=perf_counter()
     state=deepcopy(state)
     if not images or len(images)>4:
@@ -1408,6 +1409,13 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
                                      separators=(",",":"),default=str).encode("utf-8"))
         prompt["local_field_candidates_unverified"]=transport_ocr
+        fallback_echo,fallback_stats=bounded_same_turn_ocr_proof(
+            ocr_fallback_sent_rows)
+        prompt["rejected_text_same_turn_ocr_unverified"]=fallback_echo
+        prompt["rejected_text_same_turn_ocr_stats"]=fallback_stats
+        prompt["rejected_text_same_turn_ocr_incomplete"]=fallback_stats["incomplete"]
+        if diagnostic_sink is not None and ocr_fallback_sent_rows is not None:
+            diagnostic_sink("OCR_REJECTED_TEXT_FALLBACK_PROOF",fallback_stats)
         # A successful NEW-actor baseline is not confirmation of previously
         # quarantined actors. Reappearance (also Mega/form spelling), including
         # one first noticed by a *rejected* OCR-only response, needs an explicit
@@ -1526,6 +1534,14 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "boosts or move locks reset, or treat a guessed old event as "
                 "confirmed. Use confirmed_source_fields only with an exact "
                 "visible observation field and a matching nonempty value. "
+                "rejected_text_same_turn_ocr_unverified contains ONLY the "
+                "important OCR already sent to a rejected text GPT during "
+                "this SAME turn. Every row is UNVERIFIED, even if marked sent. "
+                "Preserve original source_row_key and frame_id, do not assume "
+                "move, item, stat boost or switch was verified by mere OCR. "
+                "If rejected_text_same_turn_ocr_incomplete is true, important "
+                "evidence exceeded the bounded echo; choose NO_ACTION, never "
+                "invent omitted facts or silently use a tactical recommendation. "
                 "ocr_quarantined_return_unverified identifies a Pokémon "
                 "whose return was inferred from unverified OCR in a rejected "
                 "text-only answer. It is a SUSPECT, NOT a confirmed current "
@@ -1592,6 +1608,13 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
             from .live_diagnostics import ai_response_digest
             diagnostic_sink("AI_RESPONSE_RAW",ai_response_digest(answer))
         obs=answer["observation"]
+        if fallback_stats["incomplete"]:
+            if diagnostic_sink is not None:
+                diagnostic_sink("OCR_FALLBACK_PROOF_INCOMPLETE",fallback_stats)
+            return deepcopy(state),{"status":"BLOCKED",
+                "reason":"OCR_FALLBACK_IMPORTANT_PROOF_TRUNCATED",
+                "recommendation":"","images_sent":len(images),
+                "fallback_ocr_stats":fallback_stats}
         if switch_only and obs.get("visual_ui")!="PARTY_MENU":
             return deepcopy(state),{"status":"BLOCKED",
                 "reason":"SWITCH_SCREEN_RECOGNITION_MISMATCH",
