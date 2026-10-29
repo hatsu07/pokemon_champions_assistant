@@ -669,34 +669,46 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
             })
         except Exception:
             pass  # diagnostics never break live decisions
-    stream = client.responses.create(
-        model=model, stream=True, store=False,
-        **reasoning_request_kwargs(reasoning_effort),
-        instructions=instructions,
-        input=[{"role": "user", "content": content}],
-        text={"format": {"type": "json_schema", "name": name,
-                          "strict": True, "schema": schema}},
-    )
     pieces = []
-    completed = False
-    with stream:
-        for event in stream:
-            if timing_sink is not None and "first_event_ms" not in timing_sink:
-                timing_sink["first_event_ms"]=round((perf_counter()-started)*1000)
-            event_type = getattr(event, "type", "")
-            if event_type == "response.output_text.delta":
-                if timing_sink is not None and "first_output_ms" not in timing_sink:
-                    timing_sink["first_output_ms"]=round((perf_counter()-started)*1000)
-                pieces.append(str(event.delta))
-            elif event_type == "response.completed":
-                completed = True
-            elif event_type in ("response.failed", "response.incomplete", "error"):
-                raise SelectionBlocked("MODEL_STREAM_FAILED")
-    if not completed:
-        raise SelectionBlocked("MODEL_STREAM_INCOMPLETE")
-    if timing_sink is not None:
-        timing_sink["stream_complete_ms"]=round((perf_counter()-started)*1000)
-    output=json.loads("".join(pieces))
+    try:
+        stream = client.responses.create(
+            model=model, stream=True, store=False,
+            **reasoning_request_kwargs(reasoning_effort),
+            instructions=instructions,
+            input=[{"role": "user", "content": content}],
+            text={"format": {"type": "json_schema", "name": name,
+                              "strict": True, "schema": schema}},
+        )
+        completed = False
+        with stream:
+            for event in stream:
+                if timing_sink is not None and "first_event_ms" not in timing_sink:
+                    timing_sink["first_event_ms"]=round((perf_counter()-started)*1000)
+                event_type = getattr(event, "type", "")
+                if event_type == "response.output_text.delta":
+                    if timing_sink is not None and "first_output_ms" not in timing_sink:
+                        timing_sink["first_output_ms"]=round((perf_counter()-started)*1000)
+                    pieces.append(str(event.delta))
+                elif event_type == "response.completed":
+                    completed = True
+                elif event_type in ("response.failed", "response.incomplete", "error"):
+                    raise SelectionBlocked("MODEL_STREAM_FAILED")
+        if not completed:
+            raise SelectionBlocked("MODEL_STREAM_INCOMPLETE")
+        if timing_sink is not None:
+            timing_sink["stream_complete_ms"]=round((perf_counter()-started)*1000)
+        output=json.loads("".join(pieces))
+    except Exception as exc:
+        if recorder is not None:
+            try:
+                recorder("GPT_ERROR",{
+                    "name":name,"model":model,
+                    "error_type":type(exc).__name__,
+                    "partial_response":"".join(pieces)[:1000000],
+                    "elapsed_ms":round((perf_counter()-started)*1000)})
+            except Exception:
+                pass
+        raise
     if recorder is not None:
         try:
             recorder("GPT_RESPONSE",{
