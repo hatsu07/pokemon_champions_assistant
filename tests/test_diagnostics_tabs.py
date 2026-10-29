@@ -113,7 +113,8 @@ class DiagnosticsTabTests(unittest.TestCase):
         with patch("champions_assist.ocr_diagnostics.inspect_battle_event_image",
                    return_value=sample) as inspect:
             worker.run()
-        inspect.assert_called_once_with(image,profile,device="directml",gpu_id=3)
+        inspect.assert_called_once_with(image,profile,device="directml",gpu_id=3,
+                                        ruby_preview=True)
         self.assertEqual(results,[sample])
 
     def test_local_ocr_worker_records_unexpected_error_and_emits_failure(self):

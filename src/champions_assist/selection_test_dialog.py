@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout, QWidget, QTabWidget, QScrollArea,
+    QPushButton, QVBoxLayout, QWidget, QTabWidget, QScrollArea, QCheckBox,
 )
 
 from .match_debug_log import MatchDebugLog
@@ -93,12 +93,14 @@ class _LocalOcrWorker(QObject):
     """Separate OCR-only worker; no API calls and no saved screenshots."""
     finished=Signal(object)
 
-    def __init__(self, image, profile, *, device="auto", gpu_id=0):
+    def __init__(self, image, profile, *, device="auto", gpu_id=0,
+                 ruby_preview=True):
         super().__init__()
         self.image=image
         self.profile=profile
         self.device=device
         self.gpu_id=gpu_id
+        self.ruby_preview=ruby_preview
 
     @Slot()
     def run(self):
@@ -106,7 +108,8 @@ class _LocalOcrWorker(QObject):
         from .crash_diagnostics import record_exception
         try:
             report=inspect_battle_event_image(
-                self.image,self.profile,device=self.device,gpu_id=self.gpu_id)
+                self.image,self.profile,device=self.device,gpu_id=self.gpu_id,
+                ruby_preview=self.ruby_preview)
         except Exception as exc:
             record_exception("OCR_DIAGNOSTIC_WORKER_ERROR", exc,
                              stage="OCR_DIAGNOSTIC")
@@ -333,6 +336,10 @@ class SelectionTestDialog(QDialog):
         row.addWidget(self.event_choose_button)
         row.addWidget(self.event_ocr_button)
         event_layout.addLayout(row)
+        self.event_ruby_checkbox=QCheckBox(
+            "戦闘メッセージのルビ除去を試す（実画面未校正なら診断のみ）")
+        self.event_ruby_checkbox.setChecked(True)
+        event_layout.addWidget(self.event_ruby_checkbox)
         self.event_status=QLabel("ローカルOCR対象画像を選択してください。")
         self.event_status.setWordWrap(True)
         self.event_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -707,7 +714,8 @@ class SelectionTestDialog(QDialog):
         device,gpu_id=preferences.screen_device(),preferences.screen_gpu_id()
         self.ocr_thread=QThread(self)
         self.ocr_worker=_LocalOcrWorker(
-            self.event_image.copy(),profile,device=device,gpu_id=gpu_id)
+            self.event_image.copy(),profile,device=device,gpu_id=gpu_id,
+            ruby_preview=self.event_ruby_checkbox.isChecked())
         self.ocr_worker.moveToThread(self.ocr_thread)
         self.ocr_thread.started.connect(self.ocr_worker.run)
         self.ocr_worker.finished.connect(self._local_ocr_result)
@@ -736,26 +744,34 @@ class SelectionTestDialog(QDialog):
             "（結果は候補であり対戦状態へは反映しません）")
         for result in rows:
             container=QWidget()
-            layout=QHBoxLayout(container)
+            # Vertical layout leaves the original message ROI preview legible.
+            layout=QVBoxLayout(container)
             crop=np.ascontiguousarray(result["crop"])
             h,w=crop.shape[:2]
             preview=QLabel()
             qimage=QImage(crop.data,w,h,3*w,QImage.Format.Format_RGB888).copy()
             preview.setPixmap(QPixmap.fromImage(qimage).scaled(
-                340,120,Qt.AspectRatioMode.KeepAspectRatio))
+                min(950,max(340,w)),max(120,min(200,h)),
+                Qt.AspectRatioMode.KeepAspectRatio))
             layout.addWidget(preview)
             confidence=("不明" if result["confidence"] is None
                         else f"{result['confidence']:.2f}")
             details=QLabel(
                 f"{result['name']} ({result['kind']}) / "
-                f"{result['elapsed_ms']}ms / 信頼度 {confidence}\n"
+                f"総時間 {result['elapsed_ms']}ms / "
+                f"前処理 {result.get('preprocess_ms', '不明')}ms / "
+                f"OCR本体 {result.get('ocr_elapsed_ms', '不明')}ms"
+                f" / 信頼度 {confidence}\n"
                 f"認識: {result['text'] or '（空）'}\n"
                 f"解析: {str(result['parsed']) if result['parsed'] is not None else '未確定'}"
-                f" / エラー: {result['error'] or 'なし'}")
+                f" / エラー: {result['error'] or 'なし'}\n"
+                f"ルビ除外: {result.get('preprocess', '情報なし')} / "
+                f"ルビマスクROI: {result.get('ruby_mask_rois', [])} / "
+                f"ゲーム内校正: {bool(result.get('game_validated', False))}")
             details.setWordWrap(True)
             details.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse)
-            layout.addWidget(details,1)
+            layout.addWidget(details)
             self.event_ocr_rows.addWidget(container)
         if not rows:
             error=report.get("error")

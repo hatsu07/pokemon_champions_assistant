@@ -62,6 +62,9 @@ class ScreenFieldProfile:
     regions: tuple[FieldRegion, ...]
     source: str
     validated_on_game_capture: bool = False
+    # Separately opt in after checking the two ruby/body bands on the real UI.
+    # General field calibration does NOT certify these provisional bands.
+    ruby_body_rows_validated: bool = False
 
     @classmethod
     def from_user_samples_960x572(cls) -> "ScreenFieldProfile":
@@ -114,10 +117,14 @@ class ScreenFieldProfile:
             seen.add(name)
             regions.append(FieldRegion(name,kind,tuple(bounds) if bounds is not None else None,
                                        tuple(labels),tuple(normalized) if normalized is not None else None))
+        ruby_validated=payload.get("ruby_body_rows_validated", False)
+        if type(ruby_validated) is not bool:
+            raise ValueError("ruby_body_rows_validated must be a boolean")
         return cls(
             (width, height), tuple(regions),
             str(payload.get("source", "PRIVATE_LOCAL_SCREEN_CALIBRATION")),
             bool(payload.get("validated_on_game_capture", False)),
+            ruby_validated,
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -126,6 +133,7 @@ class ScreenFieldProfile:
             "reference_resolution": list(self.reference_resolution),
             "source": self.source,
             "validated_on_game_capture": self.validated_on_game_capture,
+            "ruby_body_rows_validated": self.ruby_body_rows_validated,
             "regions": [
                 {"name":item.name,"kind":item.kind,
                  **({"bounds_px":list(item.bounds_px)} if item.bounds_px is not None else {}),

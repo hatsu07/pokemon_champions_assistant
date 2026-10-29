@@ -21,6 +21,7 @@ from .calibrated_screen_fields import (
 )
 from .observation_events import ScreenLexicon, TextObservationParser
 from .ocr import OcrEngine, TesseractJapaneseOcr
+from .battle_message_ruby import prepare_battle_message
 from .crash_diagnostics import record_event, record_exception
 
 
@@ -38,6 +39,9 @@ class LocalFieldRead:
     detected_pokemon: tuple[str, ...] = ()
     status: str = "CANDIDATE"
     display_id: str = ""
+    preprocess_status: str = ""
+    ruby_mask_rois: tuple[tuple[int, int, int, int], ...] = ()
+    ocr_elapsed_ms: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return dict(
@@ -48,6 +52,10 @@ class LocalFieldRead:
             detected_pokemon=list(self.detected_pokemon),
             certainty=self.status, game_validated=False,
             **({"display_id":self.display_id} if self.display_id else {}),
+            **({"preprocess":self.preprocess_status,
+                "ruby_mask_rois":[list(roi) for roi in self.ruby_mask_rois],
+                "ocr_elapsed_ms":self.ocr_elapsed_ms}
+               if self.preprocess_status else {}),
         )
 
 
@@ -56,7 +64,7 @@ class _Job:
     frame_id: str
     timestamp: float
     label: str
-    crops: tuple[tuple[str, str, np.ndarray, str], ...]
+    crops: tuple[tuple[str, str, np.ndarray, str, dict], ...]
 
 
 @dataclass(frozen=True)
@@ -188,7 +196,7 @@ class AsyncBattleEventReader:
                 continue
             if label not in region.applicable_labels:
                 continue
-            crop=profile.crop(image,region)
+            crop, preprocess=prepare_battle_message(image,profile,region)
             small=crop[::max(1,crop.shape[0]//20),
                        ::max(1,crop.shape[1]//48)].astype(np.float32)
             key=region.name
@@ -210,7 +218,8 @@ class AsyncBattleEventReader:
                 new_display_time[key]=captured_at
                 new_display_labels[key]=label
                 crops.append((region.name,region.kind,crop.copy(),
-                              f"{self._display_source}:{key}:visual-{episode}"))
+                              f"{self._display_source}:{key}:visual-{episode}",
+                              preprocess))
                 updated[key]=small
         if not crops:
             self.skipped+=1
@@ -269,7 +278,7 @@ class AsyncBattleEventReader:
             self.last_queue_wait_ms=max(0,int((started-job.timestamp)*1000))
             first_error=None
             first_error_code=None
-            for name,kind,crop,display_id in job.crops:
+            for name,kind,crop,display_id,preprocess in job.crops:
                 if self._stop.is_set() or not self.enabled:
                     break
                 region=next((r for r in self.profile.regions
@@ -278,7 +287,9 @@ class AsyncBattleEventReader:
                     continue
                 self.rois_attempted+=1
                 try:
+                    ocr_started=monotonic()
                     reading=self._ocr.read(crop,roi_name=name)
+                    ocr_elapsed_ms=max(0,round((monotonic()-ocr_started)*1000))
                     observed=parse_field_text(region,reading.text,
                                               frame_id=job.frame_id)
                     if observed is None:
@@ -294,7 +305,11 @@ class AsyncBattleEventReader:
                         source="ROI_OCR_UNVERIFIED",text=reading.text,
                         detected_moves=parsed.detected_moves,
                         detected_pokemon=parsed.detected_pokemon,
-                        display_id=display_id))
+                        display_id=display_id,
+                        preprocess_status=(preprocess["preprocess"]
+                                           if name=="battle_message" else ""),
+                        ruby_mask_rois=tuple(tuple(roi) for roi in preprocess["ruby_mask_rois"]),
+                        ocr_elapsed_ms=ocr_elapsed_ms))
                 except Exception as exc:
                     record_exception("LOCAL_OCR_ROI_ERROR", exc, stage="OCR_ROI")
                     # One failing ROI never discards another successfully
