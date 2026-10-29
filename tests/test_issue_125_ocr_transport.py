@@ -12,6 +12,8 @@ from champions_assist.ocr_turn_context import (
     OcrSentLedger, build_ocr_turn_context, compact_ocr_transport, _row_key,
 )
 from tests.test_match_replay import fixture_assets, frame
+from champions_assist.local_event_worker import LocalFieldRead
+from champions_assist.battle_state_tracker import LocalBattleStateTracker
 
 
 def ocr(frame, text, *, display_id="", field="screen_text.battle_message",
@@ -318,6 +320,146 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertEqual(after["our_active"], "ゲンガー")
         self.assertEqual(report["status"], "BLOCKED")
         self.assertNotIn("登録されていない技",report.get("recommendation", ""))
+
+    def test_raw_tracker_keeps_all_duplicate_frames_then_transport_compacts(self):
+        tracker = LocalBattleStateTracker()
+        message = "あいてのマスカーニャはとんぼがえりをつかった！"
+        rows = [
+            LocalFieldRead(
+                field="screen_text.battle_message", value=message,
+                frame_id=f"raw-{n}", timestamp=10.0 + n * .1,
+                confidence=.94, roi="battle_message",
+                source="fixture", text=message,
+                display_id="visual-episode-9")
+            for n in range(20)
+        ]
+        for row in rows:
+            tracker.ingest((row,), turn_epoch=2)
+        snapshot = tracker.snapshot()["local_observations"]
+        self.assertEqual(len(snapshot), 20)
+        self.assertEqual([r["frame_id"] for r in snapshot],
+                         [f"raw-{n}" for n in range(20)])
+        self.assertEqual(
+            [r["observed_at"] for r in snapshot],
+            [10.0 + n * .1 for n in range(20)])
+        groups = compact_ocr_transport(snapshot)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["source_frames"],
+                         [r["frame_id"] for r in snapshot])
+        self.assertEqual(groups[0]["source_row_keys"],
+                         [_row_key(r) for r in snapshot])
+
+    def test_discarded_response_reinspects_only_specific_original_frames_once(self):
+        assets, state = battle()
+        state["our_active"] = "ゲンガー"
+        state["opponent_active"] = "マスカーニャ"
+        ledger = OcrSentLedger()
+        records = [
+            ocr(f"event-{n}", "相手のマスカーニャはとんぼがえりをつかった！",
+                display_id="message-1",timestamp=10+n*.1)
+            for n in range(9)
+        ] + [
+            ocr(f"hp-{n}", f"{185-n}/185",
+                field="screen_text.own_hp_fraction",timestamp=11+n*.1)
+            for n in range(10)
+        ]
+        state_original = dict(state)
+        def request_a(_client, **kwargs):
+            kwargs["on_request_sent"]()
+            raise RuntimeError("discarded GPT response")
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=request_a):
+            after, report = run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",ocr_request_id="req-A",
+                local_field_candidates=records,sent_ocr_ledger=ledger,
+                client_factory=lambda **kwargs: object())
+        self.assertEqual(report["status"],"ERROR")
+        self.assertEqual(len(ledger.snapshot()),len(records))
+        self.assertEqual(state["our_active"],state_original["our_active"])
+        self.assertEqual(state["opponent_active"],state_original["opponent_active"])
+        self.assertEqual(build_ocr_turn_context(
+            state,records,sent_ledger=ledger)[0],[])
+        ledger.mark_stale("req-A")
+        replay,_,stats=build_ocr_turn_context(
+            state,records,sent_ledger=ledger)
+        self.assertEqual([r["frame_id"] for r in replay],
+                         ["event-0","event-1","hp-8","hp-9"])
+        self.assertEqual(stats["new_rows_sent"],0)
+        self.assertEqual(stats["stale_reinspection_rows"],4)
+        seen=[]
+        answer={
+            "state_updates":[],
+            "interpreted_own_active":"ゲンガー",
+            "interpreted_opponent_active":"マスカーニャ",
+            "processed_ocr_frames":[],"pending_ocr_questions":[],
+            "action":{"action_kind":"NO_ACTION","move":"",
+                      "switch_target":"","warning":""},
+        }
+        def request_b(_client, **kwargs):
+            seen.append(json.loads(kwargs["content"][0]["text"]))
+            kwargs["on_request_sent"]()
+            return answer
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=request_b):
+            _, next_report=run_replay_text_action(
+                state=state,assets=assets,access_token="unused",model="test",
+                expected_screen_label="TURN_ACTION",ocr_request_id="req-B",
+                local_field_candidates=records,sent_ocr_ledger=ledger,
+                client_factory=lambda **kwargs: object())
+        self.assertEqual(next_report["status"],"NO_ACTION")
+        self.assertEqual(len(seen),1)
+        sent_frames=set()
+        for group in seen[0]["ocr_candidates_unverified"]:
+            sent_frames.update(group.get("source_frames",[group["frame_id"]]))
+        self.assertEqual(sent_frames,
+                         {"event-0","event-1","hp-8","hp-9"})
+        self.assertEqual(build_ocr_turn_context(
+            state,records,sent_ledger=ledger)[0],[])
+        ledger.mark_stale("req-B")
+        self.assertEqual(build_ocr_turn_context(
+            state,records,sent_ledger=ledger)[0],[])
+        self.assertEqual(len(ledger.snapshot()),len(records))
+
+    def test_retired_worker_before_dispatch_preserves_targeted_proof(self):
+        ledger=OcrSentLedger()
+        rows=[ocr("f1","ゆけっ！ゲンガー！")]
+        ledger.mark_stale("req-A")
+        ledger.mark_sent([_row_key(rows[0])], request_id="req-A",rows=rows)
+        self.assertEqual(ledger.reinspection_keys(),{_row_key(rows[0])})
+        ledger.mark_sent([_row_key(rows[0])], request_id="req-B",rows=rows)
+        self.assertEqual(ledger.reinspection_keys(),set())
+        ledger.mark_stale("req-B")
+        self.assertEqual(ledger.reinspection_keys(),set())
+
+    def test_unknown_actor_requires_actual_identification_ocr_hint(self):
+        assets,state=battle()
+        hp=[ocr("hp","185/185",field="screen_text.own_hp_fraction")]
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp))
+        opponent=[ocr("opponent","相手はマスカーニャを繰り出した！")]
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp+opponent))
+        effects=[ocr("eff","相手のこうげきが上がった！",
+                     field="screen_text.opponent_effect_popup")]
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp+effects))
+        hud=ocr("name","ガプリアス",
+                field="screen_text.own_active_name")
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp+[hud]))
+        sendout=ocr("send","ゆげっ！ガプリアス！")
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp+[sendout]))
+        ledger=OcrSentLedger()
+        ledger.mark_sent([_row_key(hud)])
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp+[hud],
+            sent_ocr_ledger=ledger))
+        ledger.mark_stale("missing")  # no dispatched proof to re-present
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=hp+[hud],
+            sent_ocr_ledger=ledger))
 
     def test_unknown_actor_without_ocr_still_needs_image(self):
         assets, state = battle()
