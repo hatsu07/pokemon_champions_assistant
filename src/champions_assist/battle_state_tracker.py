@@ -16,8 +16,8 @@ class LocalBattleStateTracker:
     def __init__(self, max_events: int | None=None):
         if max_events is not None and max_events<1:
             raise ValueError("max_events must be positive")
-        # Production keeps all distinct OCR observations until explicitly
-        # acknowledged by a verified AI event or the match is reset.
+        # Production keeps EVERY original OCR observation and its frame/time,
+        # including duplicates, until match reset. Sending is a separate view.
         self._events: deque[LocalFieldRead]=deque(maxlen=max_events)
         self._latest: dict[str,LocalFieldRead]={}
         self.duplicates=0
@@ -43,12 +43,12 @@ class LocalBattleStateTracker:
                           0 <= row.timestamp-previous.timestamp <= 1.5)
             same_display=(previous is not None and bool(row.display_id)
                           and previous.display_id==row.display_id)
-            # Unknown display IDs are NEVER deduped. For known IDs, a repeated
-            # same-frame/continuous-display reading need not be stored twice.
+            # The raw evidence ledger NEVER drops OCR readings, including
+            # repeated observations of one visual display. Only the GPT
+            # transport view deduplicates them. Track repeats as telemetry.
             if (same_payload and same_display and near_in_time
                     and (turn_epoch is None or same_epoch)):
                 self.duplicates+=1
-                continue
             status="CANDIDATE"
             if (previous and previous.frame_id==row.frame_id
                     and previous.value!=row.value):
