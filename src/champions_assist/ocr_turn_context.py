@@ -768,8 +768,10 @@ def bounded_same_turn_ocr_proof(rows, *, max_rows: int = 24,
                "raw_text":str(row.get("raw_text",row.get("candidate",""))),
                "observed_at":row.get("observed_at"),
                "confidence":row.get("confidence"),"verified":False}
-        size=_json_bytes(proof)
-        if len(selected)<max_rows and total_bytes+size<=max_bytes:
+        # Count the actual array brackets/commas, not just object bytes.
+        size=_json_bytes(proof)+(1 if selected else 0)
+        if (len(selected)<max_rows and
+                total_bytes+size+2<=max_bytes):
             selected.append(proof)
             total_bytes+=size
     omitted=len(seen)-len(selected)
@@ -777,7 +779,7 @@ def bounded_same_turn_ocr_proof(rows, *, max_rows: int = 24,
                      "important_unique_rows":len(seen),
                      "echoed_rows":len(selected),
                      "omitted_important_rows":omitted,
-                     "proof_utf8_bytes":total_bytes,
+                     "proof_utf8_bytes":total_bytes+2,
                      "incomplete":bool(omitted),
                      "sent_was_not_verified":True}
 
