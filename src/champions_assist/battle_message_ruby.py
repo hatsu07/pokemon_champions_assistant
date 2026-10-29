@@ -68,9 +68,12 @@ def _current_frame_body_anchor_matches(image: np.ndarray) -> bool:
             start = None
     first = lambda pair: 432 <= pair[0] <= 438 and 447 <= pair[1] <= 452
     second = lambda pair: 465 <= pair[0] <= 470 and 478 <= pair[1] <= 484
-    return bool(runs) and any(first(run) for run in runs) and all(
-        first(run) or second(run) for run in runs
-    )
+    # An apparently valid first line DOES NOT prove the second line stayed
+    # within its body band. One-line messages are legitimate, but we cannot
+    # reliably distinguish them from a displaced second line from this crop.
+    # Only optimize a verified two-line layout; all single/ambiguous cases
+    # retain the original full message ROI and its one OCR call.
+    return len(runs) == 2 and first(runs[0]) and second(runs[1])
 
 
 def prepare_battle_message(
