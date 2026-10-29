@@ -129,7 +129,8 @@ class OfflineSelectionTestWindowTests(unittest.TestCase):
         self.assertEqual(kwargs["model"],"mock")
         self.assertEqual(kwargs["reasoning_effort"],"high")
         self.assertEqual(kwargs["state"]["phase"],"MATCHMAKING")
-        self.assertLessEqual(kwargs["total_seconds"],55)
+        # The game-clock target is separate from finite network timeout.
+        self.assertEqual(kwargs["total_seconds"],120.0)
 
     def test_invalid_slot_is_shown_without_falsely_claiming_matrix_loss(self):
         self.dialog.set_image(np.zeros((624,1048,3),dtype=np.uint8))
