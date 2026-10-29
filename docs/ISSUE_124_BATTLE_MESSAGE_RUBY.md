@@ -50,9 +50,12 @@ The existing local `screen_fields.json` schema version 1 gains optional
    `(141,412,540,505)` and is not an independently offset region;
 3. Incoming active viewport matches the reference aspect (within tolerance),
    has no obvious full-width/height black bars, and the bright-text left-prefix
-   **per-frame body anchor** matches the measured baseline. Missing, shifted,
-   scaled or ambiguous glyphs disable this optimization. The visual check
-   is a conservative heuristic, not a proof of unchanged UI alignment.
+   **per-frame body anchors** match the measured baseline for **both**
+   message rows. Missing, shifted, scaled or ambiguous glyphs disable this
+   optimization. Genuine one-line messages are still passed **once** through
+   the existing full-ROI OCR path: a missing second row cannot prove that it
+   was never present rather than shifted out of bounds. This conservative
+   check is not a proof of unchanged UI alignment.
 
 The JSON flag is a manual trusted calibration indicator, **not a promise of
 accuracy**. Frames with shifted UI, unrecognized geometry or missing calibration
@@ -71,7 +74,7 @@ checks. In ambiguous, missing or conflicting cases it remains
 
 `tests/test_battle_message_ruby.py` uses synthetic pixels to confirm scaled
 coordinates, right-edge preservation up to X540, ruby exclusion, geometry/black-bar
-safety, same-size UI shifts, UI text scale changes, right-side motion,
+safety, same-size UI shifts, second-line-only displacement, legitimate one-line fallback, UI text scale changes, right-side motion,
 one read per region, candidate provenance, diagnostic toggling and total timing.
 `tests/test_diagnostics_tabs.py` checks the offscreen GUI route.
 
