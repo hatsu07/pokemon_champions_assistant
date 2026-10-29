@@ -22,7 +22,8 @@ read is used whether the message has one or two lines.
 - The first mask **never touches Y430 or Y431**, which may contain upper
   portions of the first main-text glyphs. Before either mask is applied, the
   **full width X=[141,540)** of both ruby bands is inspected for unusually
-  dense, neutral-white body-sized strokes. A suspicious band (including a
+  dense, neutral-white body-sized strokes. The brightness baseline is sampled
+  from narrow side gutters rather than the potentially ruby-dominated band. A suspicious band (including a
   shifted second line outside the left-side anchor) is not modified; the
   original ROI is read once. This check is intentionally conservative and
   may reject some legitimate, long ruby text. It cannot guarantee every
