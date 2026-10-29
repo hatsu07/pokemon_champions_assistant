@@ -242,6 +242,14 @@ _AI_SENSITIVE_SUFFIXES = (
 _AI_SENSITIVE_PREFIXES = (
     "authorization", "oauthcode", "authcode", "authkey",
 )
+# Credential families can occur in the *middle* of namespaced keys
+# (aws_secret_access_key, aws_access_key_id, azure_storage_account_key).
+# This is defense in depth, not a promise to detect arbitrary OCR secrets.
+_AI_SENSITIVE_FRAGMENTS = (
+    "secret", "token", "password", "credential", "authorization",
+    "accesskey", "apikey", "authkey", "privatekey", "clientsecret",
+    "codeverifier", "oauthcode", "authcode",
+)
 # Unstructured OCR text must be treated conservatively: a quoted "authKey"
 # field may appear inside a sentence that is not valid JSON. No word
 # boundaries, because keys may be camelCased or namespaced.
@@ -249,7 +257,8 @@ _AI_SENSITIVE_TEXT = re.compile(
     r"(?i)(?:token|api[_\s-]*(?:key|token|secret)|"
     r"auth[_\s-]*(?:key|code|token|secret)|"
     r"authorization|oauth[_\s-]*(?:key|code|token|secret)|"
-    r"client[_\s-]*secret|code[_\s-]*verifier|secret|"
+    r"client[_\s-]*secret|code[_\s-]*verifier|"
+    r"access[_\s-]*key(?:[_\s-]*id)?|secret|"
     r"password|credentials?|private[_\s-]*key|bearer)"
 )
 
@@ -258,7 +267,9 @@ def _is_sensitive_ai_key(name: str) -> bool:
     normalized=re.sub(r"[^a-z0-9]", "", name.casefold())
     return (normalized in _AI_SENSITIVE_KEYS
             or normalized.endswith(_AI_SENSITIVE_SUFFIXES)
-            or normalized.startswith(_AI_SENSITIVE_PREFIXES))
+            or normalized.startswith(_AI_SENSITIVE_PREFIXES)
+            or any(fragment in normalized
+                   for fragment in _AI_SENSITIVE_FRAGMENTS))
 
 
 
