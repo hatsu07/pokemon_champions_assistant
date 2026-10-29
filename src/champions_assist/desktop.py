@@ -1571,11 +1571,20 @@ class DesktopMainWindow(QMainWindow):
                 self._match_panel.request_shutdown("close")
             if (self._match_panel._thread is not None or
                     self._match_panel._prep_thread is not None or
+                    self._match_panel._retired_workers or
                     (self._postmatch_worker is not None
                      and self._postmatch_worker.isRunning())):
-                # Cancel new capture/replies now, close automatically as soon
-                # as QThreads have finished. Never force-destroy live workers.
+                # QThread and blocking network calls cannot be safely killed.
+                # Hide immediately on explicit window Close, keep draining in
+                # the background, then accept close when all threads exit.
+                self._match_panel._trace_event("WINDOW_CLOSE_WAITING_FOR_WORKERS",
+                    active_thread=self._match_panel._thread is not None,
+                    prep_thread=self._match_panel._prep_thread is not None,
+                    retired_threads=len(self._match_panel._retired_workers),
+                    postmatch_thread=(self._postmatch_worker is not None
+                                      and self._postmatch_worker.isRunning()))
                 event.ignore()
+                self.hide()
                 return
         else:
             # A closed legacy dashboard must not render a queued presentation
