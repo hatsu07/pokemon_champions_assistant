@@ -440,6 +440,10 @@ class Issue125TransportTests(unittest.TestCase):
         opponent=[ocr("opponent","相手はマスカーニャを繰り出した！")]
         self.assertFalse(_text_action_eligible(
             "TURN_ACTION",state,assets,local_rows=hp+opponent))
+        # A sendout marker with NO species/name candidate is also insufficient.
+        bare_sendout=[ocr("bare","ゆけっ！")]
+        self.assertFalse(_text_action_eligible(
+            "TURN_ACTION",state,assets,local_rows=bare_sendout))
         effects=[ocr("eff","相手のこうげきが上がった！",
                      field="screen_text.opponent_effect_popup")]
         self.assertFalse(_text_action_eligible(
