@@ -655,14 +655,6 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
                  timing_sink: dict | None = None) -> dict:
     from time import perf_counter
     started=perf_counter()
-    stream = client.responses.create(
-        model=model, stream=True, store=False,
-        **reasoning_request_kwargs(reasoning_effort),
-        instructions=instructions,
-        input=[{"role": "user", "content": content}],
-        text={"format": {"type": "json_schema", "name": name,
-                          "strict": True, "schema": schema}},
-    )
     recorder=_AI_EXCHANGE_SINK.get()
     if recorder is not None:
         try:
@@ -677,6 +669,14 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
             })
         except Exception:
             pass  # diagnostics never break live decisions
+    stream = client.responses.create(
+        model=model, stream=True, store=False,
+        **reasoning_request_kwargs(reasoning_effort),
+        instructions=instructions,
+        input=[{"role": "user", "content": content}],
+        text={"format": {"type": "json_schema", "name": name,
+                          "strict": True, "schema": schema}},
+    )
     pieces = []
     completed = False
     with stream:
