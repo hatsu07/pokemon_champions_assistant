@@ -1701,7 +1701,7 @@ class MatchReplayDialog(QDialog):
             return
         rid=self._active_request_id
         if rid and getattr(self,"_ocr_sent_ledger",None) is not None:
-            self._ocr_sent_ledger.mark_stale(rid)
+            self._ocr_sent_ledger.mark_stale(rid,battle_context=self.state)
         self._retired_workers[rid]=(self._thread,self._worker)
         self._trace_event("AI_REQUEST_LOGICALLY_CANCELLED",request_id=rid,
                           reason=reason,turn_epoch=self._active_turn_epoch)
@@ -2435,7 +2435,7 @@ class MatchReplayDialog(QDialog):
         if self._active_job=="batch" and ledger is not None:
             if report["status"] in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED","BLOCKED"):
-                ledger.mark_stale(self._active_request_id)
+                ledger.mark_stale(self._active_request_id,battle_context=self.state)
             else:
                 # A screenshot alone never clears the stale-proof safety gate.
                 # Require an adopted, verified current menu with every lost
