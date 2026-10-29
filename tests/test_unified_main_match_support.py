@@ -1454,24 +1454,19 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
-    def test_prep_hard_deadline_discards_late_roles_without_discarding_cache(self):
+    def test_prep_soft_deadline_keeps_late_result_until_next_ai_request(self):
         panel=self.window._match_panel
-        panel.state={"phase":"PREP","prep_status":"RUNNING",
-                     "prep":{"cached_matchups":18}}
+        panel.state={"phase":"PREP","prep_status":"RUNNING"}
         panel._prep_thread=object()
-        panel._prep_budget_seconds=40.0
         panel._prep_cancel_event.clear()
         try:
             panel._prep_deadline()
-            self.assertTrue(panel._prep_cancel_event.is_set())
-            self.assertEqual(panel.state["prep_status"],"INCOMPLETE_DEADLINE")
-            self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+            self.assertFalse(panel._prep_cancel_event.is_set())
+            self.assertEqual(panel.state["prep_status"],"RUNNING")
             panel._on_prep_result({
                 "state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
                 "report":{"status":"PREP_STRUCTURE_OK"}})
-            self.assertEqual(panel.state["prep_status"],"INCOMPLETE_DEADLINE")
-            self.assertTrue(any(event["event"]=="PREP_HARD_DEADLINE_INCOMPLETE"
-                                for event in panel._timing_trace))
+            self.assertEqual(panel.state["prep_status"],"STRUCTURE_COMPLETE")
         finally:
             panel._prep_thread=None
 
