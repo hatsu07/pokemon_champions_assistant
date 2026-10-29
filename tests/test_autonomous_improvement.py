@@ -103,6 +103,47 @@ class AutonomousResearchTest(unittest.TestCase):
         self.assertEqual(self.research.history(team_id=TEAM)[0]["candidate_count"],0)
         self.assertEqual(self.research.candidates(batch_sha=result["batch_sha"]), [])
 
+    def test_limit_applied_after_team_version_filter_with_40_other_versions(self):
+        # Regression for PR #112 review: other versions must not consume the
+        # last-40 review budget for this exact team signature.
+        for index in range(3):
+            self.record(f"target-{index}", signature=SIGNATURE)
+        for index in range(43):
+            self.record(f"other-{index:03}", signature=f"another-sha-{index % 2}")
+        result = self.research.aggregate_after_review(match_id="target-2")
+        self.assertEqual(result["status"], "STORED_PROVISIONAL_UNVERIFIED")
+        self.assertEqual(result["reviewed_matches"], 3)
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(
+            self.research.candidates(batch_sha=result["batch_sha"])[0]["evidence_match_ids"],
+            ["target-0", "target-1", "target-2"])
+        self.assertEqual(
+            self.research.history(team_id=TEAM)[0]["team_signature"], SIGNATURE)
+
+    def test_legacy_empty_or_whitespace_signature_never_aggregates(self):
+        # record_finished defaults to ''. Three old reviews are NOT proof that
+        # they belong to one specific configuration, even with the same team ID.
+        for index in range(3):
+            self.record(f"legacy-{index}", signature="")
+        self.assertEqual(
+            self.research.aggregate_after_review(match_id="legacy-2")["status"],
+            "TEAM_SIGNATURE_UNKNOWN")
+        self.record("whitespace", signature="   ")
+        self.assertEqual(
+            self.research.aggregate_after_review(match_id="whitespace")["status"],
+            "TEAM_SIGNATURE_UNKNOWN")
+        self.assertEqual(self.research.history(team_id=TEAM), [])
+        # Valid signed reviews must remain isolated from the legacy records.
+        for index in range(3):
+            self.record(f"signed-{index}", signature=SIGNATURE)
+        result = self.research.aggregate_after_review(match_id="signed-2")
+        self.assertEqual(result["status"], "STORED_PROVISIONAL_UNVERIFIED")
+        self.assertEqual(result["reviewed_matches"], 3)
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(
+            self.research.candidates(batch_sha=result["batch_sha"])[0]["evidence_match_ids"],
+            ["signed-0", "signed-1", "signed-2"])
+
     def test_three_additional_reviews_make_new_cycle_not_per_match(self):
         for index in range(3):
             self.record(f"m{index}")
