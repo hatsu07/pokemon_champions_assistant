@@ -249,7 +249,8 @@ class OcrSentLedger:
         if updated.get("_ai_ocr_unresolved"):
             return None
         check = report.get("stale_visual_check") or {}
-        if not isinstance(check, dict) or check.get("unresolved_source_frames"):
+        if (not isinstance(check, dict) or
+                check.get("unresolved_source_row_keys")):
             return None
         entries = check.get("confirmed_source_fields")
         if not isinstance(entries, list):
@@ -258,22 +259,22 @@ class OcrSentLedger:
         permitted = set(OBSERVATION_FACT_FIELDS) | {
             "our_active","opponent_active","our_hp","opponent_hp"}
         tactical = set(OBSERVATION_FACT_FIELDS)
-        by_frame: dict[str, set[str]] = {}
+        by_key: dict[str, set[str]] = {}
         for entry in entries:
             if not isinstance(entry, dict):
                 return None
-            frame, field = entry.get("frame_id"), entry.get("field")
-            if not isinstance(frame, str) or field not in permitted:
+            key, field = entry.get("source_row_key"), entry.get("field")
+            if not isinstance(key, str) or field not in permitted:
                 return None
             if not isinstance(obs.get(field), str) or not obs[field].strip():
                 return None
-            by_frame.setdefault(frame, set()).add(field)
-        expected_frames = {row.get("frame_id") for row in rows}
-        if not expected_frames or set(by_frame) != expected_frames:
+            by_key.setdefault(key, set()).add(field)
+        expected_keys = {_row_key(row) for row in rows}
+        if not expected_keys or set(by_key) != expected_keys:
             return None
         for row in rows:
             field = str(row.get("field") or "").split(".")[-1]
-            proof = by_frame[row["frame_id"]]
+            proof = by_key[_row_key(row)]
             if field.startswith("own_") and ("hp" in field):
                 if "our_hp" not in proof:
                     return None
