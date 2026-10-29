@@ -922,6 +922,175 @@ class Issue125TransportTests(unittest.TestCase):
             {"phase":"BATTLE","our_active":"ドドゲザン",
              "opponent_active":"ルカリオ"}))
 
+    def test_poison_vs_toxic_status_uses_exact_name_not_substring(self):
+        """Both false directions, true matches, and ambiguous text stay safe."""
+        from champions_assist.ocr_turn_context import _visually_same_ocr_fact
+        for source,visible,expected in [
+            ("相手はもうどくになった","どく",False),
+            ("相手はどくになった","もうどく",False),
+            ("相手はもうどくになった","もうどく",True),
+            ("相手はどくになった","どく",True),
+            ("相手はやけどになった","やけど",True),
+            ("相手はどくどくを使った","どく",False),
+            ("相手はもうどくかどくになった","どく",False),
+            ("相手は毒になった","どく",False),
+            ("相手はどくがなおった","どく",False),
+        ]:
+            with self.subTest(source=source,visible=visible):
+                row=ocr("status-frame",source)
+                self.assertEqual(
+                    _visually_same_ocr_fact(
+                        row,"opponent_status",visible,
+                        {"opponent_active":"マスカーニャ"}),expected)
+
+    def test_poison_mismatch_never_unlocks_stale_visual_guard(self):
+        for old,new in [("もうどく","どく"),("どく","もうどく")]:
+            with self.subTest(ocr_status=old,visual_status=new):
+                ledger=OcrSentLedger()
+                proof=ocr("poison-1",f"相手は{old}になった")
+                key=_row_key(proof)
+                ledger.mark_sent([key],request_id="A",rows=[proof])
+                ledger.mark_stale("A")
+                ledger.mark_sent([key],request_id="B",rows=[proof])
+                ledger.mark_stale("B")
+                state={"phase":"BATTLE","our_active":"ゲンガー",
+                       "opponent_active":"マスカーニャ"}
+                obs=frame("COMMAND_MENU",our_active="ゲンガー",
+                          opponent_active="マスカーニャ",
+                          opponent_status=new)
+                report={"status":"NO_ACTION","images_sent":1,
+                        "observation":obs,
+                        "stale_visual_check":{
+                            "confirmed_source_fields":[
+                                {"source_row_key":key,"field":"opponent_status"}],
+                            "unresolved_source_row_keys":[],
+                            "full_state_rebaseline":False}}
+                self.assertIsNone(
+                    ledger.confirmed_visual_recovery_epoch(report,state))
+                ledger.mark_adopted("C",visual_confirmed=False)
+                self.assertTrue(ledger.needs_visual_confirmation())
+                obs["opponent_status"]=old
+                epoch=ledger.confirmed_visual_recovery_epoch(report,state)
+                self.assertIsNotNone(epoch)
+                ledger.mark_adopted("D",visual_confirmed=True,
+                                    recovery_epoch=epoch)
+                self.assertFalse(ledger.needs_visual_confirmation())
+
+    def test_quarantined_actor_aliases_include_mega_and_form_display(self):
+        from champions_assist.ocr_turn_context import _same_quarantined_actor
+        for stored,active in [
+            ("ゲンガー","メガゲンガー"),
+            ("ゲンガー","ゲンガー→メガゲンガー"),
+            ("ゲンガー","ゲンガー（メガシンカ）"),
+            ("メガゲンガー","ゲンガー"),
+            ("マスカーニャ","マスカーニャ（フォルム表記）"),
+        ]:
+            with self.subTest(stored=stored,active=active):
+                self.assertTrue(_same_quarantined_actor(stored,active))
+        for stored,active in [
+            ("ゲンガー","ドドゲザン"),("ゲンガー","ゲンガーもどき"),
+            ("マスカーニャ","ルカリオ"),
+        ]:
+            with self.subTest(stored=stored,active=active):
+                self.assertFalse(_same_quarantined_actor(stored,active))
+
+    def test_reappearing_quarantined_actor_warns_image_after_safe_rebaseline(self):
+        assets,state=battle()
+        state.update(our_active="ゲンガー",opponent_active="マスカーニャ")
+        ledger=OcrSentLedger()
+        readings=[ocr(f"ocr-{n}",f"イベント{n}！",timestamp=10+n*.1)
+                  for n in range(40)]
+        keys=[_row_key(x) for x in readings]
+        ledger.mark_sent(keys,request_id="lost-A",rows=readings)
+        ledger.mark_stale("lost-A",battle_context=state)
+        self.assertTrue(ledger.needs_visual_confirmation())
+        clean=dict(state,our_active="ドドゲザン",opponent_active="ルカリオ")
+        stages="A:+0,B:+0,C:+0,D:+0,S:+0,ACC:+0,EVA:+0"
+        baseline=frame(
+            "COMMAND_MENU",our_active="ドドゲザン",opponent_active="ルカリオ",
+            our_hp="207/207",opponent_hp="100%",
+            our_status="なし",opponent_status="なし",
+            our_current_type="あく/はがね",
+            opponent_current_type="かくとう/はがね",
+            our_temporary_effects="なし",opponent_temporary_effects="なし",
+            our_stat_changes=stages,opponent_stat_changes=stages,
+            battlefield_weather="なし",battlefield_terrain="なし",
+            battlefield_effects="なし")
+        baseline_report={
+            "status":"NO_ACTION","images_sent":1,"observation":baseline,
+            "stale_visual_check":{"confirmed_source_fields":[],
+                "unresolved_source_row_keys":[],"full_state_rebaseline":True}}
+        epoch=ledger.confirmed_visual_recovery_epoch(baseline_report,clean)
+        self.assertIsNotNone(epoch)
+        ledger.mark_adopted("safe-baseline",visual_confirmed=True,
+                            recovery_epoch=epoch)
+        self.assertFalse(ledger.needs_visual_confirmation())
+        self.assertFalse(ledger.quarantined_actor_is_active(clean))
+        self.assertEqual(ledger.visual_overflow_actors(clean),{})
+        self.assertTrue(_text_action_eligible(
+            "TURN_ACTION",clean,assets,local_rows=[],
+            sent_ocr_ledger=ledger))
+
+        def image_for(active_state):
+            response={
+                "observation":frame(
+                    "COMMAND_MENU",our_active=active_state["our_active"],
+                    opponent_active=active_state["opponent_active"]),
+                "action":{"action_kind":"NO_ACTION","move":"",
+                          "switch_target":"","warning":""},
+                "selection":{"selected_three":[],"lead":""},
+                "processed_ocr_frames":[],"pending_ocr_questions":[],
+                "stale_visual_check":{
+                    "confirmed_source_fields":[],
+                    "unresolved_source_row_keys":[],
+                    "full_state_rebaseline":False},
+            }
+            captured=[]
+            def model(_client,**kwargs):
+                captured.append(kwargs)
+                return response
+            with patch("champions_assist.match_replay._stream_json",
+                       side_effect=model):
+                _,report=run_replay_batch(
+                    [np.zeros((80,120,3),dtype=np.uint8)],
+                    state=active_state,assets=assets,access_token="unused",
+                    model="mock",expected_screen_label="TURN_ACTION",
+                    sent_ocr_ledger=ledger,local_field_candidates=[],
+                    client_factory=lambda **kw:object())
+            self.assertEqual(report["images_sent"],1)
+            self.assertEqual(len(captured),1)  # image, no OCR text GPT
+            prompt=json.loads(captured[0]["content"][0]["text"])
+            return prompt
+
+        for variant in [
+            dict(clean,our_active="ゲンガー"),
+            dict(clean,our_active="メガゲンガー"),
+            dict(clean,our_active="ゲンガー→メガゲンガー"),
+            dict(clean,opponent_active="マスカーニャ"),
+            dict(clean,opponent_active="マスカーニャ（フォルム表記）"),
+        ]:
+            with self.subTest(active=variant["our_active"],
+                              opponent=variant["opponent_active"]):
+                self.assertTrue(ledger.quarantined_actor_is_active(variant))
+                self.assertFalse(_text_action_eligible(
+                    "TURN_ACTION",variant,assets,local_rows=[],
+                    sent_ocr_ledger=ledger))
+                prompt=image_for(variant)
+                self.assertTrue(prompt["stale_visual_quarantined_actor_active"])
+                self.assertTrue(prompt["unverified_stale_ocr_requires_visual"])
+                self.assertIn("ゲンガー",
+                    prompt["stale_visual_overflow_actor_quarantine"]["our"])
+                self.assertIn("マスカーニャ",
+                    prompt["stale_visual_overflow_actor_quarantine"]["opponent"])
+                self.assertEqual(prompt["stale_visual_proof_to_reconcile"],[])
+        # Unaffected pair keeps the fast text route, and if another reason
+        # requires vision, the quarantine warning is not spuriously active.
+        prompt=image_for(clean)
+        self.assertFalse(prompt["stale_visual_quarantined_actor_active"])
+        self.assertFalse(prompt["unverified_stale_ocr_requires_visual"])
+        self.assertEqual(prompt["stale_visual_overflow_actor_quarantine"],{})
+        self.assertEqual(len(ledger.snapshot()),len(keys))
+
     def test_unknown_actor_requires_actual_identification_ocr_hint(self):
         assets,state=battle()
         hp=[ocr("hp","185/185",field="screen_text.own_hp_fraction")]
