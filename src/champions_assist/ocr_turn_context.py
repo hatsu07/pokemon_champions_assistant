@@ -36,6 +36,8 @@ class OcrSentLedger:
         self._reinspect_keys: set[str] = set()
         self._reinspected_keys: set[str] = set()
         self._needs_visual_confirmation = False
+        self._visual_guard_rows: list[dict] | None = None
+        self._visual_guard_epoch = 0
 
     def snapshot(self) -> set[str]:
         with self._lock:
@@ -54,6 +56,34 @@ class OcrSentLedger:
     def needs_visual_confirmation(self) -> bool:
         with self._lock:
             return self._needs_visual_confirmation
+
+    def visual_guard_rows(self) -> list[dict]:
+        """Bounded, still-unverified proof to reconcile against a NEW image."""
+        with self._lock:
+            return ([dict(row) for row in self._visual_guard_rows]
+                    if self._needs_visual_confirmation and
+                       self._visual_guard_rows is not None else [])
+
+    def _set_visual_guard(self, rows: list[dict] | None) -> None:
+        if not self._needs_visual_confirmation:
+            self._needs_visual_confirmation = True
+            self._visual_guard_epoch += 1
+            self._visual_guard_rows = (
+                [dict(row) for row in rows]
+                if rows is not None and len(rows) <= self.MAX_REINSPECT_ROWS
+                and _json_bytes(rows) <= self.MAX_REINSPECT_BYTES else None)
+        elif rows is None or self._visual_guard_rows is None:
+            # Never replace unknown/unsafe proof with a later "easy" sample.
+            self._visual_guard_rows = None
+        else:
+            joint = self._visual_guard_rows + [
+                dict(row) for row in rows if _row_key(row) not in {
+                    _row_key(r) for r in self._visual_guard_rows}]
+            if (len(joint) > self.MAX_REINSPECT_ROWS
+                    or _json_bytes(joint) > self.MAX_REINSPECT_BYTES):
+                self._visual_guard_rows = None
+            else:
+                self._visual_guard_rows = joint
 
     def is_stale(self, request_id: str | None) -> bool:
         with self._lock:
@@ -156,9 +186,8 @@ class OcrSentLedger:
         rows = self._request_rows.pop(request_id, [])
         keys, overflow = self._specific_reinspection_keys(rows)
         if overflow or keys & self._reinspected_keys:
-            # The retry was already consumed, or the original set was too
-            # large to show safely. Do not issue a text-only tactical decision.
-            self._needs_visual_confirmation = True
+            # An exhausted OCR retry/unknown episode cannot be assumed safe.
+            self._set_visual_guard(None if overflow else rows)
         self._reinspect_keys.update(keys - self._reinspected_keys)
 
     def mark_sent(self, keys, *, request_id: str | None = None,
@@ -185,21 +214,97 @@ class OcrSentLedger:
             # If this worker reserved proof but has not confirmed HTTP send,
             # the next worker must not silently act from incomplete OCR.
             if self._reserved.get(request_id) and request_id not in self._request_rows:
-                self._needs_visual_confirmation = True
+                self._set_visual_guard(None)
             # Do not release a reservation here: its worker may already be
             # in client.responses.create(). Only that worker may release it.
             self._stage_stale(request_id)
 
+    def confirmed_visual_recovery_epoch(self, report: dict,
+                                        updated: dict) -> int | None:
+        """Conservatively verify NEW on-screen proof, not a model's yes/no.
+
+        Current menu and actor identities must be validated by the normal image
+        path. Each LOST original frame must be tied to a non-empty, visible
+        state field in that same accepted image. Old battle messages may only
+        be resolved by a directly visible tactical field (never actor/HP).
+        Unresolved or fabricated source IDs block recovery.
+        """
+        with self._lock:
+            if not self._needs_visual_confirmation or not self._visual_guard_rows:
+                return None
+            rows = [dict(row) for row in self._visual_guard_rows]
+            epoch = self._visual_guard_epoch
+        if report.get("images_sent", 0) < 1 or report.get("status") in (
+                "BLOCKED","ERROR","SUPERSEDED","CANCELLED","DEADLINE_EXCEEDED"):
+            return None
+        obs = report.get("observation")
+        if not isinstance(obs, dict) or obs.get("visual_ui") != "COMMAND_MENU":
+            return None
+        if updated.get("phase") != "BATTLE":
+            return None
+        if not (obs.get("our_active") and obs.get("opponent_active")
+                and obs["our_active"] == updated.get("our_active")
+                and obs["opponent_active"] == updated.get("opponent_active")):
+            return None
+        if updated.get("_ai_ocr_unresolved"):
+            return None
+        check = report.get("stale_visual_check") or {}
+        if not isinstance(check, dict) or check.get("unresolved_source_frames"):
+            return None
+        entries = check.get("confirmed_source_fields")
+        if not isinstance(entries, list):
+            return None
+        from .battle_evidence import OBSERVATION_FACT_FIELDS
+        permitted = set(OBSERVATION_FACT_FIELDS) | {
+            "our_active","opponent_active","our_hp","opponent_hp"}
+        tactical = set(OBSERVATION_FACT_FIELDS)
+        by_frame: dict[str, set[str]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return None
+            frame, field = entry.get("frame_id"), entry.get("field")
+            if not isinstance(frame, str) or field not in permitted:
+                return None
+            if not isinstance(obs.get(field), str) or not obs[field].strip():
+                return None
+            by_frame.setdefault(frame, set()).add(field)
+        expected_frames = {row.get("frame_id") for row in rows}
+        if not expected_frames or set(by_frame) != expected_frames:
+            return None
+        for row in rows:
+            field = str(row.get("field") or "").split(".")[-1]
+            proof = by_frame[row["frame_id"]]
+            if field.startswith("own_") and ("hp" in field):
+                if "our_hp" not in proof:
+                    return None
+            elif field.startswith("opponent_") and ("hp" in field):
+                if "opponent_hp" not in proof:
+                    return None
+            elif field in ("own_active_name","own_name","own_species"):
+                if "our_active" not in proof:
+                    return None
+            elif field in ("opponent_active_name","opponent_name","opponent_species"):
+                if "opponent_active" not in proof:
+                    return None
+            elif not proof & tactical:
+                # Any event/effect/unknown proof needs a concrete visible
+                # mechanic field, not a blanket "actors look right" assertion.
+                return None
+        return epoch
+
     def mark_adopted(self, request_id: str | None, *,
-                     visual_confirmed: bool = False) -> None:
+                     visual_confirmed: bool = False,
+                     recovery_epoch: int | None = None) -> None:
         if not request_id:
             return
         with self._lock:
             self._request_rows.pop(request_id, None)
             self._reserved.pop(request_id, None)
             self._stale_requests.discard(request_id)
-            if visual_confirmed:
+            if (visual_confirmed and recovery_epoch is not None
+                    and recovery_epoch == self._visual_guard_epoch):
                 self._needs_visual_confirmation = False
+                self._visual_guard_rows = None
                 self._reinspect_keys.clear()
                 self._reinspected_keys.clear()
 
