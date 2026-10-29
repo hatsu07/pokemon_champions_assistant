@@ -356,9 +356,13 @@ def has_ocr_transport_evidence(state: dict, local_rows, *,
     all_rows, _ = select_ai_ocr_evidence(local_rows)
     previous = set(state.get("_ai_ocr_presented_keys") or ())
     reinspect = set()
+    unavailable = set()
     if sent_ledger is not None:
+        if sent_ledger.needs_visual_confirmation():
+            return False
         previous.update(sent_ledger.snapshot())
         reinspect = sent_ledger.reinspection_keys()
+        unavailable = sent_ledger.unavailable_keys()
     retained = {
         frame for q in (state.get("_ai_ocr_unresolved") or ())
         if isinstance(q, dict)
@@ -368,11 +372,13 @@ def has_ocr_transport_evidence(state: dict, local_rows, *,
     return any((_row_key(row) not in previous
                 or _row_key(row) in reinspect
                 or row.get("frame_id") in retained)
+               and _row_key(row) not in unavailable
                and _own_actor_identification_candidate(row)
                for row in all_rows)
 
 
-def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tuple[list[dict], list[dict], dict]:
+def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None,
+                           request_id: str | None = None) -> tuple[list[dict], list[dict], dict]:
     """Return NEW OCR, GPT-retained questions, and one-shot stale proof.
 
     Every row from the complete local OCR ledger is eligible the first time.
@@ -402,6 +408,10 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
                 _row_key(row) not in previous
                 or _row_key(row) in reinspect_keys
                 or row.get("frame_id") in retained_frames]
+    if sent_ledger is not None and request_id is not None:
+        # Claim OCR rows atomically; selection alone does not mark them sent.
+        # Other concurrent requests cannot send our claimed originals.
+        selected = sent_ledger.reserve(request_id, selected)
     before_bytes = len(json.dumps(all_rows, ensure_ascii=False,
                                   separators=(",", ":")).encode("utf-8"))
     after_bytes = len(json.dumps(selected, ensure_ascii=False,
