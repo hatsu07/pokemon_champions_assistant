@@ -652,7 +652,8 @@ CHOICE_SCHEMA = {
 
 def _stream_json(client, *, model: str, instructions: str, content: list,
                  schema: dict, name: str, reasoning_effort: str = "auto",
-                 timing_sink: dict | None = None) -> dict:
+                 timing_sink: dict | None = None,
+                 on_request_sent=None) -> dict:
     from time import perf_counter
     started=perf_counter()
     recorder=_AI_EXCHANGE_SINK.get()
@@ -679,6 +680,11 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
             text={"format": {"type": "json_schema", "name": name,
                               "strict": True, "schema": schema}},
         )
+        # A returned streaming response means the HTTP request has been
+        # dispatched. Persist transport facts BEFORE waiting for model output.
+        # Never treat the callback as an acknowledgement of OCR comprehension.
+        if on_request_sent is not None:
+            on_request_sent()
         completed = False
         with stream:
             for event in stream:
