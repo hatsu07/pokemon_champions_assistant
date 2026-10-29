@@ -1287,6 +1287,7 @@ class Issue125TransportTests(unittest.TestCase):
                          [x["frame_id"] for x in readings])
         self.assertTrue(all(x["verified"] is False for x in echoed))
         self.assertFalse(prompt["rejected_text_same_turn_ocr_incomplete"])
+        self.assertEqual(len(prompt_log),1)  # one permitted image API request
         self.assertEqual(prompt["local_field_candidates_unverified"],[])
         self.assertEqual(ledger.snapshot(),original)
         self.assertEqual(len(ledger.sent_rows_for_request("text-request")),4)
@@ -1309,24 +1310,12 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertEqual(meta["important_unique_rows"],220)
         self.assertTrue(meta["incomplete"])
         self.assertGreater(meta["omitted_important_rows"],0)
-        observed=[]
-        answer={
-            "observation":frame("COMMAND_MENU",our_active="ゲンガー",
-                                opponent_active="ルカリオ"),
-            "action":{"action_kind":"MOVE","move":"シャドーボール",
-                      "switch_target":"","warning":""},
-            "selection":{"selected_three":[],"lead":""},
-            "processed_ocr_frames":[],"pending_ocr_questions":[],
-            "stale_visual_check":{"confirmed_source_fields":[],
-                "unresolved_source_row_keys":[],
-                "full_state_rebaseline":False},
-        }
-        def fake_image(_client,**kwargs):
-            observed.append(json.loads(kwargs["content"][0]["text"]))
-            kwargs["on_request_sent"]()
-            return answer
-        with patch("champions_assist.match_replay._stream_json",
-                   side_effect=fake_image):
+        original_state=dict(state)
+        diagnostics=[]
+        with patch("champions_assist.match_replay._stream_json") as stream, patch(
+                "champions_assist.vision_api_benchmark.jpeg_data_uri") as encode:
+            def forbidden_client(**_kwargs):
+                raise AssertionError("Image client must not be constructed")
             updated,report=run_replay_batch(
                 [np.zeros((80,120,3),dtype=np.uint8)],
                 state=state,assets=assets,access_token="unused",
@@ -1334,15 +1323,24 @@ class Issue125TransportTests(unittest.TestCase):
                 local_field_candidates=rows,
                 sent_ocr_ledger=ledger,ocr_request_id="oversized-text",
                 ocr_fallback_sent_rows=ledger.sent_rows_for_request(
-                    "oversized-text"),
-                client_factory=lambda **kwargs:object())
+                    "oversized-text"),diagnostic_sink=lambda event,data:
+                diagnostics.append((event,data)),
+                client_factory=forbidden_client)
+            stream.assert_not_called()
+            encode.assert_not_called()
         self.assertEqual(report["status"],"BLOCKED")
         self.assertEqual(report["reason"],
                          "OCR_FALLBACK_IMPORTANT_PROOF_TRUNCATED")
         self.assertFalse(report.get("recommendation"))
-        self.assertEqual(updated["opponent_active"],"ルカリオ")
-        self.assertTrue(observed[0]["rejected_text_same_turn_ocr_incomplete"])
+        self.assertEqual(updated,original_state)
+        self.assertEqual(report["images_sent"],0)
+        self.assertEqual(report["transport"],"VISION_EXCEPTION_NOT_SENT")
+        self.assertTrue(report["fallback_ocr_stats"]["incomplete"])
+        self.assertIn("OCR_FALLBACK_PROOF_INCOMPLETE",
+                      [event for event,_ in diagnostics])
         self.assertEqual(ledger.snapshot(),original)
+        self.assertEqual(
+            len(ledger.sent_rows_for_request("oversized-text")),len(rows))
 
     def test_shared_turn_deadline_and_sequential_worker_fallback(self):
         from champions_assist.match_replay_dialog import _ReplayWorker
