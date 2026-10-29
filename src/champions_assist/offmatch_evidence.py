@@ -199,6 +199,8 @@ class MatchEvidenceBuffer:
                 "switch_candidates": switch_candidates,
                 "certainty": "REGISTERED_NOT_CURRENTLY_LEGALITY_VERIFIED",
                 "visible_moves": _names(observation.get("visible_moves"), 4),
+                "visible_party": _names(observation.get("visible_party"), 6),
+                "observed_moves_candidate": _names(state.get("observed_moves"), 12),
                 "choice_lock": _text(state.get("choice_lock")),
             },
             "proposal": {"action": recommended,
