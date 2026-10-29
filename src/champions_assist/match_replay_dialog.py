@@ -27,11 +27,12 @@ from PySide6.QtWidgets import (
 from .app_config import default_app_root
 from .preload import MasterPreloader
 from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore, SignInError
-from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, run_replay_screen_result, possible_result_message, _text_action_eligible)
+from .match_replay import (new_replay, confirm_actual_selection, assume_advised_selection, run_replay_image, run_replay_prep, run_replay_batch, run_replay_text_action, run_replay_text_result, run_replay_screen_result, possible_result_message, _text_action_eligible, _turn_api_budget)
 from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile, confirmed_auto_move_notice
 from .local_event_worker import AsyncBattleEventReader
+from .ocr_turn_context import OcrSentLedger
 from .battle_state_tracker import LocalBattleStateTracker
 from .live_state_updates import apply_local_ocr
 from .local_event_image_policy import event_image_plan
@@ -66,6 +67,8 @@ _URGENT_SCREENS = frozenset(("TURN_ACTION", "SWITCH_SELECTION"))
 # Neither limit is a measured in-game countdown; real testing is essential.
 _TARGET_AI_TURN_SECONDS = 30.0
 _CONSERVATIVE_AI_TURN_SECONDS = 32.0
+_BATTLE_TURN_HARD_SECONDS = 45.0
+_MIN_IMAGE_FALLBACK_SECONDS = 5.0
 # Only after a RESULT_SCREEN: stalled earlier OCR must not block human
 # outcome confirmation forever. This is NOT a turn/PREP deadline.
 _RESULT_OCR_STALL_SECONDS = 20.0
@@ -125,8 +128,9 @@ class _ReplayWorker(QObject):
                  capture_config=None, capture_gate=None, capture_function=capture_for_chatgpt,
                  cancel_event=None, frames=None, screen_label=None, field_profile=None,
                  local_field_candidates=None,diagnostic_sink=None,
-                 exchange_sink=None,
+                 exchange_sink=None,sent_ocr_ledger=None,ocr_request_id=None,
                  selection_seconds=120.0, prep_seconds=120.0,battle_seconds=120.0,
+                 turn_deadline_monotonic=None,
                  result_messages=None, result_screen=None):
         super().__init__()
         self.job=job
@@ -136,12 +140,15 @@ class _ReplayWorker(QObject):
         self.local_field_candidates=list(local_field_candidates or [])
         self.diagnostic_sink=diagnostic_sink
         self.exchange_sink=exchange_sink
+        self.sent_ocr_ledger=sent_ocr_ledger
+        self.ocr_request_id=ocr_request_id
         self.app_root=app_root
         self.selected_model=selected_model
         self.reasoning_effort=reasoning_effort
         self.selection_seconds=float(selection_seconds)
         self.prep_seconds=float(prep_seconds)
         self.battle_seconds=float(battle_seconds)
+        self.turn_deadline_monotonic=turn_deadline_monotonic
         self.result_messages=list(result_messages or [])
         self.result_screen=dict(result_screen or {})
         self.capture_config=capture_config
@@ -218,7 +225,10 @@ class _ReplayWorker(QObject):
                 auth_ms=round((perf_counter()-auth_started)*1000)
                 self.progress.emit(
                     "OCRテキストによるAI判断中（結果待ち）"
-                    if _text_action_eligible(self.screen_label,self.state,self.assets)
+                    if _text_action_eligible(
+                        self.screen_label,self.state,self.assets,
+                        local_rows=self.local_field_candidates,
+                        sent_ocr_ledger=self.sent_ocr_ledger)
                     else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
@@ -231,25 +241,93 @@ class _ReplayWorker(QObject):
                         total_seconds=self.selection_seconds)
                     report["transport"]="TWO_STAGE_SELECTION_MATRIX_FIRST"
                 else:
-                    if _text_action_eligible(self.screen_label,self.state,self.assets):
+                    def budget(*, minimum=0.0):
+                        return min(self.battle_seconds,_turn_api_budget(
+                            self.turn_deadline_monotonic,
+                            now=monotonic(),minimum_seconds=minimum))
+                    def expired(reason):
+                        return (self.state,{
+                            "status":"DEADLINE_EXCEEDED","reason":reason,
+                            "recommendation":"","images_sent":0,
+                            "turn_deadline_exceeded":True})
+                    if budget()==0:
+                        next_state,report=expired("TURN_45S_BEFORE_API")
+                    elif _text_action_eligible(
+                            self.screen_label,self.state,self.assets,
+                            local_rows=local_candidates,
+                            sent_ocr_ledger=self.sent_ocr_ledger):
                         next_state,report=run_replay_text_action(
                             state=self.state,assets=self.assets,
                             access_token=token,model=self.selected_model,
                             reasoning_effort=self.reasoning_effort,
-                            total_seconds=self.battle_seconds,
+                            total_seconds=budget(),
                             expected_screen_label=self.screen_label,
                             local_field_candidates=local_candidates,
-                            diagnostic_sink=self.diagnostic_sink)
+                            diagnostic_sink=self.diagnostic_sink,
+                            sent_ocr_ledger=self.sent_ocr_ledger,
+                            ocr_request_id=self.ocr_request_id)
+                        if (report.get("status")=="BLOCKED" and
+                                report.get("reason") in (
+                                    "ACTOR_OCR_RESERVED_OR_UNAVAILABLE",
+                                    "OCR_QUARANTINED_ACTOR_RETURNED")):
+                            blocked_reason=report["reason"]
+                            suspected=dict(
+                                report.get("quarantined_actor_candidates") or {})
+                            # Keep the pre-OCR verified state. The rejected
+                            # text answer MUST NOT become the image baseline.
+                            # Without a current screenshot, remain BLOCKED:
+                            # do not display the rejected tactical action.
+                            if not self.frames or budget(
+                                    minimum=_MIN_IMAGE_FALLBACK_SECONDS)==0:
+                                reason=("NO_CURRENT_IMAGE_FALLBACK" if not
+                                    self.frames else
+                                    "TURN_45S_FALLBACK_BUDGET_EXHAUSTED")
+                                next_state,report=expired(reason)
+                                if self.diagnostic_sink is not None:
+                                    self.diagnostic_sink("TURN_FALLBACK_SKIPPED",{
+                                        "reason":reason,
+                                        "remaining_ms":round(budget()*1000),
+                                        "rejected_reason":blocked_reason})
+                            else:
+                                sent_rows=(self.sent_ocr_ledger
+                                    .sent_rows_for_request(self.ocr_request_id)
+                                    if self.sent_ocr_ledger is not None else [])
+                                next_state,report=run_replay_batch(
+                                    self.frames[-1:],state=self.state,
+                                    assets=self.assets,access_token=token,
+                                    model=self.selected_model,
+                                    reasoning_effort=self.reasoning_effort,
+                                    total_seconds=budget(),
+                                    local_field_candidates=local_candidates,
+                                    expected_screen_label=self.screen_label,
+                                    diagnostic_sink=self.diagnostic_sink,
+                                    sent_ocr_ledger=self.sent_ocr_ledger,
+                                    ocr_request_id=self.ocr_request_id,
+                                    ocr_quarantined_return=suspected,
+                                    ocr_fallback_sent_rows=sent_rows)
+                                report["image_exception_reason"]=blocked_reason
+                                report["fallback_shared_deadline"]=True
                     else:
                         next_state,report=run_replay_batch(
                             self.frames[-1:],state=self.state,assets=self.assets,
                             access_token=token,model=self.selected_model,
                             reasoning_effort=self.reasoning_effort,
-                            total_seconds=self.battle_seconds,
+                            total_seconds=budget(),
                             local_field_candidates=local_candidates,
                             expected_screen_label=self.screen_label,
-                            diagnostic_sink=self.diagnostic_sink)
+                            diagnostic_sink=self.diagnostic_sink,
+                            sent_ocr_ledger=self.sent_ocr_ledger,
+                            ocr_request_id=self.ocr_request_id)
                         report["image_exception_reason"]="ACTIVE_IDENTITY_MISSING"
+                # An API response after the shared 45-second limit cannot
+                # become fresh advice even when the HTTP transport succeeded.
+                if (self.turn_deadline_monotonic is not None and
+                        monotonic()>=self.turn_deadline_monotonic):
+                    if self.diagnostic_sink is not None:
+                        self.diagnostic_sink("TURN_DEADLINE_EXCEEDED",{
+                            "discarded_status":report.get("status"),
+                            "advice_discarded":bool(report.get("recommendation"))})
+                    next_state,report=expired("TURN_45S_REPLY_TOO_LATE")
                 report["auth_ms"]=auth_ms
                 report["local_field_candidates_unverified"]=local_candidates
                 report["screen_label_source"]=(
@@ -293,6 +371,12 @@ class _ReplayWorker(QObject):
                 "status":"ERROR","reason":str(exc) if isinstance(exc,SignInError)
                 else type(exc).__name__}})
         finally:
+            # A claimed OCR row must never remain locked if auth, prompt
+            # assembly or the HTTP request fails before the dispatch callback.
+            # This executes only when THIS worker has finished sending/failed;
+            # retirement alone cannot release an in-flight reservation.
+            if self.sent_ocr_ledger is not None:
+                self.sent_ocr_ledger.release(self.ocr_request_id)
             stop_ai_exchange_trace(trace_token)
 
 
@@ -341,6 +425,7 @@ class MatchReplayDialog(QDialog):
         self._last_local_ocr_status="NOT_RUNNING"
         self._local_event_reader=None
         self._local_battle_tracker=LocalBattleStateTracker()
+        self._ocr_sent_ledger=OcrSentLedger()
         self._ocr_capture_epochs={}
         self._auto_move_epochs=set()
         self._active_state_revision=None
@@ -663,6 +748,7 @@ class MatchReplayDialog(QDialog):
                 self._field_profile=None
             self._stop_local_event_reader()
             self._local_battle_tracker.clear()
+            self._ocr_sent_ledger=OcrSentLedger()
             self._ocr_capture_epochs.clear()
             self._auto_move_epochs.clear()
             self._active_state_revision=None
@@ -796,6 +882,7 @@ class MatchReplayDialog(QDialog):
         self._field_profile=None
         self._stop_local_event_reader()
         self._local_battle_tracker.clear()
+        self._ocr_sent_ledger=OcrSentLedger()
         self._ocr_capture_epochs.clear()
         self._auto_move_epochs.clear()
         self._active_state_revision=None
@@ -1540,7 +1627,9 @@ class MatchReplayDialog(QDialog):
         self._pending_batch=None
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
-        text_only=_text_action_eligible(screen_label,self.state,self.assets)
+        text_only=_text_action_eligible(
+            screen_label,self.state,self.assets,local_rows=local_candidates,
+            sent_ocr_ledger=self._ocr_sent_ledger)
         planned_image_count=0 if text_only else len(frames)
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
@@ -1571,9 +1660,14 @@ class MatchReplayDialog(QDialog):
                           opponent_known=bool(self.state.get("opponent_active")),
                           state_revision=self._active_state_revision)
         self._active_request_frame=frames[-1] if frames else None
-        # Local clock deadlines are only telemetry; transport remains finite.
+        # One shared clock from the detected actionable turn (not 120s
+        # independently per API). Selection/PREP keep their own budgets.
         selection_remaining=120.0
         battle_remaining=120.0
+        turn_deadline=(
+            (self._turn_screen_seen_at if self._turn_screen_seen_at is not None
+             else monotonic())+_BATTLE_TURN_HARD_SECONDS
+            if screen_label in _URGENT_SCREENS else None)
         # Only this successful new AI dispatch invalidates unfinished PREP.
         # No cancellation on soft 40s expiry, screen animations or a request
         # abandoned before it was actually sent.
@@ -1634,8 +1728,11 @@ class MatchReplayDialog(QDialog):
             field_profile=self._field_profile,
             local_field_candidates=local_candidates,
             diagnostic_sink=diagnostic_sink,
+            sent_ocr_ledger=self._ocr_sent_ledger,
+            ocr_request_id=request_id,
             selection_seconds=selection_remaining,
             battle_seconds=battle_remaining,
+            turn_deadline_monotonic=turn_deadline,
         )
         self._worker.moveToThread(self._thread)
         self._worker.progress.connect(self._on_ai_progress)
@@ -1656,6 +1753,8 @@ class MatchReplayDialog(QDialog):
         if self._thread is None:
             return
         rid=self._active_request_id
+        if rid and getattr(self,"_ocr_sent_ledger",None) is not None:
+            self._ocr_sent_ledger.mark_stale(rid,battle_context=self.state)
         self._retired_workers[rid]=(self._thread,self._worker)
         self._trace_event("AI_REQUEST_LOGICALLY_CANCELLED",request_id=rid,
                           reason=reason,turn_epoch=self._active_turn_epoch)
@@ -2283,6 +2382,23 @@ class MatchReplayDialog(QDialog):
         elif (self._active_job=="batch" and self._active_turn_epoch is not None
               and self._turn_screen_seen_at is not None
               and monotonic()-self._turn_screen_seen_at
+                  >=_BATTLE_TURN_HARD_SECONDS
+              and report.get("status") in (
+                  "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
+              and report.get("recommendation")):
+            # Signal delivery can happen after the worker finished. A model
+            # recommendation must NEVER become actionable after turn expiry.
+            report={**report,"status":"DEADLINE_EXCEEDED",
+                    "recommendation":"","reason":"TURN_45S_GUI_RESULT_TOO_LATE",
+                    "turn_deadline_exceeded":True}
+            payload={"state":self.state,"report":report}
+            self._trace_event("TURN_45S_GUI_LATE_ADVICE_DROPPED",
+                turn_epoch=self._turn_epoch,
+                elapsed_ms=round((monotonic()-
+                    self._turn_screen_seen_at)*1000))
+        elif (self._active_job=="batch" and self._active_turn_epoch is not None
+              and self._turn_screen_seen_at is not None
+              and monotonic()-self._turn_screen_seen_at
                   >_CONSERVATIVE_AI_TURN_SECONDS
               and report.get("status") in (
                   "ADVICE","PROVISIONAL_ADVICE","TEST_ONLY")
@@ -2385,6 +2501,26 @@ class MatchReplayDialog(QDialog):
             # An unclassified fallback frame was verified by vision. End PREP
             # without accepting any later stale PREP response.
             self._interrupt_prep()
+        ledger=getattr(self,"_ocr_sent_ledger",None)
+        if self._active_job=="batch" and ledger is not None:
+            if report["status"] in ("ERROR","DEADLINE_EXCEEDED",
+                                    "CANCELLED","SUPERSEDED","BLOCKED"):
+                ledger.mark_stale(self._active_request_id,battle_context=self.state)
+            else:
+                # A screenshot alone never clears the stale-proof safety gate.
+                # Require an adopted, verified current menu with every lost
+                # original row explicitly reconciled to visible on-screen
+                # facts; unresolved tactics remain in visual/NO_ACTION mode.
+                recovery_epoch=ledger.confirmed_visual_recovery_epoch(
+                    report,payload["state"])
+                ledger.mark_adopted(
+                    self._active_request_id,
+                    visual_confirmed=recovery_epoch is not None,
+                    recovery_epoch=recovery_epoch)
+                if recovery_epoch is not None:
+                    self._trace_event("OCR_TEXT_MODE_SAFELY_RESTORED",
+                                      request_id=self._active_request_id,
+                                      guard_epoch=recovery_epoch)
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
             before=current_state_digest(self.state)
@@ -2404,6 +2540,12 @@ class MatchReplayDialog(QDialog):
                             "verified":report.get("transport")!="OCR_TEXT_ONLY",
                             "last_confirmed_turn":self._turn_epoch})
             self.state=payload["state"]
+            # This independently records successful sends by retired workers.
+            ledger=getattr(self,"_ocr_sent_ledger",None)
+            if ledger is not None:
+                self.state["_ai_ocr_presented_keys"]=sorted(
+                    set(self.state.get("_ai_ocr_presented_keys") or ()) |
+                    ledger.snapshot())
             observed=report.get("screen")
             if observed and observed!="UNKNOWN":
                 self._last_observed_ui=observed

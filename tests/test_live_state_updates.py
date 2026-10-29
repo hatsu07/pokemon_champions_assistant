@@ -48,12 +48,12 @@ def state():
     }
 
 
-def read(field, text, seq, value=None, confidence=.96):
+def read(field, text, seq, value=None, confidence=.96, display_id=""):
     return LocalFieldRead(
         field="screen_text."+field,frame_id="frame-"+str(seq),
         timestamp=float(seq),confidence=confidence,roi=field,
         source="fixture",text=text,
-        value=text if value is None else value)
+        value=text if value is None else value,display_id=display_id)
 
 
 class LiveStateOcrTests(unittest.TestCase):
@@ -191,8 +191,10 @@ class LiveStateOcrTests(unittest.TestCase):
 
     def test_ingest_collect_deduplicates_identical_message(self):
         tracker=LocalBattleStateTracker()
-        first=read("battle_message","マスカーニャのこうげきがあがった",1)
-        second=read("battle_message","マスカーニャのこうげきがあがった",2)
+        first=read("battle_message","マスカーニャのこうげきがあがった",1,
+                   display_id="same-episode")
+        second=read("battle_message","マスカーニャのこうげきがあがった",2,
+                    display_id="same-episode")
         count,new=tracker.ingest((first,),collect=True)
         self.assertEqual(count,1)
         self.state,_=apply_local_ocr(self.state,new,self.assets)
@@ -213,9 +215,9 @@ class LiveStateOcrTests(unittest.TestCase):
     def test_identical_message_in_next_turn_is_not_dropped(self):
         tracker=LocalBattleStateTracker()
         message="マスカーニャのこうげきがあがった"
-        first=read("battle_message",message,1)
-        same_turn=read("battle_message",message,2)
-        next_turn=read("battle_message",message,3)
+        first=read("battle_message",message,1,display_id="episode-1")
+        same_turn=read("battle_message",message,2,display_id="episode-1")
+        next_turn=read("battle_message",message,3,display_id="episode-1")
         count,rows=tracker.ingest((first,),collect=True,turn_epoch=11)
         self.assertEqual(count,1)
         self.state,_=apply_local_ocr(self.state,rows,self.assets)

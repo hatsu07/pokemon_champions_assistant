@@ -16,8 +16,8 @@ class LocalBattleStateTracker:
     def __init__(self, max_events: int | None=None):
         if max_events is not None and max_events<1:
             raise ValueError("max_events must be positive")
-        # Production keeps all distinct OCR observations until explicitly
-        # acknowledged by a verified AI event or the match is reset.
+        # Production keeps EVERY original OCR observation and its frame/time,
+        # including duplicates, until match reset. Sending is a separate view.
         self._events: deque[LocalFieldRead]=deque(maxlen=max_events)
         self._latest: dict[str,LocalFieldRead]={}
         self.duplicates=0
@@ -31,9 +31,9 @@ class LocalBattleStateTracker:
         for row in records:
             if row.status!="CANDIDATE":
                 continue
-            # A continuous ROI is a single event within a turn. Reoccurrence
-            # in a NEW turn is not a duplicate even with identical text.
-            # Offline callers without a turn ID use only a short time window.
+            # Never infer display identity from matching text/time alone.
+            # Two separate visual episodes can contain the exact same message
+            # within 1.5 s, and are distinct battle events.
             previous=self._latest.get(row.field)
             same_payload=(previous is not None and
                           previous.text==row.text and previous.value==row.value)
@@ -41,13 +41,15 @@ class LocalBattleStateTracker:
                         self._latest_epoch.get(row.field)==turn_epoch)
             near_in_time=(previous is not None and
                           0 <= row.timestamp-previous.timestamp <= 1.5)
-            # Only one continuing OCR display is a duplicate. An identical
-            # battle message later in the SAME turn may represent a distinct
-            # event and must still reach ChatGPT.
-            if same_payload and near_in_time and (
-                    turn_epoch is None or same_epoch):
+            same_display=(previous is not None and bool(row.display_id)
+                          and previous.display_id==row.display_id)
+            # The raw evidence ledger NEVER drops OCR readings, including
+            # repeated observations of one visual display. Only the GPT
+            # transport view deduplicates them. Track repeats as telemetry.
+            repeated=(same_payload and same_display and near_in_time
+                      and (turn_epoch is None or same_epoch))
+            if repeated:
                 self.duplicates+=1
-                continue
             status="CANDIDATE"
             if (previous and previous.frame_id==row.frame_id
                     and previous.value!=row.value):
@@ -56,11 +58,14 @@ class LocalBattleStateTracker:
             if status!=row.status:
                 from dataclasses import replace
                 row=replace(row,status=status)
-            self._events.append(row)
+            self._events.append(row)  # ALWAYS retain the raw frame and time.
             self._latest[row.field]=row
             self._latest_epoch[row.field]=turn_epoch
-            novel.append(row)
-            inserted+=1
+            # Incremental consumers should not apply one visual effect twice.
+            # The GPT prompt instead takes ALL original rows from snapshot().
+            if not repeated:
+                novel.append(row)
+                inserted+=1
         return (inserted,tuple(novel)) if collect else inserted
 
     def snapshot(self, *, at_or_before: float | None=None,

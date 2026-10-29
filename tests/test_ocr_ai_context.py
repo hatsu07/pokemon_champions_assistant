@@ -172,17 +172,19 @@ class OcrAiContextRegression(unittest.TestCase):
 
     def test_identical_text_repeated_later_in_turn_is_not_lost(self):
         tracker=LocalBattleStateTracker()
-        def row(frame,second):
+        def row(frame,second,display):
             return LocalFieldRead(
                 field="screen_text.battle_message",
                 value="同じメッセージ",frame_id=frame,
                 timestamp=second,confidence=.9,
                 roi="battle_message",source="fixture",
-                text="同じメッセージ")
-        self.assertEqual(tracker.ingest((row("f1",1.0),),turn_epoch=8),1)
-        self.assertEqual(tracker.ingest((row("f2",1.6),),turn_epoch=8),0)
-        self.assertEqual(tracker.ingest((row("f3",12.0),),turn_epoch=8),1)
-        self.assertEqual(len(tracker.snapshot()["local_observations"]),2)
+                text="同じメッセージ",display_id=display)
+        self.assertEqual(tracker.ingest((row("f1",1.0,"visual-1"),),turn_epoch=8),1)
+        self.assertEqual(tracker.ingest((row("f2",1.6,"visual-1"),),turn_epoch=8),0)
+        self.assertEqual(tracker.ingest((row("f3",12.0,"visual-2"),),turn_epoch=8),1)
+        # Raw timeline preserves all three observations, including the
+        # continuous same-display reading suppressed only for local consumers.
+        self.assertEqual(len(tracker.snapshot()["local_observations"]),3)
 
     def test_completed_ocr_output_queue_does_not_discard_old_results(self):
         reader=AsyncBattleEventReader(None)
