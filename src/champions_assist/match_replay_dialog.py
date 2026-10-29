@@ -2418,9 +2418,11 @@ class MatchReplayDialog(QDialog):
                             "last_confirmed_turn":self._turn_epoch})
             self.state=payload["state"]
             # This independently records successful sends by retired workers.
-            self.state["_ai_ocr_presented_keys"]=sorted(
-                set(self.state.get("_ai_ocr_presented_keys") or ()) |
-                self._ocr_sent_ledger.snapshot())
+            ledger=getattr(self,"_ocr_sent_ledger",None)
+            if ledger is not None:
+                self.state["_ai_ocr_presented_keys"]=sorted(
+                    set(self.state.get("_ai_ocr_presented_keys") or ()) |
+                    ledger.snapshot())
             observed=report.get("screen")
             if observed and observed!="UNKNOWN":
                 self._last_observed_ui=observed
