@@ -238,12 +238,19 @@ def _own_actor_identification_candidate(row: dict) -> bool:
     field = str(row.get("field") or "").lower()
     if field.endswith(("own_active_name", "own_pokemon_name",
                        "own_name", "own_species")):
-        return bool(str(row.get("raw_text", row.get("candidate", ""))).strip())
+        text = str(row.get("raw_text", row.get("candidate", ""))).strip(
+            "!！?？。._- :：")
+        return len(text) >= 2
     if not field.endswith("battle_message"):
         return False
     text = _compare_text(str(row.get("raw_text", row.get("candidate", ""))))
-    return any(marker in text for marker in ("ゆけっ", "ゆけ", "ゆげっ",
-                                              "ゆげ", "いけっ", "いけ"))
+    for marker in ("ゆけっ", "ゆげっ", "いけっ", "ゆけ", "ゆげ", "いけ"):
+        if marker in text:
+            name_fragment = text.split(marker, 1)[1].strip("!！?？。._- :：")
+            # Do not locally resolve the name. Only check for enough OCR
+            # material for GPT to infer one; 'ゆけっ！' alone is insufficient.
+            return len(name_fragment) >= 3 or bool(row.get("detected_pokemon"))
+    return False
 
 
 def has_ocr_transport_evidence(state: dict, local_rows, *,
