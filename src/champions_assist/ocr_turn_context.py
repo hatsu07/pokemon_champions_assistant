@@ -50,11 +50,13 @@ def _visually_same_ocr_fact(row: dict, field: str, value: str,
     actor_prefix = "相手の" if opponent else "こちらの"
     tail = raw.split(actor_prefix,1)[-1] if actor_prefix in raw else raw
     subject = tail.split("の",1)[0] if "の" in tail else ""
-    if subject and subject not in ("攻撃","こうげき","防御","ぼうぎょ",
-                                  "特攻","とくこう","特防","とくぼう",
-                                  "素早さ","すばやさ","命中","めいちゅう",
-                                  "回避","かいひ","持ち物","もちもの",
-                                  "道具","どうぐ") and observation is not None:
+    non_actor_prefixes = ("攻撃","こうげき","防御","ぼうぎょ",
+                          "特攻","とくこう","特防","とくぼう",
+                          "素早さ","すばやさ","命中","めいちゅう",
+                          "回避","かいひ","持ち物","もちもの",
+                          "道具","どうぐ")
+    if (subject and not subject.startswith(non_actor_prefixes)
+            and observation is not None):
         current = observation.get("opponent_active" if opponent else "our_active")
         if _compare_text(str(current or "")) != subject:
             return False
