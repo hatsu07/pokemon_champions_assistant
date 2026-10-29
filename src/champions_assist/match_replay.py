@@ -1913,7 +1913,16 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
-                "Interpret OCR frames as observed events, return state_updates and action together. "
+                "Interpret OCR frames as observations; return state_updates and action together. "
+                "Before choosing an action, explicitly reconcile known active "
+                "Pokémon, faint, send-out and switch observations in temporal "
+                "order. For each supported active change, faint, item, status "
+                "or boost, return state_updates with evidence_frames and "
+                "certainty. The interpreted_own_active and "
+                "interpreted_opponent_active must match the state AFTER those "
+                "updates. If a prior actor is still the latest grounded actor, "
+                "retain that identity: blank means genuinely unresolved, not "
+                "merely absent from the current menu OCR. "
                 "Evaluate moves for interpreted_own_active after the updates. "
                 "Cite actual OCR frame IDs in evidence_frames for each update. "
                 "Never treat previous recommended moves or switches as executed. "
@@ -1951,8 +1960,11 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "For SWITCH_ONLY return SWITCH with one living selected "
                 "bench member or NO_ACTION; never MOVE/PIVOT. In a confirmed "
                 "forced replacement, the fainted own active may be unknown. "
-                "If so, interpreted_own_active must stay empty unless OCR "
-                "actually proves its identity; choose using the selected "
+                "Only for a confirmed FAINT/replacement may "
+                "interpreted_own_active stay empty when its identity cannot "
+                "be proved; do not blank a verified living own actor just "
+                "because the current switch menu omits its name. "
+                "In a confirmed replacement choose using the selected "
                 "living bench and opponent instead of guessing an actor. "
                 "A switch-screen classifier does not confirm which selected "
                 "party entries are visible. "
@@ -1985,10 +1997,17 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                          row.get("side")=="own" and
                          row.get("kind") in ("SWITCH","SWITCH_OUT","FAINT","MEGA")
                          for row in audit)
-        # On a forced switch screen the fainted outgoing actor may be
-        # genuinely invisible; GPT is instructed to leave it blank.
-        # Do not require a stale actor identity just to select a living bench.
-        actor_missing_on_switch=(switch_only and
+        # Blank actor is legitimate only for an evidenced faint replacement.
+        # SWITCH_SELECTION can also be voluntary switching with a living actor;
+        # an empty GPT actor must not erase or bypass that verified identity.
+        known_fainted=(state.get("battle_evidence") or {}).get(
+            "fainted",{}).get("own",{})
+        own_faint_proven=bool(state.get("awaiting_replacement") and
+                             (known_fainted.get(current) or
+                              str((state.get("battle_evidence") or {}).get(
+                                  "hp_by_pokemon",{}).get("own",{}).get(current,"")
+                              ).startswith(("0/","0 /"))))
+        actor_missing_on_switch=(switch_only and own_faint_proven and
                                  not _canonical(answer.get("interpreted_own_active","")))
         own_mismatch=(combined and not actor_missing_on_switch and
             _canonical(answer.get("interpreted_own_active",""))!=
@@ -2025,6 +2044,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 diagnostic_sink("AI_OCR_OWN_ACTIVE_BLOCK_DETAIL",{
                     "own_update_conflict":bool(own_conflict),
                     "own_identity_mismatch":bool(own_mismatch),
+                    "confirmed_faint_replacement":own_faint_proven,
+                    "awaiting_replacement":bool(state.get("awaiting_replacement")),
                     "screen_label":expected_screen_label,
                     "internal_own":updated.get("our_active") or "",
                     "model_own":answer.get("interpreted_own_active") or "",
