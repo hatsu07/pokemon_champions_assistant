@@ -379,25 +379,58 @@ class MatchEvidenceArchive:
     def read(self, match_id: str) -> dict | None:
         with closing(self._db()) as db:
             row = db.execute("""SELECT metadata_json,metadata_sha,captured_count,
-                                       dropped_count,status FROM p1_evidence_match
+                                       dropped_count,status,team_id,team_sha,
+                                       tactical_version FROM p1_evidence_match
                                 WHERE match_id=?""",(match_id,)).fetchone()
             if not row:
                 return None
-            events = db.execute("""SELECT event_json FROM p1_evidence_events
-                                   WHERE match_id=? ORDER BY ordinal""",
+            events = db.execute("""SELECT ordinal,event_sha,event_json
+                                     FROM p1_evidence_events
+                                    WHERE match_id=? ORDER BY ordinal""",
                                 (match_id,)).fetchall()
             return {"match_id":match_id,"context":json.loads(row[0]),
                     "archive_sha":row[1],"captured_count":row[2],
                     "dropped_count":row[3],"status":row[4],
-                    "events":[json.loads(e[0]) for e in events]}
+                    "team_id":row[5],"team_sha":row[6],
+                    "tactical_version":row[7],
+                    "event_ordinals":[e[0] for e in events],
+                    "event_hashes":[e[1] for e in events],
+                    "events":[json.loads(e[2]) for e in events]}
 
     def verify(self, match_id: str) -> dict:
-        """Read-only integrity check; no after-the-fact event rewrites."""
-        record = self.read(match_id)
-        if record is None:
-            return {"status":"MISSING"}
-        ok = len(record["events"]) == record["captured_count"]
-        ok = ok and all(e.get("_fingerprint") == _event_fingerprint(e)
-                        for e in record["events"])
-        return {"status":"VALID" if ok else "CORRUPT",
-                "count":len(record["events"])}
+        """Verify the COMPLETE originally hashed snapshot, not only events.
+
+        Check DB column copies and original metadata_sha as well as each
+        event's fingerprint. No metadata-only corruption can be VALID.
+        """
+        try:
+            record = self.read(match_id)
+            if record is None:
+                return {"status":"MISSING"}
+            events = record["events"]
+            count = len(events)
+            dropped = record["dropped_count"]
+            status = record["status"]
+            context = record["context"]
+            ok = (isinstance(context, dict)
+                  and type(record["captured_count"]) is int
+                  and count == record["captured_count"]
+                  and type(dropped) is int and dropped >= 0
+                  and status == ("PARTIAL_CAPTURE" if dropped else "CAPTURED_UNVERIFIED")
+                  and context.get("team_id") == record["team_id"]
+                  and context.get("team_sha") == record["team_sha"]
+                  and context.get("tactical_version") == record["tactical_version"]
+                  and record["event_ordinals"] == list(range(count))
+                  and all(e.get("_fingerprint") == stored_hash
+                          and stored_hash == _event_fingerprint(e)
+                          for e, stored_hash in zip(events, record["event_hashes"])))
+            original = {
+                "schema": SCHEMA, "match_id": match_id,
+                "context": context, "events": events, "dropped_events": dropped,
+                "incomplete": dropped > 0, "status": status,
+            }
+            ok = ok and _hash(original) == record["archive_sha"]
+            return {"status":"VALID" if ok else "CORRUPT", "count":count}
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # E.g. corrupted JSON or malformed stored columns: fail closed.
+            return {"status":"CORRUPT"}
