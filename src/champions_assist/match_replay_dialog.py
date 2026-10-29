@@ -2437,7 +2437,20 @@ class MatchReplayDialog(QDialog):
                                     "CANCELLED","SUPERSEDED","BLOCKED"):
                 ledger.mark_stale(self._active_request_id)
             else:
-                ledger.mark_adopted(self._active_request_id)
+                # A screenshot alone never clears the stale-proof safety gate.
+                # Require an adopted, verified current menu with every lost
+                # original row explicitly reconciled to visible on-screen
+                # facts; unresolved tactics remain in visual/NO_ACTION mode.
+                recovery_epoch=ledger.confirmed_visual_recovery_epoch(
+                    report,payload["state"])
+                ledger.mark_adopted(
+                    self._active_request_id,
+                    visual_confirmed=recovery_epoch is not None,
+                    recovery_epoch=recovery_epoch)
+                if recovery_epoch is not None:
+                    self._trace_event("OCR_TEXT_MODE_SAFELY_RESTORED",
+                                      request_id=self._active_request_id,
+                                      guard_epoch=recovery_epoch)
         if report["status"] not in ("ERROR","DEADLINE_EXCEEDED",
                                     "CANCELLED","SUPERSEDED"):
             before=current_state_digest(self.state)
