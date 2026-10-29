@@ -74,9 +74,12 @@ class OcrSentLedger:
                 if rows is not None and len(rows) <= self.MAX_REINSPECT_ROWS
                 and _json_bytes(rows) <= self.MAX_REINSPECT_BYTES else None)
         elif rows is None or self._visual_guard_rows is None:
+            # Concurrent new lost proof invalidates an earlier image review.
+            self._visual_guard_epoch += 1
             # Never replace unknown/unsafe proof with a later "easy" sample.
             self._visual_guard_rows = None
         else:
+            self._visual_guard_epoch += 1
             joint = self._visual_guard_rows + [
                 dict(row) for row in rows if _row_key(row) not in {
                     _row_key(r) for r in self._visual_guard_rows}]
