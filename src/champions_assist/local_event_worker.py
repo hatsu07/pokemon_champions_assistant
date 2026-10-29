@@ -306,7 +306,8 @@ class AsyncBattleEventReader:
                         detected_moves=parsed.detected_moves,
                         detected_pokemon=parsed.detected_pokemon,
                         display_id=display_id,
-                        preprocess_status=preprocess["preprocess"],
+                        preprocess_status=(preprocess["preprocess"]
+                                           if name=="battle_message" else ""),
                         body_rois=tuple(tuple(roi) for roi in preprocess["body_rois"]),
                         ocr_elapsed_ms=ocr_elapsed_ms))
                 except Exception as exc:
