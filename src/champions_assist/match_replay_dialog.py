@@ -455,16 +455,16 @@ class MatchReplayDialog(QDialog):
             "padding: 12px; background: #1d4ed8; color: white;}")
         self.action_banner.setWordWrap(True)
         panel.addWidget(self.action_banner)
-        result_controls=QHBoxLayout()
-        self.confirm_win_button=QPushButton("対戦終了：勝利を手動確定")
-        self.confirm_loss_button=QPushButton("対戦終了：敗北を手動確定")
+        # Legacy test interfaces remain callable but are not shown to users.
+        # Result screen OCR + GPT now owns the automatic outcome flow.
+        self.confirm_win_button=QPushButton("legacy-result-win",self)
+        self.confirm_loss_button=QPushButton("legacy-result-loss",self)
+        self.confirm_win_button.hide()
+        self.confirm_loss_button.hide()
         self.confirm_win_button.clicked.connect(
             lambda:self._finish_match_manually("WIN"))
         self.confirm_loss_button.clicked.connect(
             lambda:self._finish_match_manually("LOSS"))
-        result_controls.addWidget(self.confirm_win_button)
-        result_controls.addWidget(self.confirm_loss_button)
-        panel.addLayout(result_controls)
         self.status=QLabel("未開始 / 自動送信は停止中")
         panel.addWidget(self.status)
         self.ai_status_label=QLabel(self._ai_last_status)
@@ -1753,9 +1753,13 @@ class MatchReplayDialog(QDialog):
                 # NEVER a direct WIN/LOSS determination or a new tactical call.
                 classified=self._screen_gate.observe(prediction,phase)
                 if classified=="RESULT_SCREEN":
-                    if getattr(self._screen_model,"experimental",False):
-                        self._trace_event("RESULT_SCREEN_TRIAL_REQUIRES_MANUAL_CONFIRMATION")
-                    elif phase=="BATTLE":
+                    # A trial model still triggers the SAME evidence-grounded
+                    # GPT verification; the classifier alone never decides WIN.
+                    self._trace_event("RESULT_SCREEN_OCR_GPT_GATE",
+                        experimental=bool(getattr(self._screen_model,"experimental",False)),
+                        confidence=round(prediction.confidence,3),
+                        margin=round(prediction.margin,3))
+                    if phase=="BATTLE":
                         self._note_stable_result_screen()
                     classified=None
                 if (prediction.label=="BATTLE_EVENT"
@@ -2568,6 +2572,8 @@ class MatchReplayDialog(QDialog):
         self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
                           frame_id=frame,stable_frames=2,
                           pending_prior_ocr=len(pending))
+        self._render({"status":"RESULT_VERIFICATION_PENDING",
+                      "message":"結果画面を検出。直前の戦闘OCRをGPTで確認中。"})
         QTimer.singleShot(0,self._attempt_result_screen_verification)
 
     def _attempt_result_screen_verification(self):
@@ -2590,6 +2596,10 @@ class MatchReplayDialog(QDialog):
         pending=[frame for frame in candidate["pending_ocr_frames"]
                  if frame in self._ocr_capture_epochs]
         if pending:
+            if not candidate.get("wait_logged"):
+                candidate["wait_logged"]=True
+                self._trace_event("RESULT_OCR_BARRIER_WAIT",
+                                  pending_count=len(pending))
             reader=self._local_event_reader
             if reader is None or not reader.enabled:
                 # The OCR engine stopped before its queued work completed.
@@ -2599,13 +2609,17 @@ class MatchReplayDialog(QDialog):
                     self._trace_event("PRE_RESULT_BATTLE_OCR_UNAVAILABLE",
                                       pending_count=len(pending))
                     self._set_ai_status(
-                        "終了前のバトルメッセージOCRが未完了のまま停止しました。"
-                        "ゲーム内の勝敗を確認して手動で確定してください。")
+                        "終了前の戦闘OCRが利用不能で勝敗未確定です。")
+                    self._render({"status":"RESULT_UNCONFIRMED",
+                                  "reason":"PRE_RESULT_BATTLE_OCR_UNAVAILABLE"})
                 return
             # Battle has ended: do not impose a 45-second action deadline or
             # a fabricated 1.5/3-second OCR cutoff. UI stays responsive.
             QTimer.singleShot(250,self._attempt_result_screen_verification)
             return
+        self._trace_event("RESULT_OCR_BARRIER_RELEASED",
+                          pending_prior_ocr=0,
+                          waited=bool(candidate.get("wait_logged")))
         assets=self.assets
         evidence=self._local_battle_tracker.snapshot(
             at_or_before=candidate["time"],
@@ -2620,8 +2634,9 @@ class MatchReplayDialog(QDialog):
             self._trace_event("PRE_RESULT_BATTLE_OCR_EMPTY",
                               frame_id=candidate["frame"])
             self._set_ai_status(
-                "結果画面は検出しましたが、直前のバトルメッセージOCRがありません。"
-                "手動で勝敗を確定してください。")
+                "結果画面検出・直前の戦闘OCRがなく勝敗未確定です。")
+            self._render({"status":"RESULT_UNCONFIRMED",
+                          "reason":"NO_RESULT_OCR_EVIDENCE"})
             return
         if self._thread is not None:
             self._retire_active_worker("RESULT_SCREEN_VERIFICATION")
@@ -3068,7 +3083,7 @@ class MatchReplayDialog(QDialog):
             self._last_selection_text=""
         if report.get("status") in (
                 "NO_ACTION","BLOCKED","ERROR","CANCELLED","DEADLINE_EXCEEDED",
-                "SUPERSEDED","MATCH_END"):
+                "SUPERSEDED","MATCH_END","RESULT_UNCONFIRMED"):
             # OCR text-only reports may omit screen. This must not resurrect
             # a prior action when a fresh turn produced no legal advice.
             self._last_action_text=""
@@ -3084,6 +3099,10 @@ class MatchReplayDialog(QDialog):
             else self._last_selection_text or "選出：未提示")
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
+        elif report.get("status")=="RESULT_UNCONFIRMED":
+            action_text="結果画面検出・勝敗未確定（GPTが証拠を確認できません）"
+        elif report.get("status")=="RESULT_VERIFICATION_PENDING":
+            action_text="結果画面検出・直前の戦闘OCRからGPT判定中"
         elif report.get("status")=="AI_REQUEST_QUEUED":
             action_text=("交代先を判定中（倒れたポケモンの技は無効）"
                          if report.get("screen_label_hint")=="SWITCH_SELECTION"
