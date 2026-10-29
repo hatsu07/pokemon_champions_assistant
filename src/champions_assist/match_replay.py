@@ -1682,7 +1682,7 @@ def _result_quote_direction_consistent(result: str, evidence: str) -> bool:
     import re
     if result not in ("WIN","LOSS"):
         return False
-    phrase=re.sub(r"\\s+","",unicodedata.normalize("NFKC",str(evidence).casefold()))
+    phrase=re.sub(r"\s+","",unicodedata.normalize("NFKC",str(evidence).casefold()))
     outcome_words=re.findall(r"との勝負に(勝った|負けた)",phrase)
     if outcome_words:
         # Two opposite result messages in one OCR source are ambiguous.
