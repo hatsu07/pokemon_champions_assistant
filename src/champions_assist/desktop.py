@@ -981,6 +981,7 @@ class DesktopMainWindow(QMainWindow):
             "CACHE_INCOMPLETE": "キャッシュ評価未完成",
             "INTERRUPTED_BY_NEW_BATTLE_SCREEN": "対戦画面優先により中断",
             "DEADLINE_EXCEEDED": "期限超過・未完成",
+            "INCOMPLETE_DEADLINE": "40秒期限・PREP未完成",
         }
         prep_label = prep_names.get(prep_raw,prep_raw)
         if state.get("selection_assumed"):
@@ -1047,7 +1048,14 @@ class DesktopMainWindow(QMainWindow):
             self.recommendation_label.setText("行動推奨なし：" + str(report.get("reason") or status))
         elif status == "MATCH_END":
             self.recommendation_label.setText(suggestion or "対戦終了")
-        elif status in ("OBSERVED", "RESULT_UNCONFIRMED"):
+        elif status == "RESULT_VERIFICATION_PENDING":
+            self.recommendation_label.setText(
+                "結果画面を検出。直前の戦闘メッセージOCRをGPTで判定中。")
+        elif status == "RESULT_UNCONFIRMED":
+            self.recommendation_label.setText(
+                "結果画面は検出しましたが勝敗未確定（"+
+                str(report.get("reason") or "GPTの根拠不足")+"）。")
+        elif status == "OBSERVED":
             if report.get("screen")=="COMMAND_MENU":
                 self.recommendation_label.setText(
                     "『たたかう』を選択し、技一覧を表示してください。"
