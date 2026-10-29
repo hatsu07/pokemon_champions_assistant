@@ -40,7 +40,7 @@ class LocalFieldRead:
     status: str = "CANDIDATE"
     display_id: str = ""
     preprocess_status: str = ""
-    body_rois: tuple[tuple[int, int, int, int], ...] = ()
+    ruby_mask_rois: tuple[tuple[int, int, int, int], ...] = ()
     ocr_elapsed_ms: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -53,7 +53,7 @@ class LocalFieldRead:
             certainty=self.status, game_validated=False,
             **({"display_id":self.display_id} if self.display_id else {}),
             **({"preprocess":self.preprocess_status,
-                "body_rois":[list(roi) for roi in self.body_rois],
+                "ruby_mask_rois":[list(roi) for roi in self.ruby_mask_rois],
                 "ocr_elapsed_ms":self.ocr_elapsed_ms}
                if self.preprocess_status else {}),
         )
@@ -308,7 +308,7 @@ class AsyncBattleEventReader:
                         display_id=display_id,
                         preprocess_status=(preprocess["preprocess"]
                                            if name=="battle_message" else ""),
-                        body_rois=tuple(tuple(roi) for roi in preprocess["body_rois"]),
+                        ruby_mask_rois=tuple(tuple(roi) for roi in preprocess["ruby_mask_rois"]),
                         ocr_elapsed_ms=ocr_elapsed_ms))
                 except Exception as exc:
                     record_exception("LOCAL_OCR_ROI_ERROR", exc, stage="OCR_ROI")
