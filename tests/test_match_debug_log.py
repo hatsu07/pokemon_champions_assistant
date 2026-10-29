@@ -251,6 +251,62 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
             self.assertEqual(response["authKey"],"[REDACTED]")
             self.assertEqual(response["status"],"UNKNOWN")
 
+    def test_cloud_access_keys_are_masked_in_saved_gpt_jsonl(self):
+        # These are representative cloud credentials, not a guarantee that
+        # arbitrary secrets in OCR/LLM text can be detected.
+        secret_access="AWS_SECRET_ACCESS_SAMPLE_123456"
+        key_id="AWS_ACCESS_KEY_ID_SAMPLE_123456"
+        azure_key="AZURE_STORAGE_ACCESS_KEY_123456"
+        with tempfile.TemporaryDirectory() as root:
+            logfile=PrivateAiExchangeLog(root,match_id="capture-"+"d"*32)
+            source={"aws_secret_access_key":secret_access,
+                    "aws_access_key_id":key_id,
+                    "azure_storage_account_key":azure_key,
+                    "safe_event":"交代しました"}
+            logfile.write("GPT_REQUEST",{
+                "content":[
+                    {"type":"input_text","text":json.dumps(source,ensure_ascii=False)},
+                    {"type":"input_text",
+                     "text":'prefix {"aws_access_key_id":"'+key_id+'"} suffix'},
+                    {"type":"input_text","text":"no sensitive material"},
+                ],
+                "metadata":{"aws_secret_access_key":secret_access,
+                            "aws_access_key_id":key_id,
+                            "safe":"still visible"},
+            })
+            logfile.write("GPT_RESPONSE",{
+                "answer":json.dumps({
+                    "aws_secret_access_key":secret_access,
+                    "aws_access_key_id":key_id,
+                    "status":"UNKNOWN"}),
+            })
+            logfile.queue.join()
+            logfile.close()
+            disk=logfile.path.read_text(encoding="utf-8")
+            for secret in (secret_access,key_id,azure_key):
+                self.assertNotIn(secret,disk)
+            records=[json.loads(line) for line in disk.splitlines()]
+            self.assertEqual(len(records),2)
+            request=records[0]["payload"]
+            parsed=json.loads(request["content"][0]["text"])
+            for key in ("aws_secret_access_key","aws_access_key_id",
+                        "azure_storage_account_key"):
+                self.assertEqual(parsed[key],"[REDACTED]")
+            self.assertEqual(parsed["safe_event"],"交代しました")
+            self.assertEqual(request["content"][1]["text"],
+                             "[REDACTED_SENSITIVE_TEXT]")
+            self.assertEqual(request["content"][2]["text"],
+                             "no sensitive material")
+            self.assertEqual(request["metadata"]["aws_secret_access_key"],
+                             "[REDACTED]")
+            self.assertEqual(request["metadata"]["aws_access_key_id"],
+                             "[REDACTED]")
+            self.assertEqual(request["metadata"]["safe"],"still visible")
+            response=json.loads(records[1]["payload"]["answer"])
+            self.assertEqual(response["aws_secret_access_key"],"[REDACTED]")
+            self.assertEqual(response["aws_access_key_id"],"[REDACTED]")
+            self.assertEqual(response["status"],"UNKNOWN")
+
     def test_unsafe_content_is_stripped_from_disk_and_only_codes_remain(self):
         with tempfile.TemporaryDirectory() as root:
             logfile=MatchDebugLog(root)
