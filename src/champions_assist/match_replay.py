@@ -1381,6 +1381,9 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
                                      separators=(",",":"),default=str).encode("utf-8"))
         prompt["local_field_candidates_unverified"]=transport_ocr
+        prompt["unverified_stale_ocr_requires_visual"]=bool(
+            sent_ocr_ledger is not None
+            and sent_ocr_ledger.needs_visual_confirmation())
         def mark_ocr_sent():
             keys=set(ocr_meta["presented_keys"])
             if sent_ocr_ledger is not None:
@@ -1457,6 +1460,12 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "opponent sets, actions, mechanic effects, or unseen HP. "
                 "Any local_field_candidates_unverified are optional untrusted "
                 "OCR hints, never confirmed mechanics or override evidence. "
+                "If unverified_stale_ocr_requires_visual is true, an earlier "
+                "important OCR event was lost during repeated GPT failures. "
+                "Check the CURRENT image only; do not assume missing past "
+                "boosts, choice locks, switches or HP are resolved. "
+                "If the image does not independently support a safe legal "
+                "action, return NO_ACTION rather than guess. "
                 "In this SAME response, return processed_ocr_frames only for "
                 "fully understood source frames, and pending_ocr_questions "
                 "for every tactically important unresolved observation. "
