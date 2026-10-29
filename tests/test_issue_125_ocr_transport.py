@@ -80,6 +80,22 @@ class Issue125TransportTests(unittest.TestCase):
                         len(original))
         self.assertEqual(json.dumps(records, ensure_ascii=False), original)
 
+    def test_same_frame_multiple_readings_keep_distinct_original_keys(self):
+        texts = ["ゆけっ！ゲンガー！", "ゆけっ!ゲンガー！"]
+        records = [
+            ocr("shared-frame", texts[i % 2], display_id="same-display",
+                timestamp=10.0 + i * 0.01)
+            for i in range(12)
+        ]
+        self.assertEqual(len(set(r["frame_id"] for r in records)), 1)
+        self.assertEqual(len(set(_row_key(r) for r in records)), 2)
+        compact = compact_ocr_transport(records)
+        self.assertEqual(len(compact), 1)
+        self.assertEqual(compact[0]["source_frames"],
+                         ["shared-frame"] * 12)
+        self.assertEqual(compact[0]["source_row_keys"],
+                         [_row_key(row) for row in records])
+
     def test_fuzzy_or_opposite_messages_never_coalesce(self):
         records = [
             ocr("up", "相手の攻撃が上がった！", display_id="same-visual"),
