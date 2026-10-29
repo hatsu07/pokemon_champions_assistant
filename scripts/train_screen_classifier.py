@@ -287,7 +287,7 @@ def preflight_training_export():
 
 
 def ensure_fresh_output(output_dir: Path) -> None:
-    """Never silently replace an earlier training result."""
+    """Reject old outputs and test the real output mount before GPU training."""
     output_dir.mkdir(parents=True,exist_ok=True)
     for name in ("champions_screen_classifier.onnx","champions_screen_classifier.json"):
         path=output_dir/name
@@ -296,6 +296,23 @@ def ensure_fresh_output(output_dir: Path) -> None:
                 f"Existing training artifact would be overwritten: {path}. "
                 "Use --archive-output to create a new run directory."
             )
+    # Production publishes via os.link() from a staging directory below this
+    # same output mount. Probe the actual WSL/Docker bind mount *before* epochs.
+    # TemporaryDirectory cleans up both probe files on success or failure.
+    with tempfile.TemporaryDirectory(prefix=".link-preflight-",dir=output_dir) as probe:
+        source=Path(probe)/"source"
+        destination=output_dir/(Path(probe).name+"-linked")
+        source.write_bytes(b"screen-classifier-link-probe")
+        try:
+            os.link(source,destination)
+        except OSError as exc:
+            raise TrainingPreflightError(
+                f"Training output mount does not support safe hard-link publication: "
+                f"{output_dir} ({exc}). Choose a hard-link-capable output mount."
+            ) from exc
+        finally:
+            destination.unlink(missing_ok=True)
+    print("[preflight] output mount supports hard-link publication",flush=True)
 
 
 def verify_training_export(model_path: Path, manifest_path: Path) -> None:
@@ -329,13 +346,15 @@ def publish_training_export(staged_model: Path, staged_manifest: Path,
     """Publish a verified pair without replacing any old file, even in a race.
 
     Staging lives under output_dir so hard links are on the same filesystem.
+    Publish JSON first and ONNX last: SIGKILL between the two links cannot
+    leave a discoverable standalone ONNX without its completed sidecar.
     If creating the second link fails, only links made by this call are removed.
     """
     created=[]
     try:
         for source,name in (
-            (staged_model,"champions_screen_classifier.onnx"),
             (staged_manifest,"champions_screen_classifier.json"),
+            (staged_model,"champions_screen_classifier.onnx"),
         ):
             target=output_dir/name
             os.link(source,target)
