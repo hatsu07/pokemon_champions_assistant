@@ -222,7 +222,8 @@ class _ReplayWorker(QObject):
                     "OCRテキストによるAI判断中（結果待ち）"
                     if _text_action_eligible(
                         self.screen_label,self.state,self.assets,
-                        local_rows=self.local_field_candidates)
+                        local_rows=self.local_field_candidates,
+                        sent_ocr_ledger=self.sent_ocr_ledger)
                     else "必要情報不足のため画像確認中（結果待ち）")
                 local_candidates=self.local_field_candidates
                 if self.state.get("phase") in ("MATCHMAKING","SELECTION"):
@@ -237,7 +238,8 @@ class _ReplayWorker(QObject):
                 else:
                     if _text_action_eligible(
                             self.screen_label,self.state,self.assets,
-                            local_rows=local_candidates):
+                            local_rows=local_candidates,
+                            sent_ocr_ledger=self.sent_ocr_ledger):
                         next_state,report=run_replay_text_action(
                             state=self.state,assets=self.assets,
                             access_token=token,model=self.selected_model,
@@ -1552,7 +1554,8 @@ class MatchReplayDialog(QDialog):
         self._pending_screen_label=None
         self._turn_buffer.reset_turn()
         text_only=_text_action_eligible(
-            screen_label,self.state,self.assets,local_rows=local_candidates)
+            screen_label,self.state,self.assets,local_rows=local_candidates,
+            sent_ocr_ledger=self._ocr_sent_ledger)
         planned_image_count=0 if text_only else len(frames)
         self._ai_request_attempts+=1
         self._active_request_started=monotonic()
