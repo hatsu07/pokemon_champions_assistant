@@ -1280,9 +1280,30 @@ _BATCH_SCHEMA = {
         "selection":CHOICE_SCHEMA,
         "processed_ocr_frames":AI_OCR_TURN_SCHEMA["properties"]["processed_ocr_frames"],
         "pending_ocr_questions":AI_OCR_TURN_SCHEMA["properties"]["pending_ocr_questions"],
+        "stale_visual_check":{
+            "type":"object","additionalProperties":False,
+            "properties":{
+                "confirmed_source_fields":{
+                    "type":"array","items":{
+                        "type":"object","additionalProperties":False,
+                        "properties":{
+                            "source_row_key":{"type":"string"},
+                            "field":{"type":"string"},
+                        },
+                        "required":["source_row_key","field"],
+                    },
+                },
+                "unresolved_source_row_keys":{
+                    "type":"array","items":{"type":"string"},
+                },
+            },
+            "required":["confirmed_source_fields",
+                        "unresolved_source_row_keys"],
+        },
     },
     "required":["observation","action","selection",
-                "processed_ocr_frames","pending_ocr_questions"],
+                "processed_ocr_frames","pending_ocr_questions",
+                "stale_visual_check"],
 }
 
 
@@ -1384,6 +1405,19 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
         prompt["unverified_stale_ocr_requires_visual"]=bool(
             sent_ocr_ledger is not None
             and sent_ocr_ledger.needs_visual_confirmation())
+        # Only a bounded, unverified subset is shown again for visual
+        # reconciliation. No lost OCR is automatically treated as true.
+        prompt["stale_visual_proof_to_reconcile"]=([
+            {"source_row_key":__import__("hashlib").sha256(
+                json.dumps((row.get("frame_id",""),row.get("field",""),
+                            row.get("raw_text",row.get("candidate",""))),
+                           ensure_ascii=False,separators=(",",":"))
+                           .encode("utf-8")).hexdigest()[:24],
+             "frame_id":row.get("frame_id"),"field":row.get("field"),
+             "raw_text":row.get("raw_text",row.get("candidate",""))}
+            for row in sent_ocr_ledger.visual_guard_rows()]
+            if sent_ocr_ledger is not None and
+               sent_ocr_ledger.needs_visual_confirmation() else [])
         def mark_ocr_sent():
             keys=set(ocr_meta["presented_keys"])
             if sent_ocr_ledger is not None:
@@ -1464,8 +1498,17 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "important OCR event was lost during repeated GPT failures. "
                 "Check the CURRENT image only; do not assume missing past "
                 "boosts, choice locks, switches or HP are resolved. "
-                "If the image does not independently support a safe legal "
-                "action, return NO_ACTION rather than guess. "
+                "stale_visual_proof_to_reconcile is UNVERIFIED past OCR: "
+                "for each source_row_key, cite one specific observation field "
+                "that is DIRECTLY VISIBLE NOW in this actual screenshot and "
+                "resolves its uncertainty, or list the source_row_key in "
+                "unresolved_source_row_keys. Do not invent visibility, presume "
+                "boosts or move locks reset, or treat a guessed old event as "
+                "confirmed. Use confirmed_source_fields only with an exact "
+                "visible observation field and a matching nonempty value. "
+                "For all ordinary images return empty arrays in "
+                "stale_visual_check. If unresolved proof affects action "
+                "safety, return NO_ACTION rather than guess. "
                 "In this SAME response, return processed_ocr_frames only for "
                 "fully understood source frames, and pending_ocr_questions "
                 "for every tactically important unresolved observation. "
@@ -1544,6 +1587,7 @@ def run_replay_batch(images: list, *, state: dict, assets: FrozenMatchAssets,
                 "state_revision":updated.get("_live_state_revision",0),
             })
         result.update(
+            stale_visual_check=answer.get("stale_visual_check") or {},
             image_prepare_ms=image_prepare_ms,
             api_total_ms=round((perf_counter()-api_started)*1000)-validation_ms,
             api_first_event_ms=stages.get("first_event_ms",0),
