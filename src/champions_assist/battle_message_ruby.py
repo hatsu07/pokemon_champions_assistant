@@ -1,9 +1,8 @@
-"""Conservative, single-input ruby exclusion for Champions battle-message OCR.
+"""Conservative ruby-band masking for one- and two-line battle messages.
 
-Coordinates are provisional measurements from three 960x572 screenshots, NOT
-a verified UI layout. The live path requires a game-validated calibration;
-unvalidated images can be previewed only in the local, no-network diagnostic.
-Never OCR both the original message and the composite in the same event.
+Keep the original calibrated message ROI and mask only two ruby rows. Never
+remove/reflow the main text or call OCR twice. Live use requires explicit
+ruby-band calibration; the local diagnostic can preview unvalidated regions.
 """
 from __future__ import annotations
 
@@ -14,11 +13,10 @@ from .calibrated_screen_fields import FieldRegion, ScreenFieldProfile
 
 _REFERENCE = (960, 572)
 _EXPECTED_REGION = (141, 412, 540, 505)
-# Half-open boundaries include every measured body pixel, but neither ruby row.
-_BODY_ROWS = ((430, 454), (464, 489))
-# Proven sample messages stay within the pre-existing right edge of X=540.
-# A wider text region must be separately calibrated from long real messages.
-_TEXT_X = (141, 540)
+# Half-open reference bands: small ruby glyphs above body rows whose observed
+# main text begins at approximately Y434 and Y466 on the three sample frames.
+# Masking both bands is independent of the number of actual message lines.
+_RUBY_BANDS = ((423, 432), (454, 464))
 
 
 def _has_black_capture_bars(image: np.ndarray) -> bool:
@@ -41,13 +39,13 @@ def _current_frame_body_anchor_matches(image: np.ndarray) -> bool:
     """
     h, w = image.shape[:2]
     x0, x1 = round(150 * w / 960), round(215 * w / 960)
-    y0, y1 = round(420 * h / 572), round(493 * h / 572)
+    y0, y1 = round(420 * h / 572), round(520 * h / 572)
     patch = image[y0:y1, x0:x1]
     if patch.size == 0:
         return False
     # Resolve relative pixel geometry at a single reference size so 1x, 1.5x
     # and 2x follow the same conservative tolerance for each body line.
-    patch = cv2.resize(patch, (65, 73), interpolation=cv2.INTER_AREA)
+    patch = cv2.resize(patch, (65, 100), interpolation=cv2.INTER_AREA)
     lo = patch.min(axis=2).astype(np.int16)
     hi = patch.max(axis=2).astype(np.int16)
     # A fixed absolute threshold sees a uniformly light synthetic/game
@@ -68,12 +66,12 @@ def _current_frame_body_anchor_matches(image: np.ndarray) -> bool:
             start = None
     first = lambda pair: 432 <= pair[0] <= 438 and 447 <= pair[1] <= 452
     second = lambda pair: 465 <= pair[0] <= 470 and 478 <= pair[1] <= 484
-    # An apparently valid first line DOES NOT prove the second line stayed
-    # within its body band. One-line messages are legitimate, but we cannot
-    # reliably distinguish them from a displaced second line from this crop.
-    # Only optimize a verified two-line layout; all single/ambiguous cases
-    # retain the original full message ROI and its one OCR call.
-    return len(runs) == 2 and first(runs[0]) and second(runs[1])
+    # The ROI itself remains intact in either case. A second line is optional:
+    # when present it must have its expected baseline. An extra/moved main-text
+    # run is unsafe because it may cross a fixed ruby-band mask.
+    return bool(runs) and len(runs) <= 2 and first(runs[0]) and (
+        len(runs) == 1 or second(runs[1])
+    )
 
 
 def prepare_battle_message(
@@ -89,7 +87,8 @@ def prepare_battle_message(
     """
     original = profile.crop(image, region)
     info = {"preprocess": "NOT_APPLICABLE", "body_rois": [],
-            "ruby_excluded": False, "game_validated": False}
+            "ruby_mask_rois": [], "ruby_excluded": False,
+            "game_validated": False}
     if region.name != "battle_message" or region.kind != "MESSAGE":
         return original, info
     if not enabled:
@@ -121,42 +120,39 @@ def prepare_battle_message(
         info["preprocess"] = "BODY_ANCHOR_MISMATCH"
         return original, info
 
-    x0, x1 = (round(_TEXT_X[0] * width / _REFERENCE[0]),
-              round(_TEXT_X[1] * width / _REFERENCE[0]))
-    bands, rois = [], []
-    for top, bottom in _BODY_ROWS:
-        y0 = round(top * height / _REFERENCE[1])
-        y1 = round(bottom * height / _REFERENCE[1])
-        if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
-            info["preprocess"] = "INVALID_BODY_GEOMETRY"
+    # Never crop or reflow either main text line. Start with the existing
+    # profile-limited ROI (including its usual 2x resolution cap).
+    result = np.ascontiguousarray(original.copy())
+    reference_y = region.bounds_px[1]
+    reference_h = region.bounds_px[3] - reference_y
+    reference_x = region.bounds_px[0]
+    reference_w = region.bounds_px[2] - reference_x
+    mask_rois = []
+    for top, bottom in _RUBY_BANDS:
+        y0 = round((top - reference_y) * result.shape[0] / reference_h)
+        y1 = round((bottom - reference_y) * result.shape[0] / reference_h)
+        if y0 <= 0 or y1 >= result.shape[0] or y0 >= y1:
+            info["preprocess"] = "INVALID_RUBY_MASK_GEOMETRY"
             return original, info
-        band = image[y0:y1, x0:x1]
-        if band.size == 0:
-            info["preprocess"] = "EMPTY_BODY"
-            return original, info
-        bands.append(band)
-        rois.append([x0, y0, x1, y1])
-
-    # The background-colored spacer keeps the two body lines separate for
-    # PP-OCR detection, with a single call to the existing OCR engine.
-    margin = bands[0][:, :min(12, bands[0].shape[1])]
-    background = np.median(margin, axis=(0, 1)).astype(np.uint8)
-    gap = max(8, round(10 * height / _REFERENCE[1]))
-    spacer = np.empty((gap, x1 - x0, 3), dtype=np.uint8)
-    spacer[:] = background
-    composite = np.concatenate((bands[0], spacer, bands[1]), axis=0)
-    # Match the existing 2x cap without shrinking native 1x/1.5x glyphs.
-    max_width = 2 * (_TEXT_X[1] - _TEXT_X[0])
-    if composite.shape[1] > max_width:
-        scale = max_width / composite.shape[1]
-        composite = cv2.resize(composite, (max_width,
-                              max(1, round(composite.shape[0] * scale))),
-                              interpolation=cv2.INTER_AREA)
+        # Linear vertical interpolation preserves the changing battle backdrop
+        # better than a flat black/white rectangle, with no text detection or
+        # extra OCR call. Source rows are outside the overwritten mask.
+        upper = result[y0 - 1].astype(np.float32)
+        lower = result[y1].astype(np.float32)
+        for row in range(y0, y1):
+            t = (row - y0 + 1) / (y1 - y0 + 1)
+            result[row] = np.rint(upper * (1 - t) + lower * t).astype(np.uint8)
+        mask_rois.append([
+            round(reference_x * width / _REFERENCE[0]),
+            round(top * height / _REFERENCE[1]),
+            round((reference_x + reference_w) * width / _REFERENCE[0]),
+            round(bottom * height / _REFERENCE[1]),
+        ])
     info.update(
-        preprocess=("BODY_LINES_CALIBRATED" if calibrated
-                    else "BODY_LINES_PREVIEW_ONLY"),
-        body_rois=rois,
+        preprocess=("RUBY_MASK_CALIBRATED" if calibrated
+                    else "RUBY_MASK_PREVIEW_ONLY"),
+        ruby_mask_rois=mask_rois,
         ruby_excluded=True,
         game_validated=bool(calibrated),
     )
-    return np.ascontiguousarray(composite), info
+    return result, info
