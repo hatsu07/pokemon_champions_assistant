@@ -50,7 +50,8 @@ class SampleScreenFieldTests(unittest.TestCase):
             "system_message", "selection_own_list", "selection_opponent_list",
             "switch_party_list", "switch_detail_panel", "turn_command_timer",
         }
-        self.assertTrue(excluded.isdisjoint(
+        self.assertIn("system_message",{r.name for r in self.profile.regions})
+        self.assertTrue((excluded-{"system_message"}).isdisjoint(
             {r.name for r in self.profile.regions}))
         legacy_regions = (
             FieldRegion("system_message", "MESSAGE", (317,47,667,116),
@@ -68,7 +69,7 @@ class SampleScreenFieldTests(unittest.TestCase):
         )
         legacy = ScreenFieldProfile(
             self.profile.reference_resolution,
-            self.profile.regions + legacy_regions,
+            tuple(r for r in self.profile.regions if r.name!="system_message") + legacy_regions,
             "OLD_CALIBRATION",
             False,
         )

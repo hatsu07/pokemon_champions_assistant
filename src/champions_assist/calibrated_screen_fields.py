@@ -24,8 +24,9 @@ from .roi import NormalizedROI
 class FieldRegion:
     name: str
     kind: str
-    bounds_px: tuple[int, int, int, int]
+    bounds_px: tuple[int, int, int, int] | None
     applicable_labels: tuple[str, ...]
+    bounds_normalized: tuple[float, float, float, float] | None = None
 
 
 # Old user calibration files may still contain these regions. They are
@@ -33,7 +34,6 @@ class FieldRegion:
 # image-analysis path; the turn timer uses the local screen-detection clock.
 # The upper system notice about input not reaching the server is not tactical.
 IGNORED_OCR_ROIS = frozenset({
-    "system_message",
     "selection_own_list", "selection_opponent_list",
     "switch_party_list", "switch_detail_panel", "turn_command_timer",
 })
@@ -46,6 +46,10 @@ _SAMPLE_960 = (
     FieldRegion("opponent_hp_percent", "HP_PERCENT", (868, 57, 932, 88), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("own_active_name", "TEXT", (75, 489, 184, 526), ("TURN_ACTION", "BATTLE_EVENT")),
     FieldRegion("opponent_active_name", "TEXT", (777, 14, 877, 49), ("TURN_ACTION", "BATTLE_EVENT")),
+    # Tentative position only; live confirmation requires private viewport calibration.
+    FieldRegion("system_message", "MESSAGE", None,
+                ("TURN_ACTION","SWITCH_SELECTION","BATTLE_EVENT"),
+                (0.31,0.085,0.73,0.19)),
     FieldRegion("battle_message", "MESSAGE", (141, 412, 540, 505), ("BATTLE_EVENT",)),
     FieldRegion("opponent_effect_popup", "MESSAGE", (754, 195, 941, 284), ("BATTLE_EVENT",)),
     FieldRegion("own_item_popup", "MESSAGE", (58, 194, 267, 279), ("BATTLE_EVENT",)),
@@ -85,18 +89,31 @@ class ScreenFieldProfile:
             name = raw.get("name")
             kind = raw.get("kind")
             bounds = raw.get("bounds_px")
+            normalized = raw.get("bounds_normalized")
             labels = raw.get("applicable_labels")
             if not isinstance(name, str) or not name.isidentifier() or name in seen:
                 raise ValueError("region needs a unique identifier")
             if kind not in valid_kinds or not isinstance(labels, list) or not labels or not set(labels) <= valid_labels:
                 raise ValueError("invalid region kind/labels")
-            if not isinstance(bounds, list) or len(bounds) != 4 or any(type(v) is not int for v in bounds):
+            if normalized is not None:
+                if (name != "system_message" or not isinstance(normalized,list)
+                        or len(normalized)!=4
+                        or any(type(v) not in (float,int) for v in normalized)):
+                    raise ValueError("normalized bounds reserved for system notice")
+                x0,y0,x1,y1=normalized
+                if not (0<=x0<x1<=1 and 0<=y0<y1<=1):
+                    raise ValueError("normalized region outside viewport")
+            elif not isinstance(bounds,list) or len(bounds)!=4 or any(type(v) is not int for v in bounds):
                 raise ValueError("invalid region pixel bounds")
-            x0, y0, x1, y1 = bounds
-            if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
-                raise ValueError("region is outside calibrated capture")
+            if bounds is not None:
+                if not isinstance(bounds,list) or len(bounds)!=4 or any(type(v) is not int for v in bounds):
+                    raise ValueError("invalid region pixel bounds")
+                x0,y0,x1,y1=bounds
+                if not (0<=x0<x1<=width and 0<=y0<y1<=height):
+                    raise ValueError("region outside calibrated capture")
             seen.add(name)
-            regions.append(FieldRegion(name, kind, tuple(bounds), tuple(labels)))
+            regions.append(FieldRegion(name,kind,tuple(bounds) if bounds is not None else None,
+                                       tuple(labels),tuple(normalized) if normalized is not None else None))
         return cls(
             (width, height), tuple(regions),
             str(payload.get("source", "PRIVATE_LOCAL_SCREEN_CALIBRATION")),
@@ -110,9 +127,11 @@ class ScreenFieldProfile:
             "source": self.source,
             "validated_on_game_capture": self.validated_on_game_capture,
             "regions": [
-                {"name": item.name, "kind": item.kind,
-                 "bounds_px": list(item.bounds_px),
-                 "applicable_labels": list(item.applicable_labels)}
+                {"name":item.name,"kind":item.kind,
+                 **({"bounds_px":list(item.bounds_px)} if item.bounds_px is not None else {}),
+                 **({"bounds_normalized":list(item.bounds_normalized)}
+                    if item.bounds_normalized is not None else {}),
+                 "applicable_labels":list(item.applicable_labels)}
                 for item in self.regions
             ],
         }
@@ -127,12 +146,20 @@ class ScreenFieldProfile:
         # until a real-game calibration profile is validated.
         actual_width,actual_height=image.shape[1],image.shape[0]
         aspect_error=abs((actual_width/actual_height)/(width/height)-1.0)
-        return actual_width>=width and actual_height>=height and aspect_error<=0.015
+        return actual_width>0 and actual_height>0 and aspect_error<=0.015
 
     def crop(self, image: np.ndarray, region: FieldRegion) -> np.ndarray:
         width, height = self.reference_resolution
-        x0, y0, x1, y1 = region.bounds_px
-        crop=NormalizedROI(region.name, x0 / width, y0 / height, x1 / width, y1 / height).crop(image)
+        if region.bounds_normalized is not None:
+            rx0,ry0,rx1,ry1=region.bounds_normalized
+            x0,y0,x1,y1=(round(rx0*width),round(ry0*height),
+                         round(rx1*width),round(ry1*height))
+        else:
+            if region.bounds_px is None:
+                raise ValueError("ROI has no bounds")
+            x0,y0,x1,y1=region.bounds_px
+            rx0,ry0,rx1,ry1=x0/width,y0/height,x1/width,y1/height
+        crop=NormalizedROI(region.name,rx0,ry0,rx1,ry1).crop(image)
         if (image.shape[1],image.shape[0])!=(width,height):
             # Do not destroy small Japanese glyphs by downscaling a 3.5x
             # native image all the way to the 960x572 sample size.
@@ -143,6 +170,29 @@ class ScreenFieldProfile:
             if (target_w,target_h)!=(crop.shape[1],crop.shape[0]):
                 crop=cv2.resize(crop,(target_w,target_h),interpolation=cv2.INTER_AREA)
         return crop
+
+
+# Only this user-verified literal is recognized; the cause is NOT assumed
+# to be an in-game timer expiry. Whitespace/newlines are OCR-layout artifacts.
+_AUTO_MOVE_NOTICE="サーバーに入力が届かなかったため技が自動で選ばれました"
+
+
+def confirmed_auto_move_notice(text: str, confidence: float | None, *,
+                               calibrated: bool) -> bool:
+    if not calibrated or confidence is None or confidence < 0.90:
+        return False
+    return "".join(str(text).split()) == _AUTO_MOVE_NOTICE
+
+
+def live_ocr_region_enabled(profile: ScreenFieldProfile,region: FieldRegion) -> bool:
+    if region.name in IGNORED_OCR_ROIS:
+        return False
+    if region.name=="system_message":
+        # A legacy pixel-only or unverified profile must never create a
+        # definitive auto-move event. Calibrate viewport privately first.
+        return (profile.validated_on_game_capture and
+                region.bounds_normalized is not None)
+    return True
 
 
 _FRACTION_RE = re.compile(r"(?<![0-9])([0-9]{1,4})\s*/\s*([0-9]{1,4})(?![0-9])")
@@ -210,7 +260,7 @@ def observe_screen_fields(
     candidates = []
     attempted = 0
     for region in profile.regions:
-        if region.name in IGNORED_OCR_ROIS:
+        if not live_ocr_region_enabled(profile,region):
             continue
         if label == "HUD_UNCLASSIFIED":
             # No validated screen classifier: safely OCR *numbers only* in

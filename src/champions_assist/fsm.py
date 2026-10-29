@@ -324,7 +324,7 @@ class MatchSession:
         self.opponent_preview_six = opponent_preview_six
         self.matrix_rows_six = rows
         self.phase = MatchPhase.S03_TEAM_SELECTION
-        self.selection_deadline = Deadline(now_ms, _deadline_budget(35_000, actual_ui_remaining_ms, reserve_ms=10_000))
+        self.selection_deadline = Deadline(now_ms, _deadline_budget(90_000, actual_ui_remaining_ms))
         self._audit("OPPONENT_PREVIEW_SIX", opponents=list(opponent_preview_six), matrix_rows=6)
         return rows
 
@@ -332,8 +332,6 @@ class MatchSession:
         self._require_active()
         if self.phase is not MatchPhase.S03_TEAM_SELECTION:
             raise RuntimeError("selection recommendation is not currently expected")
-        if self.selection_model_expired:
-            raise RuntimeError("selection model deadline expired; no late recommendation is displayed")
         if len(selected_three) != 3 or len(set(selected_three)) != 3 or lead not in selected_three:
             raise ValueError("selection must have three distinct Pokémon and an included lead")
         if any(name not in self.assets.own_team_names for name in selected_three):
@@ -359,17 +357,15 @@ class MatchSession:
         self.actual_selected_three = selected_three
         self.actual_lead = lead
         self.prep_input = build_prep_input(selected_three, lead, self.opponent_preview_six, self.matrix_rows_six)
-        # Historical phase identifier S04_PREP_40S remains wire-compatible;
-        # its deadline is now the *shared* 90s selection clock minus 3s
-        # reserved for player input, not an independent 40s window.
+        # Historical enum name is retained for wire compatibility; the
+        # advisory PREP clock shares the original full 90-second preview.
         selection_started_ms = (
             self.selection_deadline.created_at_ms
             if self.selection_deadline is not None else now_ms)
-        shared_remaining_ms = max(0, 87_000 - (now_ms - selection_started_ms))
+        shared_remaining_ms = max(0, 90_000 - (now_ms - selection_started_ms))
         self.prep_deadline = Deadline(
             now_ms,
-            _deadline_budget(shared_remaining_ms, actual_ui_remaining_ms,
-                             reserve_ms=3_000 if actual_ui_remaining_ms is not None else 0),
+            _deadline_budget(shared_remaining_ms, actual_ui_remaining_ms),
         )
         self.phase = MatchPhase.S04_PREP_40S
         differs = self.selection_recommendation is not None and self.selection_recommendation.selected_three != selected_three
@@ -420,13 +416,9 @@ class MatchSession:
             self.selection_model_expired = True
             expired.append("SELECTION")
         if self.phase is MatchPhase.S04_PREP_40S and self.prep_deadline and self.prep_deadline.expired(now_ms):
-            if self.prep_validation is None:
-                self.prep_validation = PrepValidation(False, "PREP_DEADLINE_EXPIRED")
             expired.append("PREP")
         if self.current_window and self.current_window.status in {WindowStatus.OPEN, WindowStatus.REQUESTED, WindowStatus.RECOMMENDED}:
             if self.current_window.deadline.expired(now_ms):
-                self.current_window.status = WindowStatus.EXPIRED
-                self.current_window.requires_model = False
                 expired.append("DECISION_WINDOW")
         if expired:
             self._audit("DEADLINE_EXPIRED", kinds=expired, now_ms=now_ms)
@@ -437,10 +429,7 @@ class MatchSession:
         if self.phase is not MatchPhase.S04_PREP_40S or self.prep_input is None or self.prep_deadline is None:
             raise RuntimeError("PREP is not active")
         self.prep_result = result
-        if self.prep_deadline.expired(now_ms):
-            self.prep_validation = PrepValidation(False, "PREP_DEADLINE_EXPIRED")
-        else:
-            self.prep_validation = validate_prep_result(self.prep_input, result)
+        self.prep_validation = validate_prep_result(self.prep_input, result)
         self._audit("PREP_RECORDED", complete=self.prep_validation.complete, reason=self.prep_validation.reason)
         return self.prep_validation
 
@@ -530,11 +519,11 @@ class MatchSession:
                 return current
             current.allowed_actions = allowed_actions
             current.tactical_state_version = self.tactical_state_version
-            revised_budget = _deadline_budget(35_000, actual_ui_remaining_ms, reserve_ms=10_000)
+            revised_budget = _deadline_budget(45_000, actual_ui_remaining_ms)
             current_deadline = current.deadline.expires_at_ms
             revised_end = now_ms + revised_budget
             current.deadline = Deadline(now_ms, max(0, min(revised_end, current_deadline) - now_ms) if current_deadline is not None else revised_budget)
-            current.status = WindowStatus.OPEN if allowed_actions.completeness == "COMPLETE" and current.deadline.budget_ms > 0 else WindowStatus.BLOCKED
+            current.status = WindowStatus.OPEN if allowed_actions.completeness == "COMPLETE" else WindowStatus.BLOCKED
             current.requires_model = current.status is WindowStatus.OPEN
             current.recommendation = None
             self._audit("WINDOW_REVISED", decision_window_id=current.decision_window_id)
@@ -551,13 +540,13 @@ class MatchSession:
     ) -> DecisionWindow:
         self.decision_seq += 1
         budget_ms = (
-            _deadline_budget(35_000, actual_ui_remaining_ms, reserve_ms=10_000)
+            _deadline_budget(45_000, actual_ui_remaining_ms)
             if kind is WindowKind.NORMAL_COMMAND or actual_ui_remaining_ms is not None
             else None
         )
         status = (
             WindowStatus.OPEN
-            if allowed_actions.completeness == "COMPLETE" and budget_ms is not None and budget_ms > 0
+            if allowed_actions.completeness == "COMPLETE" and budget_ms is not None
             else WindowStatus.BLOCKED
         )
         window = DecisionWindow(
@@ -616,10 +605,6 @@ class MatchSession:
         if not window.requires_model:
             return window
         if window.status is WindowStatus.BLOCKED:
-            return window
-        if window.deadline.expired(now_ms):
-            window.status = WindowStatus.EXPIRED
-            window.requires_model = False
             return window
         if window.tactical_state_version != self.tactical_state_version:
             window.status = WindowStatus.STALE

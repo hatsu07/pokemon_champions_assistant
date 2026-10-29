@@ -10,7 +10,7 @@ import unittest
 
 from champions_assist.app_config import ConfigurationError
 from champions_assist.real_battle_validation import (
-    SCHEMA,MIN_MATCHES,validate_real_battle_packet,import_real_battle_packet
+    SCHEMA,LEGACY_SCHEMA,MIN_MATCHES,validate_real_battle_packet,import_real_battle_packet
 )
 from champions_assist.matchup_evidence import validate_review_packet, import_reviews, certified_review_counts
 
@@ -91,20 +91,30 @@ class RealBattleGateTests(unittest.TestCase):
             with self.subTest(platform=invalid),self.assertRaises(ConfigurationError):
                 self.check(data)
 
+    def test_v3_accepts_preparation_at_89_seconds_and_v2_keeps_87s_limit(self):
+        data=self.packet()
+        for match in data["matches"]:
+            match["timeline"]["prep_finished_ms"]=89000
+            match["timeline"]["opponent_lead_visible_ms"]=90000
+        self.assertTrue(self.check(data)["device_evidence_passed"])
+        data["schema"]=LEGACY_SCHEMA
+        self.assertFalse(self.check(data)["device_evidence_passed"])
+
     def test_four_matches_never_pass_even_if_all_under_deadline(self):
         self.assertFalse(self.check(self.packet(4))["device_evidence_passed"])
 
     def test_any_deadline_miss_fails_even_if_four_are_good(self):
         data=self.packet()
         timeline=data["matches"][0]["timeline"]
-        # The combined PREP result and selection display miss the 87s budget.
-        timeline["selection_displayed_ms"]=87001
-        timeline["selection_confirmed_ms"]=87001
-        timeline["prep_finished_ms"]=87002
-        timeline["opponent_lead_visible_ms"]=88000
+        # New shared preview budget is 90 seconds.
+        timeline["selection_displayed_ms"]=90001
+        timeline["selection_confirmed_ms"]=90001
+        timeline["prep_finished_ms"]=90002
+        timeline["opponent_lead_visible_ms"]=91000
         self.assertFalse(self.check(data)["device_evidence_passed"])
         data=self.packet()
-        data["matches"][0]["timeline"]["prep_finished_ms"]=87001
+        data["matches"][0]["timeline"]["prep_finished_ms"]=90001
+        data["matches"][0]["timeline"]["opponent_lead_visible_ms"]=91000
         self.assertFalse(self.check(data)["device_evidence_passed"])
         data=self.packet()
         data["matches"][3]["timeline"]["turns"][1]["recommendation_visible_ms"]=224001

@@ -15,10 +15,12 @@ import re
 
 from .app_config import ConfigurationError, atomic_write_text
 
-SCHEMA = "champions-live-e2e-device-evidence-v2"
+SCHEMA = "champions-live-e2e-device-evidence-v3"
+LEGACY_SCHEMA = "champions-live-e2e-device-evidence-v2"
 MIN_MATCHES = 5
 SELECTION_LIMIT_MS = 90_000
-SELECTION_PREP_LIMIT_MS = 87_000  # 90s team preview minus 3s for game input
+SELECTION_PREP_LIMIT_MS = 90_000  # Full 90s shared preview window (v3)
+LEGACY_SELECTION_PREP_LIMIT_MS = 87_000  # Historical v2 audit only
 TURN_LIMIT_MS = 45_000
 MAX_IMPORT_BYTES = 2_000_000
 MAX_CAPTURE_BYTES = 800_000_000
@@ -68,7 +70,7 @@ def _interval(record: dict, start: str, end: str, limit: int) -> dict:
 
 def validate_real_battle_packet(packet: object, *, team_id: str,
                                 team_fingerprint: str, regulation: str) -> dict:
-    if not isinstance(packet,dict) or packet.get("schema") != SCHEMA:
+    if not isinstance(packet,dict) or packet.get("schema") not in (SCHEMA,LEGACY_SCHEMA):
         raise ConfigurationError("実戦E2E記録のスキーマが不正です")
     if not _TEAM.fullmatch(team_id):
         raise ConfigurationError("構築IDが不正です")
@@ -111,7 +113,10 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
         if not isinstance(times,dict):
             raise ConfigurationError("実戦計測のタイムラインがありません")
         selection=_interval(times,"selection_visible_ms","selection_displayed_ms",SELECTION_LIMIT_MS)
-        prep=_interval(times,"selection_visible_ms","prep_finished_ms",SELECTION_PREP_LIMIT_MS)
+        # Preserve previously-issued v2 evidence under its original 87s rule.
+        target=(LEGACY_SELECTION_PREP_LIMIT_MS if packet["schema"]==LEGACY_SCHEMA
+                else SELECTION_PREP_LIMIT_MS)
+        prep=_interval(times,"selection_visible_ms","prep_finished_ms",target)
         if _int(times["selection_confirmed_ms"]) < _int(times["selection_visible_ms"]):
             raise ConfigurationError("選出確定時刻が選出画面前です")
         lead_visible=_int(times.get("opponent_lead_visible_ms"))
@@ -150,7 +155,7 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
     eligible = (len(normalized)>=MIN_MATCHES
                 and all_deadlines and no_tracking_errors)
     return {
-        "schema":SCHEMA,"team_id":team_id,
+        "schema":packet["schema"],"team_id":team_id,
         "team_fingerprint":team_fingerprint,"regulation":regulation,
         "capture_platform":platform,
         "matches":normalized,"match_count":len(normalized),
@@ -163,7 +168,7 @@ def validate_real_battle_packet(packet: object, *, team_id: str,
             "INDEPENDENT_CHAMPIONS_EFFECT_AND_DAMAGE_VALIDATION",
             "REVIEWED_PROCESSOR_AND_SAFE_SWITCH_ROLE_EVIDENCE",
             "INDEPENDENT_REAL_GAME_TACTICAL_ACCURACY_REVIEW",
-        ] + ([] if eligible else ["DEVICE_E2E_90_40_45_NOT_PROVEN"]),
+        ] + ([] if eligible else ["DEVICE_E2E_90_90_45_NOT_PROVEN"]),
         "note":"Audited packet structure is not automatically proof of tactical correctness.",
     }
 

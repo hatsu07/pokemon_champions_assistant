@@ -106,6 +106,12 @@ class ResultScreenAsyncGateTests(unittest.TestCase):
             _pending_screen_label=None,
             _active_job=None,
             _active_request_started=None,
+            _active_request_id=None,
+            _ai_request_attempts=0,
+            _retired_workers={},
+            sender=lambda: None,
+            _connect_active_worker=MagicMock(),
+            _retire_active_worker=MagicMock(),
             _completed=MagicMock(),
             _cleanup=MagicMock(),
         )

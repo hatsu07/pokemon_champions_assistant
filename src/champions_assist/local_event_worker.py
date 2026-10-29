@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from .calibrated_screen_fields import (
-    IGNORED_OCR_ROIS, ScreenFieldProfile, parse_field_text,
+    IGNORED_OCR_ROIS, ScreenFieldProfile, parse_field_text, live_ocr_region_enabled,
 )
 from .observation_events import ScreenLexicon, TextObservationParser
 from .ocr import OcrEngine, TesseractJapaneseOcr
@@ -168,7 +168,7 @@ class AsyncBattleEventReader:
         crops=[]
         updated={}
         for region in profile.regions:
-            if region.name in IGNORED_OCR_ROIS:
+            if not live_ocr_region_enabled(profile,region):
                 continue
             # Optional calibrated PP fields are read only on action screens.
             # Unknown scene/timer is deliberately never interpreted.

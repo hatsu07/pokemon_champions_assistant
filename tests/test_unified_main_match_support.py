@@ -359,23 +359,25 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(any(r.get("event")=="SWITCH_NEW_DECISION_WINDOW"
                             for r in panel._timing_trace))
 
-    def test_expired_conservative_turn_blocks_ai_dispatch_and_clears_advice(self):
+    def test_soft_32s_turn_target_does_not_skip_new_ai_dispatch(self):
         from time import monotonic
+        from tests.test_match_replay import fixture_assets
         panel=self.window._match_panel
-        panel.state={"phase":"BATTLE"}
+        panel.state={"phase":"BATTLE","_live_state_revision":0}
+        panel.assets=fixture_assets()
         panel._auto_running=True
         panel._last_action_text="じしん。"
         frame=np.zeros((80,160,3),dtype=np.uint8)
         with patch.object(panel,"_send_pending"):
             panel._queue_batch([frame],screen_label="TURN_ACTION")
         panel._turn_screen_seen_at=monotonic()-33.0
-        panel._send_pending()
-        self.assertEqual(panel._last_action_text,"")
-        self.assertIn("AI表示最終期限超過",panel.action_banner.text())
-        self.assertTrue(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
-                            and x.get("timeout_budget_ms")==32000
-                            for x in panel._timing_trace))
-        self.assertIsNone(panel._thread)
+        with patch("champions_assist.match_replay_dialog.QThread"),patch(
+                "champions_assist.match_replay_dialog._ReplayWorker"):
+            panel._send_pending()
+        self.assertIsNotNone(panel._active_request_id)
+        self.assertFalse(any(x["event"]=="TURN_BUDGET_EXHAUSTED"
+                             for x in panel._timing_trace))
+        panel._thread=None
 
     def test_30_second_target_allows_22_second_first_turn_advice(self):
         from time import monotonic
@@ -476,7 +478,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertTrue(panel.state["selection_assumed"])
-        self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertIsNone(panel.state["prep"]["preserve"])
         self.assertIn("選出（提案）：",self.window.recommendation_label.text())
@@ -485,7 +487,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as prep:
             panel._cleanup()
-        prep.assert_not_called()
+        prep.assert_called_once()
 
     def test_full_selection_auto_adopt_prefills_eighteen_and_starts_prep(self):
         from copy import deepcopy
@@ -517,7 +519,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(panel.state["phase"],"PREP")
         self.assertTrue(panel.state["selection_assumed"])
         self.assertEqual(panel.state["selected_three"],list(OWN[:3]))
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(panel.state["prep"]["cached_matchups"],18)
         self.assertIn("初手（提案）：",panel.selection_banner.text())
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
@@ -525,11 +527,69 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(panel.confirm_button.isHidden())
         with patch.object(panel,"_start_prep_auto") as start:
             panel._cleanup()
-            start.assert_not_called()
+            start.assert_called_once()
         self.assertEqual(panel._proposed_selection,(OWN[:3],OWN[0]))
         self.assertTrue(any(e.get("event")=="AUTO_SELECTION_ASSUMED"
                             for e in getattr(panel,"_timing_trace",[]))
                         or panel.state["selection_assumed"])
+
+    def test_confirmed_auto_move_notice_retires_same_turn_ai_without_guessing_move(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE","_live_state_revision":0}
+        panel._field_profile=replace(ScreenFieldProfile.from_user_samples_960x572(),
+                                     validated_on_game_capture=True)
+        panel._turn_epoch=4
+        panel._active_turn_epoch=4
+        panel._active_job="batch"
+        panel._active_request_id="req-notice"
+        old_worker=object()
+        panel._thread=object()
+        panel._worker=old_worker
+        panel._last_action_text="じしん。"
+        notice="サーバーに入力が届かなかったため\n技が自動で選ばれました"
+        try:
+            panel._observe_auto_move_notice(
+                SimpleNamespace(roi="system_message",text=notice,confidence=.96),4)
+            self.assertIn("req-notice",panel._retired_workers)
+            self.assertIsNone(panel._active_request_id)
+            self.assertTrue(panel._turn_action_sent)
+            self.assertEqual(panel._last_action_text,"")
+            self.assertIn(4,panel._auto_move_epochs)
+            self.assertTrue(any(e["event"]=="AUTO_MOVE_SELECTED_INPUT_NOT_DELIVERED"
+                                for e in panel._timing_trace))
+        finally:
+            panel._retired_workers.clear()
+            panel._thread=None
+            panel._worker=None
+            panel._auto_move_epochs.clear()
+
+    def test_low_confidence_auto_move_notice_does_not_retire_ai(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from champions_assist.calibrated_screen_fields import ScreenFieldProfile
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._field_profile=replace(ScreenFieldProfile.from_user_samples_960x572(),
+                                     validated_on_game_capture=True)
+        panel._turn_epoch=3
+        panel._active_turn_epoch=3
+        panel._active_job="batch"
+        panel._active_request_id="req-still-valid"
+        panel._thread=object()
+        panel._worker=object()
+        try:
+            panel._observe_auto_move_notice(SimpleNamespace(
+                roi="system_message",text="サーバーに入力が届かなかったため\n技が自動で選ばれました",
+                confidence=.72),3)
+            self.assertEqual(panel._active_request_id,"req-still-valid")
+            self.assertFalse(panel._auto_move_epochs)
+        finally:
+            panel._thread=None
+            panel._worker=None
+            panel._active_request_id=None
 
     def test_selection_roles_complete_full_prep_without_second_api_call(self):
         from copy import deepcopy
@@ -601,13 +661,12 @@ class UnifiedMainWindowTests(unittest.TestCase):
                 "selected_three":list(OWN[:3]),"lead":OWN[0],
                 "preserve":OWN[0],"stopper":"未登録", "closer":OWN[2]}
         panel._completed({"state":deepcopy(preview),"report":report})
-        # Invalid win-role names are optional; they no longer cause 90s of
-        # tactical re-evaluation or a second AI request.
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        # Missing/invalid win roles MUST NOT complete a cached PREP.
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertIsNone(panel.state["prep"]["preserve"])
         with patch.object(panel,"_start_prep_auto") as rescue:
             panel._cleanup()
-        rescue.assert_not_called()
+        rescue.assert_called_once()
 
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
@@ -1275,11 +1334,12 @@ class UnifiedMainWindowTests(unittest.TestCase):
 
     def test_90s_preview_allows_55s_selection_then_32s_prep(self):
         from champions_assist.match_replay_dialog import prep_budget_before_battle
-        self.assertEqual(prep_budget_before_battle(100.0,now=100.0),40)
-        self.assertEqual(prep_budget_before_battle(100.0,now=155.0),32)
-        self.assertEqual(prep_budget_before_battle(100.0,now=160.0),27)
-        self.assertEqual(prep_budget_before_battle(100.0,now=188.0),0)
-        self.assertEqual(prep_budget_before_battle(None,now=900.0),40)
+        self.assertEqual(prep_budget_before_battle(100.0,now=100.0),90)
+        self.assertEqual(prep_budget_before_battle(100.0,now=155.0),35)
+        self.assertEqual(prep_budget_before_battle(100.0,now=160.0),30)
+        self.assertEqual(prep_budget_before_battle(100.0,now=188.0),2)
+        self.assertEqual(prep_budget_before_battle(100.0,now=195.0),0)
+        self.assertEqual(prep_budget_before_battle(None,now=900.0),90)
 
     def test_early_prep_launches_while_actual_selection_is_not_yet_confirmed(self):
         panel=self.window._match_panel
@@ -1406,21 +1466,24 @@ class UnifiedMainWindowTests(unittest.TestCase):
         finally:
             panel._prep_thread=None
 
-    def test_prep_without_win_roles_does_not_send_network_or_spawn_thread(self):
+    def test_prep_without_win_roles_starts_role_completion_only(self):
         from tests.test_prep_cache import loaded_assets, chosen_state
         temp,assets=loaded_assets()
         self.addCleanup(temp.cleanup)
         panel=self.window._match_panel
         panel.assets=assets
         panel.state=chosen_state(assets)
-        with patch("champions_assist.match_replay_dialog._ReplayWorker") as worker:
+        with patch("champions_assist.match_replay_dialog._ReplayWorker") as worker,patch(
+                "champions_assist.match_replay_dialog.QThread") as thread:
             panel._start_prep_auto()
-        worker.assert_not_called()
-        self.assertIsNone(panel._prep_thread)
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
-        self.assertEqual(panel.state["prep"]["cached_matchups"],18)
-        self.assertEqual(panel.state["prep"]["win_roles_status"],
-                         "OPTIONAL_NOT_REQUESTED")
+            worker.assert_called_once()
+            thread.return_value.start.assert_called_once()
+            self.assertEqual(panel.state["prep_status"],"RUNNING")
+            self.assertEqual(panel.state["prep"]["cached_matchups"],18)
+            self.assertEqual(panel.state["prep"]["win_roles_status"],"REQUIRED_NOT_EVALUATED")
+            panel._prep_timer.stop()
+            panel._prep_thread=None
+            panel._prep_worker=None
 
     def test_following_normal_switch_reuses_published_target(self):
         panel=self.window._match_panel
