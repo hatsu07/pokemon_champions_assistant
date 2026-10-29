@@ -1286,6 +1286,13 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertTrue(panel._manual_result_controls.isHidden())
         self.assertFalse(panel._manual_result_available)
         self.assertFalse(panel.full_ai_log_check.isChecked())
+        self.assertIn("機密情報に注意",panel.full_ai_log_check.text())
+        self.assertNotIn("認証情報なし",panel.full_ai_log_check.text())
+        self.assertIn("HTTP認証情報",panel.full_ai_log_check.toolTip())
+        self.assertIn("完全除去は保証しません",panel.full_ai_log_check.toolTip())
+        self.assertIn("共有前に",panel.private_ai_log_warning.text())
+        self.assertEqual(panel.private_ai_log_warning.objectName(),
+                         "privateAiLogPrivacyWarning")
         self.assertEqual(panel.classifier_choose_button.objectName(),
                          "chooseScreenClassifier")
         self.assertEqual(panel.prep_banner.objectName(),"live_prep_progress")
