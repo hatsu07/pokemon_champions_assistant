@@ -90,9 +90,50 @@ def _visually_same_ocr_fact(row: dict, field: str, value: str,
             r"([^!！。]+?)(?:だった|と判明|を持っていた|をもっていた)?[!！。]?$",raw)
         return bool(match and _compare_text(match.group(1))==visible)
     if field == prefix+"_status":
-        return any(token in raw and visible==token for token in (
-            "どく","もうどく","やけど","まひ","ねむり","こおり"))
+        # Ordered, disjoint extraction: the substring "どく" inside
+        # "もうどく" is not another status. OCR may mention the status only
+        # as a newly applied effect, never as a move name or a cure.
+        if not re.search(r"(になった|にかかった|をうけた|を受けた)", raw):
+            return False
+        tokens = ("もうどく", "やけど", "ねむり", "こおり", "どく", "まひ")
+        pattern = "|".join(re.escape(token) for token in tokens)
+        mentioned = re.findall(pattern, raw)
+        # One distinct, unambiguous status, and EXACT normalized visual value.
+        return len(mentioned) == 1 and mentioned[0] == visible
     return False
+
+
+def _actor_guard_aliases(name: str) -> set[str]:
+    """Conservative display-name identities, not battle-mechanic inference.
+
+    Only explicit form delimiters and the literal Mega naming convention are
+    normalized; unrelated Pokémon names are never substring matched.
+    """
+    from .terminology import japanese_name
+    raw = _compare_text(str(name or ""))
+    if not raw:
+        return set()
+    parts = [part for part in raw.split("→") if part]
+    result: set[str] = set()
+    for part in parts:
+        canonical = _compare_text(japanese_name("pokemon", part))
+        result.add(canonical)
+        # Parenthesized form annotation is an identity label, not a species.
+        base = re.sub(r"[（(][^()（）]+[）)]$", "", canonical)
+        result.add(base)
+        if base.startswith("メガ") and len(base) > 2:
+            base = base[2:]
+            # Only the Mega X/Y spelling has an extra suffix.
+            if base.endswith(("X", "Y")):
+                base = base[:-1]
+            result.add(base)
+        # "ゲンガー(メガ)" may be formatted as an annotation after species.
+    return {token for token in result if token}
+
+
+def _same_quarantined_actor(quarantined: str, active: str) -> bool:
+    return bool(_actor_guard_aliases(quarantined) &
+                _actor_guard_aliases(active))
 
 
 class OcrSentLedger:
@@ -146,17 +187,31 @@ class OcrSentLedger:
 
     def quarantined_actor_is_active(self, state: dict) -> bool:
         with self._lock:
-            return (str(state.get("our_active") or "") in
-                    self._quarantined_actors["our"] or
-                    str(state.get("opponent_active") or "") in
-                    self._quarantined_actors["opponent"])
+            return any(
+                _same_quarantined_actor(known, state.get(field) or "")
+                for side, field in (("our", "our_active"),
+                                    ("opponent", "opponent_active"))
+                for known in self._quarantined_actors[side])
 
-    def visual_overflow_actors(self) -> dict[str, list[str]]:
+    def visual_overflow_actors(self, state: dict | None = None) -> dict[str, list[str]]:
+        """Warn for a quarantined actor even after safe temporary resync.
+
+        A successful new-actor baseline clears only the *global* image gate;
+        the old actor's unresolved history is still quarantined. The returned
+        names are provenance, not established boosts, moves, items or locks.
+        """
         with self._lock:
-            if not self._needs_visual_confirmation or self._visual_guard_rows is not None:
+            general_guard = (self._needs_visual_confirmation and
+                             self._visual_guard_rows is None)
+            active_quarantine = bool(state and any(
+                _same_quarantined_actor(known, state.get(field) or "")
+                for side, field in (("our", "our_active"),
+                                    ("opponent", "opponent_active"))
+                for known in self._quarantined_actors[side]))
+            if not (general_guard or active_quarantine):
                 return {}
-            return {key: sorted(value) for key, value in
-                    self._quarantined_actors.items()}
+            return {side: sorted(names) for side, names in
+                    self._quarantined_actors.items() if names}
 
     def visual_guard_rows(self) -> list[dict]:
         """Bounded, still-unverified proof to reconcile against a NEW image."""
@@ -396,8 +451,10 @@ class OcrSentLedger:
             # be explicitly visible, including zeros/absence (not inferred).
             if context_missing or not all(quarantine.values()):
                 return None
-            if (obs["our_active"] in quarantine["our"]
-                    or obs["opponent_active"] in quarantine["opponent"]):
+            if (any(_same_quarantined_actor(old, obs["our_active"])
+                    for old in quarantine["our"]) or
+                    any(_same_quarantined_actor(old, obs["opponent_active"])
+                    for old in quarantine["opponent"])):
                 return None
             from .battle_evidence import _visual_stages
             required_stages = {"A","B","C","D","S","ACC","EVA"}
