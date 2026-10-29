@@ -96,7 +96,14 @@ def _ruby_band_has_body_like_strokes(image: np.ndarray) -> bool:
         hi = band.max(axis=2).astype(np.int16)
         # The background color changes with the battle animation. Bright
         # neutral glyphs must be distinct from the local median background.
-        floor = max(170, min(245, round(float(np.median(lo)) + 35)))
+        # Dense ruby may cover >50% of the band (e.g. long furigana).
+        # Estimating the floor from the entire band then misclassifies the
+        # unpainted background as bright body text. Sample narrow gutters
+        # at both horizontal ends, outside typical message glyphs instead.
+        gutter = max(3, round(12 * width / _REFERENCE[0]))
+        background_samples = np.concatenate(
+            (lo[:, :gutter].ravel(), lo[:, -gutter:].ravel()))
+        floor = max(170, min(245, round(float(np.median(background_samples)) + 35)))
         white_strokes = (lo >= floor) & ((hi - lo) <= 75)
         per_row = white_strokes.sum(axis=1)
         # Counts are normalized to the reference viewport; the ROI has the
