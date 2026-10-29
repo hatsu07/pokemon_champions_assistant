@@ -38,6 +38,14 @@ _FIELDS = frozenset((
     "battle_messages_sent","selected_frames","dropped_frames",
     "state_updates","evidence_frames","certainty","from_pokemon","value",
     "interpreted_own_active","interpreted_opponent_active",
+    "ledger_rows_available","api_rows_sent","new_rows_sent",
+    "unresolved_rows_resent","prior_observations_not_resent",
+    "unresolved_questions","ledger_json_bytes","api_json_bytes",
+    "prompt_utf8_bytes","ocr_rows","ocr_json_bytes","new_rows",
+    "unresolved_rows","prior_rows_not_resent","pending_questions",
+    "api_elapsed_ms","pre_api_elapsed_ms","validation_pending",
+    "own_conflict","own_mismatch","confirmed_faint",
+    "internal_own","model_own","screen_label","rejected_updates",
 ))
 _TEXT_FIELDS = frozenset((
     "raw_text","ocr_text","warning","recommendation","displayed","evidence",
