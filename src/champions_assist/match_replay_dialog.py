@@ -157,12 +157,22 @@ class _ReplayWorker(QObject):
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
+                from time import perf_counter
+                auth_started=perf_counter()
+                self.progress.emit("PREP_AUTH_BEGIN")
+                access_token=auth.access_token()
+                self.progress.emit("PREP_AUTH_COMPLETE:"+
+                                   str(round((perf_counter()-auth_started)*1000)))
+                ai_started=perf_counter()
+                self.progress.emit("PREP_MODEL_BEGIN")
                 next_state, report=run_replay_prep(
                     state=self.state, assets=self.assets,
-                    access_token=auth.access_token(),model=self.selected_model,
+                    access_token=access_token,model=self.selected_model,
                     reasoning_effort=self.reasoning_effort,
                     limit_seconds=self.prep_seconds,
                 )
+                self.progress.emit("PREP_MODEL_COMPLETE:"+
+                                   str(round((perf_counter()-ai_started)*1000)))
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
@@ -798,6 +808,9 @@ class MatchReplayDialog(QDialog):
         if self._debug_log is not None:
             self._debug_log.close()
         self._debug_log=None
+        if self._exchange_log is not None:
+            self._exchange_log.close()
+            self._exchange_log=None
 
     def _diagnostic(self, event: str, detail: dict) -> None:
         """Bounded non-blocking evidence recording, no images or API bodies."""
@@ -2823,6 +2836,11 @@ class MatchReplayDialog(QDialog):
         if not provisional:
             self.state["prep_status"]="RUNNING"
         self._trace_event("PREP_START",timeout_budget_ms=int(self._prep_budget_seconds*1000),
+                          cached_matchups=(prep_state.get("prep") or {}).get("cached_matchups",0),
+                          win_roles_status=(prep_state.get("prep") or {}).get("win_roles_status","UNKNOWN"),
+                          cache_available=bool(self.assets.matchup_cache_index),
+                          matrix_compatible=bool(prep_state.get("matrix_compatible")),
+                          matrix_provisional=bool(prep_state.get("matrix_provisional")),
                           status="PROVISIONAL" if provisional else "ACTUAL",
                           known_opponents=(
                               len(prep_state.get("opponent_six",[]))-
@@ -2840,6 +2858,7 @@ class MatchReplayDialog(QDialog):
             cancel_event=self._prep_cancel_event,
         )
         self._prep_worker.moveToThread(self._prep_thread)
+        self._prep_worker.progress.connect(self._on_prep_progress)
         self._prep_thread.started.connect(self._prep_worker.run)
         self._prep_worker.finished.connect(self._on_prep_result)
         self._prep_worker.finished.connect(self._prep_thread.quit)
@@ -2860,6 +2879,13 @@ class MatchReplayDialog(QDialog):
                           +f"（目標残り {self._prep_budget_seconds:.1f}秒・"
                           "超過後も次のAI依頼まで継続）"})
         self._prep_thread.start()
+
+    @Slot(str)
+    def _on_prep_progress(self, message: str):
+        if message.startswith("PREP_"):
+            stage, _, elapsed = message.partition(":")
+            self._trace_event("PREP_STAGE",status=stage,
+                              elapsed_ms=int(elapsed) if elapsed.isdigit() else None)
 
     def _interrupt_prep(self):
         if self._prep_thread is None:
@@ -2883,8 +2909,21 @@ class MatchReplayDialog(QDialog):
     def _on_prep_result(self, payload):
         self._prep_timer.stop()
         if self._prep_cancel_event.is_set() or self.state is None:
+            result=payload.get("report") or {}
+            self._trace_event("PREP_RESPONSE_AFTER_CANCELLATION_DROPPED",
+                              status=result.get("status","UNKNOWN"),
+                              elapsed_ms=result.get("elapsed_ms"),
+                              model_elapsed_ms=result.get("model_elapsed_ms"))
             return
         result=payload["report"]
+        self._trace_event("PREP_WORKER_RESULT_DIAGNOSTIC",
+                          status=result.get("status","UNKNOWN"),
+                          request_stage=result.get("request_stage","UNKNOWN"),
+                          elapsed_ms=result.get("elapsed_ms"),
+                          model_elapsed_ms=result.get("model_elapsed_ms"),
+                          prompt_chars=result.get("prompt_chars"),
+                          cached_matchups=result.get("cached_matchups"),
+                          win_conditions=result.get("win_conditions"))
         if (self.state.get("phase")=="SELECTION"
                 and self._proposed_prep_key is not None):
             # Preserve the result for actual confirmation, never mark it
@@ -3093,6 +3132,19 @@ class MatchReplayDialog(QDialog):
     def _render(self, report):
         state=self.state or {}
         phase=state.get("phase","NOT_STARTED")
+        result_status=report.get("status")
+        if phase=="ENDED" or result_status in (
+                "MATCH_STARTED","RESET","RESULT_VERIFICATION_PENDING"):
+            self._manual_result_available=False
+        elif (result_status=="RESULT_UNCONFIRMED"
+              and self._result_screen_candidate is not None):
+            self._manual_result_available=True
+            self._trace_event("MANUAL_RESULT_FALLBACK_OFFERED",
+                              reason=report.get("reason","UNKNOWN"))
+        elif (result_status=="SUPERSEDED"
+              and report.get("warning")=="RESULT_SCREEN_NO_LONGER_CURRENT"):
+            self._manual_result_available=False
+        self._manual_result_controls.setVisible(self._manual_result_available)
         compatible=state.get("matrix_compatible",False)
         suffix=("構築別LIVEマトリクス有効" if compatible
                 else "登録構築専用・根拠限定AI判断（未検証）"
@@ -3141,7 +3193,8 @@ class MatchReplayDialog(QDialog):
             self._last_selection_text=""
         if report.get("status") in (
                 "NO_ACTION","BLOCKED","ERROR","CANCELLED","DEADLINE_EXCEEDED",
-                "SUPERSEDED","MATCH_END"):
+                "SUPERSEDED","MATCH_END","RESULT_UNCONFIRMED",
+                "RESULT_VERIFICATION_PENDING"):
             # OCR text-only reports may omit screen. This must not resurrect
             # a prior action when a fresh turn produced no legal advice.
             self._last_action_text=""
@@ -3157,6 +3210,10 @@ class MatchReplayDialog(QDialog):
             else self._last_selection_text or "選出：未提示")
         if state.get("phase")=="ENDED":
             action_text="対戦終了："+str(state.get("result","UNKNOWN"))
+        elif report.get("status")=="RESULT_UNCONFIRMED":
+            action_text="結果画面を検出・勝敗未確定（必要なら下のボタンで登録）"
+        elif report.get("status")=="RESULT_VERIFICATION_PENDING":
+            action_text="結果画面を検出・GPTで勝敗確認中"
         elif report.get("status")=="AI_REQUEST_QUEUED":
             action_text=("交代先を判定中（倒れたポケモンの技は無効）"
                          if report.get("screen_label_hint")=="SWITCH_SELECTION"
@@ -3257,4 +3314,7 @@ class MatchReplayDialog(QDialog):
             self._debug_log.write("WINDOW_CLOSED")
             self._debug_log.close()
             self._debug_log=None
+        if self._exchange_log is not None:
+            self._exchange_log.close()
+            self._exchange_log=None
         super().closeEvent(event)
