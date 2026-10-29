@@ -46,8 +46,9 @@ class LocalBattleStateTracker:
             # The raw evidence ledger NEVER drops OCR readings, including
             # repeated observations of one visual display. Only the GPT
             # transport view deduplicates them. Track repeats as telemetry.
-            if (same_payload and same_display and near_in_time
-                    and (turn_epoch is None or same_epoch)):
+            repeated=(same_payload and same_display and near_in_time
+                      and (turn_epoch is None or same_epoch))
+            if repeated:
                 self.duplicates+=1
             status="CANDIDATE"
             if (previous and previous.frame_id==row.frame_id
@@ -57,11 +58,14 @@ class LocalBattleStateTracker:
             if status!=row.status:
                 from dataclasses import replace
                 row=replace(row,status=status)
-            self._events.append(row)
+            self._events.append(row)  # ALWAYS retain the raw frame and time.
             self._latest[row.field]=row
             self._latest_epoch[row.field]=turn_epoch
-            novel.append(row)
-            inserted+=1
+            # Incremental consumers should not apply one visual effect twice.
+            # The GPT prompt instead takes ALL original rows from snapshot().
+            if not repeated:
+                novel.append(row)
+                inserted+=1
         return (inserted,tuple(novel)) if collect else inserted
 
     def snapshot(self, *, at_or_before: float | None=None,
