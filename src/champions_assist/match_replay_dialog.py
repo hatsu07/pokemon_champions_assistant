@@ -991,9 +991,9 @@ class MatchReplayDialog(QDialog):
         if self._screen_model is not None:
             source="指定したONNX" if self._screen_model_path else "同梱"
             if getattr(self._screen_model,"experimental",False):
-                return ("画面判別: 【未検証・試験モード】5分類ONNX / "+
+                return ("画面判別: 【未検証・試験モード】6分類ONNX / "+
                         source+" / "+self._screen_model_status)
-            return ("画面判別: 検証済み5分類ONNX利用中 / "+source+
+            return ("画面判別: 検証済み6分類ONNX利用中 / "+source+
                     " / "+self._screen_model_status)
         return ("画面判別: 未設定・利用不可（"+self._screen_model_status+
                 "）。開始前に警告、低頻度の画像変化検出を使用します。")
@@ -1615,6 +1615,10 @@ class MatchReplayDialog(QDialog):
     def _on_ai_progress(self, progress: str) -> None:
         if self.sender() is not None and self.sender() is not self._worker:
             return  # Superseded worker: no stale GUI progress.
+        if self._cancel_event.is_set() or self._shutdown_intent is not None:
+            # HTTP may still be completing after Stop. Never overwrite the
+            # stopped state with a stale "AI processing" message.
+            return
         self._set_ai_status(f"{progress} / 試行 #{self._ai_request_attempts}")
         if progress.startswith("ChatGPT認証"):
             kind="AUTH_CHECK"
@@ -2125,6 +2129,11 @@ class MatchReplayDialog(QDialog):
                               reason="SUPERSEDED_BY_NEW_REQUEST")
             return
         if self._shutdown_intent is not None or self._cancel_event.is_set():
+            self._trace_event("AI_RESPONSE_AFTER_STOP_DROPPED",
+                              active_job=self._active_job or "NONE",
+                              status=(payload.get("report") or {}).get("status","UNKNOWN"),
+                              elapsed_active_ms=round((monotonic()-self._active_request_started)*1000)
+                              if self._active_request_started is not None else None)
             # A stopped HTTP request can still return a result. Never apply
             # its stale action, advance the match, or dispatch more captures.
             return
@@ -2773,8 +2782,8 @@ class MatchReplayDialog(QDialog):
             self._render({"status":"PREP_UNAVAILABLE",
                           "reason":"OWN_MATRIX_MISMATCH"})
             return
-        # The selection countdown limits what we can promise to the player;
-        # it must not kill a pending PREP request or discard a valid reply.
+        # PREP is bounded independently to the actual 40-second acceptance
+        # limit; no late GPT answer may be promoted to completed PREP.
         # The next outgoing AI message is the only automatic supersession.
         self._prep_budget_seconds=min(40.0,prep_budget_before_battle(
             self._selection_screen_started,now=monotonic()))
@@ -2798,8 +2807,7 @@ class MatchReplayDialog(QDialog):
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=prep_state, job="prep",
-            # Network failure still needs a finite socket timeout. It is NOT
-            # the local game-clock target and late valid results are accepted.
+            # Match PREP socket timeout to its bounded acceptance window.
             prep_seconds=max(1.0,self._prep_budget_seconds),
             cancel_event=self._prep_cancel_event,
         )
@@ -2852,6 +2860,13 @@ class MatchReplayDialog(QDialog):
     def _on_prep_result(self, payload):
         self._prep_timer.stop()
         if self._prep_cancel_event.is_set() or self.state is None:
+            report=payload.get("report") or {}
+            self._trace_event("PREP_RESPONSE_AFTER_CUTOFF_DROPPED",
+                              status=report.get("status","UNKNOWN"),
+                              reason=report.get("reason","UNKNOWN"),
+                              stage=report.get("request_stage","UNKNOWN"),
+                              elapsed_ms=report.get("elapsed_ms"),
+                              model_elapsed_ms=report.get("model_elapsed_ms"))
             return
         result=payload["report"]
         self._trace_event("PREP_WORKER_RESULT_DIAGNOSTIC",
