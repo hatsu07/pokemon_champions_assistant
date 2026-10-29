@@ -303,15 +303,18 @@ def ensure_fresh_output(output_dir: Path) -> None:
         source=Path(probe)/"source"
         destination=output_dir/(Path(probe).name+"-linked")
         source.write_bytes(b"screen-classifier-link-probe")
+        linked=False
         try:
             os.link(source,destination)
+            linked=True
         except OSError as exc:
             raise TrainingPreflightError(
                 f"Training output mount does not support safe hard-link publication: "
                 f"{output_dir} ({exc}). Choose a hard-link-capable output mount."
             ) from exc
         finally:
-            destination.unlink(missing_ok=True)
+            if linked:
+                destination.unlink()
     print("[preflight] output mount supports hard-link publication",flush=True)
 
 
