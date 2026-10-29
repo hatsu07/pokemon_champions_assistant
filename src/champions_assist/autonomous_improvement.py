@@ -37,8 +37,9 @@ def _hash(value: object) -> str:
 def _clean(value: object) -> str:
     if not isinstance(value, str):
         return ""
-    return " ".join(ch for ch in value if ch.isprintable()
-                    and ch not in "<>|").strip()[:_MAX_TEXT]
+    filtered = "".join(ch for ch in value if ch.isprintable()
+                       and ch not in "<>|")
+    return " ".join(filtered.split())[:_MAX_TEXT]
 
 
 def _stamp() -> str:
