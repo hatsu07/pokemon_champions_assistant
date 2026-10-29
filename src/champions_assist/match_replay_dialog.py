@@ -716,6 +716,12 @@ class MatchReplayDialog(QDialog):
             return
         self._shutdown_intent=intent
         self._shutdown_ready=False
+        self._shutdown_requested_at=monotonic()
+        self._trace_event("SHUTDOWN_REQUESTED",intent=intent,
+                          active_job=self._active_job or "NONE",
+                          active_thread=self._thread is not None,
+                          prep_thread=self._prep_thread is not None,
+                          retired_threads=len(self._retired_workers))
         self._restart_prep_after_cleanup=False
         self._stop_auto()
         self._interrupt_prep()
@@ -733,6 +739,10 @@ class MatchReplayDialog(QDialog):
             return
         if self._thread is not None or self._prep_thread is not None or self._retired_workers:
             return
+        self._trace_event("SHUTDOWN_WORKERS_DRAINED",
+            waited_ms=round((monotonic()-self._shutdown_requested_at)*1000)
+            if self._shutdown_requested_at is not None else None)
+        self._shutdown_requested_at=None
         intent=self._shutdown_intent
         self._shutdown_intent=None
         if intent=="reset":
@@ -1155,6 +1165,13 @@ class MatchReplayDialog(QDialog):
         self._capture_next()
 
     def _stop_auto(self):
+        self._trace_event("AUTO_STOP_REQUESTED",
+                          active_job=self._active_job or "NONE",
+                          active_thread=self._thread is not None,
+                          prep_thread=self._prep_thread is not None,
+                          retired_threads=len(self._retired_workers),
+                          elapsed_active_ms=round((monotonic()-self._active_request_started)*1000)
+                          if self._active_request_started is not None else None)
         self._stop_local_event_reader()
         self._interrupt_prep()
         self._end_background_collection()
@@ -1581,6 +1598,7 @@ class MatchReplayDialog(QDialog):
         self._inflight_screen_label=screen_label
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
+            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
             app_root=self.store_root,selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="batch",
@@ -1628,6 +1646,8 @@ class MatchReplayDialog(QDialog):
     def _on_ai_progress(self, progress: str) -> None:
         if self.sender() is not None and self.sender() is not self._worker:
             return  # Superseded worker: no stale GUI progress.
+        if self._cancel_event.is_set() or self._shutdown_intent is not None:
+            return  # Late HTTP progress cannot overwrite stopped UI.
         self._set_ai_status(f"{progress} / 試行 #{self._ai_request_attempts}")
         if progress.startswith("ChatGPT認証"):
             kind="AUTH_CHECK"
@@ -1743,6 +1763,8 @@ class MatchReplayDialog(QDialog):
                                       frame_seq=self._last_capture_seq)
                     self._result_screen_candidate=None
                     self._result_screen_sent=False
+                    self._manual_result_available=False
+                    self._manual_result_controls.hide()
                 if (prediction.label in _URGENT_SCREENS
                         and prediction.confidence>=0.80
                         and phase in ("PREP","BATTLE")):
@@ -1784,9 +1806,12 @@ class MatchReplayDialog(QDialog):
                 # NEVER a direct WIN/LOSS determination or a new tactical call.
                 classified=self._screen_gate.observe(prediction,phase)
                 if classified=="RESULT_SCREEN":
-                    if getattr(self._screen_model,"experimental",False):
-                        self._trace_event("RESULT_SCREEN_TRIAL_REQUIRES_MANUAL_CONFIRMATION")
-                    elif phase=="BATTLE":
+                    self._trace_event("RESULT_SCREEN_OCR_GPT_GATE",
+                        experimental=bool(getattr(self._screen_model,"experimental",False)),
+                        confidence=round(prediction.confidence,3),
+                        margin=round(prediction.margin,3))
+                    # Validated affects consent/quality, never match workflow.
+                    if phase=="BATTLE":
                         self._note_stable_result_screen()
                     classified=None
                 if (prediction.label=="BATTLE_EVENT"
@@ -2134,6 +2159,10 @@ class MatchReplayDialog(QDialog):
                               reason="SUPERSEDED_BY_NEW_REQUEST")
             return
         if self._shutdown_intent is not None or self._cancel_event.is_set():
+            self._trace_event("AI_RESPONSE_AFTER_STOP_DROPPED",
+                              active_job=self._active_job or "NONE",
+                              elapsed_active_ms=round((monotonic()-self._active_request_started)*1000)
+                              if self._active_request_started is not None else None)
             # A stopped HTTP request can still return a result. Never apply
             # its stale action, advance the match, or dispatch more captures.
             return
@@ -2599,6 +2628,8 @@ class MatchReplayDialog(QDialog):
         self._trace_event("RESULT_SCREEN_STABLE_CANDIDATE",
                           frame_id=frame,stable_frames=2,
                           pending_prior_ocr=len(pending))
+        self._render({"status":"RESULT_VERIFICATION_PENDING",
+                      "message":"結果画面を検出。直前の戦闘OCRをGPTで判定中。"})
         QTimer.singleShot(0,self._attempt_result_screen_verification)
 
     def _attempt_result_screen_verification(self):
@@ -2621,6 +2652,9 @@ class MatchReplayDialog(QDialog):
         pending=[frame for frame in candidate["pending_ocr_frames"]
                  if frame in self._ocr_capture_epochs]
         if pending:
+            if not candidate.get("wait_logged"):
+                candidate["wait_logged"]=True
+                self._trace_event("RESULT_OCR_BARRIER_WAIT",pending_count=len(pending))
             reader=self._local_event_reader
             if reader is None or not reader.enabled:
                 # The OCR engine stopped before its queued work completed.
@@ -2629,14 +2663,16 @@ class MatchReplayDialog(QDialog):
                     candidate["error_reported"]=True
                     self._trace_event("PRE_RESULT_BATTLE_OCR_UNAVAILABLE",
                                       pending_count=len(pending))
-                    self._set_ai_status(
-                        "終了前のバトルメッセージOCRが未完了のまま停止しました。"
-                        "ゲーム内の勝敗を確認して手動で確定してください。")
+                    self._set_ai_status("終了前の戦闘OCRを取得できず勝敗未確定です。")
+                    self._render({"status":"RESULT_UNCONFIRMED",
+                                  "reason":"PRE_RESULT_BATTLE_OCR_UNAVAILABLE"})
                 return
             # Battle has ended: do not impose a 45-second action deadline or
             # a fabricated 1.5/3-second OCR cutoff. UI stays responsive.
             QTimer.singleShot(250,self._attempt_result_screen_verification)
             return
+        self._trace_event("RESULT_OCR_BARRIER_RELEASED",
+                          waited=bool(candidate.get("wait_logged")))
         assets=self.assets
         evidence=self._local_battle_tracker.snapshot(
             at_or_before=candidate["time"],
@@ -2650,9 +2686,9 @@ class MatchReplayDialog(QDialog):
             self._result_screen_sent=True
             self._trace_event("PRE_RESULT_BATTLE_OCR_EMPTY",
                               frame_id=candidate["frame"])
-            self._set_ai_status(
-                "結果画面は検出しましたが、直前のバトルメッセージOCRがありません。"
-                "手動で勝敗を確定してください。")
+            self._set_ai_status("結果画面を検出しましたが直前の戦闘OCRがありません。")
+            self._render({"status":"RESULT_UNCONFIRMED",
+                          "reason":"NO_RESULT_OCR_EVIDENCE"})
             return
         if self._thread is not None:
             self._retire_active_worker("RESULT_SCREEN_VERIFICATION")
@@ -2670,6 +2706,7 @@ class MatchReplayDialog(QDialog):
                           pending_prior_ocr=0)
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
+            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
             app_root=self.store_root,selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="result_screen",
@@ -2703,6 +2740,7 @@ class MatchReplayDialog(QDialog):
                           message_count=len(messages))
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
+            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
             app_root=self.store_root,selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets,state=self.state,job="result",
@@ -2713,8 +2751,9 @@ class MatchReplayDialog(QDialog):
         self._thread.start()
 
     def _finish_match_manually(self, result):
-        """Explicit human attestation when OCR is unavailable or ambiguous."""
-        if result not in ("WIN","LOSS") or self.state is None:
+        """Human attestation only after OCR/GPT result verification failed."""
+        if (result not in ("WIN","LOSS") or self.state is None
+                or not self._manual_result_available):
             return
         if self.state.get("phase")=="ENDED":
             return
@@ -2732,7 +2771,9 @@ class MatchReplayDialog(QDialog):
         self.state["phase"]="ENDED"
         self.state["result"]=result
         self.state["last_event"]="PLAYER_CONFIRMED_MATCH_RESULT"
-        self._trace_event("MANUAL_MATCH_RESULT_CONFIRMED",result=result)
+        self._trace_event("MANUAL_MATCH_RESULT_CONFIRMED",result=result,
+                          reason="AUTOMATIC_RESULT_UNCONFIRMED")
+        self._manual_result_available=False
         report={"status":"MATCH_END","screen":"USER_CONFIRMED_RESULT",
                 "recommendation":"勝利。" if result=="WIN" else "敗北。",
                 "result_source":"PLAYER_EXPLICIT_CONFIRMATION",
@@ -2789,6 +2830,7 @@ class MatchReplayDialog(QDialog):
                           unknown_opponents=len(prep_state.get("visual_unknown_opponents") or []))
         self._prep_thread=QThread(self)
         self._prep_worker=_ReplayWorker(
+            exchange_sink=(self._exchange_log.write if self._exchange_log else None),
             app_root=self.store_root, selected_model=self.model,
             reasoning_effort=self.reasoning_effort,
             assets=self.assets, state=prep_state, job="prep",
