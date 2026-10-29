@@ -2002,11 +2002,20 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         # an empty GPT actor must not erase or bypass that verified identity.
         known_fainted=(state.get("battle_evidence") or {}).get(
             "fainted",{}).get("own",{})
-        own_faint_proven=bool(state.get("awaiting_replacement") and
-                             (known_fainted.get(current) or
-                              str((state.get("battle_evidence") or {}).get(
-                                  "hp_by_pokemon",{}).get("own",{}).get(current,"")
-                              ).startswith(("0/","0 /"))))
+        own_hp=(state.get("battle_evidence") or {}).get(
+            "hp_by_pokemon",{}).get("own",{})
+        # When the active actor is already cleared, any selected teammate
+        # with a proven faint can justify a forced replacement. If an actor
+        # is still named, evidence must concern THAT actor.
+        faint_subjects=([current] if current else
+                        list(state.get("selected_three") or ()))
+        faint_evidenced=any(
+            known_fainted.get(name) or str(own_hp.get(name,"")).startswith(
+                ("0/","0 /")) or str(own_hp.get(name,"")).casefold() in (
+                    "0","0hp","0%","ひんし","fainted")
+            for name in faint_subjects)
+        own_faint_proven=bool(state.get("awaiting_replacement")
+                             and faint_evidenced)
         actor_missing_on_switch=(switch_only and own_faint_proven and
                                  not _canonical(answer.get("interpreted_own_active","")))
         own_mismatch=(combined and not actor_missing_on_switch and
