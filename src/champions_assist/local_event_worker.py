@@ -36,6 +36,7 @@ class LocalFieldRead:
     detected_moves: tuple[str, ...] = ()
     detected_pokemon: tuple[str, ...] = ()
     status: str = "CANDIDATE"
+    display_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return dict(
@@ -45,6 +46,7 @@ class LocalFieldRead:
             detected_moves=list(self.detected_moves),
             detected_pokemon=list(self.detected_pokemon),
             certainty=self.status, game_validated=False,
+            **({"display_id":self.display_id} if self.display_id else {}),
         )
 
 
@@ -53,7 +55,7 @@ class _Job:
     frame_id: str
     timestamp: float
     label: str
-    crops: tuple[tuple[str, str, np.ndarray], ...]
+    crops: tuple[tuple[str, str, np.ndarray, str], ...]
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,9 @@ class AsyncBattleEventReader:
         self._out: Queue[_Result]=Queue(maxsize=max_results or 0)
         self._stop=Event()
         self._signatures: dict[str,np.ndarray]={}
+        self._display_episodes: dict[str,int]={}
+        self._display_last_time: dict[str,float]={}
+        self._display_last_label: dict[str,str]={}
         self._counter=0
         self.skipped=0
         self.overflow=0
@@ -167,6 +172,10 @@ class AsyncBattleEventReader:
             return False
         crops=[]
         updated={}
+        captured_at=monotonic() if timestamp is None else timestamp
+        new_display_episodes={}
+        new_display_time={}
+        new_display_labels={}
         for region in profile.regions:
             if not live_ocr_region_enabled(profile,region):
                 continue
@@ -186,7 +195,20 @@ class AsyncBattleEventReader:
                      or float(np.mean(np.abs(previous-small)))/255
                         >=self.change_threshold)
             if changed:
-                crops.append((region.name,region.kind,crop.copy()))
+                difference=(float(np.mean(np.abs(previous-small)))/255
+                            if previous is not None and previous.shape==small.shape
+                            else 1.0)
+                # Visual identity, not OCR string similarity, permits merging.
+                # A screen change or substantial ROI change starts a new event.
+                stable=(difference<=max(self.change_threshold,0.045)
+                        and 0<=captured_at-self._display_last_time.get(key,-1e10)<=2.0
+                        and self._display_last_label.get(key)==label)
+                episode=self._display_episodes.get(key,0)+(0 if stable else 1)
+                new_display_episodes[key]=episode
+                new_display_time[key]=captured_at
+                new_display_labels[key]=label
+                crops.append((region.name,region.kind,crop.copy(),
+                              f"{key}:visual-{episode}"))
                 updated[key]=small
         if not crops:
             self.skipped+=1
@@ -196,8 +218,7 @@ class AsyncBattleEventReader:
         # Messages precede HUD text within a frame; no semantic OCR parse.
         crops.sort(key=lambda crop: 0 if crop[1]=="MESSAGE" or
                    "message" in crop[0] else 1)
-        job=_Job(event_id,monotonic() if timestamp is None else timestamp,
-                 label,tuple(crops))
+        job=_Job(event_id,captured_at,label,tuple(crops))
         try:
             self._queue.put_nowait(job)
         except Full:
@@ -206,6 +227,9 @@ class AsyncBattleEventReader:
         # Commit dedup state only after a successful enqueue; lost events can
         # be retried on the next 300ms frame.
         self._signatures.update(updated)
+        self._display_episodes.update(new_display_episodes)
+        self._display_last_time.update(new_display_time)
+        self._display_last_label.update(new_display_labels)
         self.jobs_enqueued+=1
         return True
 
@@ -243,7 +267,7 @@ class AsyncBattleEventReader:
             self.last_queue_wait_ms=max(0,int((started-job.timestamp)*1000))
             first_error=None
             first_error_code=None
-            for name,kind,crop in job.crops:
+            for name,kind,crop,display_id in job.crops:
                 if self._stop.is_set() or not self.enabled:
                     break
                 region=next((r for r in self.profile.regions
@@ -267,7 +291,8 @@ class AsyncBattleEventReader:
                         confidence=reading.confidence,roi=name,
                         source="ROI_OCR_UNVERIFIED",text=reading.text,
                         detected_moves=parsed.detected_moves,
-                        detected_pokemon=parsed.detected_pokemon))
+                        detected_pokemon=parsed.detected_pokemon,
+                        display_id=display_id))
                 except Exception as exc:
                     record_exception("LOCAL_OCR_ROI_ERROR", exc, stage="OCR_ROI")
                     # One failing ROI never discards another successfully
