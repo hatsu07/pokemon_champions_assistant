@@ -232,19 +232,18 @@ _AI_SENSITIVE_KEYS = frozenset({
     "password", "privatekey", "credentials",
 })
 _AI_SENSITIVE_SUFFIXES = (
-    "accesstoken", "refreshtoken", "authtoken", "sessiontoken",
-    "apikey", "clientsecret", "privatekey",
+    # Normalizing every non-alphanumeric character makes both api_token
+    # and userAccessToken end in "token". Never enumerate only known prefixes.
+    "token", "apikey", "authkey", "authorization", "clientsecret",
+    "secret", "password", "privatekey", "credential", "credentials",
 )
 # A request may contain an OCR JSON string, or even a malformed/embedded
 # JSON fragment: never write a string that might contain a credential field.
 _AI_SENSITIVE_TEXT = re.compile(
-    r"(?i)(?<![a-z0-9])(?:access[_\s-]*token|refresh[_\s-]*token|"
-    r"id[_\s-]*token|auth[_\s-]*token|oauth[_\s-]*token|"
-    r"session[_\s-]*token|bearer[_\s-]*token|api[_\s-]*key|"
-    r"auth[_\s-]*key|authorization|client[_\s-]*secret|"
-    r"secret[_\s-]*key|private[_\s-]*key|password|credentials|"
-    r"token|secret)"
-    r"(?![a-z0-9])"
+    # A non-JSON OCR fragment may contain CamelCase keys or escaped JSON.
+    # No left word boundary: "userAccessToken" must be recognized.
+    r"(?i)(?:token|api[_\\s-]*key|authorization|secret|password|"
+    r"credentials?|private[_\\s-]*key|bearer)"
 )
 
 
@@ -272,18 +271,25 @@ def _sanitize_ai_exchange(value, *, depth=0):
         return [_sanitize_ai_exchange(item,depth=depth+1) for item in value]
     if isinstance(value, str):
         clean=_AI_CREDENTIAL.sub("[REDACTED]",value)
-        if not _AI_SENSITIVE_TEXT.search(clean):
-            return clean
+        # Always parse valid JSON first: a credential key such as
+        # "userAccessToken" cannot be safely recognized by boundaries on
+        # the raw string. This also handles escaped nested JSON strings.
         try:
             decoded=json.loads(clean)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
+            decoded=None
+        if isinstance(decoded,(dict,list)):
+            sanitized=_sanitize_ai_exchange(decoded,depth=depth+1)
+            return json.dumps(sanitized,ensure_ascii=False,separators=(",",":"))
+        if isinstance(decoded,str) and decoded!=clean:
+            sanitized=_sanitize_ai_exchange(decoded,depth=depth+1)
+            return json.dumps(sanitized,ensure_ascii=False)
+        # For malformed or ordinary text, fail closed whenever a
+        # credential-like key/marker appears. Never persist the unknown
+        # surrounding value by guessing where a malformed field ends.
+        if _AI_SENSITIVE_TEXT.search(clean):
             return "[REDACTED_SENSITIVE_TEXT]"
-        # JSON scalar strings or nested quoted strings could otherwise recurse
-        # indefinitely. For ambiguous content, withhold the whole string.
-        if not isinstance(decoded,(dict,list)):
-            return "[REDACTED_SENSITIVE_TEXT]"
-        sanitized=_sanitize_ai_exchange(decoded,depth=depth+1)
-        return json.dumps(sanitized,ensure_ascii=False,separators=(",",":"))
+        return clean
     if value is None or isinstance(value,(bool,int,float)):
         return value
     return "[REDACTED_UNSUPPORTED_VALUE]"
