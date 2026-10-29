@@ -1898,16 +1898,15 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "hint":str(r.get("ai_hint") or "")[:140],
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
     from .ocr_turn_context import (
-        build_ocr_turn_context, apply_model_ocr_carryover, compact_ocr_transport)
+        build_ocr_turn_context, apply_model_ocr_carryover,
+        compact_ocr_transport, _own_actor_identification_candidate)
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
         state,local_field_candidates,sent_ledger=sent_ocr_ledger,
         request_id=ocr_request_id)
     # A request whose actor identity depended on reserved/stale OCR cannot
     # silently execute with an empty candidate set.
     if current == "" and not any(
-            __import__("champions_assist.ocr_turn_context",
-                       fromlist=["_own_actor_identification_candidate"])
-            ._own_actor_identification_candidate(row) for row in candidates):
+            _own_actor_identification_candidate(row) for row in candidates):
         if sent_ocr_ledger is not None:
             sent_ocr_ledger.release(ocr_request_id)
         return state,{"status":"BLOCKED",
