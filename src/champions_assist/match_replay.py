@@ -1914,7 +1914,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         request_id=ocr_request_id)
     # A request whose actor identity depended on reserved/stale OCR cannot
     # silently execute with an empty candidate set.
-    if current == "" and not any(
+    if not switch_only and current == "" and not any(
             _own_actor_identification_candidate(row) for row in candidates):
         if sent_ocr_ledger is not None:
             sent_ocr_ledger.release(ocr_request_id)
