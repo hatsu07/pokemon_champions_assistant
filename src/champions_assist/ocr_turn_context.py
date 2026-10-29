@@ -150,6 +150,29 @@ def sanitize_pending_questions(questions, available_frames) -> list[dict]:
     return result
 
 
+def has_ocr_transport_evidence(state: dict, local_rows, *,
+                               sent_ledger=None) -> bool:
+    """Can an unidentified active be evaluated from OCR in the NEXT request?
+
+    This is a transport gate, not a local Pokémon/HP interpretation.
+    If req-A sent OCR but its answer was discarded, those rows are sent and
+    req-B must use a fresh screenshot or safely abstain, never an empty OCR
+    text prompt. Already verified active Pokémon do not need this gate.
+    """
+    all_rows, _ = select_ai_ocr_evidence(local_rows)
+    previous = set(state.get("_ai_ocr_presented_keys") or ())
+    if sent_ledger is not None:
+        previous.update(sent_ledger.snapshot())
+    retained = {
+        frame for q in (state.get("_ai_ocr_unresolved") or ())
+        if isinstance(q, dict)
+        for frame in q.get("source_frames", [])
+        if isinstance(frame, str)
+    }
+    return any(_row_key(row) not in previous or
+               row.get("frame_id") in retained for row in all_rows)
+
+
 def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tuple[list[dict], list[dict], dict]:
     """Return NEW OCR + source rows for GPT-retained unresolved questions.
 
@@ -171,14 +194,6 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
                       if isinstance(f,str) and f}
     pending = sanitize_pending_questions(prior,available | previously_cited)
     retained_frames = {f for item in pending for f in item["source_frames"]}
-    # Explicit, bounded reinspection is separate from automatic re-sending.
-    # It can restore proof from a stale/blocked answer without rewriting the
-    # sent ledger or inventing a locally confirmed battle fact.
-    requested_frames = {
-        frame for frame in (state.get("_ai_ocr_reinspect_frames") or ())
-        if isinstance(frame,str) and frame in available
-    }
-    retained_frames.update(requested_frames)
     previous = set(state.get("_ai_ocr_presented_keys") or ())
     if sent_ledger is not None:
         previous.update(sent_ledger.snapshot())
@@ -197,7 +212,6 @@ def build_ocr_turn_context(state: dict, local_rows, *, sent_ledger=None) -> tupl
         "unresolved_rows_resent": len(selected)-new_count,
         "prior_observations_not_resent": len(all_rows)-len(selected),
         "unresolved_questions": len(pending),
-        "reinspection_frames_requested": len(requested_frames),
         "ledger_json_bytes": before_bytes,
         "api_json_bytes": after_bytes,
         "ledger_not_mutated": True,
