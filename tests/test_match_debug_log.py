@@ -82,11 +82,13 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
             embedded=json.dumps({
                 "battle":"safe OCR", "auth":{"access_token":"NESTED_ACCESS_123456"},
                 "session":{"refresh_token":"NESTED_REFRESH_123456"},
-                "messages":["unchanged",{"authorization":"Bearer SECRETAUTH123456"}]
+                "messages":["unchanged",{"authorization":"Bearer SECRETAUTH123456"},
+                            {"token":"GENERIC_TOKEN_123456"}]
             },ensure_ascii=False)
             log.write("GPT_REQUEST",{
                 "api_key":"DIRECT_API_SECRET_123456",
                 "meta":{"client_secret":"CLIENT_SECRET_123456",
+                        "openai_api_key":"NAMESPACED_API_KEY_123456",
                         "content":"safe metadata"},
                 "content":[
                     {"type":"input_text","text":embedded},
@@ -114,7 +116,8 @@ class MatchDebugDiagnosticsTests(unittest.TestCase):
                 "NESTED_ACCESS_123456","NESTED_REFRESH_123456",
                 "SECRETAUTH123456","RAW_INLINE_123456",
                 "ESCAPED_123456","PASSWORD_123456",
-                "verysecret1234567890",
+                "verysecret1234567890", "NAMESPACED_API_KEY_123456",
+                "GENERIC_TOKEN_123456",
             ):
                 self.assertNotIn(secret,raw)
             self.assertIn("safe battle OCR string",raw)
