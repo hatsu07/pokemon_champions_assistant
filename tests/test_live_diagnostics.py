@@ -47,6 +47,60 @@ class LiveDiagnosticsTests(unittest.TestCase):
         self.assertEqual(o["switch_target"],"マリルリ")
         self.assertNotIn("token",o)
 
+    def test_current_selected_three_registered_moves_are_in_input_digest(self):
+        selected={
+            "ガブリアス":["じしん","げきりん","まもる","アイアンヘッド"],
+            "マリルリ":["アクアジェット","じゃれつく","たきのぼり","まもる"],
+            "ドドゲザン":["ドゲザン","ふいうち","つるぎのまい","アイアンヘッド"],
+        }
+        digest=ai_input_digest({
+            "registered_selected_moves":selected,
+            "our_registered_moves":["旧形式の技"],
+            "selected_three":list(selected),
+        })
+        self.assertEqual(digest["registered_moves"],selected)
+        self.assertEqual(set(digest["registered_moves"]),set(selected))
+        self.assertNotIn("旧形式の技",json.dumps(digest,ensure_ascii=False))
+
+    def test_turn_payload_size_is_exact_and_pending_is_not_tactical(self):
+        from champions_assist.live_diagnostics import turn_payload_byte_breakdown
+        prompt={
+            "screen_kind":"TURN_ACTION",
+            "selected_three":["ガブリアス","マリルリ","ドドゲザン"],
+            "ocr_candidates_unverified":[{"id":"e1","text":"ゆけっ！ガブリアス！"}],
+            "ocr_pending_questions_unverified":[{
+                "source_frames":["p1"],"question":"持ち物は？"}],
+            "ocr_prior_rows_not_resent":34,
+            "registered_selected_moves":{"ガブリアス":["じしん","まもる"]},
+        }
+        sizes=turn_payload_byte_breakdown(prompt)
+        actual=len(json.dumps(prompt,ensure_ascii=False,
+                              separators=(",",":")).encode("utf-8"))
+        self.assertEqual(sizes["prompt_utf8_bytes"],actual)
+        self.assertEqual(sum(v for k,v in sizes.items()
+                             if k!="prompt_utf8_bytes"),actual)
+        for key in ("new_ocr_field_utf8_bytes",
+                    "pending_ocr_field_utf8_bytes",
+                    "ocr_transport_metadata_utf8_bytes"):
+            self.assertGreater(sizes[key],0)
+        no_pending=dict(prompt)
+        no_pending["ocr_pending_questions_unverified"]=[]
+        small=turn_payload_byte_breakdown(no_pending)
+        self.assertEqual(sizes["non_ocr_json_bytes"],
+                         small["non_ocr_json_bytes"])
+        self.assertEqual(sizes["new_ocr_field_utf8_bytes"],
+                         small["new_ocr_field_utf8_bytes"])
+        self.assertGreater(sizes["pending_ocr_field_utf8_bytes"],
+                           small["pending_ocr_field_utf8_bytes"])
+        # A diagnostic recorder must retain every new integer measurement.
+        from champions_assist.live_diagnostics import redact_battle_detail
+        self.assertEqual(redact_battle_detail(sizes),sizes)
+        self.assertEqual(turn_payload_byte_breakdown({}),
+                         {"prompt_utf8_bytes":2,"non_ocr_json_bytes":2,
+                          "new_ocr_field_utf8_bytes":0,
+                          "pending_ocr_field_utf8_bytes":0,
+                          "ocr_transport_metadata_utf8_bytes":0})
+
     def test_async_chain_order_and_ids(self):
         with tempfile.TemporaryDirectory() as d:
             log=MatchDebugLog(d,async_mode=True)

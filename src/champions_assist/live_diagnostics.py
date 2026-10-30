@@ -6,6 +6,7 @@ The source of a Pokémon identity remains evidence, not guaranteed truth.
 """
 from __future__ import annotations
 
+import json
 import re
 
 _SECRET = re.compile(
@@ -45,7 +46,9 @@ _FIELDS = frozenset((
     "unresolved_rows","prior_rows_not_resent","pending_questions",
     "api_elapsed_ms","pre_api_elapsed_ms","validation_pending",
     "first_event_ms","first_output_ms","stream_complete_ms",
-    "non_ocr_json_bytes","instructions_utf8_bytes","schema_json_bytes",
+    "non_ocr_json_bytes","new_ocr_field_utf8_bytes",
+    "pending_ocr_field_utf8_bytes","ocr_transport_metadata_utf8_bytes",
+    "instructions_utf8_bytes","schema_json_bytes",
     "own_conflict","own_mismatch","confirmed_faint",
     "internal_own","model_own","screen_label","rejected_updates",
 ))
@@ -74,7 +77,8 @@ def _clean_value(value, *, key="", depth=0, actor_map=False):
                     v,key=str(k),depth=depth+1,
                     actor_map=(actor_map or key in (
                         "known_hp","hp_by_pokemon","status_by_pokemon",
-                        "item_by_pokemon","moves_by_pokemon","boosts")))
+                        "item_by_pokemon","moves_by_pokemon","boosts",
+                        "registered_moves")))
                 for k,v in list(value.items())[:40]
                 if isinstance(k,str) and (
                     k in _FIELDS or
@@ -109,6 +113,36 @@ def current_state_digest(state: dict) -> dict:
     })
 
 
+def turn_payload_byte_breakdown(prompt: dict) -> dict:
+    """Partition actual compact UTF-8 prompt bytes without double counting.
+
+    Each key/value pair is attributed to exactly one category, including its
+    preceding JSON comma. The two outer braces count as tactical overhead.
+    Thus all four parts sum exactly to prompt_utf8_bytes even for empty OCR,
+    Japanese text, or future field-order changes. OCR count metadata is not
+    silently misclassified as tactical content.
+    """
+    buckets = {
+        "non_ocr_json_bytes": 2,
+        "new_ocr_field_utf8_bytes": 0,
+        "pending_ocr_field_utf8_bytes": 0,
+        "ocr_transport_metadata_utf8_bytes": 0,
+    }
+    labels = {
+        "ocr_candidates_unverified": "new_ocr_field_utf8_bytes",
+        "ocr_pending_questions_unverified": "pending_ocr_field_utf8_bytes",
+        "ocr_prior_rows_not_resent": "ocr_transport_metadata_utf8_bytes",
+    }
+    for index, (key, value) in enumerate(prompt.items()):
+        encoded_key=json.dumps(key,ensure_ascii=False,separators=(",",":"))
+        encoded_value=json.dumps(value,ensure_ascii=False,
+                                 separators=(",",":"),default=str)
+        field_bytes=len((("," if index else "") + encoded_key + ":" +
+                         encoded_value).encode("utf-8"))
+        buckets[labels.get(key,"non_ocr_json_bytes")]+=field_bytes
+    return {"prompt_utf8_bytes":sum(buckets.values()), **buckets}
+
+
 def ai_input_digest(prompt: dict) -> dict:
     """Exactly the tactical values sent, not the full model prompt."""
     p=prompt or {}
@@ -122,7 +156,8 @@ def ai_input_digest(prompt: dict) -> dict:
         "selected_bench":p.get("living_selected_bench_candidates") or
                      (p.get("registered_command_options") or {}).get(
                          "bench_candidates_from_current_state"),
-        "registered_moves":p.get("our_registered_moves") or
+        "registered_moves":p.get("registered_selected_moves") or
+                     p.get("our_registered_moves") or
                      (p.get("registered_command_options") or {}).get(
                          "moves_by_pokemon"),
         "known_hp":p.get("known_hp_by_pokemon") or
