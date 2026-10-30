@@ -149,7 +149,9 @@ class ContractTests(unittest.TestCase):
     def test_future_pivot_target_never_certified(self):
         s = frozen()
         candidate = CandidateAction(
-            "pivot-id", ActionKind.PIVOT, "とんぼがえり", "アシレーヌ",
+            fingerprint({"action_kind": "PIVOT", "move": "とんぼがえり",
+                         "switch_target": "アシレーヌ"}),
+            ActionKind.PIVOT, "とんぼがえり", "アシレーヌ",
             window_id=s.window.decision_window_id)
         self.assertEqual(revalidate_candidate(candidate, s, ASSETS).legal_status,
                          LegalStatus.UNKNOWN)
