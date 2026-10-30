@@ -90,7 +90,7 @@ def roles():
 
 def evaluated_prep(*, known=6):
     """Structurally assessed fixture, unlike AI_UNVERIFIED cache hints."""
-    lead=("ACT=attack|KO=not_guaranteed|DPS=じしん|PRI=none|S=slower|"
+    lead=("ACT=move:じしん|KO=not_guaranteed|DPS=じしん|PRI=none|S=slower|"
           "OUR=じしん|OPP=coverage_risk|SAFE=unsafe|PROC=unverified|"
           "LOCK=none|MEGA=recheck")
     bench=("S=slower|OUR=じしん|OPP=coverage_risk|PRI=none|"
@@ -260,7 +260,7 @@ class CachedPrepTests(unittest.TestCase):
         own=tuple(OWN[:3])
         inp=build_prep_input(own,own[0],tuple(OPP),
                              tuple("matrix" for _ in OPP))
-        lead=("ACT=attack|KO=unknown|DPS=registered_move|PRI=unknown|"
+        lead=("ACT=move:じしん|KO=unknown|DPS=じしん|PRI=unknown|"
               "S=unknown|OUR=unknown|OPP=unknown|SAFE=unknown|"
               "PROC=unverified|LOCK=unknown|MEGA=unknown")
         bench=("S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
@@ -270,10 +270,10 @@ class CachedPrepTests(unittest.TestCase):
         result=PrepResult("COMPLETE",rows,*own)
         validation=validate_prep_result(inp,result)
         self.assertFalse(validation.complete)
-        self.assertEqual(validation.reason,"MATCHUP_NOT_ASSESSED")
+        self.assertEqual(validation.reason,"MAX_DAMAGE_MOVE_NOT_REGISTERED")
         evaluated_rows=tuple(PrepMatchup(
             r.our_pokemon,r.opponent_pokemon,
-            r.eval_code.replace("OUR=unknown","OUR=registered_move"))
+            r.eval_code.replace("OUR=unknown","OUR=じしん"))
             for r in rows)
         evaluated=PrepResult("COMPLETE",evaluated_rows,*own)
         self.assertTrue(validate_prep_result(inp,evaluated).complete)
