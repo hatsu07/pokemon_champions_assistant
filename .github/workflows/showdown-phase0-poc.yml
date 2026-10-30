@@ -51,6 +51,7 @@ jobs:
           print("Pending-choice trace:", json.dumps(report["probe"]["results"]["pending_choice"], ensure_ascii=False, sort_keys=True))
           print("Unsupported cases:", bench["unsupported"])
           print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
+          print("Failed branches:", [dict(index=i, **s) for i, s in enumerate(bench["timings"]) if s["status"] != "PASS_SYNTHETIC"])
           assert report["decision"]["recommended_adoption"] == "NO_GO"
           assert report["decision"]["performance_100_valid"], "fewer than 100 valid branches"
           assert report["probe"]["format_mod"] == "champions"
