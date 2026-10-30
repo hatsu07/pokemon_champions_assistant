@@ -27,6 +27,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           echo "Verified checkout SHA: $(git rev-parse HEAD)"
+          echo "CHECKED_OUT_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
@@ -66,7 +67,7 @@ jobs:
           if summary:
               with open(summary, "a", encoding="utf-8") as out:
                   out.write("### Phase 0 synthetic benchmark (NOT Champions game proof)\\n")
-                  out.write("Head SHA: `" + os.environ["GITHUB_SHA"] + "`\\n\\n")
+                  out.write("Head SHA: `" + os.environ["CHECKED_OUT_HEAD"] + "`\\n\\n")
                   out.write("Categories: `" + json.dumps(bench["by_kind"], ensure_ascii=False) + "`\\n\\n")
                   out.write("Stage totals: `" + json.dumps(bench["counts"]) + "`\\n\\n")
                   out.write("P50/P95/P99 ms: " + str((bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])) + "\\n")
