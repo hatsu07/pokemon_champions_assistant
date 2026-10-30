@@ -643,6 +643,32 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(out["recommendation"],"じしん。")
         self.assertEqual(updated["observed_lead"],OWN[0])
 
+    def test_eighteen_ai_hints_are_zero_evaluated_in_prep_gui_and_trace(self):
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=chosen_state(assets)
+        panel._prefill_cached_prep(
+            roles={"preserve":OWN[0],"stopper":OWN[1],"closer":OWN[2]})
+        prep=panel.state["prep"]
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
+        self.assertEqual(prep["cached_hint_count"],18)
+        self.assertEqual(prep["matchups_evaluated"],0)
+        event=next(item for item in reversed(panel._timing_trace)
+                   if item.get("event")=="PREP_CACHE_BASE_READY")
+        self.assertEqual(event["cached_hint_count"],18)
+        self.assertEqual(event["matchups_evaluated"],0)
+        report=panel.entries[-1]
+        self.assertEqual(report["cached_hint_count"],18)
+        self.assertEqual(report["matchups_evaluated"],0)
+        self.assertIn("評価済み0/18対面",report["message"])
+        panel._refresh_live_status()
+        self.assertIn("評価済み 0/18対面",panel.prep_banner.text())
+        self.assertIn("ヒント 18/18件",panel.prep_banner.text())
+
     def test_selection_invalid_win_roles_never_forge_completed_prep(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
