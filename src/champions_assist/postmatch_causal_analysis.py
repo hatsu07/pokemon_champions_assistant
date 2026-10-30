@@ -363,6 +363,14 @@ class PostmatchCausalStore:
                     pass
             gate_rules, gate_excluded = (
                 _gate_rules_with_audit(gate_text) if gate_sha else ({}, {}))
+            # Reserve the *complete* omission inventory upfront so
+            # restoring an excluded rule cannot overflow the final prompt.
+            # It is never acceptable to sacrifice audit metadata just to fit
+            # an additional gate section.
+            all_omissions = {
+                **gate_excluded,
+                **{rule_id: "PROMPT_BUDGET_EXCEEDED" for rule_id in gate_rules},
+            }
             # A minimum of 3 full *capture-time* event windows is mandatory.
             # Reduce extra match windows BEFORE reducing any event fields.
             # Keep omitted match IDs and rule IDs as an auditable inventory;
@@ -380,8 +388,8 @@ class PostmatchCausalStore:
                 "sample_size": len(snapshots),
                 "gate_sha": gate_sha or "UNKNOWN",
                 "existing_gate_rules": {},
-                "gate_omitted_rule_ids": sorted(gate_excluded),
-                "gate_omission_reasons": dict(gate_excluded),
+                "gate_omitted_rule_ids": sorted(all_omissions),
+                "gate_omission_reasons": dict(all_omissions),
                 "selection_audit": {
                     "eligible_match_ids": [m["match_id"] for m in snapshots],
                     "excluded_match_ids": [],
@@ -405,10 +413,13 @@ class PostmatchCausalStore:
             # truncated pseudo-rule. Over-budget IDs remain explicit.
             for rule_id, body in gate_rules.items():
                 source["existing_gate_rules"][rule_id] = body
+                source["gate_omitted_rule_ids"].remove(rule_id)
+                del source["gate_omission_reasons"][rule_id]
                 if len(_json(source)) > MAX_INPUT_CHARS:
                     del source["existing_gate_rules"][rule_id]
                     source["gate_omitted_rule_ids"].append(rule_id)
                     source["gate_omission_reasons"][rule_id] = "PROMPT_BUDGET_EXCEEDED"
+            source["gate_omitted_rule_ids"].sort()
             if len(_json(source)) > MAX_INPUT_CHARS:
                 return {"status": "PROMPT_BUDGET_EXCEEDED",
                         "reason": "AUDIT_METADATA_TOO_LARGE"}
