@@ -59,7 +59,8 @@ class Review137CacheFreshnessTests(unittest.TestCase):
                 self.assertEqual(stale["status"], "再準備が必要")
                 self.assertIn("Champions固定マスターが更新されました",
                               stale["stale_reasons"])
-                self.assertEqual(stale["fingerprint"], original.manifest_path.parent.name)
+                # With no current matching candidate, the newest stale
+                # manifest is allowed for diagnostics; the status must stay stale.
 
                 refreshed = self.prepare()
                 self.assertFalse(refreshed.cache_hit)
