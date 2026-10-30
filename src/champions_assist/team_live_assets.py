@@ -141,6 +141,14 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     review_bytes = review_path.read_bytes() if review_path.is_file() else b""
     if len(review_bytes) > 2*1024*1024:
         raise ConfigurationError("レビューJSONのサイズ上限超過")
+    source_fingerprints = {
+        # These are the exact fingerprint inputs; a derived matrix SHA is not
+        # a substitute for freshness of its *source* LIVE matrix/lookup.
+        "master_matrix_sha256": sha256(matrix_bytes).hexdigest(),
+        "master_lookup_sha256": sha256(lookup_bytes).hexdigest(),
+        "baseline_team_signature_sha256": _jsonhash(baseline),
+        "review_file_sha256": sha256(review_bytes).hexdigest(),
+    }
     fingerprint = _jsonhash({
         "version":GENERATED_VERSION, "form_evidence_revision":"exact-form-v2",
         "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
@@ -154,6 +162,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     if all(p.is_file() for p in (matrix_path,lookup_path,manifest_path,evidence_path)):
         saved = json.loads(manifest_path.read_text(encoding="utf-8"))
         if (saved.get("fingerprint")==fingerprint
+                and all(saved.get(k) == v for k, v in source_fingerprints.items())
                 and sha256(matrix_path.read_bytes()).hexdigest()==saved.get("matrix_sha256")
                 and sha256(lookup_path.read_bytes()).hexdigest()==saved.get("lookup_sha256")
                 and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")):
@@ -345,6 +354,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     atomic_write_text(evidence_path,candidate_text)
     manifest = {
         "schema":GENERATED_VERSION,"team_id":team_id,"fingerprint":fingerprint,
+        **source_fingerprints,
         "status":status,"reviewed_members":sum(i is not None for i in matched_columns),
         "opponent_rows":len(matrix_rows),"unverified_cells":len(matrix_rows)*sum(i is None for i in matched_columns),
         "team_file":source.name,"matrix_source":MATRIX,"lookup_source":LOOKUP,
