@@ -1088,6 +1088,7 @@ class SettingsDialog(QDialog):
         # another row is highlighted in the registered-team list.
         running_id = self._active_prep_team_id
         if running_id and event and event.get("team_id") == running_id:
+            stored = self._team_readiness_snapshots.get(running_id, {})
             workflow = event
             target = running_id
         else:
@@ -1436,81 +1437,110 @@ class SettingsDialog(QDialog):
 
     def _start_matchup_ai(self) -> None:
         if self._match_active() or self._matchup_ai_worker is not None:
-            QMessageBox.warning(self,"実行不可","対戦中または解析中には実行できません。")
+            QMessageBox.warning(self, "実行不可", "対戦中または解析中には実行できません。")
             return
-        record=self._selected_record()
-        if record is None:return
+        record = self._selected_record()
+        if record is None:
+            return
         from .vision_preferences import VisionPreferenceStore
         from .app_config import default_app_root
-        prefs=VisionPreferenceStore(default_app_root())
-        model=prefs.selected_model()
+        prefs = VisionPreferenceStore(default_app_root())
+        model = prefs.selected_model()
         if not model:
-            QMessageBox.warning(self,"モデル未選択","ChatGPTタブでログインし、モデルを選択してください。")
+            QMessageBox.warning(self, "モデル未選択", "ChatGPTタブでログインし、モデルを選択してください。")
             return
-        answer=QMessageBox.question(
-            self,"ChatGPTへの送信確認",
-            "選択構築×相手358種類の全2,148対面を対象に、24～36対面ずつ"
-            "構造化AI解析します（通信上限180回、再試行を含む）。"
-            "固定マスター不足の対面は未解析として記録されます。"
-            "旧形式の文章評価もv2構造化形式では再解析対象です。"
-            "他構築で根拠が同一のv2結果を再利用し、成功分を保存します。"
-            "利用枠を消費するため、必要なら途中停止してください。"
-            "実機証拠や対戦ログは送信しません。AIの推測は戦術の確定評価に昇格しません。開始しますか？",
-            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+        answer = QMessageBox.question(
+            self, "ChatGPTへの送信確認",
+            "選択構築のPREP事前準備（構築確認、固定マスター、差分再利用、"
+            "全対面AI解析、PREP根拠確認、マトリクス、4ファイル高速索引）を実行します。\n"
+            "相手約358種類×自軍6枠の不足対面を24～36件ずつAI解析"
+            "（通信上限180回、再試行を含む）。既存成功分は再利用します。\n"
+            "未確認のダメージ・処理役・安全受けは確定認定しません。"
+            "マスター不足や実戦でしか判明しない情報は一部完了のまま残ります。\n"
+            "利用枠を消費するため、必要なら停止してください。"
+            "実機証拠・対戦ログは送信しません。開始しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
-        if answer!=QMessageBox.StandardButton.Yes:return
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            # The exact visible build is the target. Do not silently run an
+            # earlier stored CSV while the editor contains unsaved changes.
+            if self._editing_team_id == record.team_id:
+                self._persist_team_editor()
+            record = self.service.revalidate_team(record.team_id, match_active=False)
+            if not record.validation.selectable_for_next_match:
+                raise ConfigurationError("構築の入力を検証してください")
+            self._refresh_teams(focus_id=record.team_id)
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "準備を開始できません", str(exc))
+            return
+        self._active_prep_team_id = record.team_id
         self.matchup_ai_button.setEnabled(False)
         self.matchup_stop_button.setEnabled(True)
         self.save_button.setEnabled(False)
-        self.matchup_review_status.setText("構築別AI対面解析を自動実行中（試合開始はしないでください）")
-        self._matchup_ai_worker=_MatchupAIWorker(self.service,record.team_id,model,prefs.reasoning_effort(),self)
+        self.matchup_review_status.setText(
+            f"{record.display_name} のPREPデータ一括準備を実行中。"
+            "詳細進捗は工程表を参照してください。")
+        self._matchup_ai_worker = _MatchupAIWorker(
+            self.service, record.team_id, model, prefs.reasoning_effort(), self)
         self._matchup_ai_worker.progress.connect(self._matchup_ai_progress)
         self._matchup_ai_worker.result_ready.connect(self._matchup_ai_result)
         self._matchup_ai_worker.finished.connect(self._matchup_ai_finished)
         self._matchup_ai_worker.start()
 
     def _matchup_ai_progress(self, report: dict) -> None:
+        if report.get("team_id") != self._active_prep_team_id:
+            return
+        record = self._selected_record()
+        self._show_prep_readiness(record.team_id if record else None, report)
+        counters = report.get("counters", {})
         self.matchup_review_status.setText(
-            f"ChatGPTで対面を構造化解析中: 今回 {report['count']}件、"
-            f"成功 {report['batches']}回／通信試行 {report.get('attempts',report['batches'])}回。"
-            f" 現在のバッチ {report.get('batch_size',12)}対面。"
-            " 確定KO・処理役・安全受けは未認定です。")
+            f"準備工程：{report.get('stage', '完了処理')} / "
+            f"{report.get('stage_status', report.get('run_status', '実行中'))}。"
+            f" {report.get('detail', '')} "
+            f"今回追加 {counters.get('generated', 0)}対面、"
+            f"通信試行 {counters.get('attempts', 0)}回。"
+            " AI仮説は確定処理役・安全受けではありません。")
 
     def _stop_matchup_ai(self) -> None:
         if self._matchup_ai_worker is not None:
             self._matchup_ai_worker.requestInterruption()
             self.matchup_stop_button.setEnabled(False)
             self.matchup_review_status.setText(
-                "停止要求を受け付けました。現在のChatGPT通信の終了後に中断します。")
+                "停止要求を受け付けました。現在の通信終了後に中断し、成功分を保持します。")
 
     def _matchup_ai_result(self, result: dict) -> None:
         if result["ok"]:
-            label={"COMPLETE":"構造化対面評価案の全件生成完了",
-                   "SOURCE_GAPS":"解析可能な対面は完了・固定マスター不足あり",
-                   "INTERRUPTED":"自動解析を中断",
-                   "BATCH_LIMIT":"自動解析の上限に到達"}.get(result["status"],result["status"])
+            labels = {
+                "COMPLETE": "解析可能なAI評価案の生成が完了",
+                "SOURCE_GAPS": "解析可能分は完了、固定根拠に不足あり",
+                "INTERRUPTED": "自動解析を停止・再開可能",
+                "BATCH_LIMIT": "通信上限に到達・再開可能",
+            }
+            label = labels.get(result["status"], result["status"])
             self.matchup_review_status.setText(
-                f"{label}。今回生成: {result['count']}件、"
-                f"差分再利用: {result.get('reused_cells',0)}件、"
-                f"通信試行 {result.get('attempts',result['batches'])}回"
-                f"（成功{result['batches']}・再試行{result.get('retries',0)}）。"
-                f" マスター不足 {result.get('source_gaps',0)}対面。"
-                + (" 不足内訳: "+", ".join(
-                    f"{reason}={count}" for reason,count in
-                    result.get("source_gap_reasons",{}).items())+"。"
-                   if result.get("source_gap_reasons") else "")
-                + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
-                + f" SQLiteへ移行済み {result.get('legacy_v28_imported',0)}件（元のv28ファイルは保持）。"
-                " 処理役・安全受け・KOは未検証であり暫定推奨です。")
+                f"{label}。PREP準備全体："
+                f"{result.get('workflow_status', '未確認')}。"
+                f"今回追加 {result['count']}件、差分再利用"
+                f"{result.get('reused_cells', 0)}件、"
+                f"累計AI注記 {result.get('ai_proposal_cells', 0)}件。"
+                f"成功通信 {result['batches']}回、試行 "
+                f"{result.get('attempts', result['batches'])}回、"
+                f"マスター不足 {result.get('source_gaps', 0)}対面。"
+                " 11/6項目が未検証ならPREP完成ではありません。")
         else:
             self.matchup_review_status.setText(
-                "AI自動解析停止・今回成功分は保存済み: "+str(result["error"]))
+                "PREP一括準備に失敗（既存成功分を保持）："
+                + str(result.get("error", "UNKNOWN")))
 
     def _matchup_ai_finished(self) -> None:
-        self._matchup_ai_worker=None
+        self._matchup_ai_worker = None
+        self._active_prep_team_id = None
         self.matchup_ai_button.setEnabled(True)
         self.matchup_stop_button.setEnabled(False)
         self.save_button.setEnabled(True)
+        self._refresh_teams()
 
     def _import_matchup_reviews(self) -> None:
         if self._match_active():
