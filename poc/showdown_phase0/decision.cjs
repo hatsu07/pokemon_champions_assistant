@@ -14,6 +14,9 @@ function assess(probe, bench, realGameGoldens = []) {
     bench?.counts?.reconstructed_ok >= 100 &&
     Number.isFinite(bench?.p99_ms);
   // 100 fast repetitions are NOT 100 representative fixtures.
+  const fullReplayConsistency = bench?.iterations > 0 &&
+    bench?.counts?.branch_resolved === bench?.iterations &&
+    bench?.counts?.unsupported === 0;
   const representativeCoverage = bench?.representative_100_cases_met === true &&
     bench?.unique_fixture_count >= 100 &&
     bench?.unique_state_contract_count >= 100;
@@ -29,6 +32,8 @@ function assess(probe, bench, realGameGoldens = []) {
     performance_100_iterations_valid: measured,
     representative_100_cases_met: representativeCoverage,
     phase0_100_case_performance_requirement_met: measured && representativeCoverage,
+    synthetic_replay_all_consistent: fullReplayConsistency,
+    synthetic_replay_failure_count: bench?.counts?.unsupported ?? null,
     benchmark_iterations: bench?.iterations || 0,
     benchmark_unique_fixtures: bench?.unique_fixture_count || 0,
     benchmark_unique_state_contracts: bench?.unique_state_contract_count || 0,
