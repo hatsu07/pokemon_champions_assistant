@@ -1248,6 +1248,9 @@ class MatchReplayDialog(QDialog):
         from .crash_diagnostics import record_event
         record_event("CAPTURE_MONITOR_START", component="MATCH_REPLAY")
         self._auto_running=True
+        # Keep privacy consent fixed during active capture. Change it after
+        # stopping, never halfway through an asynchronously queued PNG write.
+        self.ocr_debug_capture_check.setEnabled(False)
         self._crash_capture_baseline=self._capture_seq
         self._start_local_event_reader()
         self._capture_error_count=0
@@ -1305,6 +1308,7 @@ class MatchReplayDialog(QDialog):
         self._end_background_collection()
         self._cancel_event.set()
         self._auto_running=False
+        self.ocr_debug_capture_check.setEnabled(True)
         self._capture_paused=False
         self._capture_error_count=0
         self._poll_timer.stop()
