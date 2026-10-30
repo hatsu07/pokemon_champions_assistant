@@ -1,7 +1,7 @@
 "use strict";
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
-const {stableStringify, fingerprint} = require("./state_compare.cjs");
+const {stableStringify, fingerprint, classifySerializedDivergence} = require("./state_compare.cjs");
 
 // Artificial persisted-state shape: these are comparator regression tests,
 // NOT evidence that Showdown serializes every case or that Champions agrees.
@@ -59,5 +59,30 @@ test("negative control: status, item consumption and switch history are not igno
     const original = sample(), changed = structuredClone(original);
     change(changed);
     assert.notEqual(stableStringify(original), stableStringify(changed));
+  }
+});
+
+test("log-only replay variance is labeled LOG_ONLY but never equal", () => {
+  const left = {turn: 2, queue: [{moveid: "earthquake"}], log: ["|-damage|p2a|50/100"]};
+  const right = structuredClone(left);
+  right.log[0] = "|-damage|p2a|49/100";
+  const x = classifySerializedDivergence(left, right);
+  assert.equal(x.kind, "LOG_ONLY");
+  assert.equal(x.full_state_equal, false);
+  assert.equal(x.non_log_equal, true);
+  assert.equal(x.log_equal, false);
+});
+test("PRNG, queues, effects or HP divergence is a state/queue failure", () => {
+  const base = {rng: [1, 2, 3, 4], queue: [{moveid: "earthquake"}],
+    field: {weatherState: {duration: 2}}, hp: 60, log: ["move"]};
+  for (const mutate of [
+    x => {x.rng[2] = 7;},
+    x => {x.queue[0].moveid = "dragonclaw";},
+    x => {x.field.weatherState.duration = 1;},
+    x => {x.hp = 61;},
+  ]) {
+    const changed = structuredClone(base);
+    mutate(changed);
+    assert.equal(classifySerializedDivergence(base, changed).kind, "STATE_OR_QUEUE");
   }
 });
