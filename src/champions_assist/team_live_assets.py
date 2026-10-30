@@ -16,7 +16,8 @@ import re
 
 from .app_config import ConfigurationError, atomic_write_text
 from .species_name_aliases import selection_base_name
-from .matchup_evidence import build_candidate_catalog, certified_review_counts, validate_review_packet
+from .matchup_evidence import (SOURCE_FILES, _source_hashes, build_candidate_catalog,
+                               certified_review_counts, validate_review_packet)
 
 
 MATRIX = "Pokemon_Champions_MC_live_selection_matrix.txt"
@@ -141,7 +142,9 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     review_bytes = review_path.read_bytes() if review_path.is_file() else b""
     if len(review_bytes) > 2*1024*1024:
         raise ConfigurationError("レビューJSONのサイズ上限超過")
+    champions_master_sha256 = _source_hashes(master)
     source_fingerprints = {
+        "champions_master_sha256": champions_master_sha256,
         # These are the exact fingerprint inputs; a derived matrix SHA is not
         # a substitute for freshness of its *source* LIVE matrix/lookup.
         "master_matrix_sha256": sha256(matrix_bytes).hexdigest(),
@@ -155,6 +158,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         "master_lookup":sha256(lookup_bytes).hexdigest(),
         "baseline":_jsonhash(baseline), "environment":snapshot_sha,
         "environment_kind":env_kind,"reviews_sha256":sha256(review_bytes).hexdigest(),
+        "champions_masters": champions_master_sha256,
     })
     directory = Path(data_root)/"live-team-assets"/team_id/fingerprint
     matrix_path, lookup_path, manifest_path = directory/"matrix.txt", directory/"lookup.txt", directory/"manifest.json"
@@ -165,7 +169,9 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                 and all(saved.get(k) == v for k, v in source_fingerprints.items())
                 and sha256(matrix_path.read_bytes()).hexdigest()==saved.get("matrix_sha256")
                 and sha256(lookup_path.read_bytes()).hexdigest()==saved.get("lookup_sha256")
-                and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")):
+                and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")
+                and json.loads(evidence_path.read_text(encoding="utf-8")).get("master_sha256")
+                    == champions_master_sha256):
             return PreparedTeamAssets(matrix_path,lookup_path,manifest_path,
                                       saved["status"],saved["reviewed_members"],
                                       saved["opponent_rows"],True)
