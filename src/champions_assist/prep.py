@@ -9,7 +9,17 @@ from typing import Iterable
 
 LEAD_TAGS = ("ACT", "KO", "DPS", "PRI", "S", "OUR", "OPP", "SAFE", "PROC", "LOCK", "MEGA")
 BENCH_TAGS = ("S", "OUR", "OPP", "PRI", "SAFE", "PROC")
-UNKNOWN_EVALUATION = frozenset({"?", "未判定", "SKIPPED", "unknown", "UNKNOWN", "不明"})
+# A placeholder means the field was not assessed at all. "unknown" means
+# the evaluator considered it but lacks reliable battle evidence; it is not
+# permission to leave every tactical field unassessed.
+NOT_ASSESSED_EVALUATION = frozenset({
+    "?", "未判定", "未評価", "SKIPPED", "not_assessed", "NOT_ASSESSED",
+    "not_evaluated", "NOT_EVALUATED",
+})
+EVIDENCE_LIMITED_EVALUATION = frozenset({
+    "unknown", "unverified", "uncertain", "不明", "evidence_unknown",
+})
+UNKNOWN_EVALUATION = NOT_ASSESSED_EVALUATION | EVIDENCE_LIMITED_EVALUATION
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,42 @@ def _parse_eval_code(code: str) -> dict[str, str] | None:
     return values
 
 
+def _validate_assessed_fields(parsed: dict[str, str], *, lead: bool) -> str | None:
+    """Unknown evidence is permitted; unassessed mandatory fields are not.
+
+    Requiring at least one independently assessed tactical dimension for
+    every bench row prevents PROC=unverified alone from certifying a matchup.
+    The lead also needs evidence beyond simply naming an ACT and DPS.
+    """
+    required = LEAD_TAGS if lead else BENCH_TAGS
+    if any(tag not in parsed for tag in required):
+        return "LEAD_SIX_INCOMPLETE" if lead else "BENCH_TWELVE_INCOMPLETE"
+    if any(parsed[tag].strip() in NOT_ASSESSED_EVALUATION for tag in required):
+        return "REQUIRED_FIELD_NOT_ASSESSED"
+    if parsed["PROC"].strip() in UNKNOWN_EVALUATION:
+        return "PROCESSOR_NOT_ASSESSED"
+    if lead and any(parsed[tag].strip() in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
+        return "LEAD_ACTION_NOT_ASSESSED"
+    tactical = (
+        ("KO", "PRI", "S", "OUR", "OPP", "SAFE", "LOCK", "MEGA")
+        if lead else ("S", "OUR", "OPP", "PRI", "SAFE")
+    )
+    if not any(parsed[tag].strip() not in EVIDENCE_LIMITED_EVALUATION
+               for tag in tactical):
+        return "MATCHUP_NOT_ASSESSED"
+    return None
+
+
+def prep_evidence_status(rows: tuple[PrepMatchup, ...]) -> str:
+    """Separate legitimate lack of evidence from absent assessment."""
+    for row in rows:
+        fields = _parse_eval_code(row.eval_code)
+        if fields and any(value.strip() in EVIDENCE_LIMITED_EVALUATION
+                          for value in fields.values()):
+            return "ASSESSED_WITH_UNCERTAINTY"
+    return "ASSESSED_CONDITIONAL"
+
+
 def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValidation:
     """Check the wire's completion claim; never manufacture a missing evaluation."""
     if result.prep_status != "COMPLETE":
@@ -84,13 +130,10 @@ def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValid
         parsed = _parse_eval_code(item.eval_code)
         if parsed is None:
             return PrepValidation(False, "EVAL_CODE_INVALID")
-        required = LEAD_TAGS if item.our_pokemon == prep_input.lead else BENCH_TAGS
-        if any(tag not in parsed for tag in required):
-            return PrepValidation(False, "LEAD_SIX_INCOMPLETE" if item.our_pokemon == prep_input.lead else "BENCH_TWELVE_INCOMPLETE")
-        if parsed["PROC"] in UNKNOWN_EVALUATION:
-            return PrepValidation(False, "PROCESSOR_NOT_ASSESSED")
-        if item.our_pokemon == prep_input.lead and any(parsed[tag] in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
-            return PrepValidation(False, "LEAD_ACTION_NOT_ASSESSED")
+        failure = _validate_assessed_fields(
+            parsed, lead=item.our_pokemon == prep_input.lead)
+        if failure:
+            return PrepValidation(False, failure)
     return PrepValidation(True, "OK")
 
 
@@ -128,22 +171,21 @@ def validate_partial_prep_result(
         parsed = _parse_eval_code(row.eval_code)
         if parsed is None:
             return PrepValidation(False, "EVAL_CODE_INVALID")
-        required = LEAD_TAGS if row.our_pokemon == lead else BENCH_TAGS
-        if any(tag not in parsed for tag in required):
-            return PrepValidation(False, "PARTIAL_TAGS_INCOMPLETE")
-        if parsed["PROC"] in UNKNOWN_EVALUATION:
-            return PrepValidation(False, "PROCESSOR_NOT_ASSESSED")
-        if row.our_pokemon == lead and any(
-                parsed[tag] in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
-            return PrepValidation(False, "LEAD_ACTION_NOT_ASSESSED")
+        failure = _validate_assessed_fields(
+            parsed, lead=row.our_pokemon == lead)
+        if failure:
+            return PrepValidation(False, failure)
     return PrepValidation(True, "PARTIAL_KNOWN_ONLY")
 
 
 
 def mocked_complete_prep(prep_input: PrepInput) -> PrepResult:
     """A labelled simulation fixture, not a battle evaluation or tactical heuristic."""
-    lead_code = "ACT=SIMULATED|KO=?|DPS=SIMULATED|PRI=?|S=?|OUR=?|OPP=?|SAFE=?|PROC=SIMULATED|LOCK=?|MEGA=?"
-    bench_code = "S=?|OUR=?|OPP=?|PRI=?|SAFE=?|PROC=SIMULATED"
+    lead_code = ("ACT=SIMULATED|KO=unknown|DPS=SIMULATED|PRI=SIMULATED|"
+                 "S=unknown|OUR=SIMULATED|OPP=unknown|SAFE=unknown|"
+                 "PROC=SIMULATED|LOCK=unknown|MEGA=unknown")
+    bench_code = ("S=SIMULATED|OUR=SIMULATED|OPP=unknown|PRI=unknown|"
+                  "SAFE=unknown|PROC=SIMULATED")
     rows = tuple(
         PrepMatchup(own, opponent, lead_code if own == prep_input.lead else bench_code)
         for own, opponent in product(prep_input.selected_three, prep_input.opponent_preview_six)
