@@ -28,14 +28,16 @@ def selection_fixture():
     }
 
 
-def prep_payload(state):
+def prep_payload(state, assets):
+    registered={m["name"]:m["move1"] for m in assets.own_team}
     rows=[]
     for name in state["selected_three"]:
         tags = LEAD_TAGS if name==state["lead"] else BENCH_TAGS
+        move=registered[name]
         for opponent in state["opponent_six"]:
             code="|".join(f"{tag}=" + (
-                "MOVE" if tag=="ACT" else
-                "registered_move" if tag in ("DPS","OUR") else
+                "move:"+move if tag=="ACT" else
+                move if tag in ("DPS","OUR") else
                 "UNVERIFIED" if tag=="PROC" else
                 "unknown") for tag in tags)
             rows.append({"our_pokemon":name,"opponent_pokemon":opponent,
@@ -62,7 +64,7 @@ class TimingCoreTest(unittest.TestCase):
             self.clock.now=elapsed
             state=deepcopy(kwargs["state"])
             state["prep_status"]="STRUCTURE_COMPLETE"
-            state["prep"]=prep_payload(state)
+            state["prep"]=prep_payload(state,self.assets)
             if mutate:mutate(state)
             return state,{"status":"PREP_PROVISIONAL","reason":"OK"}
         return runner
@@ -95,14 +97,18 @@ class TimingCoreTest(unittest.TestCase):
         self.assertEqual(state["visual_unknown_opponents"],["未判明相手3"])
         self.assertEqual(len(state["matrix_rows_six"]),5)
         self.assertEqual(state["phase"],"PREP")
-        lead_code=("ACT=conditional|KO=unknown|DPS=move|PRI=unknown|S=unknown|"
-                   "OUR=unknown|OPP=unknown|SAFE=unknown|PROC=unverified|"
-                   "LOCK=none|MEGA=unknown")
-        bench_code=("S=unknown|OUR=registered_move|OPP=unknown|PRI=unknown|"
-                    "SAFE=unknown|PROC=unverified")
+        first={m["name"]:m["move1"] for m in self.assets.own_team}
+        lead_move=first[state["lead"]]
+        lead_code=(f"ACT=move:{lead_move}|KO=unknown|DPS={lead_move}|"
+                   f"PRI=unknown|S=unknown|OUR={lead_move}|OPP=unknown|"
+                   "SAFE=unknown|PROC=unverified|LOCK=none|MEGA=unknown")
+        bench_codes=[(f"S=unknown|OUR={first[own]}|OPP=unknown|PRI=unknown|"
+                      "SAFE=unknown|PROC=unverified")
+                     for own in state["selected_three"] if own!=state["lead"]
+                     for _ in range(5)]
         answer={
             "lead_six":[lead_code]*5,
-            "bench_twelve":[bench_code]*10,
+            "bench_twelve":bench_codes,
             "preserve":state["selected_three"][0],
             "stopper":state["selected_three"][1],
             "closer":state["selected_three"][2],
@@ -390,7 +396,7 @@ class TimingQtFlowTest(unittest.TestCase):
         self.dialog.prep_limit_seconds=73.0
         self.dialog.timing_requested_at=time.perf_counter()-46.0
         state=selection_test_prep_state(self.assets,selection_fixture())
-        state["prep"]=prep_payload(state)
+        state["prep"]=prep_payload(state,self.assets)
         self.dialog.test_state=state
         self.dialog._timing_complete({
             "mode":"PREP","state":state,
