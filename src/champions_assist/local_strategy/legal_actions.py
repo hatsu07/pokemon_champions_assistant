@@ -36,6 +36,11 @@ def _classify(candidate: CandidateAction, snapshot: FrozenBattleState,
               assets: Any) -> CandidateAction:
     w = snapshot.window
     kind = candidate.kind
+    expected_id = fingerprint({"action_kind": candidate.kind.value,
+                               "move": candidate.move,
+                               "switch_target": candidate.switch_target})
+    if candidate.action_id != expected_id:
+        return _with_status(candidate, LegalStatus.ILLEGAL, "ACTION_ID_MISMATCH")
     if candidate.window_id != w.decision_window_id:
         return _with_status(candidate, LegalStatus.ILLEGAL, "WRONG_WINDOW")
     if kind == ActionKind.MOVE and w.window_kind != WindowKind.MOVE_COMMAND:

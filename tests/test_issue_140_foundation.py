@@ -123,6 +123,13 @@ class ContractTests(unittest.TestCase):
         earth = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
         self.assertEqual(earth.legal_status, LegalStatus.UNKNOWN)
 
+    def test_action_id_cannot_be_reused_for_another_move(self):
+        s = frozen()
+        fake = CandidateAction(move_id("じしん"), ActionKind.MOVE,
+                               "ドラゴンクロー", window_id=s.window.decision_window_id)
+        self.assertEqual(revalidate_candidate(fake, s, ASSETS).legal_status,
+                         LegalStatus.ILLEGAL)
+
     def test_known_choice_lock_violation(self):
         s = frozen(choice_lock={"pokemon": "ガブリアス", "move": "ドラゴンクロー"})
         earth = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
