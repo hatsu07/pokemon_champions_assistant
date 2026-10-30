@@ -544,6 +544,113 @@ class CausalResearchTests(unittest.TestCase):
         self.assertEqual(retry["calls_used"],2)
         self.assertEqual(len(self.clients),2)
 
+    def test_p1_p2_repeated_pattern_cycles_3_6_9_12_15(self):
+        # Both P1's bounded evidence IDs AND P2's new-3 filter must work
+        # over long-running accounts; every cycle uses its own P1 budget.
+        for index in range(15):
+            mid=f"match-{index:03}"
+            self.record(mid)
+            if index % 3 != 2:
+                continue
+            research=self.p1.aggregate_after_review(match_id=mid)
+            self.assertEqual(research["status"],"STORED_PROVISIONAL_UNVERIFIED")
+            evidence=self.p1.candidates(batch_sha=research["batch_sha"])[0][
+                "evidence_match_ids"]
+            self.assertEqual(len(evidence),min(index+1,12))
+            self.assertTrue({f"match-{n:03}"
+                             for n in range(index-2,index+1)}.issubset(evidence))
+            result=self.p2.analyze_after_review(
+                match_id=mid,model="m",access_token="mock",
+                gate_file=self.gate,client_factory=self.factory())
+            self.assertEqual(result["status"],"STORED_HOLD_UNVERIFIED",
+                             f"cycle {index+1}: {result}")
+            sent=json.loads(
+                self.clients[-1].calls[0]["input"][0]["content"][0]["text"])
+            included={x["match_id"] for x in sent["source"]["matches"]}
+            self.assertTrue({f"match-{n:03}" for n in range(index-2,index+1)}
+                            .issubset(included))
+        self.assertEqual(len(self.clients),5)
+        with closing(sqlite3.connect(self.learning.db_path)) as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM p2_batch_budget").fetchone()[0],5)
+
+    def test_gate_omission_audit_covers_all_original_sections(self):
+        # Upper-stage parser exclusions must not disappear from GPT's
+        # visible rule inventory or P4's audit of what was not checked.
+        import re
+        gate=(GATE_TEXT + "\n[CORE]\nR02 registered choice lock\n"
+              "[SWITCH_GATE]\nREJECT unsafe landing\n"
+              "[PREP_SHARED_90S]\n" + "p"*1853 + "\n"
+              "[CASE_REGRESSION]\n" + "q"*2335 + "\n"
+              "[PRIORITY_GATE]\nASSESS priority before ordinary move\n")
+        self.gate.write_text(gate,encoding="utf-8")
+        self.gate_sha=sha256(self.gate.read_bytes()).hexdigest()
+        self.ready()
+        prepared=self.p2._prepare(match_id="match-2",gate_file=self.gate)
+        self.assertEqual(prepared["status"],"READY")
+        source=prepared["source"]
+        omitted=set(source["gate_omitted_rule_ids"])
+        shown=set(source["existing_gate_rules"])
+        reasons=source["gate_omission_reasons"]
+        for section in ("PREP_SHARED_90S","CASE_REGRESSION"):
+            self.assertIn(section,omitted)
+            self.assertEqual(reasons[section],"SECTION_TOO_LONG")
+        self.assertEqual(reasons["CORE"],
+                         "CORE_SECTION_ONLY_NUMBERED_RULES_EXTRACTED")
+        self.assertIn("SWITCH_GATE",shown)
+        self.assertIn("PRIORITY_GATE",shown)
+        original_sections=set(re.findall(
+            r"^\\[([A-Z][A-Z0-9_]{1,63})\\]$",gate,re.MULTILINE))
+        self.assertEqual(original_sections,(
+            shown|omitted)&original_sections)
+        self.assertEqual(set(reasons),omitted)
+        self.assertFalse(shown&omitted)
+        result=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(result["status"],"STORED_HOLD_UNVERIFIED")
+
+    def test_legacy_duplicate_p2_rows_migrate_non_destructively_and_hold(self):
+        # A pre-fix database could contain multiple research SHA digests
+        # for one P1 batch after gate changes. Never create a failing unique
+        # index or delete audit. Seed one conservative no-more-calls budget.
+        batch=self.ready()
+        with closing(sqlite3.connect(self.learning.db_path)) as db:
+            entries=[("legacy-1","FAILED_HOLD",1),
+                     ("legacy-2","STORED_HOLD_UNVERIFIED",1)]
+            for research,status,calls in entries:
+                db.execute("""INSERT INTO p2_causal_batches(
+                    research_sha,team_id,team_signature,p1_batch_sha,
+                    evidence_sha,model,gate_sha,status,analysis_json,
+                    calls_used,attempted_at,completed_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (research,TEAM,SIGNATURE,batch["batch_sha"],
+                     "old-evidence","legacy-model","UNKNOWN",status,
+                     '{"legacy":true}',calls,
+                     "2026-10-01T00:00:00+00:00", ""))
+            db.commit()
+        with closing(self.p2._db()) as db:
+            rows=db.execute("""SELECT canonical_research_sha,calls_used,
+                                     status,migrated_legacy_rows
+                    FROM p2_batch_budget WHERE p1_batch_sha=?""",
+                    (batch["batch_sha"],)).fetchone()
+            self.assertEqual(rows,(
+                "legacy-1",2,"LEGACY_DUPLICATE_HOLD",2))
+            self.assertEqual(db.execute("""
+                SELECT COUNT(*) FROM p2_causal_batches
+                WHERE p1_batch_sha=?""",(batch["batch_sha"],)).fetchone()[0],2)
+        with closing(self.p2._db()) as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM p2_batch_budget").fetchone()[0],1)
+        blocked=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,client_factory=self.factory())
+        self.assertEqual(blocked["status"],"LEGACY_DUPLICATE_HOLD")
+        self.assertEqual(blocked["calls_used"],2)
+        self.assertFalse(self.clients)
+        for research,_,_ in entries:
+            self.assertIsNotNone(self.p2.read(research))
+
     def test_never_attempt_when_cancelled_before_reservation(self):
         self.ready()
         result=self.p2.analyze_after_review(
