@@ -1159,6 +1159,10 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             },
         }
         prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
+    without_ocr={key:value for key,value in prompt.items()
+                 if key!="ocr_candidates_unverified"}
+    non_ocr_bytes=len(json.dumps(
+        without_ocr,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
         prompt_chars=len(prompt_text)
         model_started=perf_counter()
         stage="MODEL_RESPONSE"
@@ -2121,6 +2125,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
         diagnostic_sink("AI_TURN_PAYLOAD_SIZE",{
             "prompt_utf8_bytes":len(prompt_text.encode("utf-8")),
+            "non_ocr_json_bytes":non_ocr_bytes,
             "ocr_rows":len(candidates),
             "ocr_transport_groups":len(transport_ocr),
             "ocr_json_bytes":compact_after,
