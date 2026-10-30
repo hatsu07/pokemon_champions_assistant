@@ -181,11 +181,53 @@ class PostmatchCausalStore:
         );
         CREATE INDEX IF NOT EXISTS ix_p2_team
           ON p2_causal_batches(team_id,team_signature,attempted_at);
-        -- A research digest varies with gate content. The budget identity
-        -- must NOT vary: one P2 record per P1 research batch.
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_p2_per_p1_batch
+        -- Legacy P2 rows may share a P1 batch but have different prompt
+        -- digests. Never destroy old evidence to satisfy a UNIQUE index.
+        CREATE INDEX IF NOT EXISTS ix_p2_history_batch
           ON p2_causal_batches(p1_batch_sha);
+        CREATE TABLE IF NOT EXISTS p2_batch_budget(
+          p1_batch_sha TEXT PRIMARY KEY,
+          canonical_research_sha TEXT NOT NULL,
+          calls_used INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          migrated_legacy_rows INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
         """)
+        # Reconstruct a safe canonical budget once; INSERT OR IGNORE
+        # preserves subsequent reservations. The earliest legacy digest is
+        # the audit referent, duplicates become terminal HOLD. Old P2 rows
+        # remain intact and queryable, even if their total usage was >2.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            historic = db.execute("""
+                SELECT p1_batch_sha,research_sha,status,calls_used
+                  FROM p2_causal_batches
+                 ORDER BY attempted_at ASC,rowid ASC""").fetchall()
+            groups: dict[str, list[tuple]] = {}
+            for batch, research, status, calls in historic:
+                groups.setdefault(batch, []).append((research,status,calls))
+            for batch, entries in groups.items():
+                used = min(MAX_CALLS_PER_BATCH, sum(
+                    max(0, x[2]) if type(x[2]) is int else
+                    MAX_CALLS_PER_BATCH for x in entries))
+                status = ("LEGACY_DUPLICATE_HOLD" if len(entries) > 1
+                          else entries[0][1])
+                db.execute("""INSERT OR IGNORE INTO p2_batch_budget(
+                     p1_batch_sha,canonical_research_sha,calls_used,status,
+                     migrated_legacy_rows,created_at) VALUES(?,?,?,?,?,?)""",
+                     (batch,entries[0][0],used,status,len(entries),_now()))
+                if len(entries) > 1:
+                    db.execute("""UPDATE p2_batch_budget
+                           SET status='LEGACY_DUPLICATE_HOLD',
+                               calls_used=MAX(calls_used,?),
+                               migrated_legacy_rows=MAX(migrated_legacy_rows,?)
+                         WHERE p1_batch_sha=?""", (used,len(entries),batch))
+            db.commit()
+        except Exception:
+            db.rollback()
+            db.close()
+            raise
         return db
 
     def _prepare(self, *, match_id: str, gate_file: str | Path | None) -> dict:
