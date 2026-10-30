@@ -75,7 +75,8 @@ def _clean_value(value, *, key="", depth=0, actor_map=False):
     if isinstance(value,dict):
         return {str(k):_clean_value(
                     v,key=str(k),depth=depth+1,
-                    actor_map=(actor_map or key in (
+                    actor_map=(actor_map or str(k)=="registered_moves"
+                               or key in (
                         "known_hp","hp_by_pokemon","status_by_pokemon",
                         "item_by_pokemon","moves_by_pokemon","boosts",
                         "registered_moves")))
