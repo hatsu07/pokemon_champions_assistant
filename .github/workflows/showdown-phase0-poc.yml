@@ -36,6 +36,9 @@ jobs:
           bench = report["benchmark"]
           print("Bench valid / requested:", bench["completed"], bench["requested"])
           print("P50/P95/P99 ms:", bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])
+          print("Startup and probe ms:", report["startup_and_probe_ms"])
+          print("Worker memory bytes:", bench["memory"])
+          print("Unverified cases detail:", {k: v.get("detail") for k, v in report["probe"]["results"].items() if v.get("status") != "PASS_SYNTHETIC"})
           print("Unsupported cases:", bench["unsupported"])
           print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
           assert report["decision"]["recommended_adoption"] == "NO_GO"
