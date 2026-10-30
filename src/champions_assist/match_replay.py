@@ -551,9 +551,10 @@ def advance_observation(
             # Reuse only the CURRENT opponent's cached comparisons in a
             # turn prompt; never resend 18 rows or override observed evidence.
             cached_prep = state.get("prep") or {}
-            if cached_prep.get("source") == "FROZEN_CACHE":
-                known_rows = (cached_prep.get("matchups_18") or
-                              cached_prep.get("matchups_known") or [])
+            known_rows = (cached_prep.get("matchups_18") or
+                          cached_prep.get("matchups_known") or [])
+            if known_rows and cached_prep.get("source") == "FROZEN_CACHE":
+                # Reviewed cache: never send all 18 comparisons on each turn.
                 opponent_now = state.get("opponent_active")
                 current = [
                     {"own":row["our_pokemon"],"opponent":row["opponent_pokemon"],
@@ -563,13 +564,27 @@ def advance_observation(
                     if row.get("opponent_pokemon")==opponent_now
                 ]
                 context["cached_matchup_hypotheses"] = current
+            elif known_rows:
+                # Newly assessed PREP also matters on the next turn. Carry
+                # only three evaluations for the observed opponent and never
+                # mistake model-generated codes for reviewed matrix evidence.
+                opponent_now = state.get("opponent_active")
+                context["prep_matchup_evaluations"] = [
+                    {"own":row["our_pokemon"],"opponent":row["opponent_pokemon"],
+                     "eval_code":row["eval_code"]}
+                    for row in known_rows
+                    if row.get("opponent_pokemon") == opponent_now
+                    and isinstance(row.get("eval_code"), str)
+                ]
+            if known_rows:
                 context["cached_win_roles"] = {
                     k:cached_prep.get(k) for k in ("preserve","stopper","closer")}
                 context["cached_warning"] = cached_prep.get("warning","")
                 context["rule"] += (
-                    " Use cached matchup notes conditionally; observed facts "
-                    "and revealed moves/items/forms always override them. "
-                    "A cached processor is NOT proof of a safe hard switch.")
+                    " PREP assessments and roles are conditional hypotheses, "
+                    "not certified matchup outcomes. Observed facts and "
+                    "revealed moves/items/forms always override them. "
+                    "A processor is NOT proof of a safe hard switch.")
             if state["matrix_compatible"]:
                 context["frozen_gate"] = assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"]
             # Otherwise, the matrix and team-specific LIVE gate are not used.
