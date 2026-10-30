@@ -52,6 +52,24 @@ jobs:
           assert report["decision"]["recommended_adoption"] == "NO_GO"
           assert report["decision"]["performance_100_valid"], "fewer than 100 valid branches"
           assert report["probe"]["format_mod"] == "champions"
+          assert bench["counts"]["branch_resolved"] == 120, "not all 120 synthetic branches resolved"
+          assert bench["counts"]["choice_legal"] == 120, "legal choices absent"
+          for kind in ("normal", "hp_status_pp_boost", "item_choice",
+                       "weather_screens", "consumed_item", "forced_switch", "unknown_sets"):
+              assert report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC", kind
+          import os
+          meta = {k: report[k] for k in ("schema", "timestamp_utc", "pinned_sha", "context", "decision")}
+          print("PHASE0_META_JSON=" + json.dumps(meta, ensure_ascii=False, sort_keys=True))
+          for index, sample in enumerate(bench["timings"]):
+              print("PHASE0_SAMPLE_JSON=" + json.dumps({"index": index, **sample}, ensure_ascii=False, sort_keys=True))
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as out:
+                  out.write("### Phase 0 synthetic benchmark (NOT Champions game proof)\\n")
+                  out.write("Head SHA: `" + os.environ["GITHUB_SHA"] + "`\\n\\n")
+                  out.write("Categories: `" + json.dumps(bench["by_kind"], ensure_ascii=False) + "`\\n\\n")
+                  out.write("Stage totals: `" + json.dumps(bench["counts"]) + "`\\n\\n")
+                  out.write("P50/P95/P99 ms: " + str((bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])) + "\\n")
           PY
       - name: Audit source-data parity (not game certification)
         run: |
@@ -64,7 +82,35 @@ jobs:
           print("Categories:", audit["totals"])
           print("Mismatch count:", audit["mismatch_count"])
           print("Sample discrepancies:", audit["mismatch_examples"][:8])
+          assert audit["status"] == "DIAGNOSTIC_ONLY", audit.get("reason")
+          assert len(audit["master_sha256"]) == 4, "source SHA coverage"
+          assert audit["totals"]["move_coverage"]["checked"] > 0
+          print("PHASE0_AUDIT_SOURCE_SHA256=" + json.dumps(audit["master_sha256"], sort_keys=True))
+          for item in audit["mismatch_examples"]:
+              print("PHASE0_AUDIT_MISMATCH_JSON=" + json.dumps(item, ensure_ascii=False, sort_keys=True))
+          import os
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as out:
+                  out.write("\\n### Static master audit (NOT game certification)\\n")
+                  out.write("Inputs SHA256: `" + json.dumps(audit["master_sha256"], sort_keys=True) + "`\\n\\n")
+                  out.write("Mismatch count: " + str(audit["mismatch_count"]) + "\\n")
+          PY
+      - name: Assert audit fails closed without a required master
+        run: |
+          set +e
+          docker run --rm -e CHAMPIONS_MASTERS_DIR=/nonexistent-source-directory \
+            --entrypoint node champions-phase0 audit.cjs > phase0-missing-master.json
+          status=$?
+          set -e
+          test "$status" -ne 0
+          python3 - <<'PY'
+          import json
+          with open("phase0-missing-master.json", encoding="utf-8") as f:
+              result = json.load(f)
+          assert result["status"] == "NOT_RUN"
+          print("Missing source correctly rejected:", result["status"])
           PY
       - name: Remove unneeded measurement file
         if: always()
-        run: rm -f phase0-result.json phase0-audit.json
+        run: rm -f phase0-result.json phase0-audit.json phase0-missing-master.json
