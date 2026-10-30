@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QMessageBox,
     QPushButton,
     QDoubleSpinBox,
@@ -40,6 +41,10 @@ from .capture_settings import CapturePreviewResult, CapturePreviewService
 from .settings_management import DesktopSettingsService
 
 
+class _PreparationInterrupted(Exception):
+    """An explicit user stop between off-match preparation stages."""
+
+
 class _MatchupAIWorker(QThread):
     result_ready = Signal(object)
     progress = Signal(object)
@@ -49,72 +54,232 @@ class _MatchupAIWorker(QThread):
         self.service, self.team_id = service, team_id
         self.model, self.effort = model, effort
 
+    def _check_interrupted(self):
+        if self.isInterruptionRequested():
+            raise _PreparationInterrupted("user requested stop")
+
     def run(self):
+        journal = None
+
+        def step(key, status, detail="", **counts):
+            self._check_interrupted()
+            state = journal.stage(key, status, detail, **counts)
+            self.progress.emit({
+                "stage": key, "stage_status": status,
+                "detail": detail, "team_id": self.team_id,
+                "stages": state["stages"], "counters": state["counters"],
+            })
+
         try:
+            from hashlib import sha256
+            import json
             from .team_auto_analysis import run_automatic_analysis
             from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore
             from .app_config import default_app_root
-            # Import *all* prior v28/v29 batches before a refresh can create
-            # a new fingerprint. Legacy JSON/TXT are always read-only here.
+            from .team_prep_readiness import PrepWorkflowProgress, _digest
+            from .matchup_evidence import SOURCE_FILES
             from .matchup_learning_store import MatchupLearningStore
-            learning=MatchupLearningStore(self.service.settings.storage.data_root)
-            migrated_before=learning.import_legacy_assets()
-            # Refresh only BETWEEN matches. Network/age errors preserve the
-            # previous last-good Singles evidence; never block analysis.
+            from .team_matchup_reuse import reuse_unchanged_matchups
+            from .team_ai_matrix import publish_ai_matrix, proposal_notes
+            from .preload import MasterPreloader
+            from .matrix_compatibility import (
+                matrix_matches_registered_team,
+                provisional_matrix_matches_registered_team,
+            )
+
+            source = self.service.teams.path_for_next_match(self.team_id)
+            journal = PrepWorkflowProgress(
+                self.service.settings.storage.data_root, self.team_id, source)
+            # Resume only when the exact team CSV and Champions source set
+            # still match. Changes to environment/reviews are rechecked after
+            # prepare_team_live_assets supplies its full fingerprint.
+            evidence_version = sha256("".join(
+                name + ":" + _digest(Path(self.service.master_directory) / name)
+                for name in SOURCE_FILES).encode("utf-8")).hexdigest()
+            journal.start(evidence_version=evidence_version)
+            step("team", "実行中", "登録構築の6匹・SHAを確認中")
+            record = self.service.teams.get(self.team_id)
+            if not record.validation.selectable_for_next_match:
+                raise ValueError("登録構築が次戦に使用可能ではありません")
+            step("team", "完了", "構築と正本CSVを固定")
+
+            step("masters", "実行中", "Champions固定マスター・環境情報を準備中")
+            learning = MatchupLearningStore(self.service.settings.storage.data_root)
+            migrated_before = learning.import_legacy_assets()
             refresh_status = "LAST_GOOD"
             try:
                 self.service.refresh_public_battle_data(match_active=False)
                 refresh_status = "REFRESHED"
             except (OSError, ValueError, RuntimeError, TimeoutError):
                 pass
+            step("catalog", "実行中", "構築専用358相手×6枠を生成・確認中")
             ready = self.service.prepare_team_live_assets(self.team_id, match_active=False)
-            catalog = ready.manifest_path.with_name("matchup-evidence.json")
+            manifest = json.loads(ready.manifest_path.read_text(encoding="utf-8"))
+            journal.fingerprint(manifest["fingerprint"])
+            catalog_path = ready.manifest_path.with_name("matchup-evidence.json")
+            catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+            total = catalog_data["total_cells"]
+            source_gaps = sum(bool(x.get("missing_source"))
+                              for x in catalog_data["cells"])
+            step("masters", "一部完了" if source_gaps else "完了",
+                 f"Champions根拠不足 {source_gaps}/{total}対面", source_gaps=source_gaps)
+            step("catalog", "完了", f"{total}対面を索引化", total=total)
+
+            step("reuse", "実行中", "型署名と根拠が同一のAI解析を再利用")
+            reused = reuse_unchanged_matchups(
+                catalog_path, Path(self.service.settings.storage.data_root) / "live-team-assets")
+            step("reuse", "完了", f"差分再利用 {reused['reused_cells']}対面",
+                 reused_cells=reused["reused_cells"])
+
+            step("analysis", "実行中", "未解析分のみ構造化v2でAI解析")
             auth = ChatGPTSignIn(ProtectedSessionStore(default_app_root()))
-            # Public rankings only change evaluation ORDER. They never
-            # identify a guaranteed opposing item, move or ability.
             priority = []
             snapshot = self.service.environment.snapshot
             if snapshot.is_file():
                 try:
-                    import json
                     env = json.loads(snapshot.read_text(encoding="utf-8"))
                     if env.get("format") == "Singles":
                         ranked = sorted(
-                            (x for x in env.get("pokemon",[]) if isinstance(x,dict)
-                             and isinstance(x.get("name"),str)
+                            (x for x in env.get("pokemon", []) if isinstance(x, dict)
+                             and isinstance(x.get("name"), str)
                              and type(x.get("position")) is int),
-                            key=lambda x:x["position"])
-                        priority=[x["name"] for x in ranked]
-                except (OSError,ValueError,TypeError,KeyError):
+                            key=lambda x: x["position"])
+                        priority = [x["name"] for x in ranked]
+                except (OSError, ValueError, TypeError, KeyError):
                     pass
-            from .team_matchup_reuse import reuse_unchanged_matchups
-            reused = reuse_unchanged_matchups(
-                catalog, Path(self.service.settings.storage.data_root) / "live-team-assets")
-            # Saved batches are useful even after interruption or an API failure.
-            # Publication happens only BETWEEN matches, never inside LIVE.
-            try:
-                report = run_automatic_analysis(
-                    catalog, model=self.model, access_token=auth.access_token(),
-                    reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
-                    progress=self.progress.emit, priority_opponents=priority,
-                    structured=True,
-                    token_provider=lambda force: auth.access_token(force_refresh=force))
-            finally:
-                from .team_ai_matrix import publish_ai_matrix
-                integrated = publish_ai_matrix(
-                    matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
-                    catalog_path=catalog)
-            migrated_after=learning.import_legacy_assets()
-            coverage=learning.coverage(catalog)
-            self.result_ready.emit({"ok":True, "environment_refresh":refresh_status,
-                                    **report, **reused, **integrated,
-                                    "legacy_v28_imported":(migrated_before["imported_cells"]+
-                                                           migrated_after["imported_cells"]),
-                                    "learning_coverage":coverage,
-                                    "legacy_files_preserved":True})
+
+            def on_analysis(report):
+                state = journal.stage(
+                    "analysis", "実行中",
+                    f"追加 {report['count']}件、成功 {report['batches']}回、"
+                    f"通信試行 {report.get('attempts', report['batches'])}回",
+                    generated=report["count"], batches=report["batches"],
+                    attempts=report.get("attempts", report["batches"]))
+                self.progress.emit({
+                    "stage": "analysis", "stage_status": "実行中",
+                    "detail": state["stages"]["analysis"]["detail"],
+                    "team_id": self.team_id, "stages": state["stages"],
+                    "counters": state["counters"],
+                })
+
+            report = run_automatic_analysis(
+                catalog_path, model=self.model,
+                access_token=auth.access_token(),
+                reasoning_effort=self.effort,
+                interrupted=self.isInterruptionRequested,
+                progress=on_analysis, priority_opponents=priority,
+                structured=True,
+                token_provider=lambda force: auth.access_token(force_refresh=force))
+            if report["status"] == "INTERRUPTED":
+                journal.stage("analysis", "停止", "AI解析を停止・成功分は保存済み",
+                              generated=report["count"], batches=report["batches"])
+                raise _PreparationInterrupted("interrupted during AI analysis")
+            step("analysis", "一部完了" if report["status"] == "BATCH_LIMIT"
+                 else "完了",
+                 f"今回AI解析 {report['count']}対面。"
+                 f"確定KO・安全受けの根拠は別判定",
+                 generated=report["count"], batches=report["batches"],
+                 attempts=report.get("attempts", report["batches"]))
+
+            # Evaluate evidence completeness before publishing the hints.
+            step("prep", "実行中", "PREPの11項目・6項目に対する根拠を検査")
+            notes, note_cells = proposal_notes(catalog_path)
+            # AI_HINT is not an assessed 11/6-field PREP result. Keep
+            # processor/KO/safe-hard-switch unknown until real evidence exists.
+            assessed = sum(1 for c in catalog_data["cells"]
+                           if c.get("evaluation") in ("CONFIRMED", "CONDITIONAL"))
+            step("prep", "一部完了",
+                 f"既存評価 {assessed} / AIヒント {note_cells} / "
+                 f"PREP11・6項目の全件検証は未達",
+                 legacy_cells=assessed, prep_lead_complete=0,
+                 prep_bench_complete=0)
+            # The prep quality gate is not a workflow execution failure.
+            journal.evidence(
+                evaluated=assessed, proposals=note_cells, total=total,
+                source_gaps=source_gaps,
+                quality_ready=bool(manifest.get("quality_gate", {})
+                                   .get("live_ready", False)))
+            # A stop arriving after the last API response must be honored
+            # before the conditional-hint publication and all later stages.
+            self._check_interrupted()
+            step("publish", "実行中", "AI仮説を未検証注記として反映中")
+            integrated = publish_ai_matrix(
+                matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
+                catalog_path=catalog_path)
+            self._check_interrupted()
+            if note_cells != integrated["ai_proposal_cells"]:
+                raise ValueError("解析結果とLIVE補足データの件数が一致しません")
+            step("publish", "完了", "マトリクス補足欄のAI注記を保存")
+
+            step("cache", "実行中", "4件の事前読込形式と高速対面索引を検査")
+            frozen = MasterPreloader(
+                self.service.master_directory, team_source=source,
+                matrix_source=ready.matrix_path, lookup_source=ready.lookup_path,
+                registered_team_id=self.team_id,
+                registered_team_name=record.display_name,
+            ).load_for_new_match()
+            if not (matrix_matches_registered_team(frozen)
+                    or provisional_matrix_matches_registered_team(frozen)):
+                raise ValueError("選択構築とLIVEマトリクスが一致しません")
+            if (len(frozen.matchup_cache_index) != 6
+                    or any(len(opponents) != ready.opponent_rows
+                           for opponents in frozen.matchup_cache_index.values())):
+                raise ValueError("構築別対面高速索引が未完成です")
+            if sha256(source.read_bytes()).hexdigest() != journal.team_sha:
+                raise ValueError("実行中に構築CSVが変更されました")
+            step("cache", "完了", "4件の凍結読込と6×相手候補の対面索引を確認")
+            self._check_interrupted()
+            migrated_after = learning.import_legacy_assets()
+            self._check_interrupted()
+            coverage = learning.coverage(catalog_path)
+            self._check_interrupted()
+            # SOURCE_GAPS means the accessible work ended; it is not a
+            # failed execution. The separate evidence_status records gaps.
+            status = "一部完了" if report["status"] == "BATCH_LIMIT" else "完了"
+            journal.finish(status)
+            self.progress.emit({"team_id": self.team_id, "run_status": status,
+                                "evidence_status": journal.state["evidence_status"],
+                                "stages": journal.state["stages"],
+                                "counters": journal.state["counters"]})
+            self.result_ready.emit({
+                "ok": True, "team_id": self.team_id, "workflow_status": status,
+                "evidence_status": journal.state["evidence_status"],
+                "environment_refresh": refresh_status,
+                **report, **reused, **integrated,
+                "legacy_v28_imported": (migrated_before["imported_cells"]
+                                        + migrated_after["imported_cells"]),
+                "learning_coverage": coverage,
+                "legacy_files_preserved": True})
+        except _PreparationInterrupted:
+            if journal is not None and journal.state:
+                journal.finish("停止")
+                self.progress.emit({
+                    "team_id": self.team_id, "run_status": "停止",
+                    "evidence_status": journal.state["evidence_status"],
+                    "stages": journal.state["stages"],
+                    "counters": journal.state["counters"]})
+                counters = journal.state.get("run_counters", {})
+                self.result_ready.emit({
+                    "ok": True, "team_id": self.team_id,
+                    "workflow_status": "停止", "status": "INTERRUPTED",
+                    "evidence_status": journal.state["evidence_status"],
+                    "count": counters.get("generated", 0),
+                    "batches": counters.get("batches", 0),
+                    "attempts": counters.get("attempts", 0),
+                    "ai_proposal_cells": journal.state.get("counters", {})
+                        .get("ai_proposal_cells", 0),
+                })
         except Exception as exc:
+            if journal is not None and journal.state:
+                journal.finish("失敗")
+                self.progress.emit({
+                    "team_id": self.team_id, "run_status": "失敗",
+                    "stages": journal.state["stages"],
+                    "counters": journal.state["counters"]})
             from .team_ai_analysis import safe_ai_error
-            self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
+            self.result_ready.emit({
+                "ok": False, "team_id": self.team_id,
+                "error": safe_ai_error(exc)})
 
 
 class _TeamAnnotationWorker(QThread):
@@ -428,6 +593,8 @@ class SettingsDialog(QDialog):
         self._team_validation_refreshed = False
         self._singles_worker = None
         self._matchup_ai_worker = None
+        self._team_readiness_snapshots = {}
+        self._active_prep_team_id = None
         self._annotation_worker = None
         self.setWindowTitle("初回設定" if first_launch else "設定")
         self.setMinimumSize(780, 600)
@@ -566,8 +733,8 @@ class SettingsDialog(QDialog):
         self.annotation_button=QPushButton("選択構築のrole・form_change・runtime_noteをAIで補助入力")
         self.annotation_button.clicked.connect(self._start_team_annotation)
         layout.addWidget(self.annotation_button)
-        self.team_list = QTableWidget(0, 5)
-        self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用"])
+        self.team_list = QTableWidget(0, 6)
+        self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用", "PREP準備"])
         self.team_list.itemSelectionChanged.connect(self._load_selected_team_editor)
         layout.addWidget(self.team_list, 1)
         self.team_editor = QTableWidget(0, len(self.member_columns))
@@ -576,6 +743,7 @@ class SettingsDialog(QDialog):
         save_edit = QPushButton("構築を保存")
         save_edit.clicked.connect(self._save_team_edit)
         layout.addWidget(save_edit)
+        self.save_team_edit_button = save_edit
         self.team_status = QLabel("構築を選択してください。手入力値は固定マスターに無い場合、未確認または無効として扱います。")
         self.team_status.setWordWrap(True)
         layout.addWidget(self.team_status)
@@ -595,13 +763,33 @@ class SettingsDialog(QDialog):
         self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
         review_row.addWidget(self.matchup_candidates_button)
         layout.addLayout(review_row)
-        self.matchup_ai_button=QPushButton("全対面LIVEマトリクスをAI作成・再開（未検証・試合前）")
+        self.matchup_ai_button=QPushButton("選択構築のPREPデータを一括準備・再開（試合前）")
         self.matchup_ai_button.clicked.connect(self._start_matchup_ai)
         layout.addWidget(self.matchup_ai_button)
         self.matchup_stop_button=QPushButton("自動解析を停止（現在の通信終了後）")
         self.matchup_stop_button.setEnabled(False)
         self.matchup_stop_button.clicked.connect(self._stop_matchup_ai)
         layout.addWidget(self.matchup_stop_button)
+        self.prep_target_label = QLabel("選択構築の準備状況")
+        self.prep_target_label.setWordWrap(True)
+        layout.addWidget(self.prep_target_label)
+        self.prep_progress_bar = QProgressBar()
+        self.prep_progress_bar.setRange(0, 8)
+        self.prep_progress_bar.setFormat("%v / %m工程終了（部分完了を含む）")
+        layout.addWidget(self.prep_progress_bar)
+        self.prep_stage_table = QTableWidget(8, 3)
+        self.prep_stage_table.setHorizontalHeaderLabels(["工程", "状態", "根拠・進捗"])
+        self.prep_stage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.prep_stage_table.setMaximumHeight(248)
+        self.prep_stage_table.setColumnWidth(0, 210)
+        self.prep_stage_table.setColumnWidth(1, 100)
+        self.prep_stage_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.prep_stage_table)
+        layout.addWidget(QLabel("選択構築のデータ充足（AI評価と実戦検証は別集計）"))
+        self.prep_readiness_detail = QPlainTextEdit()
+        self.prep_readiness_detail.setReadOnly(True)
+        self.prep_readiness_detail.setMaximumHeight(125)
+        layout.addWidget(self.prep_readiness_detail)
         self.device_quality_button=QPushButton(
             "実機対戦90/40/45秒ログを検証（対戦前）")
         self.device_quality_button.clicked.connect(self._import_real_battle_quality)
@@ -621,7 +809,12 @@ class SettingsDialog(QDialog):
         self.team_validation_details.setMaximumHeight(110)
         self.team_validation_details.setPlainText("構築を選択してください")
         layout.addWidget(self.team_validation_details)
-        return tab
+        # Long per-team readiness details must remain accessible on a
+        # standard-height Windows settings dialog, not clipped below tabs.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(tab)
+        return scroll
 
     def _chatgpt_tab(self) -> QWidget:
         tab = QWidget()
@@ -877,9 +1070,21 @@ class SettingsDialog(QDialog):
             focus_row = None
             for row, record in enumerate(records):
                 members = ", ".join(member.get("name", "") or "（未設定）" for member in TeamDocument.load(record.csv_path).members)
+                if self._match_active():
+                    summary = self._team_readiness_snapshots.get(record.team_id, {})
+                    readiness = "対戦中・前回状態" if summary else "対戦中・未確認"
+                else:
+                    from .team_prep_readiness import team_readiness
+                    summary = team_readiness(
+                        self.service.settings.storage.data_root,
+                        record.team_id, record.csv_path,
+                        master_dir=self.service.master_directory,
+                        environment_snapshot=self.service.environment.snapshot)
+                    self._team_readiness_snapshots[record.team_id] = summary
+                    readiness = summary["status"]
                 values = (record.display_name, members, record.validation.status,
                           record.sha256, "予約" if record.team_id == pending else
-                          "選択中" if record.team_id == active else "")
+                          "選択中" if record.team_id == active else "", readiness)
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.ItemDataRole.UserRole, record.team_id if column == 0 else None)
@@ -907,6 +1112,7 @@ class SettingsDialog(QDialog):
             self._editing_team_id = None
             self.team_editor.setRowCount(0)
             self.team_validation_details.setPlainText("構築を選択してください")
+            self._show_prep_readiness(None)
             return
         document = TeamDocument.load(record.csv_path)
         self._editing_document, self._editing_team_id = document, record.team_id
@@ -925,6 +1131,73 @@ class SettingsDialog(QDialog):
                 else:
                     self.team_editor.setItem(row, column, QTableWidgetItem(value))
         self._show_team_validation(record)
+        self._show_prep_readiness(record.team_id)
+
+    def _show_prep_readiness(self, team_id: str | None, event: dict | None = None) -> None:
+        """Render stored facts only; no network, generation or LIVE file reads."""
+        from .team_prep_readiness import STAGES
+        stored = self._team_readiness_snapshots.get(team_id, {}) if team_id else {}
+        # While the worker is active its target remains explicit, even when
+        # another row is highlighted in the registered-team list.
+        running_id = self._active_prep_team_id
+        if running_id and event and event.get("team_id") == running_id:
+            stored = self._team_readiness_snapshots.get(running_id, {})
+            workflow = event
+            target = running_id
+        else:
+            workflow = stored
+            target = team_id
+        if target:
+            try:
+                label = self.service.teams.get(target).display_name
+            except (OSError, ValueError):
+                label = target
+        else:
+            label = "未選択"
+        if running_id and running_id != target:
+            label += "（別構築の処理が進行中）"
+        self.prep_target_label.setText(
+            f"対象構築：{label}　"
+            f"工程実行：{workflow.get('run_status', '未実行')}　"
+            f"根拠充足：{workflow.get('evidence_status', stored.get('evidence_status', '未評価'))}")
+        stages = workflow.get("stages", {})
+        ended = 0
+        for row, (key, name) in enumerate(STAGES):
+            info = stages.get(key, {})
+            status = info.get("status", "未実行")
+            if status in ("完了", "一部完了"):
+                ended += 1
+            for col, value in enumerate((name, status, info.get("detail", ""))):
+                self.prep_stage_table.setItem(row, col, QTableWidgetItem(str(value)))
+        self.prep_progress_bar.setValue(ended)
+        if not team_id:
+            self.prep_readiness_detail.setPlainText("構築を選択してください")
+            return
+        total = stored.get("total")
+        def count(value):
+            return str(value) if value is not None else "未確認"
+        self.prep_readiness_detail.setPlainText(
+            f"CSV実体一致：{('一致' if stored.get('csv_match') else '不一致') if stored.get('csv_match') is not None else '未確認'}　"
+            f"型署名・生成物一致：{'はい' if stored.get('tactical_match') else '未確認/不一致'}　"
+            f"環境一致：{('はい' if stored.get('environment_match') else '更新済み') if stored.get('environment_match') is not None else '未確認'}\n"
+            f"マトリクス：{'あり' if stored.get('matrix') else '未確認'}　"
+            f"ルックアップ：{'あり' if stored.get('lookup') else '未確認'}\n"
+            f"全対面：{count(total)}　"
+            f"根拠確認済み評価：{count(stored.get('confirmed_cells'))}　"
+            f"既存条件付き評価：{count(stored.get('legacy_cells'))}\n"
+            f"AI文章v1：{count(stored.get('ai_v1'))}　"
+            f"AI構造化v2：{count(stored.get('ai_v2'))}　"
+            f"AI提案合計：{count(stored.get('ai_total'))}　"
+            f"未評価：{count(stored.get('unknown'))}　"
+            f"固定根拠不足：{count(stored.get('source_gaps'))}\n"
+            f"初手11項目の完了：{count(stored.get('prep_lead'))}　"
+            f"控え6項目の完了：{count(stored.get('prep_bench'))}　"
+            f"実戦LIVE認証：{'あり' if stored.get('quality_ready') else '未認定'}\n"
+            f"指紋：{stored.get('fingerprint') or '未確認'}　"
+            f"更新：{stored.get('updated_at') or '未確認'}\n"
+            f"再準備理由：{', '.join(stored.get('stale_reasons') or []) or 'なし'}\n"
+            "注意：工程実行完了・評価根拠充足・実戦PREP完成は別です。"
+        )
 
     def _show_team_validation(self, record: RegisteredTeam) -> None:
         reasons = record.validation.reasons
@@ -1224,81 +1497,125 @@ class SettingsDialog(QDialog):
 
     def _start_matchup_ai(self) -> None:
         if self._match_active() or self._matchup_ai_worker is not None:
-            QMessageBox.warning(self,"実行不可","対戦中または解析中には実行できません。")
+            QMessageBox.warning(self, "実行不可", "対戦中または解析中には実行できません。")
             return
-        record=self._selected_record()
-        if record is None:return
+        record = self._selected_record()
+        if record is None:
+            return
         from .vision_preferences import VisionPreferenceStore
         from .app_config import default_app_root
-        prefs=VisionPreferenceStore(default_app_root())
-        model=prefs.selected_model()
+        prefs = VisionPreferenceStore(default_app_root())
+        model = prefs.selected_model()
         if not model:
-            QMessageBox.warning(self,"モデル未選択","ChatGPTタブでログインし、モデルを選択してください。")
+            QMessageBox.warning(self, "モデル未選択", "ChatGPTタブでログインし、モデルを選択してください。")
             return
-        answer=QMessageBox.question(
-            self,"ChatGPTへの送信確認",
-            "選択構築×相手358種類の全2,148対面を対象に、24～36対面ずつ"
-            "構造化AI解析します（通信上限180回、再試行を含む）。"
-            "固定マスター不足の対面は未解析として記録されます。"
-            "旧形式の文章評価もv2構造化形式では再解析対象です。"
-            "他構築で根拠が同一のv2結果を再利用し、成功分を保存します。"
-            "利用枠を消費するため、必要なら途中停止してください。"
-            "実機証拠や対戦ログは送信しません。AIの推測は戦術の確定評価に昇格しません。開始しますか？",
-            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+        answer = QMessageBox.question(
+            self, "ChatGPTへの送信確認",
+            "選択構築のPREP事前準備（構築確認、固定マスター、差分再利用、"
+            "全対面AI解析、PREP根拠確認、マトリクス、4ファイル高速索引）を実行します。\n"
+            "相手約358種類×自軍6枠の不足対面を24～36件ずつAI解析"
+            "（通信上限180回、再試行を含む）。既存成功分は再利用します。\n"
+            "未確認のダメージ・処理役・安全受けは確定認定しません。"
+            "マスター不足や実戦でしか判明しない情報は一部完了のまま残ります。\n"
+            "利用枠を消費するため、必要なら停止してください。"
+            "実機証拠・対戦ログは送信しません。開始しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
-        if answer!=QMessageBox.StandardButton.Yes:return
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            # The exact visible build is the target. Do not silently run an
+            # earlier stored CSV while the editor contains unsaved changes.
+            if self._editing_team_id == record.team_id:
+                self._persist_team_editor()
+            record = self.service.revalidate_team(record.team_id, match_active=False)
+            if not record.validation.selectable_for_next_match:
+                raise ConfigurationError("構築の入力を検証してください")
+            self._refresh_teams(focus_id=record.team_id)
+        except (ConfigurationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "準備を開始できません", str(exc))
+            return
+        self._active_prep_team_id = record.team_id
+        self.team_editor.setEnabled(False)
+        self.save_team_edit_button.setEnabled(False)
         self.matchup_ai_button.setEnabled(False)
         self.matchup_stop_button.setEnabled(True)
         self.save_button.setEnabled(False)
-        self.matchup_review_status.setText("構築別AI対面解析を自動実行中（試合開始はしないでください）")
-        self._matchup_ai_worker=_MatchupAIWorker(self.service,record.team_id,model,prefs.reasoning_effort(),self)
+        self.matchup_review_status.setText(
+            f"{record.display_name} のPREPデータ一括準備を実行中。"
+            "詳細進捗は工程表を参照してください。")
+        self._matchup_ai_worker = _MatchupAIWorker(
+            self.service, record.team_id, model, prefs.reasoning_effort(), self)
         self._matchup_ai_worker.progress.connect(self._matchup_ai_progress)
         self._matchup_ai_worker.result_ready.connect(self._matchup_ai_result)
         self._matchup_ai_worker.finished.connect(self._matchup_ai_finished)
         self._matchup_ai_worker.start()
 
     def _matchup_ai_progress(self, report: dict) -> None:
+        if report.get("team_id") != self._active_prep_team_id:
+            return
+        # Keep the registered-team summary in sync with the active worker,
+        # not just the details beneath the preparation button.
+        for row in range(self.team_list.rowCount()):
+            item = self.team_list.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == report["team_id"]:
+                stage_status = report.get("run_status", "実行中")
+                target = self.team_list.item(row, 5)
+                if target is not None:
+                    target.setText(stage_status)
+                break
+        record = self._selected_record()
+        self._show_prep_readiness(record.team_id if record else None, report)
+        counters = report.get("counters", {})
         self.matchup_review_status.setText(
-            f"ChatGPTで対面を構造化解析中: 今回 {report['count']}件、"
-            f"成功 {report['batches']}回／通信試行 {report.get('attempts',report['batches'])}回。"
-            f" 現在のバッチ {report.get('batch_size',12)}対面。"
-            " 確定KO・処理役・安全受けは未認定です。")
+            f"準備工程：{report.get('stage', '完了処理')} / "
+            f"{report.get('stage_status', report.get('run_status', '実行中'))}。"
+            f" {report.get('detail', '')} "
+            f"今回追加 {counters.get('generated', 0)}対面、"
+            f"通信試行 {counters.get('attempts', 0)}回。"
+            " AI仮説は確定処理役・安全受けではありません。")
 
     def _stop_matchup_ai(self) -> None:
         if self._matchup_ai_worker is not None:
             self._matchup_ai_worker.requestInterruption()
             self.matchup_stop_button.setEnabled(False)
             self.matchup_review_status.setText(
-                "停止要求を受け付けました。現在のChatGPT通信の終了後に中断します。")
+                "停止要求を受け付けました。現在の通信終了後に中断し、成功分を保持します。")
 
     def _matchup_ai_result(self, result: dict) -> None:
         if result["ok"]:
-            label={"COMPLETE":"構造化対面評価案の全件生成完了",
-                   "SOURCE_GAPS":"解析可能な対面は完了・固定マスター不足あり",
-                   "INTERRUPTED":"自動解析を中断",
-                   "BATCH_LIMIT":"自動解析の上限に到達"}.get(result["status"],result["status"])
+            labels = {
+                "COMPLETE": "解析可能なAI評価案の生成が完了",
+                "SOURCE_GAPS": "解析可能分は完了、固定根拠に不足あり",
+                "INTERRUPTED": "自動解析を停止・再開可能",
+                "BATCH_LIMIT": "通信上限に到達・再開可能",
+            }
+            label = labels.get(result["status"], result["status"])
             self.matchup_review_status.setText(
-                f"{label}。今回生成: {result['count']}件、"
-                f"差分再利用: {result.get('reused_cells',0)}件、"
-                f"通信試行 {result.get('attempts',result['batches'])}回"
-                f"（成功{result['batches']}・再試行{result.get('retries',0)}）。"
-                f" マスター不足 {result.get('source_gaps',0)}対面。"
-                + (" 不足内訳: "+", ".join(
-                    f"{reason}={count}" for reason,count in
-                    result.get("source_gap_reasons",{}).items())+"。"
-                   if result.get("source_gap_reasons") else "")
-                + f" LIVEマトリクスにAI評価案 {result.get('ai_proposal_cells',0)}件を反映。"
-                + f" SQLiteへ移行済み {result.get('legacy_v28_imported',0)}件（元のv28ファイルは保持）。"
-                " 処理役・安全受け・KOは未検証であり暫定推奨です。")
+                f"{label}。工程実行："
+                f"{result.get('workflow_status', '未確認')}、"
+                f"根拠充足：{result.get('evidence_status', '未評価')}。"
+                f"今回追加 {result['count']}件、差分再利用"
+                f"{result.get('reused_cells', 0)}件、"
+                f"累計AI注記 {result.get('ai_proposal_cells', 0)}件。"
+                f"成功通信 {result['batches']}回、試行 "
+                f"{result.get('attempts', result['batches'])}回、"
+                f"マスター不足 {result.get('source_gaps', 0)}対面。"
+                " 11/6項目が未検証ならPREP完成ではありません。")
         else:
             self.matchup_review_status.setText(
-                "AI自動解析停止・今回成功分は保存済み: "+str(result["error"]))
+                "PREP一括準備に失敗（既存成功分を保持）："
+                + str(result.get("error", "UNKNOWN")))
 
     def _matchup_ai_finished(self) -> None:
-        self._matchup_ai_worker=None
+        self._matchup_ai_worker = None
+        self._active_prep_team_id = None
+        self.team_editor.setEnabled(True)
+        self.save_team_edit_button.setEnabled(True)
         self.matchup_ai_button.setEnabled(True)
         self.matchup_stop_button.setEnabled(False)
         self.save_button.setEnabled(True)
+        self._refresh_teams()
 
     def _import_matchup_reviews(self) -> None:
         if self._match_active():
@@ -1429,6 +1746,9 @@ class SettingsDialog(QDialog):
         return updated
 
     def _save_team_edit(self) -> None:
+        if self._matchup_ai_worker is not None:
+            QMessageBox.warning(self, "構築を編集できません", "PREPデータ準備中は構築の保存ができません。")
+            return
         try:
             updated = self._persist_team_editor()
             if updated is None:

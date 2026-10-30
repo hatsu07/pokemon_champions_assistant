@@ -16,7 +16,9 @@ import re
 
 from .app_config import ConfigurationError, atomic_write_text
 from .species_name_aliases import selection_base_name
-from .matchup_evidence import build_candidate_catalog, certified_review_counts, validate_review_packet
+from .team_management import TeamDocument, regulation_scope
+from .matchup_evidence import (SOURCE_FILES, _source_hashes, build_candidate_catalog,
+                               certified_review_counts, validate_review_packet)
 
 
 MATRIX = "Pokemon_Champions_MC_live_selection_matrix.txt"
@@ -92,7 +94,11 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         raise ConfigurationError("不正なチームID")
     master = Path(master_dir)
     source = Path(team_path)
+    team_reg, member_regs = regulation_scope(TeamDocument.load(source))
     registered = _parsed_team(source)
+    # TEAM.reg is canonical. Every MON.reg must be identical before the
+    # one-regulation matchup catalog is constructed or any asset is cached.
+    team_regulations = list(member_regs)
     baseline = _parsed_team(master / BASE_TEAM)
     matrix_bytes = (master / MATRIX).read_bytes()
     lookup_bytes = (master / LOOKUP).read_bytes()
@@ -141,12 +147,24 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     review_bytes = review_path.read_bytes() if review_path.is_file() else b""
     if len(review_bytes) > 2*1024*1024:
         raise ConfigurationError("レビューJSONのサイズ上限超過")
+    champions_master_sha256 = _source_hashes(master)
+    source_fingerprints = {
+        "champions_master_sha256": champions_master_sha256,
+        # These are the exact fingerprint inputs; a derived matrix SHA is not
+        # a substitute for freshness of its *source* LIVE matrix/lookup.
+        "master_matrix_sha256": sha256(matrix_bytes).hexdigest(),
+        "master_lookup_sha256": sha256(lookup_bytes).hexdigest(),
+        "baseline_team_signature_sha256": _jsonhash(baseline),
+        "review_file_sha256": sha256(review_bytes).hexdigest(),
+    }
     fingerprint = _jsonhash({
         "version":GENERATED_VERSION, "form_evidence_revision":"exact-form-v2",
-        "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
+        "team":registered, "regulation":team_reg,
+        "master_matrix":sha256(matrix_bytes).hexdigest(),
         "master_lookup":sha256(lookup_bytes).hexdigest(),
         "baseline":_jsonhash(baseline), "environment":snapshot_sha,
         "environment_kind":env_kind,"reviews_sha256":sha256(review_bytes).hexdigest(),
+        "champions_masters": champions_master_sha256,
     })
     directory = Path(data_root)/"live-team-assets"/team_id/fingerprint
     matrix_path, lookup_path, manifest_path = directory/"matrix.txt", directory/"lookup.txt", directory/"manifest.json"
@@ -154,14 +172,19 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     if all(p.is_file() for p in (matrix_path,lookup_path,manifest_path,evidence_path)):
         saved = json.loads(manifest_path.read_text(encoding="utf-8"))
         if (saved.get("fingerprint")==fingerprint
+                and all(saved.get(k) == v for k, v in source_fingerprints.items())
+                and saved.get("team_regulations") == team_regulations
+                and saved.get("team_regulation") == team_reg
                 and sha256(matrix_path.read_bytes()).hexdigest()==saved.get("matrix_sha256")
                 and sha256(lookup_path.read_bytes()).hexdigest()==saved.get("lookup_sha256")
-                and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")):
+                and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")
+                and json.loads(evidence_path.read_text(encoding="utf-8")).get("master_sha256")
+                    == champions_master_sha256):
             return PreparedTeamAssets(matrix_path,lookup_path,manifest_path,
                                       saved["status"],saved["reviewed_members"],
                                       saved["opponent_rows"],True)
     full = all(i is not None for i in matched_columns)
-    team_reg=(registered[0].get("reg") or "UNDECLARED").strip()
+    # Canonical regulation already checked against all six MON entries.
     catalog=build_candidate_catalog(
         master_dir=master,team=registered,matrix_rows=matrix_rows,
         fields=SET_FIELDS,regulation=team_reg)
@@ -345,6 +368,9 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     atomic_write_text(evidence_path,candidate_text)
     manifest = {
         "schema":GENERATED_VERSION,"team_id":team_id,"fingerprint":fingerprint,
+        "team_regulations": team_regulations,
+        "team_regulation": team_reg,
+        **source_fingerprints,
         "status":status,"reviewed_members":sum(i is not None for i in matched_columns),
         "opponent_rows":len(matrix_rows),"unverified_cells":len(matrix_rows)*sum(i is None for i in matched_columns),
         "team_file":source.name,"matrix_source":MATRIX,"lookup_source":LOOKUP,

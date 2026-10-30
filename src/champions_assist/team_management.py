@@ -114,6 +114,27 @@ class TeamDocument:
         return _sha256_bytes(self.to_text().encode("utf-8"))
 
 
+def regulation_scope(document: TeamDocument) -> tuple[str, tuple[str, ...]]:
+    """Validate TEAM/MON regulation agreement, with TEAM.reg authoritative.
+
+    The only supported unspecified scope is all seven fields blank.
+    An explicit TEAM scope must agree with every one of the six MON slots.
+    Never turn mixed or missing per-member scopes into a single-regulation
+    catalog by silently taking the first member's value.
+    """
+    if len(document.team_rows) != 1 or len(document.members) != 6:
+        raise ConfigurationError("TEAM行1件、MON行6件でレギュレーションを照合してください")
+    declared = (document.team_rows[0].get("reg") or "").strip()
+    member_values = tuple((member.get("reg") or "").strip()
+                          for member in document.members)
+    if any(value != declared for value in member_values):
+        raise ConfigurationError(
+            "レギュレーション不整合：TEAM.regと6匹のMON.regを一致させてください")
+    return declared or "UNDECLARED", tuple(
+        value or "UNDECLARED" for value in member_values)
+
+
+
 @dataclass(frozen=True)
 class TeamValidation:
     status: str
@@ -192,6 +213,11 @@ def validate_team_document(document: TeamDocument, catalog: ChampionsTeamCatalog
         for key in ("item", "ability", "nature", "ap_h_a_b_c_d_s"):
             if not member.get(key, "").strip():
                 reasons.append(f"{name or '名称不明'}: {key} が空です")
+    if len(document.team_rows) == 1 and len(members) == 6:
+        try:
+            regulation_scope(document)
+        except ConfigurationError as exc:
+            reasons.append(str(exc))
     if reasons:
         return TeamValidation(TEAM_STATUS_INVALID, tuple(reasons), {} if catalog is None else dict(catalog.master_sha256))
     if catalog is None:
