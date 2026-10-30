@@ -3,6 +3,7 @@ import json
 import unittest
 import numpy as np
 from unittest.mock import patch
+from tests.ocr_wire_fixture import reply_with_wire_ids
 
 from champions_assist.ocr_turn_context import (
     build_ocr_turn_context, sanitize_pending_questions,
@@ -175,7 +176,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         submitted=[]
         def first_reply(_client,**kwargs):
             submitted.append(json.loads(kwargs["content"][0]["text"]))
-            return model_reply([unresolved(proof)])
+            return reply_with_wire_ids(
+                kwargs,model_reply([unresolved(proof)]),raw)
         with patch("champions_assist.match_replay._stream_json",
                    side_effect=first_reply):
             after,report=run_replay_text_action(
@@ -240,7 +242,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         # Next turn crosses to text-only without re-sending 364 old rows.
         def text_reply(_client,**kwargs):
             seen.append((kwargs,json.loads(kwargs["content"][0]["text"])))
-            return model_reply([unresolved(keep)])
+            return reply_with_wire_ids(
+                kwargs,model_reply([unresolved(keep)]),ledger+rows(5,365))
         with patch("champions_assist.match_replay._stream_json",side_effect=text_reply):
             following,_=run_replay_text_action(
                 state=after,assets=assets,access_token="unused",
@@ -257,7 +260,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         ledger=rows()
         keep="capture-0200"
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=model_reply([unresolved(keep)])):
+                   side_effect=lambda _client,**kw: reply_with_wire_ids(
+                       kw,model_reply([unresolved(keep)]),ledger)):
             after,_=run_replay_text_action(
                 state=state,assets=assets,access_token="unused",
                 model="test",expected_screen_label="TURN_ACTION",
@@ -296,7 +300,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         response["action"]={"action_kind":"MOVE","move":"技候補に存在しない技",
                             "switch_target":"","warning":""}
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,raw)):
             after,report=run_replay_text_action(
                 state=state,assets=assets,access_token="unused",model="test",
                 expected_screen_label="TURN_ACTION",
@@ -480,7 +485,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                       "switch_target":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,raw)):
             after,_=run_replay_text_action(
                 state=state,assets=assets,access_token="unused",
                 model="test",expected_screen_label="TURN_ACTION",
@@ -513,7 +519,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         proof=raw[2]["frame_id"]
         response=model_reply([unresolved(proof)],processed=[proof])
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,raw)):
             after,_=run_replay_text_action(
                 state=battle_state(assets),assets=assets,
                 access_token="unused",model="test",
