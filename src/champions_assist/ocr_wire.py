@@ -8,26 +8,48 @@ from __future__ import annotations
 from copy import deepcopy
 from hashlib import sha256
 
-from .ocr_turn_context import _row_key, compact_ocr_transport
+from .ocr_turn_context import _row_key, _safe_same_display_text
 
 
 def pack_ocr_wire(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
     """Minimal outgoing events plus a private reference->original row map."""
-    originals: dict[str, dict] = {_row_key(row): row for row in rows}
+    # Do NOT use the legacy metadata-heavy transport objects as a grouping
+    # oracle: for a 2-3-frame event they may be larger than separate originals.
+    # Group *local records* first; serialize only a minimal separate wire view.
+    episodes: list[list[dict]] = []
+    for row in rows:
+        previous = episodes[-1][-1] if episodes else None
+        if (previous and row.get("display_id")
+                and row["display_id"] == previous.get("display_id")
+                and row.get("field") == previous.get("field")
+                and _safe_same_display_text(
+                    str(row.get("raw_text",row.get("candidate",""))),
+                    str(previous.get("raw_text",previous.get("candidate",""))),
+                    str(row.get("field") or ""))):
+            episodes[-1].append(row)
+        else:
+            episodes.append([row])
     output, evidence = [], {}
-    for group in compact_ocr_transport(rows):
-        keys = group.get("source_row_keys") or [_row_key(group)]
-        found = [originals[key] for key in keys if key in originals]
-        if not found:
-            raise ValueError("OCR_TRANSPORT_SOURCE_UNAVAILABLE")
+    for episode in episodes:
+        keys = [_row_key(row) for row in episode]
         token = "e" + sha256("|".join(keys).encode("utf-8")).hexdigest()[:16]
         if token in evidence:
             token += "-" + str(len(output))
-        evidence[token] = found
+        evidence[token] = list(episode)
+        # Representative is only an OCR observation, not a confirmed event.
+        # Majority text and confidence break ties deterministically.
+        frequencies = {}
+        for row in episode:
+            literal = str(row.get("raw_text",row.get("candidate","")))
+            frequencies[literal] = frequencies.get(literal,0)+1
+        representative = max(episode, key=lambda row: (
+            frequencies[str(row.get("raw_text",row.get("candidate","")))],
+            float(row.get("confidence") or 0)))
         output.append({
             "id": token,
-            "field": str(group.get("field") or "").split(".")[-1],
-            "text": str(group.get("raw_text", group.get("candidate", ""))),
+            "field": str(representative.get("field") or "").split(".")[-1],
+            "text": str(representative.get("raw_text",
+                                        representative.get("candidate", ""))),
         })
     return output, evidence
 
