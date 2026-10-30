@@ -574,6 +574,22 @@ def _json_bytes(value) -> int:
                           separators=(",", ":"), default=str).encode("utf-8"))
 
 
+def _safe_same_display_text(first: str, second: str, field: str) -> bool:
+    """Merge cosmetic OCR variation only within the same visual display."""
+    left, right = _compare_text(first), _compare_text(second)
+    if left == right:
+        return True
+    if not field.endswith(("battle_message", "system_message",
+                           "effect_popup", "item_popup")):
+        return False
+    # Numbers, actor names and stat directions are never fuzzy matched.
+    if any(ch.isdigit() for ch in left + right):
+        return False
+    cosmetic = r"[!！。．、,，\s]"
+    return (bool(left) and bool(right) and
+            re.sub(cosmetic, "", left) == re.sub(cosmetic, "", right))
+
+
 def compact_ocr_transport(rows: list[dict]) -> list[dict]:
     """Lossless *transport* view: join only adjacent normalized exact matches.
 
@@ -589,8 +605,9 @@ def compact_ocr_transport(rows: list[dict]) -> list[dict]:
         if (previous and row.get("display_id")
                 and row["display_id"] == previous.get("display_id")
                 and row.get("field") == previous.get("field")
-                and _compare_text(raw) == _compare_text(str(
-                    previous.get("raw_text", previous.get("candidate", ""))))):
+                and _safe_same_display_text(
+                    raw, str(previous.get("raw_text", previous.get("candidate", ""))),
+                    str(row.get("field") or ""))):
             episodes[-1].append(row)
         else:
             episodes.append([row])

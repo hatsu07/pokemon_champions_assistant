@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import unittest
 from unittest.mock import patch
+from tests.ocr_wire_fixture import reply_with_wire_ids
 
 from champions_assist.ai_ocr_state_updates import apply_ai_ocr_updates
 from champions_assist.battle_state_tracker import LocalBattleStateTracker
@@ -128,7 +129,7 @@ class OcrAiContextRegression(unittest.TestCase):
         seen=[]
         def reply(_client,**kwargs):
             seen.append(kwargs)
-            return response
+            return reply_with_wire_ids(kwargs,response,evidence)
         with patch("champions_assist.match_replay._stream_json",side_effect=reply):
             state,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
@@ -138,8 +139,12 @@ class OcrAiContextRegression(unittest.TestCase):
                 client_factory=lambda **kwargs:object())
         sent=json.loads(seen[0]["content"][0]["text"])[
             "ocr_candidates_unverified"]
-        frames={x["frame_id"] for x in sent}
         self.assertEqual(len(sent),len(evidence))
+        self.assertTrue(all(set(x)=={"id","field","text"} for x in sent))
+        from champions_assist.ocr_wire import pack_ocr_wire
+        _,mapping=pack_ocr_wire(evidence)
+        frames={row["frame_id"] for group in mapping.values()
+                for row in group}
         self.assertTrue({"capture-505","capture-546"}<=frames)
         self.assertEqual(report["images_sent"],0)
         self.assertEqual(state["our_active"],"ドドゲザン")
@@ -159,7 +164,8 @@ class OcrAiContextRegression(unittest.TestCase):
                       "switch_target":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,evidence)):
             after,report=run_replay_text_action(
                 state=updated,assets=self.assets,
                 access_token="unused",model="test",
@@ -230,13 +236,14 @@ class OcrAiContextRegression(unittest.TestCase):
             "state_updates":[switch()],
             "interpreted_own_active":"ドドゲザン",
             "interpreted_opponent_active":"マスカーニャ",
-            "processed_ocr_frames":["capture-505","capture-546",
-                                    "capture-not-sent"],
+            # A valid GPT reply cites only evidence IDs visible in this call.
+            "processed_ocr_frames":["capture-505","capture-546"],
             "action":{"action_kind":"NO_ACTION","switch_target":"",
                       "move":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,evidence)):
             after,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
                 access_token="unused",model="test",
@@ -265,7 +272,8 @@ class OcrAiContextRegression(unittest.TestCase):
                       "move":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,evidence)):
             updated,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
                 access_token="unused",model="test",

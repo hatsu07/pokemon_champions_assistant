@@ -1,6 +1,7 @@
 """Single-call AI OCR state/action regression: no network, no image fallback."""
 from __future__ import annotations
 from unittest.mock import patch
+from tests.ocr_wire_fixture import reply_with_wire_ids
 import unittest
 from tests.test_match_replay import fixture_assets
 from champions_assist.match_replay import new_replay,run_replay_text_action
@@ -77,7 +78,8 @@ class AiOcrStateTests(unittest.TestCase):
                       "switch_target":"ドドゲザン","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,readings())):
             result,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
                 access_token="unused",model="mock",
