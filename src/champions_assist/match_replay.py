@@ -2035,7 +2035,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     } for r in rows if r.get("opponent_pokemon")==opponent][:3]
     from .ocr_turn_context import (
         build_ocr_turn_context, apply_model_ocr_carryover,
-        compact_ocr_transport, _own_actor_identification_candidate)
+        _own_actor_identification_candidate)
+    from .ocr_wire import pack_ocr_wire, resolve_ocr_wire_answer
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
         state,local_field_candidates,sent_ledger=sent_ocr_ledger,
         request_id=ocr_request_id)
@@ -2047,7 +2048,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             sent_ocr_ledger.release(ocr_request_id)
         return state,{"status":"BLOCKED",
                       "reason":"ACTOR_OCR_RESERVED_OR_UNAVAILABLE","images_sent":0}
-    transport_ocr=compact_ocr_transport(candidates)
+    transport_ocr, ocr_wire_evidence = pack_ocr_wire(candidates)
     compact_before=len(json.dumps(candidates,ensure_ascii=False,
                                   separators=(",",":"),default=str).encode("utf-8"))
     compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
@@ -2077,11 +2078,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "opponent_identity_uncertain":bool(state.get("opponent_active_unknown")) or not bool(opponent),
         "opponent_candidates":list(state.get("opponent_six") or ()),
         "last_known_opponent":state.get("last_known_opponent") or opponent,
-        "our_registered_moves":[] if switch_only or own is None else [
-            own.get("move"+str(i),"") for i in range(1,5)],
         "living_selected_bench_candidates":bench,
         "registered_selected_moves":{m["name"]:[m.get("move"+str(i),"") for i in range(1,5)] for m in assets.own_team if m["name"] in (state.get("selected_three") or [])},
-        "known_hp_by_pokemon":(state.get("battle_evidence") or {}).get("hp_by_pokemon",{}),
         "registered_move_categories":{
             n:getattr(assets,"move_class_index",{}).get(n,"UNKNOWN")
             for n in (own.get("move"+str(i),"") for i in range(1,5)) if n} if own else {
@@ -2112,7 +2110,6 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "form_by_pokemon",{}).get("own",{}).get(current)
             or (state.get("battle_evidence") or {}).get(
                 "form_by_pokemon",{}).get("opponent",{}).get(opponent)),
-        "recent_history":(state.get("history") or [])[-3:],
         "ocr_candidates_unverified":transport_ocr,
         "ocr_pending_questions_unverified":pending_ocr,
         "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
@@ -2147,83 +2144,46 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             return state,{"status":"CANCELLED",
                           "reason":"OCR_WORKER_RETIRED_BEFORE_HTTP",
                           "images_sent":0}
+        stream_timing = {}
         answer=_stream_json(
             client,model=model,schema=AI_OCR_TURN_SCHEMA,
             name="champions_text_only_state_and_action",
             on_request_sent=mark_ocr_sent,
+            timing_sink=stream_timing,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
-                "Pokémon Champions singles. INPUT IS STRUCTURED TEXT ONLY. "
-                "If own active is unknown, identify it from OCR and the selected "
-                "three and choose ONLY from that actor's registered_selected_moves. "
-                "Some OCR entries are compressed display groups: source_frames "
-                "list all original frames and variants are unverified readings. "
-                "Cite actual source frame IDs, not invented group IDs. "
-                "Interpret the NEW OCR frames in time order and return "
-                "state_updates and next action together in ONE response. "
-                "Explicitly reconcile active Pokémon, switch-out, send-out, "
-                "faints, HP, moves, boosts, item/status/ability and mega "
-                "changes against the prior state. Report each confirmed "
-                "change as a state_update with source frame IDs and certainty. "
-                "After applying them, return interpreted_own_active and "
-                "interpreted_opponent_active. If a previously verified active "
-                "has not been replaced by proven evidence, retain it even if "
-                "its name is not printed on the current menu. Do not guess "
-                "missing facts or erase a grounded actor with a blank. "
-                "Evaluate moves for interpreted_own_active after the updates. "
-                "Cite actual OCR frame IDs in evidence_frames for each update. "
-                "Never treat previous recommended moves or switches as executed. "
-                "Unknown observations remain UNKNOWN: do not fabricate Pokémon. "
-                "A missing or switched-out opponent is NOT by itself a "
-                "reason for NO_ACTION. Evaluate the legal own moves and bench "
-                "against remaining opponent candidates, minimize losing lines, "
-                "and give the best defensible action with a brief uncertainty "
-                "warning. Use NO_ACTION only if no legal action can be "
-                "meaningfully assessed. "
-                "This ONE tactical response also determines which OCR facts " 
-                "need to be remembered next turn. All OCR rows not shown "
-                "previously are included now; already shown rows appear only " 
-                "when you previously requested them as unresolved evidence. " 
-                "Return pending_ocr_questions for EVERY tactically important " 
-                "uncertain event (choice lock, speed, priority, boosts, items, " 
-                "HP, switches, forms, statuses, conflicting observations). "
-                "For each provide original source_frames, an unverified " 
-                "question, importance and specific recheck_when. Continue " 
-                "previous questions only if they still matter. Leave the " 
-                "list empty only when none require future attention. " 
-                "Omitted old events remain archived as UNVERIFIED locally, " 
-                "never become confirmed and will not be resent automatically. " 
-                "Do not choose which OCR to read by age or row count. "
-                "List a frame in processed_ocr_frames ONLY when every OCR "
-                "observation from that frame is fully understood and all "
-                "confirmed battle changes are reflected in state_updates or "
-                "already recorded. Never acknowledge uncertain or ignored "
-                "battle messages; otherwise return an empty list. "
-                "No new visual evidence is available. Optimize all remaining "
-                "three Pokémon; preserve identified win conditions and respect "
-                "known fainting, statuses, choice locks, mega forms and first-"
-                "move priority. Use only registered moves and known living "
-                "selected bench. Do not infer other-game mechanics. "
-                "For SWITCH_ONLY return SWITCH with one living selected "
-                "bench member or NO_ACTION; never MOVE/PIVOT. In a confirmed "
-                "forced replacement, the fainted own active may be unknown. "
-                "If there is grounded evidence of a fainted active but "
-                "its identity cannot be proved, interpreted_own_active may "
-                "stay empty. For voluntary switches with a known living "
-                "active, keep that name unless a confirmed event changes it. "
-                "Choose using the selected "
-                "living bench and opponent instead of guessing an actor. "
-                "A switch-screen classifier does not confirm which selected "
-                "party entries are visible. "
-                "If materially uncertain use NO_ACTION; no invented data."
+                "Pokémon Champions singles, text only; all OCR evidence is "
+                "UNVERIFIED. OCR entries have id, field, text. Refer ONLY to "
+                "the id in evidence_frames, source_frames and processed_ocr_frames. "
+                "In one response reconcile evidence with existing state "
+                "(active Pokémon, HP, moves, faints, switches, items, boosts, "
+                "status, forms, weather, type, choice locks), supply grounded "
+                "state_updates, interpreted actors, unresolved questions and "
+                "best legal action across the remaining three Pokémon. "
+                "Unknown own actor: use selected three and OCR to identify, "
+                "or NO_ACTION if no defensible legal move. Reconcile current "
+                "state before acting; never equate recommended and executed. "
+                "Never invent evidence IDs, mechanics from other games, "
+                "unseen moves or confirmed Pokémon. Preserve stopper, closer "
+                "and priority; distinguish processor from safe switch. "
+                "Return pending_ocr_questions with evidence IDs for material "
+                "uncertainty; processed_ocr_frames only for fully understood "
+                "observations. SWITCH_ONLY: select a living bench Pokémon or "
+                "NO_ACTION; a party screen does not prove a party entry. "
+                "Do not request/replay old OCR wholesale."
             ),
             content=[{"type":"input_text","text":prompt_text}])
         mark_ocr_sent()
         ai_elapsed_ms=round((perf_counter()-api_started)*1000)
+        # Resolve only this request's evidence IDs to original verified-proof inputs.
+        answer = resolve_ocr_wire_answer(answer, ocr_wire_evidence, candidates)
         if diagnostic_sink is not None:
             diagnostic_sink("AI_API_STAGE",{
                 "api_elapsed_ms":ai_elapsed_ms,
                 "pre_api_elapsed_ms":round((api_started-started)*1000),
+                "first_event_ms":stream_timing.get("first_event_ms"),
+                "first_output_ms":stream_timing.get("first_output_ms"),
+                "stream_complete_ms":stream_timing.get("stream_complete_ms"),
                 "validation_pending":True})
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest
