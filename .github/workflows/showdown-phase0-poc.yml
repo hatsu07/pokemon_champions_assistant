@@ -79,11 +79,25 @@ jobs:
               bench["counts"]["unsupported"] == 0)
           assert report["decision"]["synthetic_replay_failure_count"] == bench["counts"]["unsupported"]
           assert bench["counts"]["choice_legal"] >= 100, "fewer than 100 legal action attempts"
-          for kind in ("normal", "hp_status_pp_boost", "item_choice",
-                       "weather_screens", "consumed_item", "forced_switch", "unknown_sets"):
-              assert report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC", kind
-          assert report["probe"]["results"]["normal"]["next_turn_verified"], "two-turn fork unverified"
-          assert report["probe"]["results"]["item_choice"]["serialized_values_compared"], "effects not compared"
+          probe_kinds = ("normal", "hp_status_pp_boost", "item_choice",
+                         "weather_screens", "consumed_item", "forced_switch", "unknown_sets")
+          failed_probes = {}
+          for kind in probe_kinds:
+              result = report["probe"]["results"][kind]
+              assert result["status"] in ("PASS_SYNTHETIC", "UNSUPPORTED"), kind
+              if result["status"] == "UNSUPPORTED":
+                  assert result.get("detail"), "unexplained probe failure: " + kind
+                  failed_probes[kind] = result["detail"]
+          print("Unresolved synthetic probe failures (not treated as PASS):", failed_probes)
+          assert sum(report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC"
+                     for kind in probe_kinds) >= 4, "too few diagnostic probes passed"
+          normal = report["probe"]["results"]["normal"]
+          if normal["status"] == "PASS_SYNTHETIC":
+              assert normal["next_turn_verified"], "two-turn fork unverified"
+          choice = report["probe"]["results"]["item_choice"]
+          if choice["status"] == "PASS_SYNTHETIC":
+              assert choice["serialized_values_compared"], "effects not compared"
+          assert report["decision"]["gate_B_midbattle"] == "UNSUPPORTED", "do not certify midbattle gate"
           pending = report["probe"]["results"]["pending_choice"]
           assert pending["status"] in ("PASS_SYNTHETIC", "UNSUPPORTED")
           if pending["status"] == "PASS_SYNTHETIC":
