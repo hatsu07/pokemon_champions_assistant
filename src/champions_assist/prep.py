@@ -19,7 +19,11 @@ NOT_ASSESSED_EVALUATION = frozenset({
 EVIDENCE_LIMITED_EVALUATION = frozenset({
     "unknown", "unverified", "uncertain", "不明", "evidence_unknown",
 })
-UNKNOWN_EVALUATION = NOT_ASSESSED_EVALUATION | EVIDENCE_LIMITED_EVALUATION
+# "unverified" is a deliberate conditional processor assessment, not a
+# claim that the opponent can be safely switched into or certainly KO'd.
+UNKNOWN_EVALUATION = NOT_ASSESSED_EVALUATION | frozenset({
+    "unknown", "UNKNOWN", "uncertain", "不明", "evidence_unknown",
+})
 
 
 @dataclass(frozen=True)
