@@ -14,3 +14,5 @@ choice lock,"sim/state.ts serializes volatiles",Champions item master,PARTIAL,mi
 fainted and switch,"sim/state.ts serializes sides and queue",Champions game observations,PARTIAL,missing,Forced switching not certified
 selected three,"config/formats.ts has Flat Rules; Battle has team preview",Champions selection rules,PARTIAL,missing,Actual selection validation required
 learnset,"data/mods/champions/learnsets.ts present",Champions linked learnsets master,UNKNOWN,missing,Move legality not certified
+static audit triage,59 discrepancies A form-key candidate B dynamic layer candidate C provenance D game golden E independently reproduced defect,Champions fixed master and pinned Showdown diff,UNKNOWN,missing,All triage is provisional and none is a certified implementation bug
+pending choice and next turn,Serialized queue/choice and continued synthetic legal fork,Champions partial-observation goldens,PARTIAL,missing,Engine state preservation is not real-game reconstruction
