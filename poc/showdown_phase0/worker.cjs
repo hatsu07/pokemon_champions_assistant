@@ -4,7 +4,7 @@
 // All observations injected here are SYNTHETIC and are not Champions game evidence.
 const readline = require("node:readline");
 const path = require("node:path");
-const crypto = require("node:crypto");
+const {stableStringify, fingerprint} = require("./state_compare.cjs");
 const fs = require("node:fs");
 
 const pinned = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
@@ -81,21 +81,7 @@ function firstDifferentPaths(a, b, prefix = "$", out = []) {
   }
   return out;
 }
-// Object property insertion order is not battle state. Sort keys recursively
-// while retaining array order (including queue order) for state comparison.
-function stableStringify(value) {
-  const normalize = x => {
-    if (Array.isArray(x)) return x.map(normalize);
-    if (x && typeof x === "object")
-      return Object.fromEntries(Object.keys(x).sort().filter(k => x[k] !== undefined)
-        .map(k => [k, normalize(x[k])]));
-    return x;
-  };
-  return JSON.stringify(normalize(value));
-}
-function digest(b) {
-  return crypto.createHash("sha256").update(stableStringify(projection(b))).digest("hex");
-}
+function digest(b) { return fingerprint(projection(b)); }
 function copy(b) { return Battle.fromJSON(JSON.parse(JSON.stringify(b.toJSON()))); }
 function alter(b, kind) {
   const a = b.p1.active[0];
@@ -192,23 +178,30 @@ function testCase(b, kind) {
   const milestones = {serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0};
   try {
     const original = digest(b);
+    let started = process.hrtime.bigint();
     const isolated = copy(b);
+    const clone_ms = Number(process.hrtime.bigint() - started) / 1e6;
     alter(isolated, kind);
     const expected = digest(isolated);
     const serializedBefore = stableStringify(isolated.toJSON());
     milestones.serialized_ok = 1;
+    started = process.hrtime.bigint();
     const reconstructed = copy(isolated);
+    const restore_ms = Number(process.hrtime.bigint() - started) / 1e6;
     if (digest(reconstructed) !== expected ||
       stableStringify(reconstructed.toJSON()) !== serializedBefore)
       throw Error("full serialized state roundtrip mismatch (including queue/effect values)");
     assertInjected(reconstructed, kind);
     milestones.reconstructed_ok = 1;
     if (digest(b) !== original) throw Error("source state mutated");
+    started = process.hrtime.bigint();
     const a = executeBranch(reconstructed, kind, milestones);
+    const branch_ms = Number(process.hrtime.bigint() - started) / 1e6;
     const a2 = executeBranch(reconstructed, kind);
     if (digest(a) !== digest(a2))
       throw Error("seeded branch diverged: " +
         JSON.stringify(firstDifferentPaths(a.toJSON(), a2.toJSON())));
+    started = process.hrtime.bigint();
     let nextTurnVerified = false;
     if (a.requestState === "move" && a2.requestState === "move") {
       const nextA = executeBranch(a, "normal");
@@ -216,10 +209,13 @@ function testCase(b, kind) {
       if (digest(nextA) !== digest(nextB)) throw Error("next-turn seeded branch diverged");
       nextTurnVerified = true;
     }
+    const continuation_ms = Number(process.hrtime.bigint() - started) / 1e6;
     if (digest(reconstructed) !== expected || digest(b) !== original)
       throw Error("branch mutated frozen source");
     milestones.branch_resolved = 1;
-    return {status: "PASS_SYNTHETIC", digest: expected, milestones,
+    return {status: "PASS_SYNTHETIC", digest: expected, fixture_digest: expected,
+      stage_ms: {clone: clone_ms, restore: restore_ms, legal_branch: branch_ms,
+        continuation: continuation_ms}, milestones,
       branch_digest: digest(a), next_turn_verified: nextTurnVerified,
       serialized_values_compared: true, action_kind: kind === "forced_switch" ? "switch" : "move"};
   } catch (error) {
@@ -262,6 +258,7 @@ function probe() {
   } catch (e) { results.pending_choice = {status: "UNSUPPORTED", restoration_status: "UNSUPPORTED",
       detail: String(e.message), safe_for_midbattle_reconstruction: false, ...pendingDiagnostics}; }
   try {
+    const hypothesisStart = process.hrtime.bigint();
     // Freeze a common observable board before *either* unknown set acts.
     const a = create([9, 8, 7, 6], 0, false);
     const other = create([9, 8, 7, 6], 1, false);
@@ -281,6 +278,7 @@ function probe() {
       opponent_actions: ["p2 move 1 (Earthquake)", "p2 move 1 (Yawn)"],
       same_move_slot_not_same_opponent_move_id: true, observed_outcomes_differ: true,
       sources_unchanged: true, changed_initial_model: before !== second,
+      hypothesis_probe_ms: Number(process.hrtime.bigint() - hypothesisStart) / 1e6,
       branch_1: digest(resolvedA), branch_2: digest(resolvedB)};
   } catch (e) { results.unknown_sets = {status: "UNSUPPORTED", detail: String(e.message)}; }
   return {engine_sha: pinned, format: b.format.id, format_mod: b.format.mod,
@@ -300,15 +298,19 @@ function benchmark(count) {
   const by_kind = Object.fromEntries(kinds.map(k => [k, {requested: 0,
     serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0, unsupported: 0}]));
   const samples = [], unsupported = {};
+  const uniqueFixtures = new Set();
   for (let i = 0; i < count; i++) {
     const kind = kinds[i % kinds.length], group = by_kind[kind];
     group.requested++;
     const t = process.hrtime.bigint();
-    let status = "UNSUPPORTED", milestones = {}, error = null;
+    let status = "UNSUPPORTED", milestones = {}, error = null, fixture_digest = null, stage_ms = null;
     try {
       const result = testCase(base, kind);
       status = result.status;
       milestones = result.milestones || {};
+      fixture_digest = result.fixture_digest;
+      stage_ms = result.stage_ms;
+      if (fixture_digest) uniqueFixtures.add(fixture_digest);
     } catch (e) { error = String(e.message); milestones = e.milestones || {}; unsupported[kind] = (unsupported[kind] || 0) + 1; }
     for (const field of ["serialized_ok", "reconstructed_ok", "choice_legal", "branch_resolved"]) {
       if (milestones[field]) {counts[field]++; group[field]++;}
@@ -318,14 +320,37 @@ function benchmark(count) {
       if (!error) error = "branch not resolved";
     }
     samples.push({kind, ms: Number(process.hrtime.bigint() - t) / 1e6,
-      status, milestones, ...(error ? {error} : {})});
+      status, milestones, fixture_digest, ...(stage_ms ? {stage_ms} : {}),
+      ...(error ? {error} : {})});
   }
   const numbers = samples.filter(x => x.milestones.branch_resolved).map(x => x.ms).sort((a, b) => a - b);
   const percentile = q => numbers.length ? numbers[Math.ceil(q * numbers.length) - 1] : null;
-  return {requested: count, completed: counts.branch_resolved, counts, by_kind, unsupported,
+  // Repeated samples measure iteration latency; never interpret repetitions as distinct cases.
+  const unique_fixture_count = uniqueFixtures.size;
+  const unique_state_contract_count = kinds.length;
+  const representative_100_cases_met = unique_fixture_count >= 100 &&
+    unique_state_contract_count >= 100;
+  const stagePercentile = (key, q) => {
+    const vals = samples.filter(x => x.milestones.branch_resolved && x.stage_ms)
+      .map(x => x.stage_ms[key]).sort((a, b) => a - b);
+    return vals.length ? vals[Math.ceil(q * vals.length) - 1] : null;
+  };
+  return {requested: count, iterations: count, completed: counts.branch_resolved,
+    unique_fixture_count, unique_state_contract_count,
+    unique_fixture_sha256: [...uniqueFixtures].sort(),
+    representative_100_cases_met, starting_seed_count: 1,
+    team_composition_count: 1, scenario_kinds: kinds,
+    uncovered_mechanisms: ["independent_mega_history", "real_observation_reconstruction",
+      "more_species_and_moves", "more_abilities_and_items", "HP_range_and_boost_distributions",
+      "status_variations", "multiple_starting_seeds", "distribution_of_unknown_sets",
+      "candidate_switch_choices", "observed_partial_information"],
+    counts, by_kind, unsupported,
+    stage_latency_ms: Object.fromEntries(["clone", "restore", "legal_branch", "continuation"]
+      .map(key => [key, {p50: stagePercentile(key, .5), p95: stagePercentile(key, .95),
+        p99: stagePercentile(key, .99)}])),
     warmup_ms: warmup, p50_ms: percentile(.5), p95_ms: percentile(.95),
     p99_ms: percentile(.99), memory: process.memoryUsage(), timings: samples,
-    measurement_scope: "synthetic serialization + legal action resolution, prebuilt Node only; NOT Windows UI E2E"};
+    measurement_scope: "6 synthetic state contracts x repeated iterations on same team/seed. NOT 100 representative cases; NOT Windows UI E2E"};
 }
 function handle(message) {
   if (loadError) return {status: "UNSUPPORTED", reason: loadError};
