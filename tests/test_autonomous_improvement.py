@@ -158,6 +158,23 @@ class AutonomousResearchTest(unittest.TestCase):
         self.assertEqual(self.research.aggregate_after_review(match_id="m5")["candidate_count"], 1)
         self.assertEqual(len(self.research.history(team_id=TEAM)), 2)
 
+    def test_fifteen_matches_retain_latest_twelve_pattern_ids(self):
+        # Lexical-first truncation kept only 000-011 forever, meaning P2
+        # could not see new evidence in the fifth 3-match research cycle.
+        for index in range(15):
+            self.record(f"match-{index:03}")
+            if index % 3 == 2:
+                batch=self.research.aggregate_after_review(
+                    match_id=f"match-{index:03}")
+                self.assertEqual(batch["status"],"STORED_PROVISIONAL_UNVERIFIED")
+                ids=self.research.candidates(batch_sha=batch["batch_sha"])[0][
+                    "evidence_match_ids"]
+                self.assertEqual(len(ids),min(index+1,12))
+                self.assertEqual(ids,
+                    [f"match-{n:03}" for n in range(max(0,index-11),index+1)])
+                self.assertEqual(batch["candidate_count"],1)
+        self.assertEqual(len(self.research.history(team_id=TEAM)),5)
+
     def test_missing_review_and_invalid_match_mismatch_is_noop(self):
         self.assertEqual(self.research.aggregate_after_review(match_id="missing")["status"],
                          "NO_FINISHED_MATCH")
