@@ -2053,13 +2053,20 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                                   separators=(",",":"),default=str).encode("utf-8"))
     compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
                                  separators=(",",":"),default=str).encode("utf-8"))
+    ocr_send_recorded=False
     def mark_ocr_sent():
+        nonlocal ocr_send_recorded
+        # Both streaming dispatch and the post-call fallback can invoke this;
+        # doing so twice would consume the stale-request reinspection keys.
+        if ocr_send_recorded:
+            return
         keys=set(context_stats["presented_keys"])
         if sent_ocr_ledger is not None:
             sent_ocr_ledger.mark_sent(
                 keys,request_id=ocr_request_id,rows=candidates)
         state["_ai_ocr_presented_keys"]=sorted(
             set(state.get("_ai_ocr_presented_keys") or ()) | keys)
+        ocr_send_recorded=True
     if diagnostic_sink is not None:
         diagnostic_sink("OCR_TURN_COMPACTION",{
             key:value for key,value in context_stats.items()
