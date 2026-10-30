@@ -170,6 +170,23 @@ class _MatchupAIWorker(QThread):
                  f"未検証のKO・安全受けは認定しません",
                  ai_proposal_cells=integrated["ai_proposal_cells"])
 
+            if report["status"] == "INTERRUPTED":
+                # Stop immediately after committing the last successful AI
+                # batch and publishing its conditional hints. Do not continue
+                # with later preparation stages after explicit user stop.
+                journal.finish("停止")
+                self.progress.emit({
+                    "team_id": self.team_id, "run_status": "停止",
+                    "stages": journal.state["stages"],
+                    "counters": journal.state["counters"]})
+                self.result_ready.emit({
+                    "ok": True, "team_id": self.team_id,
+                    "workflow_status": "停止", "environment_refresh": refresh_status,
+                    **report, **reused, **integrated,
+                    "legacy_v28_imported": migrated_before["imported_cells"],
+                    "legacy_files_preserved": True})
+                return
+
             step("prep", "実行中", "PREPの11項目・6項目に対する根拠を検査")
             notes, note_cells = proposal_notes(catalog_path)
             if note_cells != integrated["ai_proposal_cells"]:
