@@ -242,7 +242,8 @@ class OcrAiContextRegression(unittest.TestCase):
                       "move":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,evidence)):
             after,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
                 access_token="unused",model="test",

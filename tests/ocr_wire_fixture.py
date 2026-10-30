@@ -14,6 +14,18 @@ def reply_with_wire_ids(kwargs, response, original_rows):
     sent=prompt.get("ocr_candidates_unverified") or []
     result=deepcopy(response)
     mapping={}
+    # Full supplied timeline: emulate the safe display grouping, then match
+    # events by order, not only OCR text (which may repeat in distinct displays).
+    from champions_assist.ocr_wire import pack_ocr_wire
+    simulated, local_map=pack_ocr_wire(original_rows,request_id="fixture")
+    def comparable(item):
+        return {key:val for key,val in item.items() if key!="id"}
+    if len(simulated)==len(sent) and all(
+            comparable(x)==comparable(y) for x,y in zip(simulated,sent)):
+        for source, actual in zip(simulated,sent):
+            if "id" in source and "id" in actual:
+                for local in local_map.get(source["id"],()):
+                    mapping[local["frame_id"]]=actual["id"]
     for row in original_rows:
         frame=row.get("frame_id")
         field=str(row.get("field") or "").split(".")[-1]
@@ -23,7 +35,7 @@ def reply_with_wire_ids(kwargs, response, original_rows):
             if "id" in item and item.get("field")==field
             and _safe_same_display_text(raw,str(item.get("text") or ""),
                                         str(row.get("field") or ""))]
-        if len(candidates)==1 and isinstance(frame,str):
+        if len(candidates)==1 and isinstance(frame,str) and frame not in mapping:
             mapping[frame]=candidates[0]
     # The previous question is a separate, explicitly transmitted short ID.
     pending=prompt.get("ocr_pending_questions_unverified") or []
