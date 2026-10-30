@@ -50,7 +50,10 @@ function create(seed, hypothesis = 0, runOpeningTurn = true) {
   return b;
 }
 function projection(b) {
+  // Serialized values include effect durations, lock targets and pending actions.
+  // toJSON normalizes references; comparing only effect keys would miss state loss.
   return {
+    persisted_state: b.toJSON(),
     turn: b.turn, requestState: b.requestState, rng: b.prng.getSeed(),
     weather: b.field.weather, pseudoWeather: Object.keys(b.field.pseudoWeather).sort(),
     sides: b.sides.map(s => ({
@@ -122,11 +125,14 @@ function assertInjected(b, kind) {
         a.moveSlots[0].pp >= a.moveSlots[0].maxpp) throw Error("status/AP/HP/PP injection lost");
       break;
     case "item_choice":
-      if (a.item !== "choicescarf" || !a.volatiles.choicelock) throw Error("choice lock lost");
+      if (a.item !== "choicescarf" || !a.volatiles.choicelock ||
+        !a.volatiles.choicelock.move) throw Error("choice lock or target move lost");
       break;
     case "weather_screens":
-      if (b.field.weather !== "raindance" || !b.p1.sideConditions.reflect)
-        throw Error("weather or reflect missing");
+      if (b.field.weather !== "raindance" || !b.p1.sideConditions.reflect ||
+        !(b.field.weatherState.duration > 0) ||
+        !(b.p1.sideConditions.reflect.duration > 0))
+        throw Error("weather/reflect duration or effect missing");
       break;
     case "consumed_item":
       if (a.item !== "") throw Error("consumed item was restored");
@@ -164,20 +170,31 @@ function testCase(b, kind) {
     const isolated = copy(b);
     alter(isolated, kind);
     const expected = digest(isolated);
+    const serializedBefore = JSON.stringify(isolated.toJSON());
     milestones.serialized_ok = 1;
     const reconstructed = copy(isolated);
-    if (digest(reconstructed) !== expected) throw Error("roundtrip mismatch");
+    if (digest(reconstructed) !== expected ||
+      JSON.stringify(reconstructed.toJSON()) !== serializedBefore)
+      throw Error("full serialized state roundtrip mismatch (including queue/effect values)");
     assertInjected(reconstructed, kind);
     milestones.reconstructed_ok = 1;
     if (digest(b) !== original) throw Error("source state mutated");
     const a = executeBranch(reconstructed, kind, milestones);
     const a2 = executeBranch(reconstructed, kind);
     if (digest(a) !== digest(a2)) throw Error("seeded branch diverged");
+    let nextTurnVerified = false;
+    if (a.requestState === "move" && a2.requestState === "move") {
+      const nextA = executeBranch(a, "normal");
+      const nextB = executeBranch(a2, "normal");
+      if (digest(nextA) !== digest(nextB)) throw Error("next-turn seeded branch diverged");
+      nextTurnVerified = true;
+    }
     if (digest(reconstructed) !== expected || digest(b) !== original)
       throw Error("branch mutated frozen source");
     milestones.branch_resolved = 1;
     return {status: "PASS_SYNTHETIC", digest: expected, milestones,
-      branch_digest: digest(a), action_kind: kind === "forced_switch" ? "switch" : "move"};
+      branch_digest: digest(a), next_turn_verified: nextTurnVerified,
+      serialized_values_compared: true, action_kind: kind === "forced_switch" ? "switch" : "move"};
   } catch (error) {
     error.milestones = {...milestones};
     throw error;
@@ -191,6 +208,21 @@ function probe() {
     try { results[kind] = testCase(b, kind); }
     catch (e) { results[kind] = {status: "UNSUPPORTED", detail: String(e.message)}; }
   }
+  try {
+    // A legal choice accepted before the other player's choice must survive restore.
+    const pending = create([2, 7, 1, 8], 0, false);
+    if (!pending.choose("p1", "move 1")) throw Error("pending choice illegal");
+    if (!pending.p1.choice.actions?.length) throw Error("pending choice missing");
+    const before = JSON.stringify(pending.toJSON());
+    const recovered = copy(pending);
+    if (JSON.stringify(recovered.toJSON()) !== before ||
+      !recovered.p1.choice.actions?.length) throw Error("pending action lost on copy");
+    if (!pending.choose("p2", "move 1") || !recovered.choose("p2", "move 1"))
+      throw Error("pending second choice illegal");
+    if (digest(pending) !== digest(recovered)) throw Error("pending resolution diverged");
+    results.pending_choice = {status: "PASS_SYNTHETIC", serialized_pending_action: true,
+      resolved_same_after_copy: true};
+  } catch (e) { results.pending_choice = {status: "UNSUPPORTED", detail: String(e.message)}; }
   try {
     // Freeze a common observable board before *either* unknown set acts.
     const a = create([9, 8, 7, 6], 0, false);
@@ -207,7 +239,9 @@ function probe() {
       JSON.stringify(observed(a)) !== publicBefore ||
       JSON.stringify(observed(other)) !== publicBefore) throw Error("hypotheses polluted observed state");
     results.unknown_sets = {status: "PASS_SYNTHETIC", same_observed_input: true,
-      same_action: "move 1 / move 1", observed_outcomes_differ: true,
+      same_own_action: "p1 move 1 (Earthquake) under both hypotheses",
+      opponent_actions: ["p2 move 1 (Earthquake)", "p2 move 1 (Yawn)"],
+      same_move_slot_not_same_opponent_move_id: true, observed_outcomes_differ: true,
       sources_unchanged: true, changed_initial_model: before !== second,
       branch_1: digest(resolvedA), branch_2: digest(resolvedB)};
   } catch (e) { results.unknown_sets = {status: "UNSUPPORTED", detail: String(e.message)}; }
