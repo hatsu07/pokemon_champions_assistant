@@ -58,7 +58,7 @@ test("pending accepted choice must remain a separate midbattle gate", () => {
 
 test("120 repeated measurements across six fixtures never satisfy 100 representative cases", () => {
   const d = assess({}, {
-    iterations: 120, unique_fixture_count: 6, unique_state_contract_count: 6,
+    iterations: 120, unique_fixture_count: 6, validated_manifest_case_count: 6, missing_required_groups: ['mega_history'],
     representative_100_cases_met: false,
     counts: {branch_resolved: 120, choice_legal: 120, reconstructed_ok: 120},
     p99_ms: 30,
@@ -71,7 +71,7 @@ test("120 repeated measurements across six fixtures never satisfy 100 representa
 });
 test("claimed coverage without 100 distinct contracts is rejected", () => {
   const d = assess({}, {
-    iterations: 120, unique_fixture_count: 120, unique_state_contract_count: 6,
+    iterations: 120, unique_fixture_count: 120, validated_manifest_case_count: 6, missing_required_groups: ['mega_history'],
     representative_100_cases_met: true,
     counts: {branch_resolved: 120, choice_legal: 120, reconstructed_ok: 120},
     p99_ms: 2,
@@ -81,7 +81,7 @@ test("claimed coverage without 100 distinct contracts is rejected", () => {
 
 test("a single divergent replay is explicitly recorded, never a consistency PASS", () => {
   const d = assess({}, {
-    iterations: 120, unique_fixture_count: 5, unique_state_contract_count: 5,
+    iterations: 120, unique_fixture_count: 5, validated_manifest_case_count: 5, missing_required_groups: ['mega_history'],
     representative_100_cases_met: false,
     counts: {branch_resolved: 119, choice_legal: 120, reconstructed_ok: 120,
       unsupported: 1}, p99_ms: 40,
@@ -90,5 +90,40 @@ test("a single divergent replay is explicitly recorded, never a consistency PASS
   assert.equal(d.synthetic_replay_all_consistent, false);
   assert.equal(d.synthetic_replay_failure_count, 1);
   assert.equal(d.phase0_100_case_performance_requirement_met, false);
+  assert.equal(d.recommended_adoption, "NO_GO");
+});
+
+test("100 different SHA inputs without independent manifested behavior coverage stay NOT MET", () => {
+  const d = assess({}, {
+    iterations: 120, unique_fixture_count: 120, validated_manifest_case_count: 6,
+    missing_required_groups: ["mega_history", "real_partial_observation"],
+    representative_100_cases_met: true,
+    counts: {branch_resolved: 120, choice_legal: 120, reconstructed_ok: 120,
+      unsupported: 0}, p99_ms: 2,
+  });
+  assert.equal(d.representative_100_cases_met, false);
+  assert.equal(d.phase0_100_case_performance_requirement_met, false);
+});
+test("green diagnostic iterations do not certify replay if regression or probe is unsupported", () => {
+  const results = Object.fromEntries(REQUIRED.map(k => [k, {status: "PASS_SYNTHETIC"}]));
+  results.unknown_sets = {status: "PASS_SYNTHETIC"};
+  results.replay_regression = {status: "UNSUPPORTED", attempts: 32, failure_count: 1};
+  const d = assess({results}, {iterations: 120,
+    counts: {branch_resolved: 120, choice_legal: 120,
+      reconstructed_ok: 120, unsupported: 0}, p99_ms: 12});
+  assert.equal(d.synthetic_replay_all_consistent, true);
+  assert.equal(d.current_run_replay_consistency_pass, false);
+  assert.equal(d.replay_regression_pass, false);
+  assert.equal(d.phase0_replay_acceptance_met, false);
+  assert.equal(d.recommended_adoption, "NO_GO");
+});
+test("one green independent run never proves historical replay stability", () => {
+  const results = Object.fromEntries(REQUIRED.map(k => [k, {status: "PASS_SYNTHETIC"}]));
+  results.unknown_sets = {status: "PASS_SYNTHETIC"};
+  results.replay_regression = {status: "PASS_SYNTHETIC", attempts: 32, failure_count: 0};
+  const d = assess({results}, {iterations: 120, counts: {branch_resolved: 120,
+    choice_legal: 120, reconstructed_ok: 120, unsupported: 0}, p99_ms: 10});
+  assert.equal(d.current_run_replay_consistency_pass, true);
+  assert.equal(d.phase0_replay_acceptance_met, false);
   assert.equal(d.recommended_adoption, "NO_GO");
 });
