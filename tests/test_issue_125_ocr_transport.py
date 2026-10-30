@@ -290,9 +290,12 @@ class Issue125TransportTests(unittest.TestCase):
         prompt = json.loads(calls[0]["content"][0]["text"])
         packed = prompt["ocr_candidates_unverified"]
         self.assertLess(len(packed), 14)
-        frame_proof=set()
-        for item in packed:
-            frame_proof.update(item.get("source_frames", [item["frame_id"]]))
+        self.assertTrue(all(set(item)=={"id","field","text"} for item in packed))
+        from champions_assist.ocr_wire import pack_ocr_wire
+        wire, mapping=pack_ocr_wire(records)
+        self.assertEqual(wire,packed)
+        frame_proof={row["frame_id"] for group in mapping.values()
+                     for row in group}
         self.assertEqual(frame_proof,{f"f{i}" for i in range(1, 15)})
         self.assertEqual(len(prompt["registered_selected_moves"]), 3)
         self.assertEqual(report["images_sent"], 0)
@@ -411,9 +414,14 @@ class Issue125TransportTests(unittest.TestCase):
                 client_factory=lambda **kwargs: object())
         self.assertEqual(next_report["status"],"NO_ACTION")
         self.assertEqual(len(seen),1)
-        sent_frames=set()
-        for group in seen[0]["ocr_candidates_unverified"]:
-            sent_frames.update(group.get("source_frames",[group["frame_id"]]))
+        sent_wire=seen[0]["ocr_candidates_unverified"]
+        self.assertTrue(all(set(x)=={"id","field","text"} for x in sent_wire))
+        from champions_assist.ocr_wire import pack_ocr_wire
+        wire, mapping=pack_ocr_wire(
+            [records[0],records[8],records[17],records[18]])
+        self.assertEqual(wire,sent_wire)
+        sent_frames={row["frame_id"] for group in mapping.values()
+                     for row in group}
         self.assertEqual(sent_frames,
                          {"event-0","event-8","hp-8","hp-9"})
         self.assertEqual(build_ocr_turn_context(

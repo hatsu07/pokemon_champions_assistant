@@ -138,8 +138,12 @@ class OcrAiContextRegression(unittest.TestCase):
                 client_factory=lambda **kwargs:object())
         sent=json.loads(seen[0]["content"][0]["text"])[
             "ocr_candidates_unverified"]
-        frames={x["frame_id"] for x in sent}
         self.assertEqual(len(sent),len(evidence))
+        self.assertTrue(all(set(x)=={"id","field","text"} for x in sent))
+        from champions_assist.ocr_wire import pack_ocr_wire
+        _,mapping=pack_ocr_wire(evidence)
+        frames={row["frame_id"] for group in mapping.values()
+                for row in group}
         self.assertTrue({"capture-505","capture-546"}<=frames)
         self.assertEqual(report["images_sent"],0)
         self.assertEqual(state["our_active"],"ドドゲザン")
