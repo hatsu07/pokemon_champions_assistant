@@ -50,71 +50,192 @@ class _MatchupAIWorker(QThread):
         self.model, self.effort = model, effort
 
     def run(self):
+        journal = None
+
+        def step(key, status, detail="", **counts):
+            state = journal.stage(key, status, detail, **counts)
+            self.progress.emit({
+                "stage": key, "stage_status": status,
+                "detail": detail, "team_id": self.team_id,
+                "stages": state["stages"], "counters": state["counters"],
+            })
+
         try:
+            from hashlib import sha256
+            import json
             from .team_auto_analysis import run_automatic_analysis
             from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore
             from .app_config import default_app_root
-            # Import *all* prior v28/v29 batches before a refresh can create
-            # a new fingerprint. Legacy JSON/TXT are always read-only here.
+            from .team_prep_readiness import PrepWorkflowProgress
             from .matchup_learning_store import MatchupLearningStore
-            learning=MatchupLearningStore(self.service.settings.storage.data_root)
-            migrated_before=learning.import_legacy_assets()
-            # Refresh only BETWEEN matches. Network/age errors preserve the
-            # previous last-good Singles evidence; never block analysis.
+            from .team_matchup_reuse import reuse_unchanged_matchups
+            from .team_ai_matrix import publish_ai_matrix, proposal_notes
+            from .preload import MasterPreloader
+            from .matrix_compatibility import (
+                matrix_matches_registered_team,
+                provisional_matrix_matches_registered_team,
+            )
+
+            source = self.service.teams.path_for_next_match(self.team_id)
+            journal = PrepWorkflowProgress(
+                self.service.settings.storage.data_root, self.team_id, source)
+            journal.start()
+            step("team", "実行中", "登録構築の6匹・SHAを確認中")
+            record = self.service.teams.get(self.team_id)
+            if not record.validation.selectable_for_next_match:
+                raise ValueError("登録構築が次戦に使用可能ではありません")
+            step("team", "完了", "構築と正本CSVを固定")
+
+            step("masters", "実行中", "Champions固定マスター・環境情報を準備中")
+            learning = MatchupLearningStore(self.service.settings.storage.data_root)
+            migrated_before = learning.import_legacy_assets()
             refresh_status = "LAST_GOOD"
             try:
                 self.service.refresh_public_battle_data(match_active=False)
                 refresh_status = "REFRESHED"
             except (OSError, ValueError, RuntimeError, TimeoutError):
                 pass
+            step("catalog", "実行中", "構築専用358相手×6枠を生成・確認中")
             ready = self.service.prepare_team_live_assets(self.team_id, match_active=False)
-            catalog = ready.manifest_path.with_name("matchup-evidence.json")
+            manifest = json.loads(ready.manifest_path.read_text(encoding="utf-8"))
+            journal.fingerprint(manifest["fingerprint"])
+            catalog_path = ready.manifest_path.with_name("matchup-evidence.json")
+            catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+            total = catalog_data["total_cells"]
+            source_gaps = sum(bool(x.get("missing_source"))
+                              for x in catalog_data["cells"])
+            step("masters", "一部完了" if source_gaps else "完了",
+                 f"Champions根拠不足 {source_gaps}/{total}対面", source_gaps=source_gaps)
+            step("catalog", "完了", f"{total}対面を索引化", total=total)
+
+            step("reuse", "実行中", "型署名と根拠が同一のAI解析を再利用")
+            reused = reuse_unchanged_matchups(
+                catalog_path, Path(self.service.settings.storage.data_root) / "live-team-assets")
+            step("reuse", "完了", f"差分再利用 {reused['reused_cells']}対面",
+                 reused_cells=reused["reused_cells"])
+
+            step("analysis", "実行中", "未解析分のみ構造化v2でAI解析")
             auth = ChatGPTSignIn(ProtectedSessionStore(default_app_root()))
-            # Public rankings only change evaluation ORDER. They never
-            # identify a guaranteed opposing item, move or ability.
             priority = []
             snapshot = self.service.environment.snapshot
             if snapshot.is_file():
                 try:
-                    import json
                     env = json.loads(snapshot.read_text(encoding="utf-8"))
                     if env.get("format") == "Singles":
                         ranked = sorted(
-                            (x for x in env.get("pokemon",[]) if isinstance(x,dict)
-                             and isinstance(x.get("name"),str)
+                            (x for x in env.get("pokemon", []) if isinstance(x, dict)
+                             and isinstance(x.get("name"), str)
                              and type(x.get("position")) is int),
-                            key=lambda x:x["position"])
-                        priority=[x["name"] for x in ranked]
-                except (OSError,ValueError,TypeError,KeyError):
+                            key=lambda x: x["position"])
+                        priority = [x["name"] for x in ranked]
+                except (OSError, ValueError, TypeError, KeyError):
                     pass
-            from .team_matchup_reuse import reuse_unchanged_matchups
-            reused = reuse_unchanged_matchups(
-                catalog, Path(self.service.settings.storage.data_root) / "live-team-assets")
-            # Saved batches are useful even after interruption or an API failure.
-            # Publication happens only BETWEEN matches, never inside LIVE.
+
+            def on_analysis(report):
+                state = journal.stage(
+                    "analysis", "実行中",
+                    f"追加 {report['count']}件、成功 {report['batches']}回、"
+                    f"通信試行 {report.get('attempts', report['batches'])}回",
+                    generated=report["count"], batches=report["batches"],
+                    attempts=report.get("attempts", report["batches"]))
+                self.progress.emit({
+                    "stage": "analysis", "stage_status": "実行中",
+                    "detail": state["stages"]["analysis"]["detail"],
+                    "team_id": self.team_id, "stages": state["stages"],
+                    "counters": state["counters"],
+                })
+
+            report = None
             try:
                 report = run_automatic_analysis(
-                    catalog, model=self.model, access_token=auth.access_token(),
-                    reasoning_effort=self.effort, interrupted=self.isInterruptionRequested,
-                    progress=self.progress.emit, priority_opponents=priority,
+                    catalog_path, model=self.model,
+                    access_token=auth.access_token(),
+                    reasoning_effort=self.effort,
+                    interrupted=self.isInterruptionRequested,
+                    progress=on_analysis, priority_opponents=priority,
                     structured=True,
                     token_provider=lambda force: auth.access_token(force_refresh=force))
             finally:
-                from .team_ai_matrix import publish_ai_matrix
+                # Publish already committed batches even if the last request fails.
                 integrated = publish_ai_matrix(
                     matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
-                    catalog_path=catalog)
-            migrated_after=learning.import_legacy_assets()
-            coverage=learning.coverage(catalog)
-            self.result_ready.emit({"ok":True, "environment_refresh":refresh_status,
-                                    **report, **reused, **integrated,
-                                    "legacy_v28_imported":(migrated_before["imported_cells"]+
-                                                           migrated_after["imported_cells"]),
-                                    "learning_coverage":coverage,
-                                    "legacy_files_preserved":True})
+                    catalog_path=catalog_path)
+            if report is None:
+                raise RuntimeError("解析レポートを取得できませんでした")
+            step("analysis", "停止" if report["status"] == "INTERRUPTED"
+                 else "一部完了" if report["status"] in ("SOURCE_GAPS", "BATCH_LIMIT")
+                 else "完了",
+                 f"AI提案 {integrated['ai_proposal_cells']}/{total}件。"
+                 f"未検証のKO・安全受けは認定しません",
+                 ai_proposal_cells=integrated["ai_proposal_cells"])
+
+            step("prep", "実行中", "PREPの11項目・6項目に対する根拠を検査")
+            notes, note_cells = proposal_notes(catalog_path)
+            if note_cells != integrated["ai_proposal_cells"]:
+                raise ValueError("解析結果とLIVE補足データの件数が一致しません")
+            # AI_HINT is not an assessed 11/6-field PREP result. Keep
+            # processor/KO/safe-hard-switch unknown until real evidence exists.
+            assessed = sum(1 for c in catalog_data["cells"]
+                           if c.get("evaluation") in ("CONFIRMED", "CONDITIONAL"))
+            step("prep", "一部完了",
+                 f"既存評価 {assessed} / AIヒント {note_cells} / "
+                 f"PREP11・6項目の全件検証は未達",
+                 legacy_cells=assessed, prep_lead_complete=0,
+                 prep_bench_complete=0)
+
+            step("publish", "実行中", "構築専用マトリクス・ルックアップを確認")
+            # prepare_team_live_assets already generated lookup and the
+            # publish step has projected only explicitly unverified AI hints.
+            step("publish", "完了", "14列マトリクス＋12列ルックアップを保存")
+
+            step("cache", "実行中", "4件の事前読込形式と高速対面索引を検査")
+            frozen = MasterPreloader(
+                self.service.master_directory, team_source=source,
+                matrix_source=ready.matrix_path, lookup_source=ready.lookup_path,
+                registered_team_id=self.team_id,
+                registered_team_name=record.display_name,
+            ).load_for_new_match()
+            if not (matrix_matches_registered_team(frozen)
+                    or provisional_matrix_matches_registered_team(frozen)):
+                raise ValueError("選択構築とLIVEマトリクスが一致しません")
+            if (len(frozen.matchup_cache_index) != 6
+                    or any(len(opponents) != ready.opponent_rows
+                           for opponents in frozen.matchup_cache_index.values())):
+                raise ValueError("構築別対面高速索引が未完成です")
+            if sha256(source.read_bytes()).hexdigest() != journal.team_sha:
+                raise ValueError("実行中に構築CSVが変更されました")
+            step("cache", "完了", "4件の凍結読込と6×相手候補の対面索引を確認")
+
+            migrated_after = learning.import_legacy_assets()
+            coverage = learning.coverage(catalog_path)
+            status = ("停止" if report["status"] == "INTERRUPTED"
+                      else "一部完了" if (source_gaps or
+                          integrated["ai_proposal_cells"] + assessed < total
+                          or not manifest["quality_gate"].get("live_ready"))
+                      else "完了")
+            journal.finish(status)
+            self.progress.emit({"team_id": self.team_id, "run_status": status,
+                                "stages": journal.state["stages"],
+                                "counters": journal.state["counters"]})
+            self.result_ready.emit({
+                "ok": True, "team_id": self.team_id, "workflow_status": status,
+                "environment_refresh": refresh_status,
+                **report, **reused, **integrated,
+                "legacy_v28_imported": (migrated_before["imported_cells"]
+                                        + migrated_after["imported_cells"]),
+                "learning_coverage": coverage,
+                "legacy_files_preserved": True})
         except Exception as exc:
+            if journal is not None and journal.state:
+                journal.finish("失敗")
+                self.progress.emit({
+                    "team_id": self.team_id, "run_status": "失敗",
+                    "stages": journal.state["stages"],
+                    "counters": journal.state["counters"]})
             from .team_ai_analysis import safe_ai_error
-            self.result_ready.emit({"ok":False, "error":safe_ai_error(exc)})
+            self.result_ready.emit({
+                "ok": False, "team_id": self.team_id,
+                "error": safe_ai_error(exc)})
 
 
 class _TeamAnnotationWorker(QThread):
