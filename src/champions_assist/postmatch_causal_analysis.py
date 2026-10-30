@@ -98,49 +98,52 @@ def _small(value: object, bound: int = 180) -> str:
     return " ".join(value.split())[:bound]
 
 
-def _frozen_gate_rules(gate_text: str) -> dict[str, str]:
-    """Bounded, explicit IDs for CORE rules AND existing non-Rxx sections.
+def _gate_rules_with_audit(gate_text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Extract full SHA-matched rules plus EVERY excluded section and reason.
 
-    A SHA-matched text is essential; callers never pass a different gate
-    version to this function as proof of historical rule coverage. The most
-    safety-critical GATE sections are kept first under the byte budget.
+    No section is silently lost before input-level budget selection. CORE is
+    audited separately because its numbered rules are individually extracted.
     """
     sections: dict[str, list[str]] = {}
     rules: dict[str, str] = {}
+    omitted: dict[str, str] = {}
     current = ""
     for raw in gate_text.splitlines():
         line = raw.strip()
-        section = re.fullmatch(r"\[([A-Z][A-Z0-9_]{1,63})\]", line)
+        section = re.fullmatch(r"\\[([A-Z][A-Z0-9_]{1,63})\\]", line)
         if section:
             current = section.group(1)
             sections.setdefault(current, [])
             continue
-        match = re.match(r"^(R\d{2})\s+(.+)$", line)
+        match = re.match(r"^(R\\d{2})\\s+(.+)$", line)
         if match:
             rules[match.group(1)] = _small(match.group(2), 200)
         if current and line and not line.startswith("#"):
             sections[current].append(line)
-    # Keep safety/decision gates ahead of informational setup sections.
     ranked = sorted(sections, key=lambda sec: (
         0 if sec.endswith("_GATE") else
         1 if sec in ("LIVE_FORCE_ORDER", "LIVE_SPEED", "CORE",
                      "FAINT_ENTRY", "OUTPUT_SELF_CHECK") else 2, sec))
     used = len(_json(rules))
     for name in ranked:
-        if name == "CORE":
-            continue  # Rxx rules already have exact standalone IDs
         content = "\n".join(sections[name])
-        if not content:
-            continue
-        # Do not publish a partial section as though it were a complete
-        # prevention gate: skip long sections instead of silently truncating.
-        if len(content) > MAX_GATE_SECTION_CHARS:
-            continue
-        if used + len(name) + len(content) > MAX_GATE_RULE_CHARS:
-            continue
-        rules[name] = content
-        used += len(name) + len(content)
-    return rules
+        if name == "CORE":
+            omitted[name] = "CORE_SECTION_ONLY_NUMBERED_RULES_EXTRACTED"
+        elif not content:
+            omitted[name] = "EMPTY_SECTION"
+        elif len(content) > MAX_GATE_SECTION_CHARS:
+            omitted[name] = "SECTION_TOO_LONG"
+        elif used + len(name) + len(content) > MAX_GATE_RULE_CHARS:
+            omitted[name] = "EXTRACTION_BUDGET_EXCEEDED"
+        else:
+            rules[name] = content
+            used += len(name) + len(content)
+    return rules, omitted
+
+
+def _frozen_gate_rules(gate_text: str) -> dict[str, str]:
+    """Compatibility helper: extracted complete rules (audit via sibling)."""
+    return _gate_rules_with_audit(gate_text)[0]
 
 
 def _confirmed(event: dict) -> bool:
@@ -316,7 +319,8 @@ class PostmatchCausalStore:
                             gate_sha = digest
                 except (OSError, UnicodeError, ValueError):
                     pass
-            gate_rules = _frozen_gate_rules(gate_text) if gate_sha else {}
+            gate_rules, gate_excluded = (
+                _gate_rules_with_audit(gate_text) if gate_sha else ({}, {}))
             # A minimum of 3 full *capture-time* event windows is mandatory.
             # Reduce extra match windows BEFORE reducing any event fields.
             # Keep omitted match IDs and rule IDs as an auditable inventory;
@@ -334,7 +338,8 @@ class PostmatchCausalStore:
                 "sample_size": len(snapshots),
                 "gate_sha": gate_sha or "UNKNOWN",
                 "existing_gate_rules": {},
-                "gate_omitted_rule_ids": [],
+                "gate_omitted_rule_ids": sorted(gate_excluded),
+                "gate_omission_reasons": dict(gate_excluded),
                 "selection_audit": {
                     "eligible_match_ids": [m["match_id"] for m in snapshots],
                     "excluded_match_ids": [],
@@ -361,6 +366,7 @@ class PostmatchCausalStore:
                 if len(_json(source)) > MAX_INPUT_CHARS:
                     del source["existing_gate_rules"][rule_id]
                     source["gate_omitted_rule_ids"].append(rule_id)
+                    source["gate_omission_reasons"][rule_id] = "PROMPT_BUDGET_EXCEEDED"
             if len(_json(source)) > MAX_INPUT_CHARS:
                 return {"status": "PROMPT_BUDGET_EXCEEDED",
                         "reason": "AUDIT_METADATA_TOO_LARGE"}
