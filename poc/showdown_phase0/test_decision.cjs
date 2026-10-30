@@ -45,3 +45,13 @@ test("different hidden sets alone are not independent outcome evaluation", () =>
   }}}, {});
   assert.equal(d.synthetic_hypotheses_ok, false);
 });
+
+test("pending accepted choice must remain a separate midbattle gate", () => {
+  const results = Object.fromEntries(REQUIRED.filter(k => k !== "pending_choice")
+    .map(k => [k, {status: "PASS_SYNTHETIC"}]));
+  results.pending_choice = {status: "UNSUPPORTED"};
+  const d = assess({results}, {counts: {branch_resolved: 120, choice_legal: 120, reconstructed_ok: 120}, p99_ms: 25});
+  assert.equal(d.gate_B_midbattle, "UNSUPPORTED");
+  assert.ok(d.missing_restore_cases.includes("pending_choice"));
+  assert.equal(d.recommended_adoption, "NO_GO");
+});
