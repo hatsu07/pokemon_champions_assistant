@@ -181,20 +181,9 @@ class _MatchupAIWorker(QThread):
                  generated=report["count"], batches=report["batches"],
                  attempts=report.get("attempts", report["batches"]))
 
-            # A stop arriving after the last API response must be honored
-            # before the conditional-hint publication and all later stages.
-            self._check_interrupted()
-            step("publish", "実行中", "AI仮説を未検証注記として反映中")
-            integrated = publish_ai_matrix(
-                matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
-                catalog_path=catalog_path)
-            self._check_interrupted()
-            step("publish", "完了", "マトリクス補足欄のAI注記を保存")
-
+            # Evaluate evidence completeness before publishing the hints.
             step("prep", "実行中", "PREPの11項目・6項目に対する根拠を検査")
             notes, note_cells = proposal_notes(catalog_path)
-            if note_cells != integrated["ai_proposal_cells"]:
-                raise ValueError("解析結果とLIVE補足データの件数が一致しません")
             # AI_HINT is not an assessed 11/6-field PREP result. Keep
             # processor/KO/safe-hard-switch unknown until real evidence exists.
             assessed = sum(1 for c in catalog_data["cells"]
@@ -210,6 +199,18 @@ class _MatchupAIWorker(QThread):
                 source_gaps=source_gaps,
                 quality_ready=bool(manifest.get("quality_gate", {})
                                    .get("live_ready", False)))
+            # A stop arriving after the last API response must be honored
+            # before the conditional-hint publication and all later stages.
+            self._check_interrupted()
+            step("publish", "実行中", "AI仮説を未検証注記として反映中")
+            integrated = publish_ai_matrix(
+                matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
+                catalog_path=catalog_path)
+            self._check_interrupted()
+            if note_cells != integrated["ai_proposal_cells"]:
+                raise ValueError("解析結果とLIVE補足データの件数が一致しません")
+            step("publish", "完了", "マトリクス補足欄のAI注記を保存")
+
             step("cache", "実行中", "4件の事前読込形式と高速対面索引を検査")
             frozen = MasterPreloader(
                 self.service.master_directory, team_source=source,
@@ -1182,8 +1183,11 @@ class SettingsDialog(QDialog):
             f"マトリクス：{'あり' if stored.get('matrix') else '未確認'}　"
             f"ルックアップ：{'あり' if stored.get('lookup') else '未確認'}\n"
             f"全対面：{count(total)}　"
-            f"既存条件付き評価：{count(stored.get('legacy_cells'))}　"
-            f"AI構造化評価案：{count(stored.get('ai_v2'))}　"
+            f"根拠確認済み評価：{count(stored.get('confirmed_cells'))}　"
+            f"既存条件付き評価：{count(stored.get('legacy_cells'))}\n"
+            f"AI文章v1：{count(stored.get('ai_v1'))}　"
+            f"AI構造化v2：{count(stored.get('ai_v2'))}　"
+            f"AI提案合計：{count(stored.get('ai_total'))}　"
             f"未評価：{count(stored.get('unknown'))}　"
             f"固定根拠不足：{count(stored.get('source_gaps'))}\n"
             f"初手11項目の完了：{count(stored.get('prep_lead'))}　"
