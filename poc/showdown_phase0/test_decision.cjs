@@ -55,3 +55,26 @@ test("pending accepted choice must remain a separate midbattle gate", () => {
   assert.ok(d.missing_restore_cases.includes("pending_choice"));
   assert.equal(d.recommended_adoption, "NO_GO");
 });
+
+test("120 repeated measurements across six fixtures never satisfy 100 representative cases", () => {
+  const d = assess({}, {
+    iterations: 120, unique_fixture_count: 6, unique_state_contract_count: 6,
+    representative_100_cases_met: false,
+    counts: {branch_resolved: 120, choice_legal: 120, reconstructed_ok: 120},
+    p99_ms: 30,
+  });
+  assert.equal(d.performance_100_iterations_valid, true);
+  assert.equal(d.representative_100_cases_met, false);
+  assert.equal(d.phase0_100_case_performance_requirement_met, false);
+  assert.equal(d.benchmark_unique_fixtures, 6);
+  assert.equal(d.recommended_adoption, "NO_GO");
+});
+test("claimed coverage without 100 distinct contracts is rejected", () => {
+  const d = assess({}, {
+    iterations: 120, unique_fixture_count: 120, unique_state_contract_count: 6,
+    representative_100_cases_met: true,
+    counts: {branch_resolved: 120, choice_legal: 120, reconstructed_ok: 120},
+    p99_ms: 2,
+  });
+  assert.equal(d.representative_100_cases_met, false);
+});
