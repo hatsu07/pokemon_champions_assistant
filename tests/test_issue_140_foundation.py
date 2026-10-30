@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+from unittest.mock import patch
 import sys
 import tempfile
 import time
@@ -21,6 +22,7 @@ from champions_assist.local_strategy.decision_service import accept_result
 from champions_assist.local_strategy.simulator_adapter import (
     LocalSimulatorWorker, WorkerUnavailable,
 )
+from scripts.stage_issue140_runtime import stage, PINNED_SHOWDOWN_SHA
 
 
 class FakeAssets:
@@ -250,6 +252,86 @@ class WorkerTests(unittest.TestCase):
             showdown_root="/missing/engine", simulator_sha="sha")
         with self.assertRaises(WorkerUnavailable):
             w.start()
+
+
+    def test_worker_crash_never_restarts_or_returns_old_advice(self):
+        script = (
+            "import sys,json\\n"
+            "for line in sys.stdin:\\n"
+            " r=json.loads(line)\\n"
+            " if r['op']=='HELLO':\\n"
+            "  r.update(capability_status='PARTIAL',ok=True,payload={})\\n"
+            "  print(json.dumps(r),flush=True)\\n"
+            " else:\\n"
+            "  sys.exit(2)\\n"
+        )
+        tmp, w = self.make_fake_worker(script)
+        try:
+            w.start(timeout_seconds=1)
+            with self.assertRaises(WorkerUnavailable):
+                w.simulate(frozen(), {"synthetic": True}, "move 1", "move 1")
+            with self.assertRaises(WorkerUnavailable):
+                w.start()
+        finally:
+            w.close()
+            tmp.cleanup()
+
+
+class StagingTests(unittest.TestCase):
+    def test_pinned_runtime_stage_requires_sha_and_licenses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            showdown = root / "showdown"
+            (showdown / "dist/sim").mkdir(parents=True)
+            (showdown / "node_modules").mkdir()
+            (showdown / "dist/sim/index.js").write_text("module.exports = {};")
+            (showdown / "LICENSE").write_text("test-only-upstream-license")
+            (showdown / "package.json").write_text("{}")
+            node = root / "node.exe"
+            node.write_bytes(b"synthetic-node-not-real-executable")
+            node_license = root / "NODE_LICENSE"
+            node_license.write_text("node-license-placeholder")
+            notices = root / "notices"
+            notices.write_text("third-party-notices-placeholder")
+            worker = root / "worker.cjs"
+            worker.write_text("// synthetic worker")
+            target = root / "output"
+            opts = dict(showdown_root=showdown, node_exe=node,
+                        node_license=node_license,
+                        third_party_notices=notices, worker_script=worker,
+                        output=target)
+            with patch("scripts.stage_issue140_runtime.subprocess.check_output",
+                       return_value="wrong-SHA\\n"):
+                with self.assertRaises(ValueError):
+                    stage(**opts)
+            self.assertFalse(target.exists())
+            with patch("scripts.stage_issue140_runtime.subprocess.check_output",
+                       return_value=PINNED_SHOWDOWN_SHA + "\\n"):
+                manifest = stage(**opts)
+            self.assertEqual(manifest["engine_sha"], PINNED_SHOWDOWN_SHA)
+            self.assertFalse(manifest["production_enabled"])
+            self.assertEqual((target / "showdown/.champions-source-sha")
+                             .read_text().strip(), PINNED_SHOWDOWN_SHA)
+            with self.assertRaises(FileExistsError):
+                stage(**opts)
+
+    def test_stage_rejects_empty_dependency_notices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "engine").mkdir()
+            (root / "node.exe").touch()
+            (root / "LICENSE").write_text("license")
+            (root / "NOTICES").touch()
+            (root / "worker.cjs").write_text("// worker")
+            with patch("scripts.stage_issue140_runtime.subprocess.check_output",
+                       return_value=PINNED_SHOWDOWN_SHA + "\\n"):
+                with self.assertRaises(FileNotFoundError):
+                    stage(showdown_root=root / "engine",
+                          node_exe=root / "node.exe",
+                          node_license=root / "LICENSE",
+                          third_party_notices=root / "NOTICES",
+                          worker_script=root / "worker.cjs",
+                          output=root / "out")
 
 
 if __name__ == "__main__":
