@@ -200,7 +200,9 @@ function testCase(b, kind) {
     const a2 = executeBranch(reconstructed, kind);
     if (digest(a) !== digest(a2))
       throw Error("seeded branch diverged: " +
-        JSON.stringify(firstDifferentPaths(a.toJSON(), a2.toJSON())));
+        JSON.stringify({paths: firstDifferentPaths(a.toJSON(), a2.toJSON()),
+          aLogTail: (a.toJSON().log || []).slice(-5),
+          bLogTail: (a2.toJSON().log || []).slice(-5)}));
     started = process.hrtime.bigint();
     let nextTurnVerified = false;
     if (a.requestState === "move" && a2.requestState === "move") {
@@ -327,7 +329,9 @@ function benchmark(count) {
   const percentile = q => numbers.length ? numbers[Math.ceil(q * numbers.length) - 1] : null;
   // Repeated samples measure iteration latency; never interpret repetitions as distinct cases.
   const unique_fixture_count = uniqueFixtures.size;
-  const unique_state_contract_count = kinds.length;
+  // Scenario labels are not independent state contracts if their hashed input is identical.
+  const unique_state_contract_count = unique_fixture_count;
+  const scenario_kind_count = kinds.length;
   const representative_100_cases_met = unique_fixture_count >= 100 &&
     unique_state_contract_count >= 100;
   const stagePercentile = (key, q) => {
@@ -336,7 +340,7 @@ function benchmark(count) {
     return vals.length ? vals[Math.ceil(q * vals.length) - 1] : null;
   };
   return {requested: count, iterations: count, completed: counts.branch_resolved,
-    unique_fixture_count, unique_state_contract_count,
+    unique_fixture_count, unique_state_contract_count, scenario_kind_count,
     unique_fixture_sha256: [...uniqueFixtures].sort(),
     representative_100_cases_met, starting_seed_count: 1,
     team_composition_count: 1, scenario_kinds: kinds,
@@ -344,13 +348,13 @@ function benchmark(count) {
       "more_species_and_moves", "more_abilities_and_items", "HP_range_and_boost_distributions",
       "status_variations", "multiple_starting_seeds", "distribution_of_unknown_sets",
       "candidate_switch_choices", "observed_partial_information"],
-    counts, by_kind, unsupported,
+    counts, by_kind, unsupported, replay_consistency_full: counts.branch_resolved === count,
     stage_latency_ms: Object.fromEntries(["clone", "restore", "legal_branch", "continuation"]
       .map(key => [key, {p50: stagePercentile(key, .5), p95: stagePercentile(key, .95),
         p99: stagePercentile(key, .99)}])),
     warmup_ms: warmup, p50_ms: percentile(.5), p95_ms: percentile(.95),
     p99_ms: percentile(.99), memory: process.memoryUsage(), timings: samples,
-    measurement_scope: "6 synthetic state contracts x repeated iterations on same team/seed. NOT 100 representative cases; NOT Windows UI E2E"};
+    measurement_scope: "6 scenario labels / 5 unique normalized input fixtures, repeated on one team/seed. NOT 100 representative cases; NOT Windows UI E2E"};
 }
 function handle(message) {
   if (loadError) return {status: "UNSUPPORTED", reason: loadError};
