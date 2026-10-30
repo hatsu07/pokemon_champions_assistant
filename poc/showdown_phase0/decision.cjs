@@ -17,9 +17,18 @@ function assess(probe, bench, realGameGoldens = []) {
   const fullReplayConsistency = bench?.iterations > 0 &&
     bench?.counts?.branch_resolved === bench?.iterations &&
     bench?.counts?.unsupported === 0;
+  const regressionPass = cases.replay_regression?.status === "PASS_SYNTHETIC" &&
+    cases.replay_regression?.failure_count === 0 && cases.replay_regression?.attempts >= 32;
+  const criticalProbesPass = ["normal", "hp_status_pp_boost", "item_choice",
+    "weather_screens", "consumed_item", "forced_switch", "pending_choice",
+    "unknown_sets"].every(k => cases[k]?.status === "PASS_SYNTHETIC");
+  const currentRunReplayConsistency = fullReplayConsistency &&
+    regressionPass && criticalProbesPass;
   const representativeCoverage = bench?.representative_100_cases_met === true &&
     bench?.unique_fixture_count >= 100 &&
-    bench?.unique_state_contract_count >= 100;
+    bench?.validated_manifest_case_count >= 100 &&
+    Array.isArray(bench?.missing_required_groups) &&
+    bench.missing_required_groups.length === 0;
   const gameValidated = Array.isArray(realGameGoldens) && realGameGoldens.length > 0 &&
     realGameGoldens.every(x => x?.verified === true && x?.matched === true);
   // The PoC cannot certify Champions equivalence from simulator-only data.
@@ -34,9 +43,21 @@ function assess(probe, bench, realGameGoldens = []) {
     phase0_100_case_performance_requirement_met: measured && representativeCoverage,
     synthetic_replay_all_consistent: fullReplayConsistency,
     synthetic_replay_failure_count: bench?.counts?.unsupported ?? null,
+    synthetic_probe_failure_count: criticalProbesPass ? 0 :
+      ["normal", "hp_status_pp_boost", "item_choice", "weather_screens",
+        "consumed_item", "forced_switch", "pending_choice", "unknown_sets"]
+        .filter(k => cases[k]?.status !== "PASS_SYNTHETIC").length,
+    replay_regression_failures: cases.replay_regression?.failure_count ?? null,
+    replay_regression_pass: regressionPass,
+    current_run_replay_consistency_pass: currentRunReplayConsistency,
+    // Repeated independent CI runs and real observed-state goldens are absent.
+    phase0_replay_acceptance_met: false,
+    phase0_replay_acceptance_reason: "No independent repeated-run evidence or real-game reconstruction; all critical synthetic fixtures must remain mismatch-free.",
     benchmark_iterations: bench?.iterations || 0,
     benchmark_unique_fixtures: bench?.unique_fixture_count || 0,
-    benchmark_unique_state_contracts: bench?.unique_state_contract_count || 0,
+    benchmark_manifest_case_count: bench?.manifest_case_count || 0,
+    benchmark_validated_manifest_cases: bench?.validated_manifest_case_count || 0,
+    benchmark_distinct_mechanism_tags: bench?.distinct_mechanism_tag_count || 0,
     game_golden_cases: realGameGoldens.length,
     recommended_adoption: "NO_GO", final_adoption_gate_implemented: false,
     gate_A_requires_real_game_goldens: true,
