@@ -4,6 +4,7 @@ import unittest
 from threading import Event, Thread
 import numpy as np
 from unittest.mock import patch
+from tests.ocr_wire_fixture import reply_with_wire_ids
 
 from champions_assist.match_replay import (
     new_replay, run_replay_text_action, run_replay_batch,
@@ -277,7 +278,7 @@ class Issue125TransportTests(unittest.TestCase):
         calls = []
         def model(_client, **kwargs):
             calls.append(kwargs)
-            return reply
+            return reply_with_wire_ids(kwargs,reply,records)
         with patch("champions_assist.match_replay._stream_json",
                    side_effect=model):
             after, report = run_replay_text_action(
@@ -293,7 +294,9 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertTrue(all(set(item)=={"id","field","text"} for item in packed))
         from champions_assist.ocr_wire import pack_ocr_wire
         wire, mapping=pack_ocr_wire(records)
-        self.assertEqual(wire,packed)
+        self.assertEqual(
+            [{k:v for k,v in item.items() if k!="id"} for item in wire],
+            [{k:v for k,v in item.items() if k!="id"} for item in packed])
         frame_proof={row["frame_id"] for group in mapping.values()
                      for row in group}
         self.assertEqual(frame_proof,{f"f{i}" for i in range(1, 15)})
@@ -316,7 +319,8 @@ class Issue125TransportTests(unittest.TestCase):
                        "switch_target": "", "warning": ""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,source)):
             after, report = run_replay_text_action(
                 state=state,assets=assets,access_token="unused",model="test",
                 expected_screen_label="TURN_ACTION",
@@ -418,7 +422,8 @@ class Issue125TransportTests(unittest.TestCase):
         self.assertTrue(all(set(x)=={"id","field","text"} for x in sent_wire))
         from champions_assist.ocr_wire import pack_ocr_wire
         wire, mapping=pack_ocr_wire(
-            [records[0],records[8],records[17],records[18]])
+            [records[0],records[8],records[17],records[18]],
+            request_id="req-B")
         self.assertEqual(wire,sent_wire)
         sent_frames={row["frame_id"] for group in mapping.values()
                      for row in group}
@@ -1162,7 +1167,7 @@ class Issue125TransportTests(unittest.TestCase):
                 def model(_client,**kw):
                     calls.append(kw)
                     kw["on_request_sent"]()
-                    return reply
+                    return reply_with_wire_ids(kw,reply,observed)
                 with patch("champions_assist.match_replay._stream_json",
                            side_effect=model):
                     updated,report=run_replay_text_action(

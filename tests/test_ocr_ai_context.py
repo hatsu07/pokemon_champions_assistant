@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import unittest
 from unittest.mock import patch
+from tests.ocr_wire_fixture import reply_with_wire_ids
 
 from champions_assist.ai_ocr_state_updates import apply_ai_ocr_updates
 from champions_assist.battle_state_tracker import LocalBattleStateTracker
@@ -128,7 +129,7 @@ class OcrAiContextRegression(unittest.TestCase):
         seen=[]
         def reply(_client,**kwargs):
             seen.append(kwargs)
-            return response
+            return reply_with_wire_ids(kwargs,response,evidence)
         with patch("champions_assist.match_replay._stream_json",side_effect=reply):
             state,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
@@ -163,7 +164,8 @@ class OcrAiContextRegression(unittest.TestCase):
                       "switch_target":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,evidence)):
             after,report=run_replay_text_action(
                 state=updated,assets=self.assets,
                 access_token="unused",model="test",
@@ -269,7 +271,8 @@ class OcrAiContextRegression(unittest.TestCase):
                       "move":"","warning":""},
         }
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,evidence)):
             updated,report=run_replay_text_action(
                 state=self.state,assets=self.assets,
                 access_token="unused",model="test",
