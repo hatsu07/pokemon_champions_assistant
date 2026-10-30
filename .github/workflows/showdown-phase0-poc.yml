@@ -44,9 +44,12 @@ jobs:
           print("Independent gates:", report["decision"]["gate_A_calculation"], report["decision"]["gate_B_midbattle"])
           bench = report["benchmark"]
           print("Bench valid / requested:", bench["completed"], bench["requested"])
-          print("Iterations / unique fixture SHA256 / distinct state contracts:",
+          print("Iterations / unique input hashes / manifest cases / mechanism tags:",
                 bench["iterations"], bench["unique_fixture_count"],
-                bench["unique_state_contract_count"])
+                bench["validated_manifest_case_count"], bench["distinct_mechanism_tag_count"])
+          print("Manifest groups covered / missing:", bench["covered_required_groups"],
+                bench["missing_required_groups"])
+          print("Manifest case evidence:", bench["evaluated_manifest_cases"])
           print("Representative-100 requirement:", report["decision"]["representative_100_cases_met"])
           print("Missing representative mechanisms:", bench["uncovered_mechanisms"])
           print("Timed stages (Node synthetic):", bench["stage_latency_ms"])
@@ -60,17 +63,40 @@ jobs:
           print("Unsupported cases:", bench["unsupported"])
           print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
           print("Failed branches:", [dict(index=i, **s) for i, s in enumerate(bench["timings"]) if s["status"] != "PASS_SYNTHETIC"])
+          for failure in bench["failed_cases"]:
+              print("PHASE0_REPLAY_FAILURE_JSON=" +
+                    json.dumps(failure, ensure_ascii=False, sort_keys=True))
+          regression = report["probe"]["results"]["replay_regression"]
+          print("Seeded regression cases / failures:", regression["attempts"], regression["failure_count"])
+          for failure in regression["failures"]:
+              print("PHASE0_REPLAY_REGRESSION_FAILURE_JSON=" +
+                    json.dumps(failure, ensure_ascii=False, sort_keys=True))
+          print("Diagnostic CI is not Phase 0 replay acceptance:",
+                report["decision"]["phase0_replay_acceptance_met"])
           print("All repeated branches exactly reproducible:",
                 report["decision"]["synthetic_replay_all_consistent"])
+          print("Current run replay/probe regression PASS:",
+                report["decision"]["current_run_replay_consistency_pass"])
+          print("Known historical failures mean long-term stability is unproven.")
           assert report["decision"]["recommended_adoption"] == "NO_GO"
           assert report["decision"]["performance_100_iterations_valid"], "fewer than 100 valid branch iterations"
           assert bench["iterations"] == 120
           assert bench["unique_fixture_count"] == 5, "fixture count changed; inspect coverage"
-          assert bench["unique_state_contract_count"] == 5
           assert bench["scenario_kind_count"] == 6
+          assert bench["manifest_case_count"] == 6
+          assert bench["validated_manifest_case_count"] <= 6
+          assert bench["distinct_mechanism_tag_count"] > 6
+          assert len(bench["missing_required_groups"]) > 0
+          assert len(bench["evaluated_manifest_cases"]) == 6
+          assert all(x.get("case_id") and x.get("preconditions") and x.get("expected")
+                     and x.get("mechanism_tags") and x.get("actual")
+                     for x in bench["evaluated_manifest_cases"])
           assert bench["representative_100_cases_met"] is False
           assert report["decision"]["representative_100_cases_met"] is False
           assert report["decision"]["phase0_100_case_performance_requirement_met"] is False
+          assert report["decision"]["phase0_replay_acceptance_met"] is False
+          assert report["decision"]["benchmark_manifest_case_count"] == 6
+          assert report["decision"]["benchmark_distinct_mechanism_tags"] > 6
           assert len(bench["unique_fixture_sha256"]) == bench["unique_fixture_count"]
           assert report["probe"]["format_mod"] == "champions"
           assert bench["counts"]["branch_resolved"] >= 100, "fewer than 100 resolved synthetic iterations"
@@ -116,12 +142,21 @@ jobs:
               with open(summary, "a", encoding="utf-8") as out:
                   out.write("### Phase 0 synthetic benchmark (NOT Champions game proof)\\n")
                   out.write("Head SHA: `" + os.environ["CHECKED_OUT_HEAD"] + "`\\n\\n")
-                  out.write("Iterations / unique SHA fixtures / state contracts: `" +
+                  out.write("Iterations / unique SHA / manifest cases / mechanism tags: `" +
                             str((bench["iterations"], bench["unique_fixture_count"],
-                                 bench["unique_state_contract_count"])) + "`\\n\\n")
+                                 bench["validated_manifest_case_count"],
+                                 bench["distinct_mechanism_tag_count"])) + "`\\n\\n")
+                  out.write("Uncovered required mechanism groups: `" +
+                            json.dumps(bench["missing_required_groups"]) + "`\\n\\n")
                   out.write("100 representative cases: **NOT MET**\\n\\n")
+                  out.write("Diagnostic CI outcome (test execution): **evaluated**\\n\\n")
+                  out.write("Current-run replay/probe consistency: **" +
+                            str(report["decision"]["current_run_replay_consistency_pass"]) + "**\\n\\n")
+                  out.write("Phase 0 replay acceptance: **NOT MET** (independent multi-run evidence absent)\\n\\n")
                   out.write("All 120 repeated branches consistent: **" +
                             str(report["decision"]["synthetic_replay_all_consistent"]) + "**\\n\\n")
+                  out.write("Regression failures: `" +
+                            str(report["decision"]["replay_regression_failures"]) + "`\\n\\n")
                   out.write("Divergent/unsupported branches: " +
                             str(bench["counts"]["unsupported"]) + "\\n\\n")
                   out.write("Node stage timings: `" + json.dumps(bench["stage_latency_ms"]) + "`\\n\\n")
