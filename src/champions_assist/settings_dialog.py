@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QMessageBox,
     QPushButton,
     QDoubleSpinBox,
@@ -549,6 +550,8 @@ class SettingsDialog(QDialog):
         self._team_validation_refreshed = False
         self._singles_worker = None
         self._matchup_ai_worker = None
+        self._team_readiness_snapshots = {}
+        self._active_prep_team_id = None
         self._annotation_worker = None
         self.setWindowTitle("初回設定" if first_launch else "設定")
         self.setMinimumSize(780, 600)
@@ -687,8 +690,8 @@ class SettingsDialog(QDialog):
         self.annotation_button=QPushButton("選択構築のrole・form_change・runtime_noteをAIで補助入力")
         self.annotation_button.clicked.connect(self._start_team_annotation)
         layout.addWidget(self.annotation_button)
-        self.team_list = QTableWidget(0, 5)
-        self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用"])
+        self.team_list = QTableWidget(0, 6)
+        self.team_list.setHorizontalHeaderLabels(["登録名", "6匹", "検証", "SHA-256", "次戦適用", "PREP準備"])
         self.team_list.itemSelectionChanged.connect(self._load_selected_team_editor)
         layout.addWidget(self.team_list, 1)
         self.team_editor = QTableWidget(0, len(self.member_columns))
@@ -716,13 +719,30 @@ class SettingsDialog(QDialog):
         self.matchup_candidates_button.clicked.connect(self._show_matchup_candidates)
         review_row.addWidget(self.matchup_candidates_button)
         layout.addLayout(review_row)
-        self.matchup_ai_button=QPushButton("全対面LIVEマトリクスをAI作成・再開（未検証・試合前）")
+        self.matchup_ai_button=QPushButton("選択構築のPREPデータを一括準備・再開（試合前）")
         self.matchup_ai_button.clicked.connect(self._start_matchup_ai)
         layout.addWidget(self.matchup_ai_button)
         self.matchup_stop_button=QPushButton("自動解析を停止（現在の通信終了後）")
         self.matchup_stop_button.setEnabled(False)
         self.matchup_stop_button.clicked.connect(self._stop_matchup_ai)
         layout.addWidget(self.matchup_stop_button)
+        self.prep_target_label = QLabel("選択構築の準備状況")
+        self.prep_target_label.setWordWrap(True)
+        layout.addWidget(self.prep_target_label)
+        self.prep_progress_bar = QProgressBar()
+        self.prep_progress_bar.setRange(0, 8)
+        self.prep_progress_bar.setFormat("%v / %m工程終了（部分完了を含む）")
+        layout.addWidget(self.prep_progress_bar)
+        self.prep_stage_table = QTableWidget(8, 3)
+        self.prep_stage_table.setHorizontalHeaderLabels(["工程", "状態", "根拠・進捗"])
+        self.prep_stage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.prep_stage_table.setMaximumHeight(248)
+        layout.addWidget(self.prep_stage_table)
+        layout.addWidget(QLabel("選択構築のデータ充足（AI評価と実戦検証は別集計）"))
+        self.prep_readiness_detail = QPlainTextEdit()
+        self.prep_readiness_detail.setReadOnly(True)
+        self.prep_readiness_detail.setMaximumHeight(125)
+        layout.addWidget(self.prep_readiness_detail)
         self.device_quality_button=QPushButton(
             "実機対戦90/40/45秒ログを検証（対戦前）")
         self.device_quality_button.clicked.connect(self._import_real_battle_quality)
@@ -998,9 +1018,20 @@ class SettingsDialog(QDialog):
             focus_row = None
             for row, record in enumerate(records):
                 members = ", ".join(member.get("name", "") or "（未設定）" for member in TeamDocument.load(record.csv_path).members)
+                if self._match_active():
+                    summary = self._team_readiness_snapshots.get(record.team_id, {})
+                    readiness = "対戦中・前回状態" if summary else "対戦中・未確認"
+                else:
+                    from .team_prep_readiness import team_readiness
+                    summary = team_readiness(
+                        self.service.settings.storage.data_root,
+                        record.team_id, record.csv_path,
+                        master_dir=self.service.master_directory)
+                    self._team_readiness_snapshots[record.team_id] = summary
+                    readiness = summary["status"]
                 values = (record.display_name, members, record.validation.status,
                           record.sha256, "予約" if record.team_id == pending else
-                          "選択中" if record.team_id == active else "")
+                          "選択中" if record.team_id == active else "", readiness)
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.ItemDataRole.UserRole, record.team_id if column == 0 else None)
@@ -1028,6 +1059,7 @@ class SettingsDialog(QDialog):
             self._editing_team_id = None
             self.team_editor.setRowCount(0)
             self.team_validation_details.setPlainText("構築を選択してください")
+            self._show_prep_readiness(None)
             return
         document = TeamDocument.load(record.csv_path)
         self._editing_document, self._editing_team_id = document, record.team_id
@@ -1046,6 +1078,65 @@ class SettingsDialog(QDialog):
                 else:
                     self.team_editor.setItem(row, column, QTableWidgetItem(value))
         self._show_team_validation(record)
+        self._show_prep_readiness(record.team_id)
+
+    def _show_prep_readiness(self, team_id: str | None, event: dict | None = None) -> None:
+        """Render stored facts only; no network, generation or LIVE file reads."""
+        from .team_prep_readiness import STAGES
+        stored = self._team_readiness_snapshots.get(team_id, {}) if team_id else {}
+        # While the worker is active its target remains explicit, even when
+        # another row is highlighted in the registered-team list.
+        running_id = self._active_prep_team_id
+        if running_id and event and event.get("team_id") == running_id:
+            workflow = event
+            target = running_id
+        else:
+            workflow = stored
+            target = team_id
+        if target:
+            try:
+                label = self.service.teams.get(target).display_name
+            except (OSError, ValueError):
+                label = target
+        else:
+            label = "未選択"
+        if running_id and running_id != target:
+            label += "（別構築の処理が進行中）"
+        self.prep_target_label.setText(
+            f"対象構築：{label}　"
+            f"状態：{workflow.get('run_status', '未実行')}")
+        stages = workflow.get("stages", {})
+        ended = 0
+        for row, (key, name) in enumerate(STAGES):
+            info = stages.get(key, {})
+            status = info.get("status", "未実行")
+            if status in ("完了", "一部完了"):
+                ended += 1
+            for col, value in enumerate((name, status, info.get("detail", ""))):
+                self.prep_stage_table.setItem(row, col, QTableWidgetItem(str(value)))
+        self.prep_progress_bar.setValue(ended)
+        if not team_id:
+            self.prep_readiness_detail.setPlainText("構築を選択してください")
+            return
+        total = stored.get("total")
+        def count(value):
+            return str(value) if value is not None else "未確認"
+        self.prep_readiness_detail.setPlainText(
+            f"構築一致：{'はい' if stored.get('team_match') else '未確認/不一致'}　"
+            f"マトリクス：{'あり' if stored.get('matrix') else '未確認'}　"
+            f"ルックアップ：{'あり' if stored.get('lookup') else '未確認'}\n"
+            f"全対面：{count(total)}　"
+            f"既存条件付き評価：{count(stored.get('legacy_cells'))}　"
+            f"AI構造化評価案：{count(stored.get('ai_v2'))}　"
+            f"未評価：{count(stored.get('unknown'))}　"
+            f"固定根拠不足：{count(stored.get('source_gaps'))}\n"
+            f"初手11項目の完了：{count(stored.get('prep_lead'))}　"
+            f"控え6項目の完了：{count(stored.get('prep_bench'))}　"
+            f"実戦LIVE認証：{'あり' if stored.get('quality_ready') else '未認定'}\n"
+            f"指紋：{stored.get('fingerprint') or '未確認'}　"
+            f"更新：{stored.get('updated_at') or '未確認'}\n"
+            "注意：AI評価案・キャッシュ18枠の存在はPREP完了を意味しません。"
+        )
 
     def _show_team_validation(self, record: RegisteredTeam) -> None:
         reasons = record.validation.reasons
