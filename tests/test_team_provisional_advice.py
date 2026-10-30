@@ -83,15 +83,18 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
     def test_prep18_and_action_are_provisional_not_certified(self):
         state,out=self.make_selection()
         state=confirm_actual_selection(state,self.assets,out["selected_three"],out["lead"])
-        lead_code=("ACT=conditional_attack|KO=unknown|DPS=known_move|PRI=unknown|"
-                   "S=unknown|OUR=registered|OPP=unknown|SAFE=unknown|PROC=unverified|"
+        moves={m["name"]:m["move1"] for m in self.assets.own_team}
+        lead_move=moves[self.names[0]]
+        lead_code=(f"ACT=move:{lead_move}|KO=unknown|DPS={lead_move}|PRI=unknown|"
+                   f"S=unknown|OUR={lead_move}|OPP=unknown|SAFE=unknown|PROC=unverified|"
                    "LOCK=unknown|MEGA=unknown")
-        bench_code=("S=unknown|OUR=registered|OPP=unknown|PRI=unknown|"
-                    "SAFE=unknown|PROC=unverified")
+        bench_codes=[(f"S=unknown|OUR={moves[name]}|OPP=unknown|PRI=unknown|"
+                      "SAFE=unknown|PROC=unverified")
+                     for name in self.names[1:3] for _ in range(6)]
         response={
             "preserve":self.names[0],"stopper":self.names[1],"closer":self.names[2],
             "warning":"未評価対面は暫定で扱う",
-            "lead_six":[lead_code]*6,"bench_twelve":[bench_code]*12,
+            "lead_six":[lead_code]*6,"bench_twelve":bench_codes,
         }
         class Stream:
             def __enter__(self):return self
