@@ -118,7 +118,8 @@ def cached_pairs(assets, selected_three: tuple[str, ...],
 
 
 def cached_evidence_count(rows: list[dict]) -> int:
-    return sum(r.get("source") in ("REVIEWED_CELL", "AI_HINT")
+    return sum(r.get("source") in ("REVIEWED_CELL", "AI_HINT",
+                                   "REVIEWED_EVALUATION")
                for r in rows)
 
 
@@ -143,4 +144,21 @@ def validate_cached_preparation(assets, selected_three: tuple[str, ...],
             or rows != expected):
         return False, 0
     count = cached_evidence_count(rows)
+    # A present matrix cell / AI hint is only a tactical clue. The 6 x 11
+    # lead tags and 12 x 6 bench tags must be ACTUALLY assessed before a
+    # cached result may be displayed as completed. Never substitute mere
+    # evidence count for evaluation completeness.
+    from .prep import LEAD_TAGS, BENCH_TAGS, UNKNOWN_EVALUATION, _parse_eval_code
+    for row in rows:
+        code = row.get("eval_code")
+        parsed = _parse_eval_code(code) if isinstance(code, str) else None
+        required = LEAD_TAGS if row["our_pokemon"] == lead else BENCH_TAGS
+        if (parsed is None or any(tag not in parsed for tag in required)
+                or any(parsed[tag].strip().casefold() in UNKNOWN_EVALUATION
+                        for tag in required)):
+            return False, count
+        if row.get("source") != "REVIEWED_EVALUATION":
+            # AI_UNVERIFIED or an unreviewed type/matrix cell cannot
+            # certify a processor or safe switch.
+            return False, count
     return count == len(expected), count

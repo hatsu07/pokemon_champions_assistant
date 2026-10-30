@@ -83,14 +83,18 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
     def test_prep18_and_action_are_provisional_not_certified(self):
         state,out=self.make_selection()
         state=confirm_actual_selection(state,self.assets,out["selected_three"],out["lead"])
-        lead_code=("ACT=conditional_attack|KO=unknown|DPS=known_move|PRI=unknown|"
-                   "S=unknown|OUR=registered|OPP=unknown|SAFE=unknown|PROC=unverified|"
+        moves={m["name"]:m["move1"] for m in self.assets.own_team}
+        lead_move=moves[self.names[0]]
+        lead_code=(f"ACT=move:{lead_move}|KO=unknown|DPS={lead_move}|PRI=unknown|"
+                   f"S=unknown|OUR={lead_move}|OPP=unknown|SAFE=unknown|PROC=unverified|"
                    "LOCK=unknown|MEGA=unknown")
-        bench_code=("S=unknown|OUR=registered|OPP=unknown|PRI=unknown|"
-                    "SAFE=unknown|PROC=unverified")
+        bench_codes=[(f"S=unknown|OUR={moves[name]}|OPP=unknown|PRI=unknown|"
+                      "SAFE=unknown|PROC=unverified")
+                     for name in self.names[1:3] for _ in range(6)]
         response={
             "preserve":self.names[0],"stopper":self.names[1],"closer":self.names[2],
             "warning":"未評価対面は暫定で扱う",
+            "lead_six":[lead_code]*6,"bench_twelve":bench_codes,
         }
         class Stream:
             def __enter__(self):return self
@@ -110,22 +114,23 @@ class ProvisionalTeamReasoningTests(unittest.TestCase):
         state,prep=run_replay_prep(
             state=state,assets=self.assets,model="mock",access_token="dummy",
             client_factory=lambda **_:client)
-        self.assertEqual(prep["status"],"PREP_CACHE_INCOMPLETE")
+        self.assertEqual(prep["status"],"PREP_PROVISIONAL")
+        self.assertEqual(prep["matchups_evaluated"],18)
+        self.assertEqual(state["prep_status"],"STRUCTURE_COMPLETE")
         self.assertEqual(len(state["prep"]["matchups_18"]),18)
-        # Exact registered battle sets may reuse existing reviewed matrix
-        # cells while other members remain UNKNOWN: never discard the former.
-        cached=sum(r["source"]!="MISSING" for r in state["prep"]["matchups_18"])
-        self.assertGreater(cached,0)
-        self.assertLess(cached,18)
-        self.assertEqual(prep["matchups_evaluated"],cached)
-        self.assertEqual(prep["missing_matchups"],18-cached)
-        self.assertTrue(any(r["source"]=="MISSING"
-                            for r in state["prep"]["matchups_18"]))
+        self.assertTrue(all("eval_code" in r for r in state["prep"]["matchups_18"]))
+        self.assertTrue(all("source" not in r for r in state["prep"]["matchups_18"]))
+        # A changed team's matrix has unverified / missing cells. They can
+        # inform one conditional PREP request, but not certify a cached result.
+        self.assertIn("暫定AI評価",state["prep"]["note"])
         self.assertEqual(client.calls[0]["stream"],True)
+        prompt=json.loads(client.calls[0]["input"][0]["content"][0]["text"])
         self.assertNotIn("OLD TEAM",client.calls[0]["input"][0]["content"][0]["text"])
+        self.assertEqual(len(prompt["matrix_rows_six"]),6)
+        self.assertLessEqual(len(prompt["lookup_rows_critical"]),2)
         self.assertEqual(client.calls[0]["text"]["format"]["name"],
-                         "champions_cached_prep_roles")
-        self.assertNotIn("lead_six",client.calls[0]["text"]["format"]["schema"]["properties"])
+                         "champions_replay_prep")
+        self.assertIn("lead_six",client.calls[0]["text"]["format"]["schema"]["properties"])
         state,_=advance_observation(
             state,self.assets,
             frame("COMMAND_MENU",our_active=self.names[0],

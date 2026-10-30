@@ -312,6 +312,21 @@ class DesktopSettingsService:
         self._save()
         return changed
 
+    def apply_pending_team_for_next_match(self) -> str | None:
+        """Activate the reserved team only at a new-match boundary.
+
+        The unified GUI and the legacy controller share this transition;
+        neither can silently change the team during an active battle.
+        Storage migration is deliberately outside this team-only method.
+        """
+        teams = self.settings.teams
+        if teams.pending_team_id is not None:
+            teams = replace(teams, active_team_id=teams.pending_team_id,
+                            pending_team_id=None)
+            self.settings = replace(self.settings, teams=teams)
+            self._save()
+        return self.settings.teams.active_team_id
+
     def apply_for_next_match(
         self,
         match_controller: "MatchController | None",
@@ -324,14 +339,10 @@ class DesktopSettingsService:
             if before_storage_migration is not None:
                 before_storage_migration()
             storage_changed = self._apply_storage(self.settings.pending_storage)
-        teams = self.settings.teams
-        if teams.pending_team_id is not None:
-            teams = replace(teams, active_team_id=teams.pending_team_id, pending_team_id=None)
-            self.settings = replace(self.settings, teams=teams)
-            self._save()
+        active_team_id = self.apply_pending_team_for_next_match()
         active_path = None
-        if self.settings.teams.active_team_id is not None:
-            active_path = self.teams.path_for_next_match(self.settings.teams.active_team_id)
+        if active_team_id is not None:
+            active_path = self.teams.path_for_next_match(active_team_id)
             if match_controller is not None:
                 match_controller.set_team_source_for_next_match(active_path)
         elif match_controller is not None:

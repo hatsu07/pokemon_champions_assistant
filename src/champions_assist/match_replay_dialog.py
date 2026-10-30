@@ -186,6 +186,11 @@ class _ReplayWorker(QObject):
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
+                # Every PREP terminal path must notify the GUI exactly once.
+                # Without this, the QThread never receives quit() and the
+                # successful PREP is neither displayed nor logged.
+                self.finished.emit({"state":next_state,"report":report})
+                return
             elif self.job=="result":
                 # Non-interactive, bounded TEXT-ONLY check of an actual OCR
                 # result message. No battle screenshot is transmitted.
@@ -399,6 +404,9 @@ class MatchReplayDialog(QDialog):
         super().__init__(parent)
         self.embedded = embedded
         self.before_new_match = before_new_match
+        # The host commits a deferred team reservation only after the actual
+        # four frozen inputs have loaded successfully in this new match.
+        self.after_preload_success = None
         self.on_capture_reconnected = on_capture_reconnected
         self.match_id = None
         if embedded:
@@ -502,6 +510,8 @@ class MatchReplayDialog(QDialog):
         self._last_selection_text=""
         self._selection_screen_started=None
         self._prep_budget_seconds=90.0
+        self.registered_team_id=None
+        self.registered_team_name=None
         self._proposed_selection=None
         self._proposed_prep_key=None
         self._proposed_prep_payload=None
@@ -732,8 +742,13 @@ class MatchReplayDialog(QDialog):
             self.assets=MasterPreloader(
                 self.master_directory, team_source=self.team_path,
                 matrix_source=self.matrix_source,lookup_source=self.lookup_source,
+                registered_team_id=self.registered_team_id,
+                registered_team_name=self.registered_team_name,
             ).load_for_new_match()
             self.state=new_replay(self.assets)
+            self.state["loaded_team_identity"]=self.assets.loaded_team_identity
+            if self.after_preload_success is not None:
+                self.after_preload_success()
             # Read the optional PRIVATE ROI profile once at match start.
             # Calibration does not bypass or replace the four-master load.
             private_profile=self.store_root / "calibration" / "screen_fields.json"
@@ -799,6 +814,7 @@ class MatchReplayDialog(QDialog):
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
             self._update_menu_detection_label()
             self._trace_event("PRELOAD_4_FILES_COMPLETED",preload_count=4,
+                              team_identity=self.assets.loaded_team_identity,
                               matrix_compatible=self.state.get("matrix_compatible",False),
                               matrix_provisional=self.state.get("matrix_provisional",False))
             self._render({"status":"MATCH_STARTED","message":"4ファイル事前読込完了。自動キャプチャ開始で進めます。"})
@@ -1536,10 +1552,14 @@ class MatchReplayDialog(QDialog):
                                   frame_seq=self._last_capture_seq)
         if screen_label=="BATTLE_EVENT":
             self._note_battle_event()
-        # PREP remains valid during screen changes. It is cancelled only
-        # when the NEXT model request actually begins (_send_pending).
-        # An unclassified image change is not proof that battle has started.
-        # Let the visual AI observation confirm the opponent lead first.
+        # A verified actionable battle screen ends PREP immediately, even
+        # when OCR synchronization delays the next model request. An
+        # unclassified image change alone does not cancel preparation.
+        if (screen_label in _URGENT_SCREENS and self.state is not None
+                and self.state.get("phase")=="PREP"):
+            self._interrupt_prep()
+            self._trace_event("PREP_CANCELLED_ON_BATTLE_SCREEN",
+                              screen_label=screen_label)
         # At most one pending batch: new observed events replace stale ones.
         if (screen_label=="TEAM_SELECTION" and self._selection_screen_started is None
                 and self.state is not None
@@ -1845,6 +1865,15 @@ class MatchReplayDialog(QDialog):
             self._drain_event_candidates(include_snapshot=False)
             if self._last_capture_seq == capture_base+1:
                 record_event("FIRST_FRAME_OCR_DRAIN_COMPLETE")
+        # OCR-confirmed opponent lead is stronger than an unclassified
+        # visual transition. Cancel PREP now, not after the next API dispatch.
+        if (self.state is not None and self.state.get("phase")=="PREP"
+                and self.state.get("opponent_active")
+                and self._prep_thread is not None
+                and not self._prep_cancel_event.is_set()):
+            self._interrupt_prep()
+            self._trace_event("PREP_CANCELLED_ON_CONFIRMED_OPPONENT_LEAD",
+                              opponent=self.state["opponent_active"])
         if self._last_capture_seq == capture_base+1:
             record_event("FIRST_FRAME_MENU_OBSERVE_BEGIN")
         kind=self._turn_buffer.observe(image)
@@ -2697,7 +2726,7 @@ class MatchReplayDialog(QDialog):
             return
         if QMessageBox.question(
             self,"PREP再実行の確認",
-            "まだ対戦が始まっていない場合だけ40秒PREPを再実行しますか？",
+            "まだ対戦が始まっていない場合だけPREPを再実行しますか？",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )!=QMessageBox.StandardButton.Yes:return
@@ -2713,7 +2742,8 @@ class MatchReplayDialog(QDialog):
         if (self.state is None or self.assets is None
                 or self.state.get("phase")!="PREP"):
             return
-        from .prep_cache import cached_pairs, cached_evidence_count
+        from .prep_cache import (cached_pairs, cached_evidence_count,
+                                 validate_cached_preparation)
         known = tuple(name for name in self.state.get("opponent_six",[])
                       if name not in (self.state.get("visual_unknown_opponents") or []))
         selected = tuple(self.state.get("selected_three") or ())
@@ -2724,30 +2754,45 @@ class MatchReplayDialog(QDialog):
         if len(pairs)!=len(known)*3:
             return
         partial = len(known)!=6
-        evaluated=cached_evidence_count(pairs)
+        hint_count=cached_evidence_count(pairs)
+        # The auto-start runs after selection response cleanup. Keep only
+        # roles explicitly tied to this exact selected three + lead; never
+        # reuse win roles from a different selection or match.
+        prior = self.state.get("prep") or {}
+        if roles is None and (prior.get("selection_key") ==
+                              [list(selected), lead]):
+            roles = {k: prior.get(k) for k in ("preserve","stopper","closer")}
         roles = roles or {}
         role_values = tuple(roles.get(k) for k in ("preserve","stopper","closer"))
         role_ready=all(isinstance(value,str) and value in selected
                        for value in role_values)
         role_count=3 if role_ready else sum(
             isinstance(value,str) and value in selected for value in role_values)
-        all_cached=evaluated==len(pairs)
-        # Full PREP needs all 18 evaluated matchups AND the three win roles.
-        ready=all_cached and role_ready and not partial and len(pairs)==18
+        # Hints / matrix cells are not 11+6-tag evaluations. The same strict
+        # checker is used in the no-network PREP path and timing harness.
+        complete_fields,_=validate_cached_preparation(
+            self.assets,selected,known,lead,pairs,role_values)
+        ready=complete_fields and role_ready and not partial and len(pairs)==18
         status=("PREP_CACHE_KNOWN_ONLY" if partial and ready else
                 "PREP_CACHE_REUSED" if ready else
                 "PREP_CACHE_INCOMPLETE")
         state_status=("CACHE_KNOWN_ONLY" if partial and ready else
                       "CACHE_STRUCTURE_COMPLETE" if ready else
                       "CACHE_INCOMPLETE")
+        # Frozen matrix hints are not reviewed 11/6-tag evaluations.
+        evaluated=len(pairs) if ready else 0
         self.state["prep"] = {
             ("matchups_known" if partial else "matchups_18"):pairs,
             "source":"FROZEN_CACHE",
+            "selection_key":[list(selected), lead],
             "preserve":role_values[0] if role_ready else None,
             "stopper":role_values[1] if role_ready else None,
             "closer":role_values[2] if role_ready else None,
             "win_roles_status":"SELECTION_REUSED" if role_ready else "REQUIRED_NOT_EVALUATED",
-            "cached_matchups":evaluated,"missing_matchups":len(pairs)-evaluated,
+            "cached_hint_count":hint_count,
+            "matchups_evaluated":evaluated,
+            "cached_matchups":hint_count,  # legacy count of evidence, not evaluations
+            "missing_matchups":len(pairs)-hint_count,
             "unknown_opponent_slots":list(self.state.get("visual_unknown_opponents") or []),
             "unknown_pairs":[
                 {"our_pokemon":member,"opponent_pokemon":opponent}
@@ -2759,7 +2804,8 @@ class MatchReplayDialog(QDialog):
         self.state["prep_status"]=state_status
         self._trace_event("PREP_CACHE_BASE_READY",
                           matchups_evaluated=evaluated,
-                          known_opponents=len(known),missing_matchups=len(pairs)-evaluated,
+                          cached_hint_count=hint_count,
+                          known_opponents=len(known),missing_matchups=len(pairs)-hint_count,
                           win_conditions=role_count)
         if ready:
             # A full PREP is now complete without a separate API call. Emit
@@ -2770,13 +2816,15 @@ class MatchReplayDialog(QDialog):
                               matchups_evaluated=evaluated,win_conditions=role_count)
         self._render({"status":status,
                       "matchups_evaluated":evaluated,
+                      "cached_hint_count":hint_count,
                       "win_conditions":role_count,
                       "message":(
-                          f"事前対面{evaluated}/{len(pairs)}を即時利用。"
+                          f"評価済み{evaluated}/{len(pairs)}対面。"
                           "勝ち筋3点を含め完成。"
                           if ready else
-                          f"事前対面{evaluated}/{len(pairs)}を保持。"
-                          "欠損や勝ち筋不足は補完待ち。")})
+                          f"ヒント{hint_count}/{len(pairs)}件・"
+                          f"評価済み{evaluated}/{len(pairs)}対面。"
+                          "未評価対面はAIによる補完が必要。")})
 
 
     def _note_stable_result_screen(self):
@@ -3073,7 +3121,11 @@ class MatchReplayDialog(QDialog):
         self._prep_timer.stop()
         self._prep_cancel_event.set()
         if self.state is not None and self.state.get("phase")=="PREP":
+            prior=(self.state.get("prep") or {})
             self.state["prep_status"]="INTERRUPTED_BY_NEW_BATTLE_SCREEN"
+            self._trace_event("PREP_INTERRUPTED",reason="BATTLE_SCREEN",
+                cached_matchups=prior.get("cached_matchups",0),
+                win_roles_status=prior.get("win_roles_status","UNKNOWN"))
 
     def _prep_deadline(self):
         if self._prep_thread is None:
@@ -3103,6 +3155,8 @@ class MatchReplayDialog(QDialog):
                           model_elapsed_ms=result.get("model_elapsed_ms"),
                           prompt_chars=result.get("prompt_chars"),
                           cached_matchups=result.get("cached_matchups"),
+                          cached_hint_count=result.get("cached_hint_count"),
+                          matchups_evaluated=result.get("matchups_evaluated",0),
                           win_conditions=result.get("win_conditions"))
         if (self.state.get("phase")=="SELECTION"
                 and self._proposed_prep_key is not None):
@@ -3121,7 +3175,10 @@ class MatchReplayDialog(QDialog):
                 or self.state.get("prep_status")!="RUNNING"
                 or self._prep_cancel_event.is_set()):
             return  # A new AI request or explicit stop supersedes PREP.
-        self._trace_event("PREP_RESULT",status=result.get("status","UNKNOWN"))
+        self._trace_event("PREP_RESULT",
+                          status=result.get("status","UNKNOWN"),
+                          matchups_evaluated=result.get("matchups_evaluated",0),
+                          cached_hint_count=result.get("cached_hint_count",0))
         if result.get("status")=="CANCELLED":
             return
         if result.get("status") in ("ERROR", "DEADLINE_EXCEEDED"):
@@ -3216,14 +3273,19 @@ class MatchReplayDialog(QDialog):
         prep=state.get("prep") or {}
         prep_status=state.get("prep_status","NOT_STARTED")
         expected=3*(6-len(state.get("visual_unknown_opponents") or []))
-        done=prep.get("cached_matchups",0)
+        done=prep.get("matchups_evaluated")
         if not isinstance(done,int):
-            done=0
+            done=(len(prep.get("matchups_18") or prep.get("matchups_known") or [])
+                  if prep_status in ("STRUCTURE_COMPLETE",
+                                     "PARTIAL_STRUCTURE_COMPLETE") else 0)
+        hints=prep.get("cached_hint_count",prep.get("cached_matchups",0))
+        if not isinstance(hints,int):
+            hints=0
         roles=sum(
             isinstance(prep.get(k),str)
             and prep.get(k) in (state.get("selected_three") or ())
             for k in ("preserve","stopper","closer"))
-        progress=f"対面 {done}/18・役割 {roles}/3（必須）"
+        progress=f"評価済み {done}/{expected}対面・ヒント {hints}/{expected}件・役割 {roles}/3"
         complete_statuses={
             "CACHE_STRUCTURE_COMPLETE","STRUCTURE_COMPLETE"}
         incomplete_statuses={
@@ -3280,8 +3342,9 @@ class MatchReplayDialog(QDialog):
             if phase=="PREP" and state.get("prep_status") in (
                     "PENDING","CACHE_PREP_BASE_READY"):
                 cache=state.get("prep") or {}
-                current=(f"事前対面評価{cache.get('cached_matchups',0)}件を保持済み"
-                         "／追加AI通信なし")
+                current=(f"評価済み{cache.get('matchups_evaluated',0)}対面"
+                         f"／ヒント{cache.get('cached_hint_count',0)}件。"
+                         "未評価はAI評価が必要")
             else:
                 current=("選出の画像認識・判断待ち" if phase=="SELECTION"
                          else "次の行動選択画面の検出待ち" if phase=="BATTLE"

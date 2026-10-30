@@ -591,7 +591,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._worker=None
             panel._active_request_id=None
 
-    def test_selection_roles_complete_full_prep_without_second_api_call(self):
+    def test_selection_roles_do_not_certify_unassessed_cached_matchups(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
         from tests.test_match_replay import OWN, OPP, frame
@@ -619,7 +619,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         }
         panel._completed(payload)
         self.assertEqual(panel.state["phase"],"PREP")
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
         self.assertEqual(panel.state["prep"]["win_roles_status"],"SELECTION_REUSED")
         self.assertEqual((panel.state["prep"]["preserve"],
@@ -627,9 +627,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
                           panel.state["prep"]["closer"]),OWN[:3])
         with patch.object(panel,"_start_prep_auto") as model_call:
             panel._cleanup()
-        model_call.assert_not_called()
-        # The first visible turn is handled from that same tentative state:
-        # no manual confirmation and no PREP API are required.
+        model_call.assert_called_once()
+        # The first visible turn still uses the tentative selection and
+        # cached hints, but no 18-field PREP is declared complete.
         updated,out=advance_observation(
             panel.state,assets,
             frame("MOVE_MENU",our_active=OWN[0],
@@ -642,6 +642,33 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertIn(out["status"],("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"))
         self.assertEqual(out["recommendation"],"じしん。")
         self.assertEqual(updated["observed_lead"],OWN[0])
+
+    def test_eighteen_ai_hints_are_zero_evaluated_in_prep_gui_and_trace(self):
+        from tests.test_prep_cache import loaded_assets, chosen_state
+        from tests.test_match_replay import OWN
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=chosen_state(assets)
+        with patch.object(panel,"_render",wraps=panel._render) as render:
+            panel._prefill_cached_prep(
+                roles={"preserve":OWN[0],"stopper":OWN[1],"closer":OWN[2]})
+        prep=panel.state["prep"]
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
+        self.assertEqual(prep["cached_hint_count"],18)
+        self.assertEqual(prep["matchups_evaluated"],0)
+        event=next(item for item in reversed(panel._timing_trace)
+                   if item.get("event")=="PREP_CACHE_BASE_READY")
+        self.assertEqual(event["cached_hint_count"],18)
+        self.assertEqual(event["matchups_evaluated"],0)
+        report=render.call_args.args[0]
+        self.assertEqual(report["cached_hint_count"],18)
+        self.assertEqual(report["matchups_evaluated"],0)
+        self.assertIn("評価済み0/18対面",report["message"])
+        panel._refresh_live_status()
+        self.assertIn("評価済み 0/18対面",panel.prep_banner.text())
+        self.assertIn("ヒント 18/18件",panel.prep_banner.text())
 
     def test_selection_invalid_win_roles_never_forge_completed_prep(self):
         from copy import deepcopy
@@ -671,17 +698,18 @@ class UnifiedMainWindowTests(unittest.TestCase):
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
         from copy import deepcopy
-        from tests.test_prep_cache import loaded_assets, chosen_state, roles
+        from tests.test_prep_cache import loaded_assets, chosen_state, evaluated_prep
         from tests.test_match_replay import OWN
         from champions_assist.match_replay import run_replay_prep
         temp,assets=loaded_assets()
         self.addCleanup(temp.cleanup)
         prepared=chosen_state(assets,partial=True)
-        with patch("champions_assist.match_replay._stream_json",return_value=roles()):
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=evaluated_prep(known=5)):
             cached,report=run_replay_prep(
                 state=prepared,assets=assets,access_token="mock",model="mock",
                 client_factory=lambda **kwargs:object())
-        self.assertEqual(report["status"],"PREP_CACHE_KNOWN_ONLY")
+        self.assertEqual(report["status"],"PREP_PARTIAL")
         self.assertEqual(len(cached["prep"]["matchups_known"]),15)
         self.assertEqual(len(cached["prep"]["unknown_pairs"]),3)
         panel=self.window._match_panel
@@ -700,7 +728,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         with patch.object(panel,"_start_prep_auto") as unnecessary:
             panel._confirm_selection()
         unnecessary.assert_not_called()
-        self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
+        self.assertEqual(panel.state["prep_status"],"PARTIAL_STRUCTURE_COMPLETE")
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertEqual(panel.entries[-1]["status"],"CONFIRMED")
 
@@ -1412,17 +1440,17 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._auto_running=True
         panel._prep_thread=object()
         panel._prep_cancel_event.clear()
-        panel._prep_timer.start(40000)
+        panel._prep_timer.start(90000)
         image=np.zeros((100,160,3),dtype=np.uint8)
         try:
             with patch.object(panel,"_send_pending") as queued:
                 panel._queue_batch([image],screen_label="TURN_ACTION")
                 queued.assert_called_once()
-                self.assertFalse(panel._prep_cancel_event.is_set())
-                self.assertEqual(panel.state["prep_status"],"RUNNING")
-            # Only the actual next AI dispatch, not detecting/queuing a
-            # screen, supersedes the PREP request.
-            panel._interrupt_prep()
+                # This is a verified command menu. Do not wait for API dispatch
+                # (which may be delayed by OCR) before cancelling PREP.
+                self.assertTrue(panel._prep_cancel_event.is_set())
+                self.assertEqual(panel.state["prep_status"],
+                                 "INTERRUPTED_BY_NEW_BATTLE_SCREEN")
             old={"state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
                  "report":{"status":"PREP_STRUCTURE_OK"}}
             panel._on_prep_result(old)
@@ -1460,7 +1488,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
-    def test_prep_soft_deadline_keeps_late_result_until_next_ai_request(self):
+    def test_prep_soft_budget_is_not_an_arbitrary_forty_second_hard_cap(self):
         panel=self.window._match_panel
         panel.state={"phase":"PREP","prep_status":"RUNNING"}
         panel._prep_thread=object()
@@ -1664,6 +1692,143 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertTrue(panel._auto_running)
             self.assertIsNone(panel._background_capture)
         panel._stop_auto()
+
+    def test_prep_worker_success_emits_once_and_cancellation_never_adopts_result(self):
+        from threading import Event
+        from champions_assist.match_replay_dialog import _ReplayWorker
+        state={"phase":"PREP","prep_status":"RUNNING"}
+        cancellation=Event()
+        worker=_ReplayWorker(app_root=self.root,selected_model="test",
+                             assets=object(),state=state,job="prep",
+                             cancel_event=cancellation)
+        results=[]
+        worker.finished.connect(results.append)
+        completed={**state,"prep_status":"STRUCTURE_COMPLETE"}
+        with patch("champions_assist.match_replay_dialog.ChatGPTSignIn") as auth,patch(
+                "champions_assist.match_replay_dialog.run_replay_prep",
+                return_value=(completed,{"status":"PREP_STRUCTURE_OK"})) as prep:
+            auth.return_value.access_token.return_value="dummy"
+            worker.run()
+            prep.assert_called_once()
+        self.assertEqual(results,[{"state":completed,
+                                   "report":{"status":"PREP_STRUCTURE_OK"}}])
+        results.clear()
+        cancellation.set()
+        with patch("champions_assist.match_replay_dialog.run_replay_prep") as prep:
+            worker.run()
+            prep.assert_not_called()
+        self.assertEqual(len(results),1)
+        self.assertEqual(results[0]["report"]["status"],"CANCELLED")
+
+
+    def test_auto_prep_keeps_selection_roles_through_worker_cleanup_and_prompt(self):
+        """A second cache prefill must not erase roles inferred at selection."""
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state, evaluated_prep
+        from tests.test_match_replay import OWN
+        from champions_assist.match_replay import run_replay_prep
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        preview=chosen_state(assets)
+        preview.update(phase="SELECTION",selected_three=[],lead=None,
+                       prep=None,prep_status="NOT_STARTED")
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "preserve":OWN[1],"stopper":OWN[2],"closer":OWN[0],
+                "recommendation":"選出"}
+        panel._completed({"state":deepcopy(preview),"report":report})
+        roles=(OWN[1],OWN[2],OWN[0])
+        self.assertEqual(tuple(panel.state["prep"][k]
+                               for k in ("preserve","stopper","closer")),roles)
+        with patch("champions_assist.match_replay_dialog.QThread") as thread, patch(
+                "champions_assist.match_replay_dialog._ReplayWorker") as worker:
+            panel._cleanup()  # invokes the REAL _start_prep_auto
+            worker.assert_called_once()
+            prep_state=worker.call_args.kwargs["state"]
+            self.assertEqual(tuple(prep_state["prep"][k]
+                                   for k in ("preserve","stopper","closer")),roles)
+            panel._prep_thread=None
+            panel._prep_worker=None
+        captured=[]
+        def mock_response(_client,**kwargs):
+            captured.append(json.loads(kwargs["content"][0]["text"]))
+            return {**evaluated_prep(),"preserve":roles[0],
+                    "stopper":roles[1],"closer":roles[2]}
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=mock_response):
+            _,result=run_replay_prep(
+                state=prep_state,assets=assets,access_token="dummy",
+                model="mock",client_factory=lambda **_:object())
+        self.assertEqual(result["status"],"PREP_PROVISIONAL")
+        self.assertEqual(captured[0]["selection_roles"],
+                         {"preserve":roles[0],"stopper":roles[1],
+                          "closer":roles[2]})
+
+    def test_failed_new_match_preload_does_not_consume_reserved_team(self):
+        first=self.service.import_team(
+            MASTER_DIR/"Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(first.team_id,match_active=False)
+        other=self.root/"next-team.csv"
+        other.write_bytes(Path(first.csv_path).read_bytes())
+        second=self.service.import_team(other,match_active=False)
+        self.service.select_team(second.team_id,match_active=True)
+        from champions_assist.preload import MasterPreloader
+        with patch("champions_assist.vision_preferences.VisionPreferenceStore") as prefs, patch(
+                "champions_assist.match_replay_dialog.QMessageBox.warning"):
+            prefs.return_value.selected_model.return_value="mock-model"
+            prefs.return_value.reasoning_effort.return_value="low"
+            # Prepared assets succeed but the actual four-file preload fails.
+            with patch.object(MasterPreloader,"load_for_new_match",
+                              side_effect=ValueError("broken frozen file")):
+                self.window._match_panel._new_match()
+        self.assertEqual(self.service.settings.teams.active_team_id,first.team_id)
+        self.assertEqual(self.service.settings.teams.pending_team_id,second.team_id)
+        self.assertIsNone(self.window._match_panel.assets)
+        self.assertIsNone(self.window._match_panel.state)
+        self.assertEqual(
+            self.service.store.load().settings.teams.pending_team_id,second.team_id)
+
+    def test_reserved_team_is_used_by_normal_gui_preload_not_current_match(self):
+        initial=self.service.import_team(
+            MASTER_DIR/"Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(initial.team_id,match_active=False)
+        original_path=self.service.teams.path_for_next_match(initial.team_id)
+        original_bytes=original_path.read_bytes()
+        alternative=self.root/"alternate-team.csv"
+        alternative.write_text(original_bytes.decode("utf-8").replace(
+            "BASE_SELECT=","BASE_SELECT_NOTE="),encoding="utf-8")
+        later=self.service.import_team(alternative,match_active=False)
+        from champions_assist.preload import MasterPreloader
+        original=MasterPreloader(MASTER_DIR,team_source=original_path).load_for_new_match()
+        self.assertEqual(self.service.select_team(later.team_id,match_active=True),
+                         "PENDING_NEXT_MATCH")
+        self.assertEqual(original.own_team_names[0],"マスカーニャ")
+        self.assertEqual(self.service.settings.teams.active_team_id,initial.team_id)
+        with patch("champions_assist.vision_preferences.VisionPreferenceStore") as prefs:
+            prefs.return_value.selected_model.return_value="mock-model"
+            prefs.return_value.reasoning_effort.return_value="low"
+            panel=self.window._match_panel
+            panel._new_match()
+        self.assertEqual(self.service.settings.teams.active_team_id,later.team_id)
+        self.assertIsNone(self.service.settings.teams.pending_team_id)
+        self.assertEqual(panel.assets.loaded_team_identity["team_id"],later.team_id)
+        self.assertEqual(panel.assets.loaded_team_identity["registered_name"],later.display_name)
+        self.assertEqual(panel.assets.loaded_team_identity["csv_path"],
+                         str(self.service.teams.path_for_next_match(later.team_id).resolve()))
+        self.assertEqual(panel.assets.loaded_team_identity["sha256"],
+                         panel.assets.sha256["Pokemon_Champions_MC_team_2026-10-03.csv"])
+        self.assertEqual(len(panel.assets.loaded_team_identity["members"]),6)
+        # Immutable first-match data is not retroactively modified by reservation.
+        self.assertEqual(original.sha256["Pokemon_Champions_MC_team_2026-10-03.csv"],
+                         __import__("hashlib").sha256(original_bytes).hexdigest())
 
     def test_prep_auth_error_does_not_leave_running_forever(self):
         panel=self.window._match_panel

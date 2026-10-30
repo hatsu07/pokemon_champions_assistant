@@ -88,6 +88,17 @@ def roles():
             "closer":OWN[2],"warning":"積み対策を優先"}
 
 
+def evaluated_prep(*, known=6):
+    """Structurally assessed fixture, unlike AI_UNVERIFIED cache hints."""
+    lead=("ACT=move:じしん|KO=not_guaranteed|DPS=じしん|PRI=none|S=slower|"
+          "OUR=じしん|OPP=coverage_risk|SAFE=unsafe|PROC=unverified|"
+          "LOCK=none|MEGA=recheck")
+    bench=("S=slower|OUR=じしん|OPP=coverage_risk|PRI=none|"
+           "SAFE=unsafe|PROC=unverified")
+    return {**roles(),"lead_six":[lead]*known,
+            "bench_twelve":[bench]*(2*known)}
+
+
 class CachedPrepTests(unittest.TestCase):
     def test_preload_compiles_all_six_times_six_no_network(self):
         tmp,assets=loaded_assets()
@@ -98,7 +109,8 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(len(rows),18)
         self.assertEqual(cached_evidence_count(rows),18)
         self.assertTrue(all(row["source"]=="AI_HINT" for row in rows))
-        self.assertTrue(validate_cached_preparation(
+        # All 18 cells are merely provisional hints, not 18 evaluations.
+        self.assertFalse(validate_cached_preparation(
             assets,OWN[:3],OPP,OWN[0],rows,OWN[:3])[0])
         # Neither a copy of the cache nor a partial first row can be promoted.
         copy=[dict(row) for row in rows]
@@ -106,30 +118,28 @@ class CachedPrepTests(unittest.TestCase):
         self.assertFalse(validate_cached_preparation(
             assets,OWN[:3],OPP,OWN[0],copy,OWN[:3])[0])
 
-    def test_preloaded_cache_skips_regenerating_138_fields(self):
+    def test_provisional_hints_do_not_bypass_eighteen_field_evaluation(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         calls=[]
         def reply(_client, **kwargs):
             calls.append(kwargs)
-            return roles()
+            return evaluated_prep()
         with patch("champions_assist.match_replay._stream_json",side_effect=reply):
             updated,report=run_replay_prep(
                 state=state,assets=assets,access_token="test",model="mock",
                 client_factory=lambda **_:object(),reasoning_effort="auto")
-        self.assertEqual(report["status"],"PREP_CACHE_REUSED")
+        self.assertEqual(report["status"],"PREP_PROVISIONAL")
         self.assertEqual(report["matchups_evaluated"],18)
-        self.assertEqual(report["missing_matchups"],0)
-        self.assertEqual(updated["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
         self.assertEqual(updated["prep"]["preserve"],OWN[0])
         self.assertEqual(len(calls),1)
-        self.assertEqual(calls[0]["name"],"champions_cached_prep_roles")
-        self.assertNotIn("lead_six",calls[0]["schema"]["properties"])
+        self.assertEqual(calls[0]["name"],"champions_replay_prep")
+        self.assertIn("lead_six",calls[0]["schema"]["properties"])
         prompt=json.loads(calls[0]["content"][0]["text"])
-        self.assertEqual(len(prompt["cached_matchups"]),18)
-        self.assertNotIn("lead_tags",prompt)
+        self.assertIn("lead_tags",prompt["response_order"])
         self.assertEqual(calls[0]["reasoning_effort"],"low")
 
     def test_timing_accepts_exact_18_cached_rows_and_three_roles(self):
@@ -137,7 +147,7 @@ class CachedPrepTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep()):
             updated,report=prep_timing_test(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
@@ -145,34 +155,31 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(report["status"],"PREP_TIMING_PASS")
         self.assertEqual((report["lead_evaluated"],report["bench_evaluated"],
                           report["win_conditions"]),(6,12,3))
-        self.assertEqual(report["cached_matchups"],18)
-        self.assertEqual(updated["prep"]["source"],"FROZEN_CACHE")
+        self.assertEqual(report["source_status"],"PREP_PROVISIONAL")
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
 
-    def test_missing_one_cached_cell_is_not_certified(self):
+    def test_missing_cached_hint_still_requires_model_fields(self):
         tmp,assets=loaded_assets(missing=True)
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
+        cached=cached_pairs(assets,OWN[:3],OPP,OWN[0])
+        self.assertEqual(cached_evidence_count(cached),17)
+        self.assertFalse(validate_cached_preparation(
+            assets,OWN[:3],OPP,OWN[0],cached,OWN[:3])[0])
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep()):
             updated,report=prep_timing_test(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
-        self.assertFalse(report["pass"])
-        self.assertTrue(report["cache_ready"])
-        self.assertEqual(report["status"],"PREP_TIMING_CACHE_INCOMPLETE")
-        self.assertEqual((report["lead_evaluated"],report["bench_evaluated"]),
-                         (5,12))
-        self.assertEqual(report["cached_matchups"],17)
-        self.assertEqual(report["missing_matchups"],1)
-        self.assertEqual(updated["prep_status"],"CACHE_INCOMPLETE")
-        self.assertEqual(updated["prep"]["matchups_18"][0]["source"],"MISSING")
+        self.assertEqual(report["source_status"],"PREP_PROVISIONAL")
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
 
-    def test_known_five_cache_is_conditional_not_full_pass(self):
+    def test_known_five_is_conditional_not_full_pass(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets,partial=True)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep(known=5)):
             updated,report=prep_timing_test(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
@@ -180,8 +187,7 @@ class CachedPrepTests(unittest.TestCase):
         self.assertTrue(report["partial_ready"])
         self.assertEqual((report["lead_evaluated"],report["bench_evaluated"],
                           report["unknown_matchups"]),(5,10,3))
-        self.assertEqual(report["cached_matchups"],15)
-        self.assertEqual(updated["prep"]["source"],"FROZEN_CACHE")
+        self.assertEqual(updated["prep_status"],"PARTIAL_STRUCTURE_COMPLETE")
         self.assertNotIn("matchups_18",updated["prep"])
 
     def test_turn_uses_current_opponent_cache_not_all_eighteen(self):
@@ -189,11 +195,11 @@ class CachedPrepTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep()):
             state,report=run_replay_prep(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
-        self.assertEqual(report["status"],"PREP_CACHE_REUSED")
+        self.assertEqual(report["status"],"PREP_PROVISIONAL")
         state["phase"]="BATTLE"
         contexts=[]
         def tactical(ctx,limit,mode):
@@ -207,23 +213,149 @@ class CachedPrepTests(unittest.TestCase):
             tactical,elapsed_seconds=lambda:1.0)
         self.assertEqual(result["status"],"PROVISIONAL_ADVICE")
         self.assertEqual(len(contexts),1)
-        self.assertEqual(len(contexts[0]["cached_matchup_hypotheses"]),3)
+        self.assertNotIn("cached_matchup_hypotheses",contexts[0])
+        self.assertEqual(len(contexts[0]["prep_matchup_evaluations"]),3)
         self.assertTrue(all(r["opponent"]==OPP[0] for r in
-                            contexts[0]["cached_matchup_hypotheses"]))
+                            contexts[0]["prep_matchup_evaluations"]))
+        self.assertTrue(all("eval_code" in r for r in
+                            contexts[0]["prep_matchup_evaluations"]))
         self.assertEqual(contexts[0]["cached_win_roles"]["preserve"],OWN[0])
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
+
+
+    def test_all_unassessed_required_tags_cannot_be_declared_complete(self):
+        from champions_assist.prep import (
+            build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+            validate_partial_prep_result, mocked_complete_prep,
+        )
+        from itertools import product
+        own=tuple(OWN[:3])
+        lead=own[0]
+        inp=build_prep_input(own,lead,tuple(OPP),
+                             tuple("matrix" for _ in OPP))
+        lead_code=("ACT=attack|KO=?|DPS=registered_move|PRI=?|S=?|OUR=?|"
+                   "OPP=?|SAFE=?|PROC=unverified|LOCK=?|MEGA=?")
+        bench_code="S=?|OUR=?|OPP=?|PRI=?|SAFE=?|PROC=unverified"
+        rows=tuple(PrepMatchup(mon,opp,lead_code if mon==lead else bench_code)
+                   for mon,opp in product(own,OPP))
+        failed=PrepResult("COMPLETE",rows,*own)
+        self.assertEqual(validate_prep_result(inp,failed).reason,
+                         "REQUIRED_FIELD_NOT_ASSESSED")
+        self.assertFalse(validate_prep_result(inp,failed).complete)
+        partial=PrepResult("PARTIAL",tuple(
+            r for r in rows if r.opponent_pokemon!=OPP[-1]),*own)
+        v=validate_partial_prep_result(own,lead,tuple(OPP[:5]),
+                                       ("未判明相手6",),partial)
+        self.assertFalse(v.complete)
+        self.assertEqual(v.reason,"REQUIRED_FIELD_NOT_ASSESSED")
+        # The labelled offline mock must still explicitly assess fields.
+        self.assertTrue(validate_prep_result(inp,mocked_complete_prep(inp)).complete)
+
+    def test_evidence_unknown_is_not_the_same_as_missing_evaluation(self):
+        from champions_assist.prep import (
+            build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+            prep_evidence_status,
+        )
+        from itertools import product
+        own=tuple(OWN[:3])
+        inp=build_prep_input(own,own[0],tuple(OPP),
+                             tuple("matrix" for _ in OPP))
+        lead=("ACT=move:じしん|KO=unknown|DPS=じしん|PRI=unknown|"
+              "S=unknown|OUR=unknown|OPP=unknown|SAFE=unknown|"
+              "PROC=unverified|LOCK=unknown|MEGA=unknown")
+        bench=("S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
+               "SAFE=unknown|PROC=unverified")
+        rows=tuple(PrepMatchup(mon,opp,lead if mon==own[0] else bench)
+                   for mon,opp in product(own,OPP))
+        result=PrepResult("COMPLETE",rows,*own)
+        validation=validate_prep_result(inp,result)
+        self.assertFalse(validation.complete)
+        self.assertEqual(validation.reason,"MAX_DAMAGE_MOVE_NOT_REGISTERED")
+        evaluated_rows=tuple(PrepMatchup(
+            r.our_pokemon,r.opponent_pokemon,
+            r.eval_code.replace("OUR=unknown","OUR=じしん"))
+            for r in rows)
+        evaluated=PrepResult("COMPLETE",evaluated_rows,*own)
+        self.assertTrue(validate_prep_result(inp,evaluated).complete)
+        self.assertEqual(prep_evidence_status(evaluated_rows),
+                         "ASSESSED_WITH_UNCERTAINTY")
+
+    def test_concrete_first_move_is_required_even_if_all_18_rows_have_tags(self):
+        from champions_assist.prep import (
+            build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+            validate_partial_prep_result,
+        )
+        from itertools import product
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        chosen=tuple(OWN[:3])
+        moves={m["name"]:tuple(m[f"move{i}"] for i in range(1,5))
+               for m in assets.own_team if m["name"] in chosen}
+        inp=build_prep_input(chosen,chosen[0],tuple(OPP),
+                             tuple("matrix" for _ in OPP),
+                             registered_moves=moves)
+        lead=("ACT=attack|KO=unknown|DPS=registered_move|PRI=none|"
+              "S=unknown|OUR=registered_move|OPP=unknown|SAFE=unknown|"
+              "PROC=unverified|LOCK=unknown|MEGA=unknown")
+        bench=("S=unknown|OUR=registered_move|OPP=unknown|PRI=none|"
+               "SAFE=unknown|PROC=unverified")
+        rows=tuple(PrepMatchup(own,opp,lead if own==chosen[0] else bench)
+                   for own,opp in product(chosen,OPP))
+        all_ambiguous=PrepResult("COMPLETE",rows,*chosen)
+        result=validate_prep_result(inp,all_ambiguous)
+        self.assertFalse(result.complete)
+        self.assertEqual(result.reason,"MAX_DAMAGE_MOVE_NOT_REGISTERED")
+        partial=PrepResult(
+            "PARTIAL",tuple(r for r in rows if r.opponent_pokemon!=OPP[-1]),
+            *chosen)
+        self.assertFalse(validate_partial_prep_result(
+            chosen,chosen[0],tuple(OPP[:5]),("未判明相手6",),
+            partial,registered_moves=moves).complete)
+
+        legal=tuple(PrepMatchup(
+            r.our_pokemon,r.opponent_pokemon,
+            r.eval_code.replace("ACT=attack","ACT=move:じしん")
+                       .replace("registered_move","じしん"))
+            for r in rows)
+        self.assertTrue(validate_prep_result(
+            inp,PrepResult("COMPLETE",legal,*chosen)).complete)
+        wrong_action=tuple(PrepMatchup(
+            r.our_pokemon,r.opponent_pokemon,
+            r.eval_code.replace("ACT=attack","ACT=move:未登録技")
+                       .replace("registered_move","じしん"))
+            for r in rows)
+        self.assertEqual(validate_prep_result(
+            inp,PrepResult("COMPLETE",wrong_action,*chosen)).reason,
+            "FIRST_ACTION_NOT_CONCRETE")
+
+    def test_invalid_model_prep_counts_zero_evaluated_even_when_18_returned(self):
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        state=chosen_state(assets)
+        bad={**evaluated_prep()}
+        bad["lead_six"]=[
+            row.replace("ACT=move:じしん","ACT=attack") for row in bad["lead_six"]]
+        with patch("champions_assist.match_replay._stream_json",return_value=bad):
+            updated,report=run_replay_prep(
+                state=state,assets=assets,access_token="dummy",
+                model="mock",client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"PREP_INCOMPLETE")
+        self.assertEqual(report["reason"],"FIRST_ACTION_NOT_CONCRETE")
+        self.assertEqual(report["matchup_rows_returned"],18)
+        self.assertEqual(report["matchups_evaluated"],0)
+        self.assertIsNone(updated["prep"])
 
     def test_invalid_roles_never_promoted(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value={**roles(),"closer":"未登録"}):
+                   return_value={**evaluated_prep(),"closer":"未登録"}):
             updated,report=run_replay_prep(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
-        self.assertEqual(report["status"],"PREP_CACHE_INCOMPLETE")
-        self.assertEqual(report["reason"],"CACHE_ROLES_INVALID")
+        self.assertEqual(report["status"],"PREP_INCOMPLETE")
+        self.assertEqual(report["reason"],"WIN_CONDITIONS_INVALID")
         self.assertIsNone(updated["prep"])
 
 

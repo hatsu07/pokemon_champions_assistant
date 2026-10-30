@@ -4,12 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 LEAD_TAGS = ("ACT", "KO", "DPS", "PRI", "S", "OUR", "OPP", "SAFE", "PROC", "LOCK", "MEGA")
 BENCH_TAGS = ("S", "OUR", "OPP", "PRI", "SAFE", "PROC")
-UNKNOWN_EVALUATION = frozenset({"?", "未判定", "SKIPPED", "unknown", "UNKNOWN", "不明"})
+# A placeholder means the field was not assessed at all. "unknown" means
+# the evaluator considered it but lacks reliable battle evidence; it is not
+# permission to leave every tactical field unassessed.
+NOT_ASSESSED_EVALUATION = frozenset({
+    "?", "未判定", "未評価", "skipped", "not_assessed", "not_evaluated",
+})
+EVIDENCE_LIMITED_EVALUATION = frozenset({
+    "unknown", "unverified", "uncertain", "不明", "evidence_unknown",
+})
+# "unverified" is a deliberate conditional processor assessment, not a
+# claim that the opponent can be safely switched into or certainly KO'd.
+UNKNOWN_EVALUATION = NOT_ASSESSED_EVALUATION | frozenset({
+    "unknown", "uncertain", "不明", "evidence_unknown",
+})
 
 
 @dataclass(frozen=True)
@@ -18,6 +31,7 @@ class PrepInput:
     lead: str
     opponent_preview_six: tuple[str, str, str, str, str, str]
     matrix_rows_six: tuple[str, str, str, str, str, str]
+    registered_moves: Mapping[str, tuple[str, ...]] | None = None
 
     @property
     def expected_pairs(self) -> frozenset[tuple[str, str]]:
@@ -52,12 +66,14 @@ def build_prep_input(
     lead: str,
     opponent_preview_six: tuple[str, str, str, str, str, str],
     matrix_rows_six: tuple[str, str, str, str, str, str],
+    *, registered_moves: Mapping[str, tuple[str, ...]] | None = None,
 ) -> PrepInput:
     if len(set(selected_three)) != 3 or lead not in selected_three:
         raise ValueError("PREP requires three distinct selected Pokémon and a selected lead")
     if len(opponent_preview_six) != 6 or len(matrix_rows_six) != 6:
         raise ValueError("PREP requires exactly six cached opponent matrix rows")
-    return PrepInput(selected_three, lead, opponent_preview_six, matrix_rows_six)
+    return PrepInput(selected_three, lead, opponent_preview_six, matrix_rows_six,
+                     registered_moves)
 
 
 def _parse_eval_code(code: str) -> dict[str, str] | None:
@@ -70,12 +86,93 @@ def _parse_eval_code(code: str) -> dict[str, str] | None:
     return values
 
 
+# Marker text that looks populated but is not a registered action or move.
+ABSTRACT_MOVE_VALUES = frozenset({
+    "move", "known_move", "registered", "registered_move", "registered move",
+    "known", "candidate", "attack", "conditional", "conditional_attack",
+    "best_move", "max_move", "max_damage", "some_move", "technical",
+    "verified", "simulated_move",
+})
+
+
+def _concrete_move(value: str, registered: tuple[str, ...] | None) -> bool:
+    move = value.strip()
+    if (not move or move.casefold() in ABSTRACT_MOVE_VALUES
+            or move.casefold() in UNKNOWN_EVALUATION):
+        return False
+    return registered is None or move in registered
+
+
+def _concrete_first_action(value: str, *, lead_name: str,
+                           selected: tuple[str, ...],
+                           registered: tuple[str, ...] | None) -> bool:
+    kind, sep, target = value.strip().partition(":")
+    if not sep or not target:
+        return False
+    if kind == "move":
+        return _concrete_move(target, registered)
+    if kind == "switch":
+        return target in selected and target != lead_name
+    if kind == "pivot":
+        move, arrow, destination = target.partition("→")
+        return (bool(arrow) and _concrete_move(move, registered)
+                and destination in selected and destination != lead_name)
+    return False
+
+
+def _validate_assessed_fields(parsed: dict[str, str], *, lead: bool,
+                              own_name: str = "", selected: tuple[str, ...] = (),
+                              registered: tuple[str, ...] | None = None) -> str | None:
+    """Unknown evidence is permitted; unassessed mandatory fields are not.
+
+    Requiring at least one independently assessed tactical dimension for
+    every bench row prevents PROC=unverified alone from certifying a matchup.
+    The lead also needs evidence beyond simply naming an ACT and DPS.
+    """
+    required = LEAD_TAGS if lead else BENCH_TAGS
+    if any(tag not in parsed for tag in required):
+        return "LEAD_SIX_INCOMPLETE" if lead else "BENCH_TWELVE_INCOMPLETE"
+    if any(parsed[tag].strip().casefold() in NOT_ASSESSED_EVALUATION for tag in required):
+        return "REQUIRED_FIELD_NOT_ASSESSED"
+    if parsed["PROC"].strip().casefold() in UNKNOWN_EVALUATION:
+        return "PROCESSOR_NOT_ASSESSED"
+    if lead and any(parsed[tag].strip().casefold() in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
+        return "LEAD_ACTION_NOT_ASSESSED"
+    if not _concrete_move(parsed["OUR"], registered):
+        return "MAX_DAMAGE_MOVE_NOT_REGISTERED"
+    if lead:
+        if not _concrete_move(parsed["DPS"], registered):
+            return "MAX_DAMAGE_MOVE_NOT_REGISTERED"
+        if not _concrete_first_action(parsed["ACT"], lead_name=own_name,
+                                      selected=selected, registered=registered):
+            return "FIRST_ACTION_NOT_CONCRETE"
+    tactical = (
+        ("KO", "PRI", "S", "OUR", "OPP", "SAFE", "LOCK", "MEGA")
+        if lead else ("S", "OUR", "OPP", "PRI", "SAFE")
+    )
+    if not any(parsed[tag].strip().casefold() not in EVIDENCE_LIMITED_EVALUATION
+               for tag in tactical):
+        return "MATCHUP_NOT_ASSESSED"
+    return None
+
+
+def prep_evidence_status(rows: tuple[PrepMatchup, ...]) -> str:
+    """Separate legitimate lack of evidence from absent assessment."""
+    for row in rows:
+        fields = _parse_eval_code(row.eval_code)
+        if fields and any(value.strip().casefold() in EVIDENCE_LIMITED_EVALUATION
+                          for value in fields.values()):
+            return "ASSESSED_WITH_UNCERTAINTY"
+    return "ASSESSED_CONDITIONAL"
+
+
 def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValidation:
     """Check the wire's completion claim; never manufacture a missing evaluation."""
     if result.prep_status != "COMPLETE":
         return PrepValidation(False, result.unfinished_reason or "PREP_NOT_COMPLETE")
-    if not result.preserve or not result.stopper or not result.closer:
-        return PrepValidation(False, "WIN_CONDITIONS_MISSING")
+    if not all(role in prep_input.selected_three for role in
+               (result.preserve, result.stopper, result.closer)):
+        return PrepValidation(False, "WIN_CONDITIONS_INVALID")
     pairs = {(item.our_pokemon, item.opponent_pokemon) for item in result.matchups_18}
     if len(result.matchups_18) != 18 or pairs != prep_input.expected_pairs:
         return PrepValidation(False, "MATCHUPS_18_INCOMPLETE")
@@ -83,13 +180,13 @@ def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValid
         parsed = _parse_eval_code(item.eval_code)
         if parsed is None:
             return PrepValidation(False, "EVAL_CODE_INVALID")
-        required = LEAD_TAGS if item.our_pokemon == prep_input.lead else BENCH_TAGS
-        if any(tag not in parsed for tag in required):
-            return PrepValidation(False, "LEAD_SIX_INCOMPLETE" if item.our_pokemon == prep_input.lead else "BENCH_TWELVE_INCOMPLETE")
-        if parsed["PROC"] in UNKNOWN_EVALUATION:
-            return PrepValidation(False, "PROCESSOR_NOT_ASSESSED")
-        if item.our_pokemon == prep_input.lead and any(parsed[tag] in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
-            return PrepValidation(False, "LEAD_ACTION_NOT_ASSESSED")
+        failure = _validate_assessed_fields(
+            parsed, lead=item.our_pokemon == prep_input.lead,
+            own_name=item.our_pokemon, selected=prep_input.selected_three,
+            registered=(prep_input.registered_moves.get(item.our_pokemon, ())
+                        if prep_input.registered_moves is not None else None))
+        if failure:
+            return PrepValidation(False, failure)
     return PrepValidation(True, "OK")
 
 
@@ -98,6 +195,7 @@ def validate_partial_prep_result(
     selected_three: tuple[str, ...], lead: str,
     known_opponents: tuple[str, ...], unknown_slots: tuple[str, ...],
     result: PrepResult,
+    *, registered_moves: Mapping[str, tuple[str, ...]] | None = None,
 ) -> PrepValidation:
     """Validate only observed opponents; never certify the missing 3/6 pairs.
 
@@ -127,24 +225,26 @@ def validate_partial_prep_result(
         parsed = _parse_eval_code(row.eval_code)
         if parsed is None:
             return PrepValidation(False, "EVAL_CODE_INVALID")
-        required = LEAD_TAGS if row.our_pokemon == lead else BENCH_TAGS
-        if any(tag not in parsed for tag in required):
-            return PrepValidation(False, "PARTIAL_TAGS_INCOMPLETE")
-        if parsed["PROC"] in UNKNOWN_EVALUATION:
-            return PrepValidation(False, "PROCESSOR_NOT_ASSESSED")
-        if row.our_pokemon == lead and any(
-                parsed[tag] in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
-            return PrepValidation(False, "LEAD_ACTION_NOT_ASSESSED")
+        failure = _validate_assessed_fields(
+            parsed, lead=row.our_pokemon == lead,
+            own_name=row.our_pokemon, selected=selected_three,
+            registered=(registered_moves.get(row.our_pokemon, ())
+                        if registered_moves is not None else None))
+        if failure:
+            return PrepValidation(False, failure)
     return PrepValidation(True, "PARTIAL_KNOWN_ONLY")
 
 
 
 def mocked_complete_prep(prep_input: PrepInput) -> PrepResult:
     """A labelled simulation fixture, not a battle evaluation or tactical heuristic."""
-    lead_code = "ACT=SIMULATED|KO=?|DPS=SIMULATED|PRI=?|S=?|OUR=?|OPP=?|SAFE=?|PROC=SIMULATED|LOCK=?|MEGA=?"
-    bench_code = "S=?|OUR=?|OPP=?|PRI=?|SAFE=?|PROC=SIMULATED"
+    lead_code = ("ACT=move:SIMULATED|KO=unknown|DPS=SIMULATED|PRI=SIMULATED|"
+                 "S=unknown|OUR=SIMULATED|OPP=unknown|SAFE=unknown|"
+                 "PROC=SIMULATED|LOCK=unknown|MEGA=unknown")
+    bench_code = ("S=SIMULATED|OUR=SIMULATED|OPP=unknown|PRI=unknown|"
+                  "SAFE=unknown|PROC=SIMULATED")
     rows = tuple(
         PrepMatchup(own, opponent, lead_code if own == prep_input.lead else bench_code)
         for own, opponent in product(prep_input.selected_three, prep_input.opponent_preview_six)
     )
-    return PrepResult("COMPLETE", rows, "SIMULATED_PRESERVE", "SIMULATED_STOPPER", "SIMULATED_CLOSER")
+    return PrepResult("COMPLETE", rows, *prep_input.selected_three)

@@ -551,9 +551,10 @@ def advance_observation(
             # Reuse only the CURRENT opponent's cached comparisons in a
             # turn prompt; never resend 18 rows or override observed evidence.
             cached_prep = state.get("prep") or {}
-            if cached_prep.get("source") == "FROZEN_CACHE":
-                known_rows = (cached_prep.get("matchups_18") or
-                              cached_prep.get("matchups_known") or [])
+            known_rows = (cached_prep.get("matchups_18") or
+                          cached_prep.get("matchups_known") or [])
+            if known_rows and cached_prep.get("source") == "FROZEN_CACHE":
+                # Reviewed cache: never send all 18 comparisons on each turn.
                 opponent_now = state.get("opponent_active")
                 current = [
                     {"own":row["our_pokemon"],"opponent":row["opponent_pokemon"],
@@ -563,13 +564,27 @@ def advance_observation(
                     if row.get("opponent_pokemon")==opponent_now
                 ]
                 context["cached_matchup_hypotheses"] = current
+            elif known_rows:
+                # Newly assessed PREP also matters on the next turn. Carry
+                # only three evaluations for the observed opponent and never
+                # mistake model-generated codes for reviewed matrix evidence.
+                opponent_now = state.get("opponent_active")
+                context["prep_matchup_evaluations"] = [
+                    {"own":row["our_pokemon"],"opponent":row["opponent_pokemon"],
+                     "eval_code":row["eval_code"]}
+                    for row in known_rows
+                    if row.get("opponent_pokemon") == opponent_now
+                    and isinstance(row.get("eval_code"), str)
+                ]
+            if known_rows:
                 context["cached_win_roles"] = {
                     k:cached_prep.get(k) for k in ("preserve","stopper","closer")}
                 context["cached_warning"] = cached_prep.get("warning","")
                 context["rule"] += (
-                    " Use cached matchup notes conditionally; observed facts "
-                    "and revealed moves/items/forms always override them. "
-                    "A cached processor is NOT proof of a safe hard switch.")
+                    " PREP assessments and roles are conditional hypotheses, "
+                    "not certified matchup outcomes. Observed facts and "
+                    "revealed moves/items/forms always override them. "
+                    "A processor is NOT proof of a safe hard switch.")
             if state["matrix_compatible"]:
                 context["frozen_gate"] = assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"]
             # Otherwise, the matrix and team-specific LIVE gate are not used.
@@ -1047,8 +1062,10 @@ def _run_cached_prep(*, state: dict, assets: FrozenMatchAssets,
         "elapsed_ms": elapsed, "model_elapsed_ms": model_ms,
         "prep_soft_deadline_exceeded": overtime,
         "prompt_chars": len(encoded),
-        "cached_matchups": count, "missing_matchups": missing_count,
-        "matchups_evaluated": count, "win_conditions": role_count,
+        "cached_matchups": count, "cached_hint_count": count,
+        "missing_matchups": missing_count,
+        "matchups_evaluated": len(rows) if complete_evidence else 0,
+        "win_conditions": role_count,
         "unknown_matchups": 3*len(unknown),
         "message": ("キャッシュ18対面＋勝ち筋3点。" if full else
                     f"暫定キャッシュ{count}/{len(rows)}対面＋勝ち筋3点。"),
@@ -1061,7 +1078,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
     """Bounded by caller shared-clock budget; complete only if all 18 validate."""
     from .prep import (
         build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
-        validate_partial_prep_result,
+        validate_partial_prep_result, prep_evidence_status,
     )
     started=perf_counter()
     stage="SETUP"
@@ -1072,12 +1089,22 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         return updated,{"status":"BLOCKED","reason":"PREP_NOT_EXPECTED"}
     unknown_slots=tuple(updated.get("visual_unknown_opponents") or ())
     partial=bool(unknown_slots)
-    if (assets.matchup_cache_index and
-            (updated["matrix_compatible"] or updated.get("matrix_provisional", False))):
-        return _run_cached_prep(
-            state=state, assets=assets, access_token=access_token, model=model,
-            limit_seconds=limit_seconds, client_factory=client_factory,
-            reasoning_effort=reasoning_effort)
+    # The current off-match compiler exposes REVIEWED_CELL/AI_HINT/MISSING
+    # only: no full 11/6-tag REVIEWED_EVALUATION is persisted yet. Therefore
+    # an 18-pair cache *hit* is evidence reuse, not a completed PREP shortcut.
+    # Keep _run_cached_prep for future validated cache persistence only.
+    # Record the missing optimization explicitly until that feature ships.
+    from .prep_cache import cached_pairs, cached_evidence_count
+    cached_hint_count=0
+    if assets.matchup_cache_index:
+        preview=tuple(updated.get("opponent_six") or ())
+        known_preview=tuple(name for name in preview if name not in unknown_slots)
+        chosen=tuple(updated.get("selected_three") or ())
+        selected_lead=updated.get("lead")
+        if len(chosen)==3 and selected_lead in chosen and len(known_preview) in (4,5,6):
+            cached_hint_count=cached_evidence_count(
+                cached_pairs(assets,chosen,known_preview,selected_lead))
+    cache_reuse_status="REVIEWED_EVALUATION_PERSISTENCE_NOT_IMPLEMENTED"
     if not (updated["matrix_compatible"] or updated.get("matrix_provisional",False) or partial):
         updated["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
         return updated,{"status":"PREP_UNAVAILABLE","reason":"OWN_MATRIX_MISMATCH",
@@ -1109,8 +1136,15 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         from .live_context import critical_lookup_rows
         # With 4-5 known opponents, never requery or invent unknown lookup rows.
         lookup=[] if partial else critical_lookup_rows(assets, opponents, rows)
+        registered_moves={
+            m["name"]:tuple(str(m.get(f"move{i}") or "").strip()
+                            for i in range(1,5)
+                            if str(m.get(f"move{i}") or "").strip())
+            for m in assets.own_team if m["name"] in updated["selected_three"]
+        }
         prep_input=(None if partial else build_prep_input(
-            tuple(updated["selected_three"]),updated["lead"],opponents,rows))
+            tuple(updated["selected_three"]),updated["lead"],opponents,rows,
+            registered_moves=registered_moves))
         # Even for a changed team with no tactical matrix, pinned row columns
         # 0-2 are immutable species/type/speed context; other team-specific
         # matchup cells must NOT leak into this partial tactical evaluation.
@@ -1133,6 +1167,12 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "lookup_rows_critical":lookup,
             "selected_team":[member for member in assets.own_team
                              if member["name"] in updated["selected_three"]],
+            # Selection already identified the three win roles. Reuse them
+            # instead of spending another inference pass merely renaming roles.
+            "selection_roles":{
+                key:(value if value in updated["selected_three"] else None)
+                for key in ("preserve","stopper","closer")
+                for value in [(updated.get("prep") or {}).get(key)]},
             "prep_gate_rules":(_prep_gate_excerpt(
                 assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"])
                 if not provisional else ""),
@@ -1155,7 +1195,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "lead_tags":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
                 "bench_tags":"S|OUR|OPP|PRI|SAFE|PROC",
                 "format":"Every string has TAG=value components separated by |; "
-                         "unknown is allowed except ACT/DPS/PROC must be assessed.",
+                         "ACT=move:<exact registered move>, "
+                         "ACT=switch:<selected teammate>, or "
+                         "ACT=pivot:<exact registered move>→<selected teammate>. "
+                         "DPS and OUR must be exact registered moves, not "
+                         "abstract labels such as 'registered_move'.",
             },
         }
         prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
@@ -1186,6 +1230,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "six this is 6+12; for partial known five, 5+10. "
                 "Do NOT repeat Pokémon names inside each entry. "
                 "Every entry must include all its required tags. "
+                "Set ACT to an executable first action using the exact registered "
+                "move or selected switch destination; never write ACT=attack. "
+                "DPS and OUR are exact registered moves, not 'known_move' "
+                "or 'registered_move'. If unable to identify a move, use "
+                "unknown and accept an incomplete assessment; do not invent. "
                 "PROC=unknown or ACT=unknown is an incomplete assessment; "
                 "use PROC=unverified for explicitly assessed but uncertified "
                 "processing capability, never as a guaranteed processor. "
@@ -1224,7 +1273,8 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         validation=(
             validate_partial_prep_result(
                 tuple(updated["selected_three"]), updated["lead"],
-                known, unknown_slots, result)
+                known, unknown_slots, result,
+                registered_moves=registered_moves)
             if partial else validate_prep_result(prep_input,result))
         elapsed=round((perf_counter()-started)*1000)
         # Completed PREP output remains useful after the soft time target.
@@ -1245,6 +1295,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                                  for slot in unknown_slots],
                 "preserve":result.preserve,"stopper":result.stopper,
                 "closer":result.closer,
+                "evidence_status":prep_evidence_status(result.matchups_18),
                 "note":(
                     f"暫定PREP。既知{len(known)}匹×3の{len(matchups)}対面のみ評価。"
                     f"未判明{len(unknown_slots)}匹×3の{3*len(unknown_slots)}対面は未評価。"
@@ -1266,11 +1317,17 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "事前評価完了（構造検証）。"
         ) if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
+                        "evidence_status":(
+                            prep_evidence_status(result.matchups_18)
+                            if validation.complete else "NOT_FULLY_ASSESSED"),
+                        "cache_reuse_status":cache_reuse_status,
+                        "cached_hint_count":cached_hint_count,
                         "prep_soft_deadline_exceeded":overtime,
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                         "prompt_chars":prompt_chars,
-                        "matchups_evaluated":len(result.matchups_18),
+                        "matchups_evaluated":len(result.matchups_18) if validation.complete else 0,
+                        "matchup_rows_returned":len(result.matchups_18),
                         "unknown_matchups":3*len(unknown_slots),
                         "message":message}
     except Exception as exc:

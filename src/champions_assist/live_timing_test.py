@@ -111,6 +111,12 @@ def prep_timing_test(
     known=tuple(name for name in six if name not in unknown_slots)
     rows = prep.get("matchups_known" if partial else "matchups_18") or []
     cached = prep.get("source")=="FROZEN_CACHE"
+    registered_moves={
+        m["name"]:tuple(str(m.get(f"move{i}") or "").strip()
+                        for i in range(1,5)
+                        if str(m.get(f"move{i}") or "").strip())
+        for m in assets.own_team if m["name"] in selected
+    }
     if cached:
         lead_rows = [
             r for r in rows if r.get("our_pokemon")==lead
@@ -141,10 +147,12 @@ def prep_timing_test(
                 prep.get("preserve"),prep.get("stopper"),prep.get("closer"))
             check=(
                 validate_partial_prep_result(
-                    selected,lead,known,unknown_slots,parsed)
+                    selected,lead,known,unknown_slots,parsed,
+                    registered_moves=registered_moves)
                 if partial else validate_prep_result(
                     build_prep_input(selected,lead,six,tuple(
-                        state.get("matrix_rows_six") or assets.matrix_rows_for(six))),
+                        state.get("matrix_rows_six") or assets.matrix_rows_for(six)),
+                        registered_moves=registered_moves),
                     parsed))
             structurally_valid=check.complete
         except (ValueError,KeyError,TypeError):

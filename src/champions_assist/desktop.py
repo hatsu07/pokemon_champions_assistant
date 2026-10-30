@@ -820,6 +820,7 @@ class DesktopMainWindow(QMainWindow):
             embedded=True, before_new_match=self._prepare_unified_match,
             on_capture_reconnected=self._persist_reconnected_capture,
         )
+        self._match_panel.after_preload_success=self._confirm_unified_match_preload
         self._match_panel.state_changed.connect(self._on_unified_state)
         self._match_panel.shutdown_finished.connect(self._retry_close_after_workers)
         self._match_panel.ai_status_changed.connect(
@@ -893,7 +894,8 @@ class DesktopMainWindow(QMainWindow):
         try:
             prefs=VisionPreferenceStore(default_app_root())
             model=prefs.selected_model()
-            team_id=self.settings_service.settings.teams.active_team_id
+            teams=self.settings_service.settings.teams
+            team_id=teams.pending_team_id or teams.active_team_id
             if not model or not team_id:
                 raise ConfigurationError(
                     "設定でChatGPTモデルと次戦の自軍構築を選択してください")
@@ -919,7 +921,7 @@ class DesktopMainWindow(QMainWindow):
         dialog.exec()
 
     def _prepare_unified_match(self) -> None:
-        """Apply current model/team/capture selection BEFORE the four reads."""
+        """Resolve the reserved next team without consuming it before preload."""
         from .app_config import default_app_root, ConfigurationError
         from .vision_preferences import VisionPreferenceStore
 
@@ -929,13 +931,20 @@ class DesktopMainWindow(QMainWindow):
         model = preferences.selected_model()
         if not model:
             raise ConfigurationError("設定 → ChatGPTでモデルを選択してください。")
-        team_id = self.settings_service.settings.teams.active_team_id
+        # Keep A active and B reserved until the actual four-file preload
+        # succeeds. A missing B CSV or failed LIVE asset generation must leave
+        # the pending reservation intact for retry.
+        team_settings = self.settings_service.settings.teams
+        team_id = team_settings.pending_team_id or team_settings.active_team_id
         if not team_id:
             raise ConfigurationError("設定 → 自軍構築で次戦の構築を選択してください。")
         team_path = self.settings_service.teams.path_for_next_match(team_id)
         prepared = self.settings_service.prepare_team_live_assets(
             team_id, match_active=False)
         self._unified_team_id = team_id
+        self._match_panel.registered_team_id = team_id
+        self._match_panel.registered_team_name = (
+            self.settings_service.teams.get(team_id).display_name)
         from hashlib import sha256
         self._unified_team_sha = sha256(Path(team_path).read_bytes()).hexdigest()
         self._match_panel.matrix_source = str(prepared.matrix_path)
@@ -945,6 +954,18 @@ class DesktopMainWindow(QMainWindow):
         self._match_panel.reasoning_effort = preferences.reasoning_effort()
         self._match_panel.team_path = str(team_path)
         self._match_panel.capture_config = self.settings_service.settings.capture
+
+    def _confirm_unified_match_preload(self) -> None:
+        """Consume the exact reserved team only after the actual four reads."""
+        from .app_config import ConfigurationError
+        assets = self._match_panel.assets
+        team_id = self._unified_team_id
+        if (assets is None or not team_id or
+                assets.loaded_team_identity.get("team_id") != team_id):
+            raise ConfigurationError("実読込構築IDが次戦予約と一致しません。")
+        active = self.settings_service.apply_pending_team_for_next_match()
+        if active != team_id:
+            raise ConfigurationError("4ファイル読込中に自軍構築の予約が変更されました。")
 
     def _persist_reconnected_capture(self, config) -> None:
         """User-selected, successfully previewed mirror-window identity."""
