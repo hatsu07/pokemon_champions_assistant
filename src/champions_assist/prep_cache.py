@@ -118,7 +118,8 @@ def cached_pairs(assets, selected_three: tuple[str, ...],
 
 
 def cached_evidence_count(rows: list[dict]) -> int:
-    return sum(r.get("source") in ("REVIEWED_CELL", "AI_HINT")
+    return sum(r.get("source") in ("REVIEWED_CELL", "AI_HINT",
+                                   "REVIEWED_EVALUATION")
                for r in rows)
 
 
