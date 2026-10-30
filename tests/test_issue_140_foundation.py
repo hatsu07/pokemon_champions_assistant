@@ -219,7 +219,7 @@ class WorkerTests(unittest.TestCase):
             "for line in sys.stdin:\n"
             " r=json.loads(line)\n"
             " if r['op']=='SIMULATE':\n"
-            "  old=dict(r); old['request_id']='stale'\n"
+            "  old=dict(r); old['snapshot_sha256']='stale-snapshot'\n"
             "  old.update(capability_status='CONFIRMED',ok=True)\n"
             "  print(json.dumps(old),flush=True)\n"
             " r.update(capability_status='PARTIAL',ok=True,payload={})\n"
@@ -256,14 +256,14 @@ class WorkerTests(unittest.TestCase):
 
     def test_worker_crash_never_restarts_or_returns_old_advice(self):
         script = (
-            "import sys,json\\n"
-            "for line in sys.stdin:\\n"
-            " r=json.loads(line)\\n"
-            " if r['op']=='HELLO':\\n"
-            "  r.update(capability_status='PARTIAL',ok=True,payload={})\\n"
-            "  print(json.dumps(r),flush=True)\\n"
-            " else:\\n"
-            "  sys.exit(2)\\n"
+            "import sys,json\n"
+            "for line in sys.stdin:\n"
+            " r=json.loads(line)\n"
+            " if r['op']=='HELLO':\n"
+            "  r.update(capability_status='PARTIAL',ok=True,payload={})\n"
+            "  print(json.dumps(r),flush=True)\n"
+            " else:\n"
+            "  sys.exit(2)\n"
         )
         tmp, w = self.make_fake_worker(script)
         try:
@@ -301,12 +301,12 @@ class StagingTests(unittest.TestCase):
                         third_party_notices=notices, worker_script=worker,
                         output=target)
             with patch("scripts.stage_issue140_runtime.subprocess.check_output",
-                       return_value="wrong-SHA\\n"):
+                       return_value="wrong-SHA\n"):
                 with self.assertRaises(ValueError):
                     stage(**opts)
             self.assertFalse(target.exists())
             with patch("scripts.stage_issue140_runtime.subprocess.check_output",
-                       return_value=PINNED_SHOWDOWN_SHA + "\\n"):
+                       return_value=PINNED_SHOWDOWN_SHA + "\n"):
                 manifest = stage(**opts)
             self.assertEqual(manifest["engine_sha"], PINNED_SHOWDOWN_SHA)
             self.assertFalse(manifest["production_enabled"])
@@ -324,7 +324,7 @@ class StagingTests(unittest.TestCase):
             (root / "NOTICES").touch()
             (root / "worker.cjs").write_text("// worker")
             with patch("scripts.stage_issue140_runtime.subprocess.check_output",
-                       return_value=PINNED_SHOWDOWN_SHA + "\\n"):
+                       return_value=PINNED_SHOWDOWN_SHA + "\n"):
                 with self.assertRaises(FileNotFoundError):
                     stage(showdown_root=root / "engine",
                           node_exe=root / "node.exe",
