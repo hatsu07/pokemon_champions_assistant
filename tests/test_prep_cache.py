@@ -88,6 +88,17 @@ def roles():
             "closer":OWN[2],"warning":"積み対策を優先"}
 
 
+def evaluated_prep(*, known=6):
+    """Structurally assessed fixture, unlike AI_UNVERIFIED cache hints."""
+    lead=("ACT=attack|KO=not_guaranteed|DPS=じしん|PRI=none|S=slower|"
+          "OUR=じしん|OPP=coverage_risk|SAFE=unsafe|PROC=unverified|"
+          "LOCK=none|MEGA=recheck")
+    bench=("S=slower|OUR=じしん|OPP=coverage_risk|PRI=none|"
+           "SAFE=unsafe|PROC=unverified")
+    return {**roles(),"lead_six":[lead]*known,
+            "bench_twelve":[bench]*(2*known)}
+
+
 class CachedPrepTests(unittest.TestCase):
     def test_preload_compiles_all_six_times_six_no_network(self):
         tmp,assets=loaded_assets()
@@ -98,7 +109,8 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(len(rows),18)
         self.assertEqual(cached_evidence_count(rows),18)
         self.assertTrue(all(row["source"]=="AI_HINT" for row in rows))
-        self.assertTrue(validate_cached_preparation(
+        # All 18 cells are merely provisional hints, not 18 evaluations.
+        self.assertFalse(validate_cached_preparation(
             assets,OWN[:3],OPP,OWN[0],rows,OWN[:3])[0])
         # Neither a copy of the cache nor a partial first row can be promoted.
         copy=[dict(row) for row in rows]
@@ -106,30 +118,28 @@ class CachedPrepTests(unittest.TestCase):
         self.assertFalse(validate_cached_preparation(
             assets,OWN[:3],OPP,OWN[0],copy,OWN[:3])[0])
 
-    def test_preloaded_cache_skips_regenerating_138_fields(self):
+    def test_provisional_hints_do_not_bypass_eighteen_field_evaluation(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         calls=[]
         def reply(_client, **kwargs):
             calls.append(kwargs)
-            return roles()
+            return evaluated_prep()
         with patch("champions_assist.match_replay._stream_json",side_effect=reply):
             updated,report=run_replay_prep(
                 state=state,assets=assets,access_token="test",model="mock",
                 client_factory=lambda **_:object(),reasoning_effort="auto")
-        self.assertEqual(report["status"],"PREP_CACHE_REUSED")
+        self.assertEqual(report["status"],"PREP_PROVISIONAL")
         self.assertEqual(report["matchups_evaluated"],18)
-        self.assertEqual(report["missing_matchups"],0)
-        self.assertEqual(updated["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
         self.assertEqual(updated["prep"]["preserve"],OWN[0])
         self.assertEqual(len(calls),1)
-        self.assertEqual(calls[0]["name"],"champions_cached_prep_roles")
-        self.assertNotIn("lead_six",calls[0]["schema"]["properties"])
+        self.assertEqual(calls[0]["name"],"champions_replay_prep")
+        self.assertIn("lead_six",calls[0]["schema"]["properties"])
         prompt=json.loads(calls[0]["content"][0]["text"])
-        self.assertEqual(len(prompt["cached_matchups"]),18)
-        self.assertNotIn("lead_tags",prompt)
+        self.assertIn("lead_tags",prompt["response_order"])
         self.assertEqual(calls[0]["reasoning_effort"],"low")
 
     def test_timing_accepts_exact_18_cached_rows_and_three_roles(self):
@@ -137,7 +147,7 @@ class CachedPrepTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep()):
             updated,report=prep_timing_test(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
@@ -145,34 +155,31 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(report["status"],"PREP_TIMING_PASS")
         self.assertEqual((report["lead_evaluated"],report["bench_evaluated"],
                           report["win_conditions"]),(6,12,3))
-        self.assertEqual(report["cached_matchups"],18)
-        self.assertEqual(updated["prep"]["source"],"FROZEN_CACHE")
+        self.assertEqual(report["source_status"],"PREP_PROVISIONAL")
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
 
-    def test_missing_one_cached_cell_is_not_certified(self):
+    def test_missing_cached_hint_still_requires_model_fields(self):
         tmp,assets=loaded_assets(missing=True)
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
+        cached=cached_pairs(assets,OWN[:3],OPP,OWN[0])
+        self.assertEqual(cached_evidence_count(cached),17)
+        self.assertFalse(validate_cached_preparation(
+            assets,OWN[:3],OPP,OWN[0],cached,OWN[:3])[0])
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep()):
             updated,report=prep_timing_test(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
-        self.assertFalse(report["pass"])
-        self.assertTrue(report["cache_ready"])
-        self.assertEqual(report["status"],"PREP_TIMING_CACHE_INCOMPLETE")
-        self.assertEqual((report["lead_evaluated"],report["bench_evaluated"]),
-                         (5,12))
-        self.assertEqual(report["cached_matchups"],17)
-        self.assertEqual(report["missing_matchups"],1)
-        self.assertEqual(updated["prep_status"],"CACHE_INCOMPLETE")
-        self.assertEqual(updated["prep"]["matchups_18"][0]["source"],"MISSING")
+        self.assertEqual(report["source_status"],"PREP_PROVISIONAL")
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
 
-    def test_known_five_cache_is_conditional_not_full_pass(self):
+    def test_known_five_is_conditional_not_full_pass(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets,partial=True)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep(known=5)):
             updated,report=prep_timing_test(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
@@ -180,8 +187,7 @@ class CachedPrepTests(unittest.TestCase):
         self.assertTrue(report["partial_ready"])
         self.assertEqual((report["lead_evaluated"],report["bench_evaluated"],
                           report["unknown_matchups"]),(5,10,3))
-        self.assertEqual(report["cached_matchups"],15)
-        self.assertEqual(updated["prep"]["source"],"FROZEN_CACHE")
+        self.assertEqual(updated["prep_status"],"PARTIAL_STRUCTURE_COMPLETE")
         self.assertNotIn("matchups_18",updated["prep"])
 
     def test_turn_uses_current_opponent_cache_not_all_eighteen(self):
@@ -189,11 +195,11 @@ class CachedPrepTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=roles()):
+                   return_value=evaluated_prep()):
             state,report=run_replay_prep(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
-        self.assertEqual(report["status"],"PREP_CACHE_REUSED")
+        self.assertEqual(report["status"],"PREP_PROVISIONAL")
         state["phase"]="BATTLE"
         contexts=[]
         def tactical(ctx,limit,mode):
@@ -218,12 +224,12 @@ class CachedPrepTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         state=chosen_state(assets)
         with patch("champions_assist.match_replay._stream_json",
-                   return_value={**roles(),"closer":"未登録"}):
+                   return_value={**evaluated_prep(),"closer":"未登録"}):
             updated,report=run_replay_prep(
                 state=state,assets=assets,access_token="dummy",model="mock",
                 client_factory=lambda **_:object())
-        self.assertEqual(report["status"],"PREP_CACHE_INCOMPLETE")
-        self.assertEqual(report["reason"],"CACHE_ROLES_INVALID")
+        self.assertEqual(report["status"],"PREP_INCOMPLETE")
+        self.assertEqual(report["reason"],"WIN_CONDITIONS_INVALID")
         self.assertIsNone(updated["prep"])
 
 
