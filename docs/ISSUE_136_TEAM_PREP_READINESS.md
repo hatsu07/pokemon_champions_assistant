@@ -84,3 +84,13 @@
 - 回帰テストでは **進捗journalがない** 条件を明示し、CSV SHAチェックに頼らない規制判定を確認する。
 
 未検証の技・KO・安全受け・処理役の認証は行わない。
+
+
+## 2026-10-30 第6回再レビュー（構築内のレギュレーション矛盾）
+
+- 正本は **\`TEAM.reg\`**。6匹の \`MON.reg\` すべてがTEAM行と一致する場合だけ、その単一レギュレーションのPREP素材を生成する。空欄で統一された7行のみ \`UNDECLARED\` として扱い、TEAMのみ指定、MONの混在、一部空欄を不整合として拒否する。
+- 登録・再検証 \`team_management.validate_team_document\` は矛盾を \`INVALID\` とする。 \`team_live_assets.prepare_team_assets\` はファイル生成前に \`ConfigurationError\` で停止する。 \`team_prep_readiness.team_readiness\` は読み取り専用のまま \`構築確認不可\` と理由を表示する。
+- manifestへ \`team_regulation\`（TEAMを正本とする単一値）と \`team_regulations\`（各MON値）を保存し、既存のカタログ \`regulation\` と照合する。旧manifestに正本情報が欠ける場合、準備済みと判定せず再生成を要求する。
+- 回帰テストは、全7行一致、混在MON、TEAM行のみ変更、一部MON空欄、全7行空欄（UNDECLARED）、一致したA→B→Aへの切り戻しを検証する。旧版生成物は破壊しない。
+
+レギュレーションが矛盾するファイルから1匹目の値を推測しない。確定不能な処理役・安全受けの認証にも利用しない。
