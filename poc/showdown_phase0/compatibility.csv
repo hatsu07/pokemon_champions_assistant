@@ -1,0 +1,16 @@
+category,showdown_source_observation,Champions_reference,verification,real_game_golden,impact
+format,"config/formats.ts: BSS Reg M-C uses mod champions",M-C regulation,PARTIAL,missing,Not proof of live rule equivalence
+AP and nature,"scripts.ts: statModify uses set.evs and nature; custom formula",Champions Pokemon master,PARTIAL,missing,Damage and speed not independently verified
+PP,"scripts.ts: init caps PP at 20 and calculatePP customized",Champions move master,PARTIAL,missing,PP and legality uncertain
+priority,"data/mods/champions/moves.ts overrides moves",Champions move master,UNKNOWN,missing,Priority unsupported as certainty
+damage and critical,"scripts.ts overrides modifyDamage",Champions move master,UNKNOWN,missing,Guaranteed KO unsupported
+accuracy and RNG,"sim/battle.ts exposes seeded PRNG",Champions game observations,PARTIAL,missing,Distribution not certified
+ability,"data/mods/champions/abilities.ts present",Champions ability master,UNKNOWN,missing,Safe switches unsupported
+held items,"data/mods/champions/items.ts present",Champions held item master,UNKNOWN,missing,Consumptions and locks uncertain
+mega and form,"scripts.ts overrides formeChange and canMegaEvo",Champions Pokemon master,PARTIAL,missing,Post-mega types and speed need independent checks
+weather and field,"sim/state.ts serializes field",Champions move and ability masters,PARTIAL,missing,Field damage not certified
+status and stages,"sim/state.ts serializes Pokemon state",Champions game observations,PARTIAL,missing,Reconstruction from video untested
+choice lock,"sim/state.ts serializes volatiles",Champions item master,PARTIAL,missing,Reconstruction not certified
+fainted and switch,"sim/state.ts serializes sides and queue",Champions game observations,PARTIAL,missing,Forced switching not certified
+selected three,"config/formats.ts has Flat Rules; Battle has team preview",Champions selection rules,PARTIAL,missing,Actual selection validation required
+learnset,"data/mods/champions/learnsets.ts present",Champions linked learnsets master,UNKNOWN,missing,Move legality not certified
