@@ -1076,7 +1076,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
     """Bounded by caller shared-clock budget; complete only if all 18 validate."""
     from .prep import (
         build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
-        validate_partial_prep_result,
+        validate_partial_prep_result, prep_evidence_status,
     )
     started=perf_counter()
     stage="SETUP"
@@ -1087,29 +1087,22 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         return updated,{"status":"BLOCKED","reason":"PREP_NOT_EXPECTED"}
     unknown_slots=tuple(updated.get("visual_unknown_opponents") or ())
     partial=bool(unknown_slots)
-    if (assets.matchup_cache_index and
-            (updated["matrix_compatible"] or updated.get("matrix_provisional", False))):
-        # Only a fully reviewed, explicitly tagged 18-pair cache can bypass
-        # the full PREP evaluation. AI hints alone are NOT assessed fields.
-        from .prep_cache import cached_pairs, validate_cached_preparation
-        opponents=tuple(updated.get("opponent_six") or ())
-        known=tuple(name for name in opponents
-                    if name not in (updated.get("visual_unknown_opponents") or ()))
-        selected=tuple(updated.get("selected_three") or ())
-        lead=updated.get("lead")
-        if len(selected)==3 and lead in selected and len(known) in (4,5,6):
-            cache_rows=cached_pairs(assets,selected,known,lead)
-            roles_hint=(state.get("prep") or {})
-            verified,_=validate_cached_preparation(
-                assets,selected,known,lead,cache_rows,
-                tuple(roles_hint.get(k) or selected[0]
-                      for k in ("preserve","stopper","closer")))
-            if verified:
-                return _run_cached_prep(
-                    state=state, assets=assets, access_token=access_token,
-                    model=model, limit_seconds=limit_seconds,
-                    client_factory=client_factory,
-                    reasoning_effort=reasoning_effort)
+    # The current off-match compiler exposes REVIEWED_CELL/AI_HINT/MISSING
+    # only: no full 11/6-tag REVIEWED_EVALUATION is persisted yet. Therefore
+    # an 18-pair cache *hit* is evidence reuse, not a completed PREP shortcut.
+    # Keep _run_cached_prep for future validated cache persistence only.
+    # Record the missing optimization explicitly until that feature ships.
+    from .prep_cache import cached_pairs, cached_evidence_count
+    cached_hint_count=0
+    if assets.matchup_cache_index:
+        preview=tuple(updated.get("opponent_six") or ())
+        known_preview=tuple(name for name in preview if name not in unknown_slots)
+        chosen=tuple(updated.get("selected_three") or ())
+        selected_lead=updated.get("lead")
+        if len(chosen)==3 and selected_lead in chosen and len(known_preview) in (4,5,6):
+            cached_hint_count=cached_evidence_count(
+                cached_pairs(assets,chosen,known_preview,selected_lead))
+    cache_reuse_status="REVIEWED_EVALUATION_PERSISTENCE_NOT_IMPLEMENTED"
     if not (updated["matrix_compatible"] or updated.get("matrix_provisional",False) or partial):
         updated["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
         return updated,{"status":"PREP_UNAVAILABLE","reason":"OWN_MATRIX_MISMATCH",
@@ -1283,6 +1276,7 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                                  for slot in unknown_slots],
                 "preserve":result.preserve,"stopper":result.stopper,
                 "closer":result.closer,
+                "evidence_status":prep_evidence_status(result.matchups_18),
                 "note":(
                     f"暫定PREP。既知{len(known)}匹×3の{len(matchups)}対面のみ評価。"
                     f"未判明{len(unknown_slots)}匹×3の{3*len(unknown_slots)}対面は未評価。"
@@ -1304,6 +1298,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "事前評価完了（構造検証）。"
         ) if validation.complete else "事前評価は未完成です。"
         return updated,{"status":status,
+                        "evidence_status":(
+                            prep_evidence_status(result.matchups_18)
+                            if validation.complete else "NOT_FULLY_ASSESSED"),
+                        "cache_reuse_status":cache_reuse_status,
+                        "cached_hint_count":cached_hint_count,
                         "prep_soft_deadline_exceeded":overtime,
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
