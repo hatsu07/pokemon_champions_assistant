@@ -2210,6 +2210,8 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
                 "first_event_ms":stream_timing.get("first_event_ms"),
                 "first_output_ms":stream_timing.get("first_output_ms"),
                 "stream_complete_ms":stream_timing.get("stream_complete_ms"),
+                "instructions_utf8_bytes":stream_timing.get("instructions_utf8_bytes"),
+                "schema_json_bytes":stream_timing.get("schema_json_bytes"),
                 "validation_pending":True})
         if diagnostic_sink is not None:
             from .live_diagnostics import ai_response_digest

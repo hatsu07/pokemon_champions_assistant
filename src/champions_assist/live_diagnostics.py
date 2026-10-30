@@ -45,7 +45,7 @@ _FIELDS = frozenset((
     "unresolved_rows","prior_rows_not_resent","pending_questions",
     "api_elapsed_ms","pre_api_elapsed_ms","validation_pending",
     "first_event_ms","first_output_ms","stream_complete_ms",
-    "non_ocr_json_bytes",
+    "non_ocr_json_bytes","instructions_utf8_bytes","schema_json_bytes",
     "own_conflict","own_mismatch","confirmed_faint",
     "internal_own","model_own","screen_label","rejected_updates",
 ))

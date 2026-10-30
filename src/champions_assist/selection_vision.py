@@ -671,6 +671,10 @@ def _stream_json(client, *, model: str, instructions: str, content: list,
         except Exception:
             pass  # diagnostics never break live decisions
     pieces = []
+    if timing_sink is not None:
+        timing_sink["instructions_utf8_bytes"]=len(instructions.encode("utf-8"))
+        timing_sink["schema_json_bytes"]=len(json.dumps(
+            schema,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
     try:
         stream = client.responses.create(
             model=model, stream=True, store=False,
