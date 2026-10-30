@@ -108,7 +108,8 @@ class CausalResearchTests(unittest.TestCase):
     def record(self, mid, *, signature=SIGNATURE, gate_sha=None,
                tactical_version="tactical-v1", environment_at="2026-10-29",
                with_p1=True, confirmed=False, control="UNKNOWN",
-               incomplete=False, issue="初手の見直し"):
+               incomplete=False, issue="初手の見直し",
+               event_count=1, rich=False):
         state={
             "phase":"ENDED","result":"LOSS",
             "opponent_six":["カバルドン"],
@@ -149,11 +150,31 @@ class CausalResearchTests(unittest.TestCase):
             if confirmed:
                 report["actual_action"]={"kind":"MOVE","move":"じしん"}
                 report["actual_action_source"]="USER_CONFIRMED"
-            st={"phase":"BATTLE","step_number":1,"turn_id":"turn1",
-                "our_active":"ガブリアス","opponent_active":"カバルドン",
-                "selected_three":["ガブリアス"],
-                "opponent_control_classification":control}
-            self.assertTrue(buffer.capture(st,report))
+            for index in range(event_count):
+                state_at_turn={
+                    "phase":"BATTLE","step_number":index+1,
+                    "turn_id":f"turn{index+1}",
+                    "our_active":"ガブリアス","opponent_active":"カバルドン",
+                    "selected_three":["ガブリアス"],
+                    "opponent_control_classification":control,
+                }
+                candidate=dict(report)
+                candidate["frame_id"]=f"f{index+1}"
+                if rich:
+                    state_at_turn.update({
+                        "last_event":"観測候補だけ " + ("注意" * 15),
+                        "observed_hp":{"own":"100/200", "opponent":"80/210"},
+                        "battlefield":{"weather":"すなあらし",
+                                       "terrain":"なし",
+                                       "effects":"防御UPの候補"},
+                    })
+                    candidate["observation"]={
+                        "visual_ui":"MOVE_MENU",
+                        "visible_moves":["じしん","げきりん","まもる","アイアンヘッド"],
+                        "visible_party":["ガブリアス","ロトム","サーフゴー",
+                                         "ポケモン4","ポケモン5","ポケモン6"],
+                    }
+                self.assertTrue(buffer.capture(state_at_turn,candidate))
             if incomplete:
                 buffer.dropped_events=1
             self.assertEqual(
@@ -420,6 +441,108 @@ class CausalResearchTests(unittest.TestCase):
         self.assertEqual(packet["source"]["existing_gate_rules"],{})
         stored=self.p2.read(output["research_sha"])["analysis"]["findings"][0]
         self.assertEqual(stored["gate_status"],"RULE_COVERAGE_UNKNOWN")
+
+    def test_realistic_three_matches_five_events_preserve_all_event_windows(self):
+        # 10k+ characters of SHA-matched gate rules must not overwhelm 15
+        # independently frozen, evidence-rich turn records.
+        sections = "".join(
+            f"\\n[SECTION_{idx:02}]\\n" + ("rule details " * 28) + "\\n"
+            for idx in range(25))
+        self.gate.write_text(
+            GATE_TEXT + "\\n[SWITCH_GATE]\\nREJECT unsafe landing\\n"
+            + sections, encoding="utf-8")
+        self.gate_sha=sha256(self.gate.read_bytes()).hexdigest()
+        for index in range(3):
+            self.record(f"match-{index}",event_count=5,rich=True)
+        self.p1.aggregate_after_review(match_id="match-2")
+        prepared=self.p2._prepare(match_id="match-2",gate_file=self.gate)
+        self.assertEqual(prepared["status"],"READY",prepared)
+        source=prepared["source"]
+        self.assertEqual(source["sample_size"],3)
+        self.assertEqual(len(source["matches"]),3)
+        self.assertTrue(all(len(m["events"])==5 for m in source["matches"]))
+        self.assertFalse(source["selection_audit"]["excluded_match_ids"])
+        self.assertIn("SWITCH_GATE", source["existing_gate_rules"])
+        self.assertLessEqual(len(json.dumps(source,ensure_ascii=False,
+                        separators=(",",":"),sort_keys=True)),23000)
+        # The gate selection is auditable and never sends partial rule bodies.
+        all_rules=set(__import__(
+            "champions_assist.postmatch_causal_analysis",
+            fromlist=["_frozen_gate_rules"])._frozen_gate_rules(
+                self.gate.read_text(encoding="utf-8")))
+        self.assertEqual(
+            set(source["existing_gate_rules"]) |
+            set(source["gate_omitted_rule_ids"]), all_rules)
+        self.assertFalse(set(source["existing_gate_rules"]) &
+                         set(source["gate_omitted_rule_ids"]))
+
+    def test_six_matches_five_events_reduce_extra_matches_with_audit(self):
+        for index in range(6):
+            self.record(f"match-{index}",event_count=5,rich=True)
+        batch=self.p1.aggregate_after_review(match_id="match-5")
+        self.assertEqual(batch["status"],"STORED_PROVISIONAL_UNVERIFIED")
+        result=self.p2.analyze_after_review(
+            match_id="match-5",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(result["status"],"STORED_HOLD_UNVERIFIED",result)
+        source=json.loads(
+            self.clients[0].calls[0]["input"][0]["content"][0]["text"])["source"]
+        self.assertGreaterEqual(source["sample_size"],3)
+        self.assertLessEqual(source["sample_size"],6)
+        self.assertEqual(len(source["selection_audit"]["eligible_match_ids"]),6)
+        self.assertIn("match-5",[m["match_id"] for m in source["matches"]])
+        self.assertEqual(set(source["selection_audit"]["eligible_match_ids"]),
+                         {m["match_id"] for m in source["matches"]} |
+                         set(source["selection_audit"]["excluded_match_ids"]))
+        self.assertTrue(all(len(m["events"])==5 for m in source["matches"]))
+        self.assertLessEqual(len(json.dumps(source,ensure_ascii=False,
+                        separators=(",",":"),sort_keys=True)),23000)
+
+    def test_gate_changed_cannot_restart_automatic_budget_for_same_p1_batch(self):
+        self.ready()
+        first=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(first["status"],"STORED_HOLD_UNVERIFIED")
+        self.gate.write_text(GATE_TEXT+"\\n[SWITCH_GATE]\\nREJECT unsafe\\n",
+                             encoding="utf-8")
+        again=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(again["status"],"SOURCE_CHANGED_HOLD")
+        self.assertEqual(again["research_sha"],first["research_sha"])
+        self.assertEqual(again["calls_used"],1)
+        self.assertEqual(len(self.clients),1)
+        forced=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,client_factory=self.factory())
+        self.assertEqual(forced["status"],"SOURCE_CHANGED_HOLD")
+        self.assertEqual(len(self.clients),1)
+        with closing(sqlite3.connect(self.learning.db_path)) as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM p2_causal_batches WHERE p1_batch_sha=?",
+                (self.p1.history(team_id=TEAM)[0]["batch_sha"],)).fetchone()[0],1)
+
+    def test_gate_changed_after_failure_does_not_allow_explicit_new_source(self):
+        self.ready()
+        first=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory(fail=True))
+        self.assertEqual(first["status"],"FAILED_HOLD")
+        old_text=self.gate.read_text(encoding="utf-8")
+        self.gate.write_text(old_text+"changed",encoding="utf-8")
+        blocked=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,client_factory=self.factory())
+        self.assertEqual(blocked["status"],"SOURCE_CHANGED_HOLD")
+        self.assertEqual(len(self.clients),1)
+        self.gate.write_text(old_text,encoding="utf-8")
+        retry=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,client_factory=self.factory())
+        self.assertEqual(retry["status"],"STORED_HOLD_UNVERIFIED")
+        self.assertEqual(retry["calls_used"],2)
+        self.assertEqual(len(self.clients),2)
 
     def test_never_attempt_when_cancelled_before_reservation(self):
         self.ready()
