@@ -168,6 +168,25 @@ class Review137CacheFreshnessTests(unittest.TestCase):
             self.prepare()
         self.assertTrue(old.manifest_path.is_file())
 
+    def test_all_seven_blank_regulations_are_undeclared_and_consistent(self):
+        self._set_regulations([""] * 6, team_reg="")
+        prepared = self.prepare()
+        manifest = json.loads(prepared.manifest_path.read_text(encoding="utf-8"))
+        catalog = json.loads(prepared.manifest_path.with_name(
+            "matchup-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["team_regulation"], "UNDECLARED")
+        self.assertEqual(manifest["team_regulations"], ["UNDECLARED"] * 6)
+        self.assertEqual(catalog["regulation"], "UNDECLARED")
+        self.assertTrue(self.readiness()["team_match"])
+
+    def test_team_declared_but_one_mon_empty_is_invalid(self):
+        self._set_regulations(["REG_A", "REG_A", "",
+                               "REG_A", "REG_A", "REG_A"])
+        state = self.readiness()
+        self.assertEqual(state["status"], "構築確認不可")
+        with self.assertRaisesRegex(ConfigurationError, "レギュレーション不整合"):
+            self.prepare()
+
     def test_six_matching_regs_with_team_row_are_valid(self):
         self._set_regulations(["REG_A"] * 6)
         prepared = self.prepare()
