@@ -56,6 +56,30 @@ function sourceHashes() {
     return [name, crypto.createHash("sha256").update(data).digest("hex")];
   }));
 }
+// Provisional triage buckets, NOT verified root causes:
+// A forme/key or transformation-layer mapping; B static vs dynamic rules;
+// C source-version discrepancy; D game-rule confirmation needed;
+// E replicated implementation defect (requires an independent golden).
+// Static evidence alone cannot certify a C or E root cause.
+function triage(mismatch) {
+  const isFormCandidate = /^(aegislash|palafin|castform|meganium)/.test(mismatch.key);
+  let bucket = "D", rationale = "Champions in-game or official golden validation required";
+  if (mismatch.group === "move_pp") {
+    bucket = "B";
+    rationale = "Dex base PP versus possible Champions dynamic PP cap; actual battle PP not tested";
+  } else if (isFormCandidate &&
+    (mismatch.group === "species_base_stats" || mismatch.group === "species_types")) {
+    bucket = "A";
+    rationale = "Forme/key or battle transformation comparison-layer candidate; not established";
+  }
+  return {...mismatch, provisional_bucket: bucket, cause_verified: false,
+    validation_status: "UNKNOWN", rationale,
+    other_unverified_candidates: ["C_SOURCE_VERSION_DIFFERENCE", "D_GAME_RULE_DIFFERENCE",
+      "E_IMPLEMENTATION_BUG_IF_REPRODUCED"],
+    next_evidence: bucket === "B" ? "Compare effective battle PP and its caps with game evidence"
+      : bucket === "A" ? "Verify form key, transformation point and in-battle stats/types"
+      : "Independently check master source date, Champions observation and Showdown mechanics"};
+}
 function compare() {
   const master_sha256 = sourceHashes(); // also fail fast if any required file is missing
   const moves = load("Pokemon_Champions_MC_move_master.csv");
@@ -114,15 +138,24 @@ function compare() {
     const name = row["英語名"];
     if (name) check("item_coverage", name, "exists", true, !!dex.items.get(name).exists);
   }
+  const triaged = discrepancies.map(triage);
+  const triage_counts = {A: 0, B: 0, C: 0, D: 0, E: 0};
+  for (const entry of triaged) triage_counts[entry.provisional_bucket]++;
+  if (Object.values(triage_counts).reduce((a, b) => a + b, 0) !== discrepancies.length)
+    throw Error("discrepancy triage incomplete");
   return {status: "DIAGNOSTIC_ONLY", master_sha256, master_scope: "4 source CSV files / M-C candidate; observation unverified", source: "Champions fixed masters versus pinned Showdown mod, static comparison",
     format: "gen9championsbssregmc", upstream_sha: "ccfaa20f32af363569cd21a9d501b2bc1ded26b1",
     totals, mismatch_count: discrepancies.length,
-    mismatch_examples: discrepancies.slice(0, 100),
+    provisional_cause_counts: triage_counts,
+    classification_status: "UNVERIFIED_HYPOTHESES; NO_CHAMPIONS_GOLDEN",
+    mismatch_details: triaged, mismatch_examples: triaged.slice(0, 100),
     caveats: [
       "Values can disagree due to source update timing; this is a diagnostic, not game truth.",
       "Direct source agreement is not an independent real-game golden case.",
       "Effects/ability semantics and damage sequences are not proved by this audit.",
       "Mega/forms and known aliases need independent observational validation.",
+      "A/B/D triage is provisional; C requires source provenance; E requires reproduction against independent goldens.",
+      "Never overwrite Champions masters to match Showdown on the basis of this static audit.",
     ]};
 }
 if (require.main === module) {
