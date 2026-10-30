@@ -32,6 +32,7 @@ from .turn_capture import TurnCaptureBuffer, AutomaticVisualProbe
 from .screen_classifier import ClassifiedMenuGate, load_bundled_classifier
 from .calibrated_screen_fields import ScreenFieldProfile, confirmed_auto_move_notice
 from .local_event_worker import AsyncBattleEventReader
+from .ocr_capture_debug import OcrCaptureDebugWriter
 from .ocr_turn_context import OcrSentLedger
 from .battle_state_tracker import LocalBattleStateTracker
 from .live_state_updates import apply_local_ocr
@@ -424,6 +425,7 @@ class MatchReplayDialog(QDialog):
         self._last_local_ocr_stats={}
         self._last_local_ocr_status="NOT_RUNNING"
         self._local_event_reader=None
+        self._ocr_debug_writer=None
         self._local_battle_tracker=LocalBattleStateTracker()
         self._ocr_sent_ledger=OcrSentLedger()
         self._ocr_capture_epochs={}
@@ -437,7 +439,7 @@ class MatchReplayDialog(QDialog):
         self._result_screen_sent=False
         self._manual_result_available=False
         self._revision_retry_keys=set()
-        self._last_advised_switch=None
+        self._pending_normal_switch=None
         self._automatic_probe=AutomaticVisualProbe(
             min_gap=8.0,matchmaking_recheck=float('inf'))
         self._screen_gate=ClassifiedMenuGate()
@@ -597,6 +599,16 @@ class MatchReplayDialog(QDialog):
             "共有前に必ずログ内容を確認してください。"
             "保存先: debug-logs/ai-exchanges（最大32MB/試合・最大10試合）。")
         panel.addWidget(self.full_ai_log_check)
+        self.ocr_debug_capture_check=QCheckBox(
+            "OCR診断用の実画像・ROI・認識文字をローカル保存（任意・最大24MB/試合）")
+        self.ocr_debug_capture_check.setObjectName("ocrCaptureDebugOptIn")
+        self.ocr_debug_capture_check.setChecked(False)
+        self.ocr_debug_capture_check.setToolTip(
+            "対戦画面全体とポケモン名・対戦メッセージ等が保存されます。"
+            "保存先: debug-logs/ocr-captures（最大32サンプル/試合・直近5試合）。"
+            "GitHubや問題報告へ画像を自動送信しません。"
+            "共有前に画像とOCR文字列の機密情報を確認してください。")
+        panel.addWidget(self.ocr_debug_capture_check)
         self.private_ai_log_warning=QLabel(
             "注意：詳細GPTログはOCR・プロンプト内の任意の機密情報を"
             "完全には除去できません。共有前に内容を確認してください。")
@@ -709,6 +721,9 @@ class MatchReplayDialog(QDialog):
         if self._exchange_log is not None:
             self._exchange_log.close()
             self._exchange_log=None
+        if self._ocr_debug_writer is not None:
+            self._ocr_debug_writer.close()
+            self._ocr_debug_writer=None
         new_id="capture-"+uuid4().hex
         self._debug_log=None
         try:
@@ -760,7 +775,7 @@ class MatchReplayDialog(QDialog):
             self._result_screen_sent=False
             self._manual_result_available=False
             self._revision_retry_keys.clear()
-            self._last_advised_switch=None
+            self._pending_normal_switch=None
             self.match_id=new_id
             self._selection_screen_started=None
             self._selection_clock_source=None
@@ -894,7 +909,7 @@ class MatchReplayDialog(QDialog):
         self._result_screen_sent=False
         self._manual_result_available=False
         self._revision_retry_keys.clear()
-        self._last_advised_switch=None
+        self._pending_normal_switch=None
         self.assets=None
         self.state=None
         self.entries=[]
@@ -1294,6 +1309,12 @@ class MatchReplayDialog(QDialog):
         self._capture_error_count=0
         self._poll_timer.stop()
         self._poll_timer.setInterval(300)
+        if self._ocr_debug_writer is not None:
+            self._ocr_debug_writer.close()
+            self._ocr_debug_writer=None
+        # Stopping must never reinterpret a historical GPT reply as a new one.
+        self._last_action_text=""
+        self._pending_normal_switch=None
         self._pending_batch=None
         self._pending_screen_label=None
         self._pending_result_messages=None
@@ -1309,7 +1330,7 @@ class MatchReplayDialog(QDialog):
             "AI監視停止（新規画像送信なし）")
         # Previously the UI could still say "自動送信中" after stopping.
         if self.state is not None:
-            self._render(self.entries[-1] if self.entries else {"status":"AUTO_STOPPED"})
+            self._render({"status":"AUTO_STOPPED"})
 
     def _on_training_capture_toggle(self, enabled: bool) -> None:
         if enabled and self._auto_running and self.state is not None:
@@ -1425,7 +1446,7 @@ class MatchReplayDialog(QDialog):
         self._turn_epoch+=1
         # Never render the preceding turn's action in a new decision window.
         self._last_action_text=""
-        self._last_advised_switch=None
+        self._pending_normal_switch=None
         self._turn_screen_seen_at=monotonic()
         self._turn_action_sent=False
         self._turn_event_after_action=False
@@ -1443,7 +1464,7 @@ class MatchReplayDialog(QDialog):
             self._turn_event_after_action=True
             self._turn_screen_seen_at=None
             self._last_action_text=""
-            self._last_advised_switch=None
+            self._pending_normal_switch=None
             self._screen_gate.rearm_after_resolution()
             self._trace_event("TURN_RESOLUTION_OBSERVED",
                               frame_seq=self._last_capture_seq,
@@ -1458,26 +1479,28 @@ class MatchReplayDialog(QDialog):
             # A forced party choice can follow an action without an
             # intervening classified BATTLE_EVENT. It is a NEW actionable
             # decision, not another use of the fainted member's move.
-            if (screen_label=="SWITCH_SELECTION"
-                    and self._last_advised_switch
-                    and not (self.state or {}).get("awaiting_replacement")
-                    and not self._turn_event_after_action
-                    and self._last_advised_switch.get("turn_epoch")==self._turn_epoch
-                    and (self.state or {}).get("our_active")!=
-                        self._last_advised_switch.get("target")):
-                # The player is FOLLOWING an already displayed normal hard
-                # switch, not presenting another tactical decision.
-                self._trace_event("PROPOSED_NORMAL_SWITCH_MENU_REUSED",
+            # Suppress duplicate API dispatch only for a continuous, still
+            # unexecuted normal-switch navigation. Never re-render the cached
+            # recommendation: only the originating GPT reply is actionable.
+            pending=self._pending_normal_switch
+            same_navigation=(
+                screen_label=="SWITCH_SELECTION"
+                and pending is not None
+                and pending.get("status")=="ADVISED_NOT_CONFIRMED"
+                and pending.get("turn_epoch")==self._turn_epoch
+                and pending.get("source_screen") in ("COMMAND_MENU","MOVE_MENU")
+                and self._last_action_request_screen=="TURN_ACTION"
+                and not (self.state or {}).get("awaiting_replacement")
+                and not self._turn_event_after_action
+                and self._turn_action_sent
+                and bool(pending.get("source_active"))
+                and (self.state or {}).get("our_active")==pending.get("source_active")
+                and pending.get("target")!=pending.get("source_active")
+                and (self.state or {}).get("_live_state_revision",0)==
+                    pending.get("state_revision"))
+            if same_navigation:
+                self._trace_event("NORMAL_SWITCH_NAVIGATION_SUPPRESSED",
                                   turn_epoch=self._turn_epoch)
-                display="次の行動："+str(self._last_advised_switch["target"])+"に交代。"
-                self.action_banner.setText(display)
-                self._diagnostic("SWITCH_REUSED",{
-                    "target":self._last_advised_switch["target"],
-                    "original_turn":self._last_advised_switch["turn_epoch"],
-                    "display_turn":self._turn_epoch,
-                    "our_active":(self.state or {}).get("our_active"),
-                    "displayed":display,
-                    "display_source":"CACHED_SWITCH_PROPOSAL"})
                 return
             new_switch_window=(
                 screen_label=="SWITCH_SELECTION"
@@ -1986,6 +2009,14 @@ class MatchReplayDialog(QDialog):
         self._local_event_reader=AsyncBattleEventReader.with_onnx_ocr(
             self._field_profile,lexicon=lexicon,device=device,gpu_id=gpu_id,
             isolate_process=(sys.platform=="win32" and device!="cpu"))
+        if (self._ocr_debug_writer is None and self.match_id
+                and self.ocr_debug_capture_check.isChecked()):
+            try:
+                self._ocr_debug_writer=OcrCaptureDebugWriter(
+                    self.store_root,match_id=self.match_id)
+            except (OSError,ValueError):
+                self._trace_event("OCR_DEBUG_CAPTURE_START_FAILED")
+
         self._last_ocr_reported_status=self._local_event_reader.reason
         record_event("LOCAL_OCR_READER_CREATED", component="MATCH_REPLAY")
         self._trace_event("LOCAL_OCR_STARTED",
@@ -2007,8 +2038,23 @@ class MatchReplayDialog(QDialog):
         self._drain_event_candidates(include_snapshot=False)
         reader=self._local_event_reader
         capture_id=f"capture-{self._last_capture_seq}"
-        if reader is not None and reader.offer(
-                image,label=label,frame_id=capture_id):
+        enqueued=(reader.offer(image,label=label,frame_id=capture_id)
+                  if reader is not None else False)
+        if reader is not None:
+            debug_writer=self._ocr_debug_writer
+            if debug_writer is not None:
+                sampled=debug_writer.offer(
+                    image,frame_id=capture_id,label=label,
+                    reason=reader.last_offer_reason,profile=self._field_profile)
+                if sampled:
+                    self._trace_event(
+                        "OCR_DEBUG_FRAME_SAMPLED",
+                        frame_seq=self._last_capture_seq,
+                        screen_label=label,
+                        reason=reader.last_offer_reason,
+                        visual_source_width=image.shape[1],
+                        visual_source_height=image.shape[0])
+        if enqueued:
             self._ocr_capture_epochs[capture_id]=self._turn_epoch
             self._trace_event("LOCAL_OCR_EVENT_QUEUED",
                               frame_seq=self._last_capture_seq,
@@ -2044,7 +2090,7 @@ class MatchReplayDialog(QDialog):
             self._pending_screen_label=None
         self._turn_action_sent=True
         self._last_action_text=""
-        self._last_advised_switch=None
+        self._pending_normal_switch=None
         self._render({"status":"AUTO_MOVE_NOTICE","screen":"ACTION_RESOLUTION",
                       "message":"入力未到達のため技が自動選択されました。実際の技は未確認。"})
 
@@ -2089,6 +2135,9 @@ class MatchReplayDialog(QDialog):
                     self._trace_event("LOCAL_OCR_ERROR",reason=result.error,
                                       ocr_error_code=getattr(result,"error_code","UNKNOWN") or "UNKNOWN")
                 if result.observations:
+                    if self._ocr_debug_writer is not None:
+                        self._ocr_debug_writer.record_ocr(
+                            str(captured_frame),result.observations)
                     for row in result.observations:
                         self._observe_auto_move_notice(row,capture_epoch)
                         self._diagnostic("OCR_RAW",{
@@ -3360,25 +3409,35 @@ class MatchReplayDialog(QDialog):
                 report.get("screen") in ("COMMAND_MENU","MOVE_MENU","PARTY_MENU")
                 and report.get("recommendation")):
             self._last_action_text=str(report["recommendation"])
-            # Remember a direct switch while the player opens the party menu.
-            # A newly observed battle resolution/forced replacement invalidates it.
-            if (report.get("action") or {}).get("kind")=="SWITCH":
-                self._last_advised_switch={
-                    "target":(report.get("action") or {}).get("target"),
+            # Record an advisory navigation marker, NOT an executed switch.
+            # It is used only to suppress duplicate requests on the following
+            # same-turn party menu, never to re-display a GPT recommendation.
+            action=report.get("action") or {}
+            if (action.get("kind")=="SWITCH"
+                    and report.get("screen") in ("COMMAND_MENU","MOVE_MENU")
+                    and state.get("our_active")
+                    and action.get("target")
+                    and action.get("target")!=state.get("our_active")):
+                self._pending_normal_switch={
+                    "target":action["target"],
+                    "source_active":state["our_active"],
+                    "source_screen":report["screen"],
+                    "status":"ADVISED_NOT_CONFIRMED",
+                    "state_revision":state.get("_live_state_revision",0),
                     "turn_epoch":self._turn_epoch}
             else:
-                self._last_advised_switch=None
+                self._pending_normal_switch=None
         if report.get("status") in ("MATCH_STARTED","RESET"):
             self._last_action_text=""
             self._last_selection_text=""
         if report.get("status") in (
-                "NO_ACTION","BLOCKED","ERROR","CANCELLED","DEADLINE_EXCEEDED",
+                "AUTO_STOPPED","NO_ACTION","BLOCKED","ERROR","CANCELLED","DEADLINE_EXCEEDED",
                 "SUPERSEDED","MATCH_END","RESULT_UNCONFIRMED",
                 "RESULT_VERIFICATION_PENDING"):
             # OCR text-only reports may omit screen. This must not resurrect
             # a prior action when a fresh turn produced no legal advice.
             self._last_action_text=""
-            self._last_advised_switch=None
+            self._pending_normal_switch=None
         elif (report.get("screen") in (
                 "COMMAND_MENU","PARTY_MENU","DETAIL_OVERLAY",
                 "ACTION_RESOLUTION","RESULT_SCREEN")
@@ -3394,6 +3453,8 @@ class MatchReplayDialog(QDialog):
             action_text="結果画面を検出・勝敗未確定（必要なら下のボタンで登録）"
         elif report.get("status")=="RESULT_VERIFICATION_PENDING":
             action_text="結果画面を検出・GPTで勝敗確認中"
+        elif report.get("status")=="AUTO_STOPPED":
+            action_text="監視停止中（前の推奨は無効）"
         elif report.get("status")=="AI_REQUEST_QUEUED":
             action_text=("交代先を判定中（倒れたポケモンの技は無効）"
                          if report.get("screen_label_hint")=="SWITCH_SELECTION"
