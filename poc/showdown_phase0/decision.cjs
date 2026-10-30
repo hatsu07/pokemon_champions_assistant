@@ -1,6 +1,6 @@
 "use strict";
 const REQUIRED = ["normal", "hp_status_pp_boost", "item_choice", "weather_screens",
-  "consumed_item", "forced_switch", "mega_history"];
+  "consumed_item", "forced_switch", "mega_history", "pending_choice"];
 function assess(probe, bench, realGameGoldens = []) {
   const cases = probe?.results || {};
   const restoration = REQUIRED.filter(k => cases[k]?.status !== "PASS_SYNTHETIC");
