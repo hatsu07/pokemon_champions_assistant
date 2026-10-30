@@ -1,0 +1,47 @@
+name: Phase 0 Showdown isolated PoC
+
+on:
+  pull_request:
+    paths:
+      - 'poc/showdown_phase0/**'
+      - '.github/workflows/showdown-phase0-poc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase0-linux-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build fixed SHA in isolated container
+        run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+      - name: Test fail-closed adoption assessment
+        run: docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs
+      - name: Execute 120 synthetic fork samples
+        run: |
+          docker run --rm champions-phase0 > phase0-result.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-result.json", encoding="utf-8") as f:
+              report = json.load(f)
+          print("Showdown SHA:", report["pinned_sha"])
+          print("Format:", report["probe"]["format"])
+          print("Independent gates:", report["decision"]["gate_A_calculation"], report["decision"]["gate_B_midbattle"])
+          bench = report["benchmark"]
+          print("Bench valid / requested:", bench["completed"], bench["requested"])
+          print("P50/P95/P99 ms:", bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])
+          print("Unsupported cases:", bench["unsupported"])
+          print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
+          assert report["decision"]["recommended_adoption"] == "NO_GO"
+          assert report["decision"]["performance_100_valid"], "fewer than 100 valid branches"
+          assert report["probe"]["format_mod"] == "champions"
+          PY
+      - name: Remove unneeded measurement file
+        if: always()
+        run: rm -f phase0-result.json
