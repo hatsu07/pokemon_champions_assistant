@@ -110,12 +110,12 @@ def _gate_rules_with_audit(gate_text: str) -> tuple[dict[str, str], dict[str, st
     current = ""
     for raw in gate_text.splitlines():
         line = raw.strip()
-        section = re.fullmatch(r"\\[([A-Z][A-Z0-9_]{1,63})\\]", line)
+        section = re.fullmatch(r"\[([A-Z][A-Z0-9_]{1,63})\]", line)
         if section:
             current = section.group(1)
             sections.setdefault(current, [])
             continue
-        match = re.match(r"^(R\\d{2})\\s+(.+)$", line)
+        match = re.match(r"^(R\d{2})\s+(.+)$", line)
         if match:
             rules[match.group(1)] = _small(match.group(2), 200)
         if current and line and not line.startswith("#"):
