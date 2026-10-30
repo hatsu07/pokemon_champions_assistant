@@ -137,15 +137,18 @@ class TeamProvisionalMatrixTests(unittest.TestCase):
         def fake_stream(_client,**kwargs):
             prompt=json.loads(kwargs["content"][0]["text"])
             captured.append(prompt)
-            lead = ("ACT=conditional_attack|KO=unknown|DPS=registered_move|"
-                    "PRI=unknown|S=unknown|OUR=registered|OPP=unknown|"
+            own_moves={m["name"]:m["move1"] for m in assets.own_team}
+            first_move=own_moves[chosen[0]]
+            lead = (f"ACT=move:{first_move}|KO=unknown|DPS={first_move}|"
+                    f"PRI=unknown|S=unknown|OUR={first_move}|OPP=unknown|"
                     "SAFE=unknown|PROC=unverified|LOCK=unknown|MEGA=recheck")
-            bench = ("S=unknown|OUR=registered|OPP=unknown|PRI=unknown|"
-                     "SAFE=unknown|PROC=unverified")
+            bench = [(f"S=unknown|OUR={own_moves[mon]}|OPP=unknown|"
+                      "PRI=unknown|SAFE=unknown|PROC=unverified")
+                     for mon in chosen[1:] for _ in opponents]
             return {
                 "preserve":chosen[0],"stopper":chosen[1],"closer":chosen[2],
                 "warning":"既存評価を条件付きで使用",
-                "lead_six":[lead]*6, "bench_twelve":[bench]*12,
+                "lead_six":[lead]*6, "bench_twelve":bench,
             }
         with patch("champions_assist.match_replay._stream_json",
                    side_effect=fake_stream):
