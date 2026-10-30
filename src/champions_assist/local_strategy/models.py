@@ -157,6 +157,9 @@ class FrozenBattleState:
                hypotheses: tuple[Hypothesis, ...] = (),
                verified_action_ids: tuple[str, ...] = (),
                constraints_confirmed: bool = False) -> "FrozenBattleState":
+        if (state.get("our_active", "") != window.active_pokemon
+                or observation.get("visual_ui") != window.screen_kind):
+            raise ValueError("actor or screen changed before freeze")
         verified = tuple(sorted(set(verified_action_ids)))
         if action_digest(verified) != window.allowed_action_digest:
             raise ValueError("current allowed actions digest mismatch")

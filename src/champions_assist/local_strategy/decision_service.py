@@ -38,9 +38,13 @@ def accept_result(submitted: FrozenBattleState, current: FrozenBattleState,
     if (action_digest(current.verified_action_ids)
             != current.window.allowed_action_digest):
         return DecisionOutcome("NO_RECOMMENDATION", "ALLOWED_ACTIONS_CHANGED")
+    try:
+        reported_identity = json.loads(result.identity_json)
+    except (ValueError, TypeError):
+        return DecisionOutcome("NO_RECOMMENDATION", "INVALID_WORKER_IDENTITY")
     if (result.request_id != current.window.request_id
             or result.snapshot_sha256 != submitted.snapshot_sha256
-            or json.loads(result.identity_json) != current.window.identity()):
+            or reported_identity != current.window.identity()):
         return DecisionOutcome("NO_RECOMMENDATION", "STALE_OR_UNBOUND_WORKER_RESPONSE")
     if result.hypothesis_id and result.hypothesis_id not in {
             h.hypothesis_id for h in submitted.hypotheses}:

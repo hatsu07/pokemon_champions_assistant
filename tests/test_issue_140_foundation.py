@@ -97,6 +97,19 @@ class ContractTests(unittest.TestCase):
         changed["our_active"] = "ミミッキュ"
         self.assertEqual(s.state["our_active"], "ガブリアス")
 
+    def test_freeze_rejects_mismatched_actor_or_screen(self):
+        s = frozen()
+        bad = s.state
+        bad["our_active"] = "ミミッキュ"
+        with self.assertRaises(ValueError):
+            FrozenBattleState.freeze(s.window, bad, s.observation,
+                                     verified_action_ids=s.verified_action_ids)
+        wrong = s.observation
+        wrong["visual_ui"] = "PARTY_MENU"
+        with self.assertRaises(ValueError):
+            FrozenBattleState.freeze(s.window, s.state, wrong,
+                                     verified_action_ids=s.verified_action_ids)
+
     def test_snapshot_rejects_digest_mismatch(self):
         s = frozen()
         with self.assertRaises(ValueError):
@@ -187,6 +200,13 @@ class ContractTests(unittest.TestCase):
             s.window.request_id, s.window.identity(), s.snapshot_sha256, "",
             CapabilityStatus.PARTIAL, {})
         self.assertEqual(accept_result(s, s, result, earth, ASSETS).status,
+                         "NO_RECOMMENDATION")
+
+    def test_malformed_worker_identity_returns_no_recommendation(self):
+        s = frozen()
+        candidate = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
+        r = replace(successful_result(s), identity_json="{broken")
+        self.assertEqual(accept_result(s, s, r, candidate, ASSETS).status,
                          "NO_RECOMMENDATION")
 
     def test_response_wrong_request_or_hypothesis_rejected(self):

@@ -52,7 +52,10 @@ def _classify(candidate: CandidateAction, snapshot: FrozenBattleState,
     if kind == ActionKind.PIVOT:
         # The target is an action in a FUTURE input window, after resolution.
         return _with_status(candidate, LegalStatus.UNKNOWN, "FUTURE_PIVOT_TARGET")
-    code, _ = _validate(candidate.replay_answer(), snapshot, assets)
+    try:
+        code, _ = _validate(candidate.replay_answer(), snapshot, assets)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return _with_status(candidate, LegalStatus.UNKNOWN, "VALIDATOR_INPUT_INCOMPLETE")
     if code != "OK":
         return _with_status(candidate, LegalStatus.ILLEGAL, code)
     if candidate.action_id not in snapshot.verified_action_ids:
