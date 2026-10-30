@@ -154,7 +154,8 @@ def validate_cached_preparation(assets, selected_three: tuple[str, ...],
         parsed = _parse_eval_code(code) if isinstance(code, str) else None
         required = LEAD_TAGS if row["our_pokemon"] == lead else BENCH_TAGS
         if (parsed is None or any(tag not in parsed for tag in required)
-                or any(parsed[tag] in UNKNOWN_EVALUATION for tag in required)):
+                or any(parsed[tag].strip().casefold() in UNKNOWN_EVALUATION
+                        for tag in required)):
             return False, count
         if row.get("source") != "REVIEWED_EVALUATION":
             # AI_UNVERIFIED or an unreviewed type/matrix cell cannot
