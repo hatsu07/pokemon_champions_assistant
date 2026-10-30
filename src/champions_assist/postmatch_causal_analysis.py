@@ -178,6 +178,10 @@ class PostmatchCausalStore:
         );
         CREATE INDEX IF NOT EXISTS ix_p2_team
           ON p2_causal_batches(team_id,team_signature,attempted_at);
+        -- A research digest varies with gate content. The budget identity
+        -- must NOT vary: one P2 record per P1 research batch.
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_p2_per_p1_batch
+          ON p2_causal_batches(p1_batch_sha);
         """)
         return db
 
@@ -313,6 +317,10 @@ class PostmatchCausalStore:
                 except (OSError, UnicodeError, ValueError):
                     pass
             gate_rules = _frozen_gate_rules(gate_text) if gate_sha else {}
+            # A minimum of 3 full *capture-time* event windows is mandatory.
+            # Reduce extra match windows BEFORE reducing any event fields.
+            # Keep omitted match IDs and rule IDs as an auditable inventory;
+            # never silently pretend truncated observations were examined.
             source = {
                 "schema": SCHEMA, "team_id": team_id, "team_signature": signature,
                 "p1_batch_sha": p1_batch["batch_sha"],
@@ -325,13 +333,37 @@ class PostmatchCausalStore:
                 },
                 "sample_size": len(snapshots),
                 "gate_sha": gate_sha or "UNKNOWN",
-                "existing_gate_rules": gate_rules,
-                "matches": snapshots,
+                "existing_gate_rules": {},
+                "gate_omitted_rule_ids": [],
+                "selection_audit": {
+                    "eligible_match_ids": [m["match_id"] for m in snapshots],
+                    "excluded_match_ids": [],
+                    "reason": "FULL_EVIDENCE_OR_EXPLICIT_BUDGET_REDUCTION",
+                },
+                "matches": list(snapshots),
             }
-            # Hard cap protects cost, memory, privacy and prompt injection
-            # surface; fail rather than silently drop an unknown match.
+            # Reserve a modest space for original mandatory safety rules,
+            # but never drop below the 3 independently verified matches.
+            min_gate_space = 3100 if gate_rules else 0
+            while (len(source["matches"]) > MIN_MATCHES and
+                   len(_json(source)) + min_gate_space > MAX_INPUT_CHARS):
+                removed = source["matches"].pop()
+                source["selection_audit"]["excluded_match_ids"].append(
+                    removed["match_id"])
+            source["sample_size"] = len(source["matches"])
             if len(_json(source)) > MAX_INPUT_CHARS:
-                return {"status": "PROMPT_BUDGET_EXCEEDED"}
+                return {"status": "PROMPT_BUDGET_EXCEEDED",
+                        "reason": "MINIMUM_THREE_FULL_EVENT_WINDOWS_TOO_LARGE"}
+            # Add COMPLETE gate sections in safety-first order, never a
+            # truncated pseudo-rule. Over-budget IDs remain explicit.
+            for rule_id, body in gate_rules.items():
+                source["existing_gate_rules"][rule_id] = body
+                if len(_json(source)) > MAX_INPUT_CHARS:
+                    del source["existing_gate_rules"][rule_id]
+                    source["gate_omitted_rule_ids"].append(rule_id)
+            if len(_json(source)) > MAX_INPUT_CHARS:
+                return {"status": "PROMPT_BUDGET_EXCEEDED",
+                        "reason": "AUDIT_METADATA_TOO_LARGE"}
             return {"status": "READY", "source": source,
                     "research_sha": _sha(source), "team_id": team_id,
                     "team_signature": signature, "p1_batch_sha": p1_batch["batch_sha"],
