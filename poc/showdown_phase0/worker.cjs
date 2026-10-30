@@ -4,6 +4,7 @@
 // All observations injected here are SYNTHETIC and are not Champions game evidence.
 const readline = require("node:readline");
 const path = require("node:path");
+const fs = require("node:fs");
 const {stableStringify, fingerprint, classifySerializedDivergence} = require("./state_compare.cjs");
 const fixtureManifest = JSON.parse(fs.readFileSync(path.join(__dirname, "fixture_manifest.json"), "utf8"));
 const CASES = fixtureManifest.cases;
@@ -13,7 +14,6 @@ if (new Set(CASES.map(x => x.case_id)).size !== CASES.length ||
     CASES.some(x => !x.case_id || !x.preconditions || !x.expected ||
       !Array.isArray(x.mechanism_tags) || !x.mechanism_tags.length))
   throw Error("invalid synthetic case manifest");
-const fs = require("node:fs");
 
 const pinned = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const root = process.env.SHOWDOWN_ROOT;
