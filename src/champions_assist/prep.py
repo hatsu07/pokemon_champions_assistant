@@ -74,8 +74,9 @@ def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValid
     """Check the wire's completion claim; never manufacture a missing evaluation."""
     if result.prep_status != "COMPLETE":
         return PrepValidation(False, result.unfinished_reason or "PREP_NOT_COMPLETE")
-    if not result.preserve or not result.stopper or not result.closer:
-        return PrepValidation(False, "WIN_CONDITIONS_MISSING")
+    if not all(role in prep_input.selected_three for role in
+               (result.preserve, result.stopper, result.closer)):
+        return PrepValidation(False, "WIN_CONDITIONS_INVALID")
     pairs = {(item.our_pokemon, item.opponent_pokemon) for item in result.matchups_18}
     if len(result.matchups_18) != 18 or pairs != prep_input.expected_pairs:
         return PrepValidation(False, "MATCHUPS_18_INCOMPLETE")
