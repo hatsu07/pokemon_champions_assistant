@@ -15,4 +15,19 @@ function stableStringify(value) {
 function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
 }
-module.exports = {stableStringify, fingerprint};
+// Diagnose serialized diff without treating log-only mismatches as a full pass.
+// Log text can still carry tactically meaningful events: all mismatches fail.
+function classifySerializedDivergence(a, b) {
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  const tacticalA = {}, tacticalB = {};
+  for (const k of keys) if (k !== "log") {
+    tacticalA[k] = a?.[k]; tacticalB[k] = b?.[k];
+  }
+  return {
+    kind: fingerprint(tacticalA) === fingerprint(tacticalB) ? "LOG_ONLY" : "STATE_OR_QUEUE",
+    full_state_equal: fingerprint(a) === fingerprint(b),
+    non_log_equal: fingerprint(tacticalA) === fingerprint(tacticalB),
+    log_equal: fingerprint(a?.log || []) === fingerprint(b?.log || []),
+  };
+}
+module.exports = {stableStringify, fingerprint, classifySerializedDivergence};
