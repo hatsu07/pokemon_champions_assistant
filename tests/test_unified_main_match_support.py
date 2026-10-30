@@ -591,7 +591,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._worker=None
             panel._active_request_id=None
 
-    def test_selection_roles_complete_full_prep_without_second_api_call(self):
+    def test_selection_roles_do_not_certify_unassessed_cached_matchups(self):
         from copy import deepcopy
         from tests.test_prep_cache import loaded_assets, chosen_state
         from tests.test_match_replay import OWN, OPP, frame
@@ -619,7 +619,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         }
         panel._completed(payload)
         self.assertEqual(panel.state["phase"],"PREP")
-        self.assertEqual(panel.state["prep_status"],"CACHE_STRUCTURE_COMPLETE")
+        self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(len(panel.state["prep"]["matchups_18"]),18)
         self.assertEqual(panel.state["prep"]["win_roles_status"],"SELECTION_REUSED")
         self.assertEqual((panel.state["prep"]["preserve"],
@@ -627,9 +627,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
                           panel.state["prep"]["closer"]),OWN[:3])
         with patch.object(panel,"_start_prep_auto") as model_call:
             panel._cleanup()
-        model_call.assert_not_called()
-        # The first visible turn is handled from that same tentative state:
-        # no manual confirmation and no PREP API are required.
+        model_call.assert_called_once()
+        # The first visible turn still uses the tentative selection and
+        # cached hints, but no 18-field PREP is declared complete.
         updated,out=advance_observation(
             panel.state,assets,
             frame("MOVE_MENU",our_active=OWN[0],
@@ -671,17 +671,18 @@ class UnifiedMainWindowTests(unittest.TestCase):
     def test_cached_partial_prep_is_preserved_on_actual_selection_confirmation(self):
         """Match actual selection with cached 5/6 PREP; do not regenerate."""
         from copy import deepcopy
-        from tests.test_prep_cache import loaded_assets, chosen_state, roles
+        from tests.test_prep_cache import loaded_assets, chosen_state, evaluated_prep
         from tests.test_match_replay import OWN
         from champions_assist.match_replay import run_replay_prep
         temp,assets=loaded_assets()
         self.addCleanup(temp.cleanup)
         prepared=chosen_state(assets,partial=True)
-        with patch("champions_assist.match_replay._stream_json",return_value=roles()):
+        with patch("champions_assist.match_replay._stream_json",
+                   return_value=evaluated_prep(known=5)):
             cached,report=run_replay_prep(
                 state=prepared,assets=assets,access_token="mock",model="mock",
                 client_factory=lambda **kwargs:object())
-        self.assertEqual(report["status"],"PREP_CACHE_KNOWN_ONLY")
+        self.assertEqual(report["status"],"PREP_PARTIAL")
         self.assertEqual(len(cached["prep"]["matchups_known"]),15)
         self.assertEqual(len(cached["prep"]["unknown_pairs"]),3)
         panel=self.window._match_panel
@@ -700,7 +701,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         with patch.object(panel,"_start_prep_auto") as unnecessary:
             panel._confirm_selection()
         unnecessary.assert_not_called()
-        self.assertEqual(panel.state["prep_status"],"CACHE_KNOWN_ONLY")
+        self.assertEqual(panel.state["prep_status"],"PARTIAL_STRUCTURE_COMPLETE")
         self.assertEqual(len(panel.state["prep"]["matchups_known"]),15)
         self.assertEqual(panel.entries[-1]["status"],"CONFIRMED")
 
@@ -1412,7 +1413,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._auto_running=True
         panel._prep_thread=object()
         panel._prep_cancel_event.clear()
-        panel._prep_timer.start(40000)
+        panel._prep_timer.start(90000)
         image=np.zeros((100,160,3),dtype=np.uint8)
         try:
             with patch.object(panel,"_send_pending") as queued:
@@ -1460,7 +1461,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._pending_batch=None
             panel._stop_auto()
 
-    def test_prep_soft_deadline_keeps_late_result_until_next_ai_request(self):
+    def test_prep_soft_budget_is_not_an_arbitrary_forty_second_hard_cap(self):
         panel=self.window._match_panel
         panel.state={"phase":"PREP","prep_status":"RUNNING"}
         panel._prep_thread=object()
