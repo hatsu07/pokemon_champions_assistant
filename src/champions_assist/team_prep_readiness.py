@@ -221,7 +221,11 @@ def team_readiness(data_root: str | Path, team_id: str,
     }
     try:
         current_sha = _digest(team_path)
-        signatures = team_signatures(team_path)
+        members = TeamDocument.load(team_path).members
+        signatures = [member_signature(member, SET_FIELDS) for member in members]
+        regulations = [(member.get("reg") or "UNDECLARED").strip()
+                       for member in members]
+        current_regulation = regulations[0] if regulations else None
         if len(signatures) != 6:
             result["status"] = "構築未完成"
             return result
@@ -265,6 +269,7 @@ def team_readiness(data_root: str | Path, team_id: str,
     if not root.is_dir():
         return result
     found_stale = False
+    regulation_stale = False
     candidates = []
     for manifest_path in root.glob("*/manifest.json"):
         try:
@@ -277,12 +282,19 @@ def team_readiness(data_root: str | Path, team_id: str,
             if catalog.get("member_signatures") != signatures:
                 found_stale = True
                 continue
+            if (catalog.get("regulation") != current_regulation
+                    or manifest.get("team_regulations") != regulations):
+                regulation_stale = True
+                continue
             candidates.append((manifest_path.stat().st_mtime, manifest_path,
                                manifest, catalog_path, catalog))
         except (OSError, ValueError, TypeError):
             continue
     if not candidates:
-        if found_stale:
+        if regulation_stale:
+            result["status"] = "再準備が必要"
+            result["stale_reasons"].append("レギュレーションが変更されました")
+        elif found_stale:
             result["status"] = "再準備が必要"
         return result
     # Prefer the asset matching *current* Champions sources, rather than the
@@ -333,7 +345,9 @@ def team_readiness(data_root: str | Path, team_id: str,
                     or current_baseline_sha is None):
                 return False
             if not (
-                evidence.get("master_sha256") == current_masters
+                evidence.get("regulation") == current_regulation
+                and entry.get("team_regulations") == regulations
+                and evidence.get("master_sha256") == current_masters
                 and entry.get("champions_master_sha256") == current_masters
                 and entry.get("master_matrix_sha256") == current_matrix_sha
                 and entry.get("master_lookup_sha256") == current_lookup_sha
