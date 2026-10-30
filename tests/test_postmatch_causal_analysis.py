@@ -446,10 +446,10 @@ class CausalResearchTests(unittest.TestCase):
         # 10k+ characters of SHA-matched gate rules must not overwhelm 15
         # independently frozen, evidence-rich turn records.
         sections = "".join(
-            f"\\n[SECTION_{idx:02}]\\n" + ("rule details " * 28) + "\\n"
+            f"\n[SECTION_{idx:02}]\n" + ("rule details " * 28) + "\n"
             for idx in range(25))
         self.gate.write_text(
-            GATE_TEXT + "\\n[SWITCH_GATE]\\nREJECT unsafe landing\\n"
+            GATE_TEXT + "\n[SWITCH_GATE]\nREJECT unsafe landing\n"
             + sections, encoding="utf-8")
         self.gate_sha=sha256(self.gate.read_bytes()).hexdigest()
         for index in range(3):
@@ -504,7 +504,7 @@ class CausalResearchTests(unittest.TestCase):
             match_id="match-2",model="m",access_token="mock",
             gate_file=self.gate,client_factory=self.factory())
         self.assertEqual(first["status"],"STORED_HOLD_UNVERIFIED")
-        self.gate.write_text(GATE_TEXT+"\\n[SWITCH_GATE]\\nREJECT unsafe\\n",
+        self.gate.write_text(GATE_TEXT+"\n[SWITCH_GATE]\nREJECT unsafe\n",
                              encoding="utf-8")
         again=self.p2.analyze_after_review(
             match_id="match-2",model="m",access_token="mock",
