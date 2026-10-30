@@ -2,11 +2,14 @@
 // Static source-to-source comparison only; NOT proof of in-game damage compatibility.
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const root = process.env.SHOWDOWN_ROOT;
 if (!root) throw new Error("SHOWDOWN_ROOT required");
 const {Dex} = require(path.join(root, "dist", "sim", "index.js"));
 const dex = Dex.forFormat("gen9championsbssregmc");
-const base = path.join(__dirname, "masters");
+const base = path.resolve(process.env.CHAMPIONS_MASTERS_DIR || path.join(__dirname, "masters"));
+const MASTER_FILES = ["Pokemon_Champions_MC_move_master.csv", "Pokemon_Champions_MC_usable_pokemon.csv",
+  "Pokemon_Champions_MC_pokemon_learnsets_linked.csv", "Pokemon_Champions_MC_usable_held_items.csv"];
 
 const types = {
   "ノーマル": "Normal", "ほのお": "Fire", "みず": "Water", "でんき": "Electric",
@@ -43,8 +46,18 @@ function rows(csv) {
     return Object.fromEntries(headers.map((key, i) => [key, arr[i]]));
   });
 }
-function load(name) {return rows(fs.readFileSync(path.join(base, name), "utf8"));}
+function load(name) {
+  if (!MASTER_FILES.includes(name)) throw new Error("unexpected master input " + name);
+  return rows(fs.readFileSync(path.join(base, name), "utf8"));
+}
+function sourceHashes() {
+  return Object.fromEntries(MASTER_FILES.map(name => {
+    const data = fs.readFileSync(path.join(base, name));
+    return [name, crypto.createHash("sha256").update(data).digest("hex")];
+  }));
+}
 function compare() {
+  const master_sha256 = sourceHashes(); // also fail fast if any required file is missing
   const moves = load("Pokemon_Champions_MC_move_master.csv");
   const pokemon = load("Pokemon_Champions_MC_usable_pokemon.csv");
   const links = load("Pokemon_Champions_MC_pokemon_learnsets_linked.csv");
@@ -92,7 +105,7 @@ function compare() {
   }
   const uniqueLinks = new Map(links.map(x => [x.LearnsetKey, x]));
   for (const [key, row] of uniqueLinks) {
-    const got = dex.species.getLearnsetData(key);
+    const got = dex.species.getLearnsetData(key) || {};
     const expected = (row["習得MoveKey一覧"] || "").split(",").map(x=>x.trim()).filter(Boolean);
     const known = new Set(Object.keys(got.learnset || {}));
     for (const id of expected) check("learnset_membership", key, id, true, known.has(id));
@@ -101,7 +114,7 @@ function compare() {
     const name = row["英語名"];
     if (name) check("item_coverage", name, "exists", true, !!dex.items.get(name).exists);
   }
-  return {source: "Champions fixed masters versus pinned Showdown mod, static comparison",
+  return {status: "DIAGNOSTIC_ONLY", master_sha256, master_scope: "4 source CSV files / M-C candidate; observation unverified", source: "Champions fixed masters versus pinned Showdown mod, static comparison",
     format: "gen9championsbssregmc", upstream_sha: "ccfaa20f32af363569cd21a9d501b2bc1ded26b1",
     totals, mismatch_count: discrepancies.length,
     mismatch_examples: discrepancies.slice(0, 100),
@@ -113,7 +126,13 @@ function compare() {
     ]};
 }
 if (require.main === module) {
-  const result = compare();
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  try {
+    const result = compare();
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  } catch (error) {
+    process.stdout.write(JSON.stringify({status: "NOT_RUN", reason: String(error.message),
+      master_directory: base, format: "gen9championsbssregmc"}) + "\n");
+    process.exitCode = 2;
+  }
 }
 module.exports = {rows, compare};
