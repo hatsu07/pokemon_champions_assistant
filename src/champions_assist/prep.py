@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 LEAD_TAGS = ("ACT", "KO", "DPS", "PRI", "S", "OUR", "OPP", "SAFE", "PROC", "LOCK", "MEGA")
@@ -31,6 +31,7 @@ class PrepInput:
     lead: str
     opponent_preview_six: tuple[str, str, str, str, str, str]
     matrix_rows_six: tuple[str, str, str, str, str, str]
+    registered_moves: Mapping[str, tuple[str, ...]] | None = None
 
     @property
     def expected_pairs(self) -> frozenset[tuple[str, str]]:
@@ -65,12 +66,14 @@ def build_prep_input(
     lead: str,
     opponent_preview_six: tuple[str, str, str, str, str, str],
     matrix_rows_six: tuple[str, str, str, str, str, str],
+    *, registered_moves: Mapping[str, tuple[str, ...]] | None = None,
 ) -> PrepInput:
     if len(set(selected_three)) != 3 or lead not in selected_three:
         raise ValueError("PREP requires three distinct selected Pokémon and a selected lead")
     if len(opponent_preview_six) != 6 or len(matrix_rows_six) != 6:
         raise ValueError("PREP requires exactly six cached opponent matrix rows")
-    return PrepInput(selected_three, lead, opponent_preview_six, matrix_rows_six)
+    return PrepInput(selected_three, lead, opponent_preview_six, matrix_rows_six,
+                     registered_moves)
 
 
 def _parse_eval_code(code: str) -> dict[str, str] | None:
@@ -83,7 +86,43 @@ def _parse_eval_code(code: str) -> dict[str, str] | None:
     return values
 
 
-def _validate_assessed_fields(parsed: dict[str, str], *, lead: bool) -> str | None:
+# Marker text that looks populated but is not a registered action or move.
+ABSTRACT_MOVE_VALUES = frozenset({
+    "move", "known_move", "registered", "registered_move", "registered move",
+    "known", "candidate", "attack", "conditional", "conditional_attack",
+    "best_move", "max_move", "max_damage", "some_move", "technical",
+    "verified", "simulated_move",
+})
+
+
+def _concrete_move(value: str, registered: tuple[str, ...] | None) -> bool:
+    move = value.strip()
+    if (not move or move.casefold() in ABSTRACT_MOVE_VALUES
+            or move.casefold() in UNKNOWN_EVALUATION):
+        return False
+    return registered is None or move in registered
+
+
+def _concrete_first_action(value: str, *, lead_name: str,
+                           selected: tuple[str, ...],
+                           registered: tuple[str, ...] | None) -> bool:
+    kind, sep, target = value.strip().partition(":")
+    if not sep or not target:
+        return False
+    if kind == "move":
+        return _concrete_move(target, registered)
+    if kind == "switch":
+        return target in selected and target != lead_name
+    if kind == "pivot":
+        move, arrow, destination = target.partition("→")
+        return (bool(arrow) and _concrete_move(move, registered)
+                and destination in selected and destination != lead_name)
+    return False
+
+
+def _validate_assessed_fields(parsed: dict[str, str], *, lead: bool,
+                              own_name: str = "", selected: tuple[str, ...] = (),
+                              registered: tuple[str, ...] | None = None) -> str | None:
     """Unknown evidence is permitted; unassessed mandatory fields are not.
 
     Requiring at least one independently assessed tactical dimension for
@@ -99,6 +138,14 @@ def _validate_assessed_fields(parsed: dict[str, str], *, lead: bool) -> str | No
         return "PROCESSOR_NOT_ASSESSED"
     if lead and any(parsed[tag].strip().casefold() in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
         return "LEAD_ACTION_NOT_ASSESSED"
+    if not _concrete_move(parsed["OUR"], registered):
+        return "MAX_DAMAGE_MOVE_NOT_REGISTERED"
+    if lead:
+        if not _concrete_move(parsed["DPS"], registered):
+            return "MAX_DAMAGE_MOVE_NOT_REGISTERED"
+        if not _concrete_first_action(parsed["ACT"], lead_name=own_name,
+                                      selected=selected, registered=registered):
+            return "FIRST_ACTION_NOT_CONCRETE"
     tactical = (
         ("KO", "PRI", "S", "OUR", "OPP", "SAFE", "LOCK", "MEGA")
         if lead else ("S", "OUR", "OPP", "PRI", "SAFE")
@@ -134,7 +181,10 @@ def validate_prep_result(prep_input: PrepInput, result: PrepResult) -> PrepValid
         if parsed is None:
             return PrepValidation(False, "EVAL_CODE_INVALID")
         failure = _validate_assessed_fields(
-            parsed, lead=item.our_pokemon == prep_input.lead)
+            parsed, lead=item.our_pokemon == prep_input.lead,
+            own_name=item.our_pokemon, selected=prep_input.selected_three,
+            registered=(prep_input.registered_moves.get(item.our_pokemon, ())
+                        if prep_input.registered_moves is not None else None))
         if failure:
             return PrepValidation(False, failure)
     return PrepValidation(True, "OK")
@@ -145,6 +195,7 @@ def validate_partial_prep_result(
     selected_three: tuple[str, ...], lead: str,
     known_opponents: tuple[str, ...], unknown_slots: tuple[str, ...],
     result: PrepResult,
+    *, registered_moves: Mapping[str, tuple[str, ...]] | None = None,
 ) -> PrepValidation:
     """Validate only observed opponents; never certify the missing 3/6 pairs.
 
@@ -175,7 +226,10 @@ def validate_partial_prep_result(
         if parsed is None:
             return PrepValidation(False, "EVAL_CODE_INVALID")
         failure = _validate_assessed_fields(
-            parsed, lead=row.our_pokemon == lead)
+            parsed, lead=row.our_pokemon == lead,
+            own_name=row.our_pokemon, selected=selected_three,
+            registered=(registered_moves.get(row.our_pokemon, ())
+                        if registered_moves is not None else None))
         if failure:
             return PrepValidation(False, failure)
     return PrepValidation(True, "PARTIAL_KNOWN_ONLY")
@@ -184,7 +238,7 @@ def validate_partial_prep_result(
 
 def mocked_complete_prep(prep_input: PrepInput) -> PrepResult:
     """A labelled simulation fixture, not a battle evaluation or tactical heuristic."""
-    lead_code = ("ACT=SIMULATED|KO=unknown|DPS=SIMULATED|PRI=SIMULATED|"
+    lead_code = ("ACT=move:SIMULATED|KO=unknown|DPS=SIMULATED|PRI=SIMULATED|"
                  "S=unknown|OUR=SIMULATED|OPP=unknown|SAFE=unknown|"
                  "PROC=SIMULATED|LOCK=unknown|MEGA=unknown")
     bench_code = ("S=SIMULATED|OUR=SIMULATED|OPP=unknown|PRI=unknown|"
