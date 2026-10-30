@@ -192,7 +192,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         self.assertEqual(report["images_sent"],0)
         def second_reply(_client,**kwargs):
             submitted.append(json.loads(kwargs["content"][0]["text"]))
-            return model_reply([unresolved(proof)])
+            return reply_with_wire_ids(
+                kwargs,model_reply([unresolved(proof)]),raw+rows(6,365))
         with patch("champions_assist.match_replay._stream_json",
                    side_effect=second_reply):
             second,_=run_replay_text_action(
@@ -301,7 +302,7 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
                             "switch_target":"","warning":""}
         with patch("champions_assist.match_replay._stream_json",
                    side_effect=lambda _client,**kw:
-                       reply_with_wire_ids(kw,response,raw)):
+                       reply_with_wire_ids(kw,response,proof)):
             after,report=run_replay_text_action(
                 state=state,assets=assets,access_token="unused",model="test",
                 expected_screen_label="TURN_ACTION",
@@ -537,7 +538,8 @@ class ModelSelectedOcrContextTests(unittest.TestCase):
         response=model_reply([unresolved(proof)],own="ドドゲザン",
                              processed=[proof])
         with patch("champions_assist.match_replay._stream_json",
-                   return_value=response):
+                   side_effect=lambda _client,**kw:
+                       reply_with_wire_ids(kw,response,raw)):
             after,report=run_replay_text_action(
                 state=battle_state(assets),assets=assets,
                 access_token="unused",model="test",
