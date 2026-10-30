@@ -489,6 +489,30 @@ class Phase8SettingsTestCase(unittest.TestCase):
         self.assertTrue(Path(original.csv_path).exists())
         self.assertEqual(self.service.settings.teams.active_team_id, original.team_id)
 
+    def test_reopened_settings_prefers_pending_team_and_preserves_it(self) -> None:
+        first=self.service.import_team(
+            PROJECT_ROOT/"masters"/"Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(first.team_id,match_active=False)
+        source=Path(first.csv_path).read_text(encoding="utf-8")
+        alternative=self.root/"settings-pending.csv"
+        alternative.write_text(source.replace("BASE_SELECT=","BASE_SELECT_NOTE="),
+                               encoding="utf-8")
+        second=self.service.import_team(alternative,match_active=False)
+        self.assertEqual(self.service.select_team(second.team_id,match_active=True),
+                         "PENDING_NEXT_MATCH")
+        dialog=SettingsDialog(self.service,match_active=lambda:True)
+        try:
+            self.assertEqual(dialog._selected_team_id,second.team_id)
+            self.assertEqual(dialog._selected_record().team_id,second.team_id)
+            dialog._save()
+            self.assertEqual(self.service.settings.teams.pending_team_id,
+                             second.team_id)
+            self.assertEqual(self.service.settings.teams.active_team_id,
+                             first.team_id)
+        finally:
+            dialog.close()
+
     def test_team_import_round_trip_and_deferred_switch_feed_the_next_preload_only(self) -> None:
         initial = self.service.import_team(PROJECT_ROOT / "masters" / "Pokemon_Champions_MC_team_2026-10-03.csv", match_active=False)
         self.assertEqual(len((Path(initial.csv_path)).read_text(encoding="utf-8").splitlines()), 8)
