@@ -222,6 +222,64 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(contexts[0]["cached_win_roles"]["preserve"],OWN[0])
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
 
+
+    def test_all_unassessed_required_tags_cannot_be_declared_complete(self):
+        from champions_assist.prep import (
+            build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+            validate_partial_prep_result, mocked_complete_prep,
+        )
+        from itertools import product
+        own=tuple(OWN[:3])
+        lead=own[0]
+        inp=build_prep_input(own,lead,tuple(OPP),
+                             tuple("matrix" for _ in OPP))
+        lead_code=("ACT=attack|KO=?|DPS=registered_move|PRI=?|S=?|OUR=?|"
+                   "OPP=?|SAFE=?|PROC=unverified|LOCK=?|MEGA=?")
+        bench_code="S=?|OUR=?|OPP=?|PRI=?|SAFE=?|PROC=unverified"
+        rows=tuple(PrepMatchup(mon,opp,lead_code if mon==lead else bench_code)
+                   for mon,opp in product(own,OPP))
+        failed=PrepResult("COMPLETE",rows,*own)
+        self.assertEqual(validate_prep_result(inp,failed).reason,
+                         "REQUIRED_FIELD_NOT_ASSESSED")
+        self.assertFalse(validate_prep_result(inp,failed).complete)
+        partial=PrepResult("PARTIAL",tuple(
+            r for r in rows if r.opponent_pokemon!=OPP[-1]),*own)
+        v=validate_partial_prep_result(own,lead,tuple(OPP[:5]),
+                                       ("未判明相手6",),partial)
+        self.assertFalse(v.complete)
+        self.assertEqual(v.reason,"REQUIRED_FIELD_NOT_ASSESSED")
+        # The labelled offline mock must still explicitly assess fields.
+        self.assertTrue(validate_prep_result(inp,mocked_complete_prep(inp)).complete)
+
+    def test_evidence_unknown_is_not_the_same_as_missing_evaluation(self):
+        from champions_assist.prep import (
+            build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+            prep_evidence_status,
+        )
+        from itertools import product
+        own=tuple(OWN[:3])
+        inp=build_prep_input(own,own[0],tuple(OPP),
+                             tuple("matrix" for _ in OPP))
+        lead=("ACT=attack|KO=unknown|DPS=registered_move|PRI=unknown|"
+              "S=unknown|OUR=unknown|OPP=unknown|SAFE=unknown|"
+              "PROC=unverified|LOCK=unknown|MEGA=unknown")
+        bench=("S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
+               "SAFE=unknown|PROC=unverified")
+        rows=tuple(PrepMatchup(mon,opp,lead if mon==own[0] else bench)
+                   for mon,opp in product(own,OPP))
+        result=PrepResult("COMPLETE",rows,*own)
+        validation=validate_prep_result(inp,result)
+        self.assertFalse(validation.complete)
+        self.assertEqual(validation.reason,"MATCHUP_NOT_ASSESSED")
+        evaluated_rows=tuple(PrepMatchup(
+            r.our_pokemon,r.opponent_pokemon,
+            r.eval_code.replace("OUR=unknown","OUR=registered_move"))
+            for r in rows)
+        evaluated=PrepResult("COMPLETE",evaluated_rows,*own)
+        self.assertTrue(validate_prep_result(inp,evaluated).complete)
+        self.assertEqual(prep_evidence_status(evaluated_rows),
+                         "ASSESSED_WITH_UNCERTAINTY")
+
     def test_invalid_roles_never_promoted(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
