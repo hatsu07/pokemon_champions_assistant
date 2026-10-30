@@ -52,9 +52,11 @@ class OcrCaptureDebugWriter:
                 pass
         self.max_samples = max(1, int(max_samples))
         self.max_bytes = max(1, int(max_bytes))
-        self.samples = 0
+        # A stop/restart of capture within one match must not reset quotas.
+        self.samples = sum(1 for _ in self.path.glob("frame-*.json"))
         self.dropped = 0
-        self._bytes = 0
+        self._bytes = sum(p.stat().st_size for p in self.path.iterdir()
+                          if p.is_file())
         self._closed = False
         self._last_by_reason: dict[tuple[str, str], float] = {}
         self._queue: Queue[tuple] = Queue(maxsize=4)
