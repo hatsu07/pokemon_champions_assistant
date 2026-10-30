@@ -229,9 +229,11 @@ class PostmatchCausalStore:
                 -len(pair[1]), -len(pair[0]["evidence_match_ids"]),
                 pair[0]["candidate_sha"]))
             candidate, new_evidence = relevant[0]
-            selected = sorted(new_evidence)[:MAX_MATCHES]
+            selected = [match_id]
+            selected.extend(mid for mid in sorted(new_evidence)
+                            if mid != match_id)
             selected.extend(mid for mid in sorted(candidate["evidence_match_ids"])
-                            if mid not in new_evidence) 
+                            if mid not in new_evidence)
             selected = selected[:MAX_MATCHES]
 
             snapshots = []
