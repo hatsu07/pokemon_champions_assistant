@@ -717,6 +717,7 @@ class SettingsDialog(QDialog):
         save_edit = QPushButton("構築を保存")
         save_edit.clicked.connect(self._save_team_edit)
         layout.addWidget(save_edit)
+        self.save_team_edit_button = save_edit
         self.team_status = QLabel("構築を選択してください。手入力値は固定マスターに無い場合、未確認または無効として扱います。")
         self.team_status.setWordWrap(True)
         layout.addWidget(self.team_status)
@@ -754,6 +755,9 @@ class SettingsDialog(QDialog):
         self.prep_stage_table.setHorizontalHeaderLabels(["工程", "状態", "根拠・進捗"])
         self.prep_stage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.prep_stage_table.setMaximumHeight(248)
+        self.prep_stage_table.setColumnWidth(0, 210)
+        self.prep_stage_table.setColumnWidth(1, 100)
+        self.prep_stage_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.prep_stage_table)
         layout.addWidget(QLabel("選択構築のデータ充足（AI評価と実戦検証は別集計）"))
         self.prep_readiness_detail = QPlainTextEdit()
@@ -779,7 +783,12 @@ class SettingsDialog(QDialog):
         self.team_validation_details.setMaximumHeight(110)
         self.team_validation_details.setPlainText("構築を選択してください")
         layout.addWidget(self.team_validation_details)
-        return tab
+        # Long per-team readiness details must remain accessible on a
+        # standard-height Windows settings dialog, not clipped below tabs.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(tab)
+        return scroll
 
     def _chatgpt_tab(self) -> QWidget:
         tab = QWidget()
@@ -1493,6 +1502,8 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "準備を開始できません", str(exc))
             return
         self._active_prep_team_id = record.team_id
+        self.team_editor.setEnabled(False)
+        self.save_team_edit_button.setEnabled(False)
         self.matchup_ai_button.setEnabled(False)
         self.matchup_stop_button.setEnabled(True)
         self.save_button.setEnabled(False)
@@ -1554,6 +1565,8 @@ class SettingsDialog(QDialog):
     def _matchup_ai_finished(self) -> None:
         self._matchup_ai_worker = None
         self._active_prep_team_id = None
+        self.team_editor.setEnabled(True)
+        self.save_team_edit_button.setEnabled(True)
         self.matchup_ai_button.setEnabled(True)
         self.matchup_stop_button.setEnabled(False)
         self.save_button.setEnabled(True)
@@ -1688,6 +1701,9 @@ class SettingsDialog(QDialog):
         return updated
 
     def _save_team_edit(self) -> None:
+        if self._matchup_ai_worker is not None:
+            QMessageBox.warning(self, "構築を編集できません", "PREPデータ準備中は構築の保存ができません。")
+            return
         try:
             updated = self._persist_team_editor()
             if updated is None:
