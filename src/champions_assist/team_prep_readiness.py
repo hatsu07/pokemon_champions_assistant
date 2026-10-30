@@ -17,7 +17,7 @@ from .matchup_evidence import member_signature, SOURCE_FILES, _source_hashes
 from .team_live_assets import (
     SET_FIELDS, MATRIX, LOOKUP, BASE_TEAM, _jsonhash, _parsed_team,
 )
-from .team_management import TeamDocument
+from .team_management import TeamDocument, regulation_scope
 
 STAGES = (
     ("team", "構築情報・整合性確認"),
@@ -221,16 +221,17 @@ def team_readiness(data_root: str | Path, team_id: str,
     }
     try:
         current_sha = _digest(team_path)
-        members = TeamDocument.load(team_path).members
+        doc = TeamDocument.load(team_path)
+        current_regulation, registered_regulations = regulation_scope(doc)
+        members = doc.members
         signatures = [member_signature(member, SET_FIELDS) for member in members]
-        regulations = [(member.get("reg") or "UNDECLARED").strip()
-                       for member in members]
-        current_regulation = regulations[0] if regulations else None
+        regulations = list(registered_regulations)
         if len(signatures) != 6:
             result["status"] = "構築未完成"
             return result
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError) as exc:
         result["status"] = "構築確認不可"
+        result["stale_reasons"].append(str(exc)[:200])
         return result
 
     ledger = progress_path(data_root, team_id)
@@ -283,6 +284,7 @@ def team_readiness(data_root: str | Path, team_id: str,
                 found_stale = True
                 continue
             if (catalog.get("regulation") != current_regulation
+                    or manifest.get("team_regulation") != current_regulation
                     or manifest.get("team_regulations") != regulations):
                 regulation_stale = True
                 continue
@@ -346,6 +348,7 @@ def team_readiness(data_root: str | Path, team_id: str,
                 return False
             if not (
                 evidence.get("regulation") == current_regulation
+                and entry.get("team_regulation") == current_regulation
                 and entry.get("team_regulations") == regulations
                 and evidence.get("master_sha256") == current_masters
                 and entry.get("champions_master_sha256") == current_masters
