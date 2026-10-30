@@ -25,8 +25,9 @@ Fixed candidate upstream SHA:
 This source SHA is only the pinned PoC candidate, **not proof of Champions
 compatibility**. The runtime is disabled unless a prebuilt Showdown tree has
 `dist/sim/index.js` and a text marker `.champions-source-sha` with that SHA,
-plus a local Node executable. Do not create the marker without verifying the
-upstream checkout. Python's LocalSimulatorWorker requires explicit paths.
+plus a local Node executable. The worker also checks the staging manifest's
+SHA256 fields for Node, worker, Showdown entry and license files; a bare marker
+is not sufficient. Do not create the marker without verifying the upstream checkout. Python's LocalSimulatorWorker requires explicit paths.
 This project does not download or update anything while playing.
 
 Windows onedir bundling of Node, licenses, dependencies and validated
