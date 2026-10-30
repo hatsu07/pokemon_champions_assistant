@@ -31,14 +31,14 @@ const own = [
 function opponents(hypothesis) {
   return [
     set("Hippowdon", hypothesis
-      ? ["Earthquake", "Yawn", "Slack Off", "Stealth Rock"]
+      ? ["Yawn", "Earthquake", "Slack Off", "Stealth Rock"]
       : ["Earthquake", "Stealth Rock", "Slack Off", "Yawn"],
     hypothesis ? "Rocky Helmet" : "Sitrus Berry", "Sand Stream"),
     set("Corviknight", ["Roost", "U-turn", "Iron Defense", "Body Press"], "Leftovers", "Pressure"),
     set("Lucario", ["Aura Sphere", "Dark Pulse", "Nasty Plot", "Flash Cannon"], "Lucarionite", "Inner Focus"),
   ];
 }
-function create(seed, hypothesis = 0) {
+function create(seed, hypothesis = 0, runOpeningTurn = true) {
   const b = new Battle({formatid: "gen9championsbssregmc", seed,
     p1: {name: "Synthetic P1", team: own},
     p2: {name: "Synthetic P2", team: opponents(hypothesis)}, strictChoices: true});
@@ -46,7 +46,7 @@ function create(seed, hypothesis = 0) {
   if (b.requestState === "teampreview") b.makeChoices("team 123", "team 123");
   if (b.p1.pokemon.length !== 3 || b.p2.pokemon.length !== 3)
     throw new Error("expected selected 3 vs 3");
-  if (b.requestState === "move") b.makeChoices("move 1", "move 1");
+  if (runOpeningTurn && b.requestState === "move") b.makeChoices("move 1", "move 1");
   return b;
 }
 function projection(b) {
@@ -102,29 +102,80 @@ function alter(b, kind) {
     default: throw new Error("unknown fixture");
   }
 }
-function fork(b, p1, p2) {
-  const c = copy(b);
-  if (c.requestState !== "move") throw new Error("not a move window");
-  c.makeChoices(p1, p2);
+// Only public, actually visible synthetic board fields. Opponent hidden moves,
+// item and ability are *not* promoted into an observation.
+function observed(b) {
+  return {turn: b.turn, requestState: b.requestState,
+    weather: b.field.weather, sides: b.sides.map(s => ({
+      conditions: Object.keys(s.sideConditions).sort(),
+      active: s.active.map(p => p && ({
+        species: p.species.id, hp: p.hp, status: p.status,
+        boosts: p.boosts, volatiles: Object.keys(p.volatiles).sort(),
+      })),
+    }))};
+}
+function assertInjected(b, kind) {
+  const a = b.p1.active[0];
+  switch (kind) {
+    case "hp_status_pp_boost":
+      if (a.status !== "par" || a.boosts.atk !== 1 || a.hp >= a.maxhp ||
+        a.moveSlots[0].pp >= a.moveSlots[0].maxpp) throw Error("status/AP/HP/PP injection lost");
+      break;
+    case "item_choice":
+      if (a.item !== "choicescarf" || !a.volatiles.choicelock) throw Error("choice lock lost");
+      break;
+    case "weather_screens":
+      if (b.field.weather !== "raindance" || !b.p1.sideConditions.reflect)
+        throw Error("weather or reflect missing");
+      break;
+    case "consumed_item":
+      if (a.item !== "") throw Error("consumed item was restored");
+      break;
+    case "forced_switch":
+      if (b.requestState !== "switch" || !a.switchFlag) throw Error("forced switch request lost");
+      break;
+  }
+}
+function executeBranch(snapshot, kind) {
+  const c = copy(snapshot);
+  const before = digest(c);
+  const beforeTurn = c.turn;
+  const beforeActive = c.p1.active[0]?.position;
+  if (kind === "forced_switch") {
+    if (c.requestState !== "switch") throw Error("switch request expected");
+    if (!c.choose("p1", "switch 2")) throw Error("forced switch choice illegal");
+    if (c.p1.active[0]?.position === beforeActive) throw Error("switch unresolved");
+    if (c.p1.active[0]?.position !== 1) throw Error("unexpected switch destination");
+  } else {
+    if (c.requestState !== "move") throw Error("move request expected");
+    if (!c.choose("p1", "move 1")) throw Error("player 1 move illegal");
+    if (!c.choose("p2", "move 1")) throw Error("player 2 move illegal");
+    if (c.turn <= beforeTurn && c.requestState === "move") throw Error("move turn not resolved");
+  }
+  if (digest(c) === before) throw Error("legal action produced unchanged board");
   return c;
 }
 function testCase(b, kind) {
+  const milestones = {serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0};
   const original = digest(b);
   const isolated = copy(b);
   alter(isolated, kind);
   const expected = digest(isolated);
+  milestones.serialized_ok = 1;
   const reconstructed = copy(isolated);
-  if (digest(reconstructed) !== expected) throw new Error("roundtrip mismatch");
-  if (digest(b) !== original) throw new Error("source state mutated");
-  if (kind === "normal" || kind === "hp_status_pp_boost" || kind === "weather_screens" || kind === "consumed_item" || kind === "item_choice") {
-    if (reconstructed.requestState === "move") {
-      const a = fork(reconstructed, "move 1", "move 1");
-      const a2 = fork(reconstructed, "move 1", "move 1");
-      if (digest(a) !== digest(a2)) throw new Error("seeded branch diverged");
-      if (digest(reconstructed) !== expected) throw new Error("branch mutated snapshot");
-    }
-  }
-  return {status: "PASS_SYNTHETIC", digest: expected};
+  if (digest(reconstructed) !== expected) throw Error("roundtrip mismatch");
+  assertInjected(reconstructed, kind);
+  milestones.reconstructed_ok = 1;
+  if (digest(b) !== original) throw Error("source state mutated");
+  const a = executeBranch(reconstructed, kind);
+  milestones.choice_legal = 1;
+  const a2 = executeBranch(reconstructed, kind);
+  if (digest(a) !== digest(a2)) throw Error("seeded branch diverged");
+  if (digest(reconstructed) !== expected || digest(b) !== original)
+    throw Error("branch mutated frozen source");
+  milestones.branch_resolved = 1;
+  return {status: "PASS_SYNTHETIC", digest: expected, milestones,
+    branch_digest: digest(a), action_kind: kind === "forced_switch" ? "switch" : "move"};
 }
 function probe() {
   const results = {};
@@ -135,19 +186,30 @@ function probe() {
     catch (e) { results[kind] = {status: "UNSUPPORTED", detail: String(e.message)}; }
   }
   try {
-    const a = create([9, 8, 7, 6], 0), other = create([9, 8, 7, 6], 1);
+    // Freeze a common observable board before *either* unknown set acts.
+    const a = create([9, 8, 7, 6], 0, false);
+    const other = create([9, 8, 7, 6], 1, false);
     const before = digest(a), second = digest(other);
-    const fork1 = copy(a), fork2 = copy(other);
-    if (digest(a) !== before || digest(other) !== second) throw new Error("hypothesis mutated");
-    results.unknown_sets = {status: "PASS_SYNTHETIC", independently_instantiated: true,
-      changed_initial_model: before !== second,
-      branch_1: digest(fork1), branch_2: digest(fork2)};
+    const publicBefore = JSON.stringify(observed(a));
+    if (publicBefore !== JSON.stringify(observed(other))) throw Error("different observed input");
+    if (a.requestState !== "move" || other.requestState !== "move") throw Error("not at common move turn");
+    const resolvedA = executeBranch(a, "normal");
+    const resolvedB = executeBranch(other, "normal");
+    const outcomesDiffer = JSON.stringify(observed(resolvedA)) !== JSON.stringify(observed(resolvedB));
+    if (!outcomesDiffer) throw Error("distinct hypotheses did not change visible result");
+    if (digest(a) !== before || digest(other) !== second ||
+      JSON.stringify(observed(a)) !== publicBefore ||
+      JSON.stringify(observed(other)) !== publicBefore) throw Error("hypotheses polluted observed state");
+    results.unknown_sets = {status: "PASS_SYNTHETIC", same_observed_input: true,
+      same_action: "move 1 / move 1", observed_outcomes_differ: true,
+      sources_unchanged: true, changed_initial_model: before !== second,
+      branch_1: digest(resolvedA), branch_2: digest(resolvedB)};
   } catch (e) { results.unknown_sets = {status: "UNSUPPORTED", detail: String(e.message)}; }
   return {engine_sha: pinned, format: b.format.id, format_mod: b.format.mod,
     sample: "synthetic; not an observed Champions game", results};
 }
 function benchmark(count) {
-  if (!Number.isInteger(count) || count < 100 || count > 10000) throw new Error("count must be 100..10000");
+  if (!Number.isInteger(count) || count < 100 || count > 10000) throw Error("count must be 100..10000");
   const kinds = ["normal", "hp_status_pp_boost", "item_choice", "weather_screens", "consumed_item", "forced_switch"];
   const base = create([11, 22, 33, 44]);
   const warmup = [];
@@ -155,27 +217,37 @@ function benchmark(count) {
     const t = process.hrtime.bigint(); copy(base);
     warmup.push(Number(process.hrtime.bigint() - t) / 1e6);
   }
+  const counts = {requested: count, serialized_ok: 0, reconstructed_ok: 0,
+    choice_legal: 0, branch_resolved: 0, unsupported: 0};
+  const by_kind = Object.fromEntries(kinds.map(k => [k, {requested: 0,
+    serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0, unsupported: 0}]));
   const samples = [], unsupported = {};
   for (let i = 0; i < count; i++) {
-    const kind = kinds[i % kinds.length];
+    const kind = kinds[i % kinds.length], group = by_kind[kind];
+    group.requested++;
     const t = process.hrtime.bigint();
+    let status = "UNSUPPORTED", milestones = {}, error = null;
     try {
-      const sample = copy(base);
-      alter(sample, kind);
-      const c = copy(sample);
-      if (digest(sample) !== digest(c)) throw new Error("roundtrip mismatch");
-      if (c.requestState === "move") fork(c, "move 1", "move 1");
-      samples.push({kind, ms: Number(process.hrtime.bigint() - t) / 1e6});
-    } catch (e) {
-      unsupported[kind] = (unsupported[kind] || 0) + 1;
+      const result = testCase(base, kind);
+      status = result.status;
+      milestones = result.milestones || {};
+    } catch (e) { error = String(e.message); unsupported[kind] = (unsupported[kind] || 0) + 1; }
+    for (const field of ["serialized_ok", "reconstructed_ok", "choice_legal", "branch_resolved"]) {
+      if (milestones[field]) {counts[field]++; group[field]++;}
     }
+    if (status !== "PASS_SYNTHETIC" || !milestones.branch_resolved) {
+      counts.unsupported++; group.unsupported++;
+      if (!error) error = "branch not resolved";
+    }
+    samples.push({kind, ms: Number(process.hrtime.bigint() - t) / 1e6,
+      status, milestones, ...(error ? {error} : {})});
   }
-  const numbers = samples.map(x => x.ms).sort((a, b) => a - b);
+  const numbers = samples.filter(x => x.milestones.branch_resolved).map(x => x.ms).sort((a, b) => a - b);
   const percentile = q => numbers.length ? numbers[Math.ceil(q * numbers.length) - 1] : null;
-  return {requested: count, completed: samples.length, unsupported, warmup_ms: warmup,
-    p50_ms: percentile(.5), p95_ms: percentile(.95), p99_ms: percentile(.99),
-    memory: process.memoryUsage(), timings: samples,
-    measurement_scope: "isolated prebuilt Node engine only; NOT Windows UI E2E"};
+  return {requested: count, completed: counts.branch_resolved, counts, by_kind, unsupported,
+    warmup_ms: warmup, p50_ms: percentile(.5), p95_ms: percentile(.95),
+    p99_ms: percentile(.99), memory: process.memoryUsage(), timings: samples,
+    measurement_scope: "synthetic serialization + legal action resolution, prebuilt Node only; NOT Windows UI E2E"};
 }
 function handle(message) {
   if (loadError) return {status: "UNSUPPORTED", reason: loadError};
