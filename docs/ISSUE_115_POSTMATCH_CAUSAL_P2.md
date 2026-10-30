@@ -8,9 +8,9 @@
 
 ## 分析する情報
 
-1. **P1研究バッチ**: 同一 `team_id` / `team_signature` で反復した `GPT_HYPOTHESIS_UNVERIFIED` のみ選択。最低3試合、最大6試合。候補となる対面/問題のラベルと候補の元match IDを保持。
+1. **P1研究バッチ**: 同一 `team_id` / `team_signature` で反復した `GPT_HYPOTHESIS_UNVERIFIED` のみ選択。直前の研究バッチと比較し、今回新たに追加された3独立試合以上に裏付けられ、トリガー試合を含む候補のみ対象（最大6試合、選定候補SHAを監査）。候補SHA順の先頭だけを分析することはない。新しい反復候補がなければAPI通信せず `NO_RELEVANT_NEW_PATTERN`。
 2. **試合時点の知識**: `MatchEvidenceArchive.verify() == VALID` が全件必須。構築SHAとレギュレーション、戦術版・環境日付が一致する場合のみ扱う。P1イベントは各試合の最初から最大5件に制限し、報告の `captured_at`、画面候補、選出、登録技（現在の合法択とは限らない）、GPT推奨、**確認された実行/UNKNOWN**を分離して送る。結果は `result_after_match` に別欄保存し、当時の観測として過去へ格上げしない。
-3. **LIVE判断ゲートの優先**: P1が試合開始時にメモリで凍結した `gate` SHA と、試合外に参照する唯一正本 `Pokemon_Champions_MC_live_decision_gate.txt` の実バイトSHAが完全一致した場合だけ、既存 `Rxx` 規則をGPTへ渡す。ゲートの版が不明・変化した場合は `UNKNOWN`。モデルが既存ルール違反を主張しても、ルールID実在と**実行確認**を伴わなければ `RULE_COVERAGE_UNKNOWN`。ルールが見つかった場合も `EXISTING_GATE_EXECUTION_CANDIDATE`（仮説）であって証明ではない。
+3. **LIVE判断ゲートの優先**: P1が試合開始時にメモリで凍結した `gate` SHA と、試合外に参照する唯一正本 `Pokemon_Champions_MC_live_decision_gate.txt` の実バイトSHAが完全一致した場合だけ、既存 `Rxx` 規則に加えて `SWITCH_GATE`、`HP_LOW_GATE`、`ROLE_END_GATE`、`ATTACK_GATE`、`PRIORITY_GATE` 等の番号なし節を長さ制限付きでGPTへ渡す。節を途中切断して正しい規則として扱うことはせず、収まらない節は使わない。ゲートの版が不明・変化した場合は `UNKNOWN`。モデルが既存ルール違反を主張しても、ルールID実在と**実行確認**を伴わなければ `RULE_COVERAGE_UNKNOWN`。ルールが見つかった場合も `EXISTING_GATE_EXECUTION_CANDIDATE`（仮説）であって証明ではない。
 4. **カテゴリーの分離**: TEAM / SELECTION / PLAY / SUPPORT / OCR_SYNC / LUCK / UNKNOWN、owner=TEAM / USER / SUPPORT / RECOGNITION / UNDETERMINED。人間戦・CPU疑い・不明は凍結済み候補を越えて補完しない。
 5. **O/Xの比較**: 安全択・高期待値択・読み択・負け筋を作る択を説明可能な範囲だけ比較し、合法性・対面効果・ダメージ/行動保証の裏付けを欠く場合は `NOT_VERIFIED` / `HOLD_GATE_OR_ACTION_UNVERIFIED` とする。既存ルールで防げたと疑われる場合は `EXISTING_RULE_EXECUTION_HYPOTHESIS`、**新規O/Xルールを自動生成・昇格しない**。
 
@@ -20,7 +20,7 @@ P1にはゲーム内で実際に押された技を毎ターン確定できると
 
 - 構造化Responses API `champions_p2_causal`、`store=False`、`max_output_tokens=3500`、1件ずつ最大240文字の所見、最大6所見。モデルのID参照・イベント番号を実データと照合。架空のmatch ID・event番号は保存せず `FAILED_HOLD`。
 - プロンプト上限23000文字、最大3～6試合・1試合5イベント。結果/メモリが不足している場合は通信せず保留。**画像、OCR生テキスト、シークレット、未制限の全対戦ログは送信しない**。
-- バッチSHAで予約・冪等保存。自動通信は1バッチ1回まで、明示的な `allow_retry=True` 時だけもう1回可能（最大2回）。`BEGIN IMMEDIATE` で同時ワーカーの二重通信を抑制。モデル通信失敗でも予算を消費したとして記録し、自動リトライしない。費用金額が取得できない場合は推測表示しない。
+- バッチSHAで予約・冪等保存。自動通信は1バッチ1回まで、明示的な `allow_retry=True` 時だけもう1回可能（最大2回）。`BEGIN IMMEDIATE` で同時ワーカーの二重通信を抑制。**予約後、通信開始前のキャンセルは `CANCELLED_HOLD` に遷移し、未使用の通信枠を返す。** `RESERVED_UNVERIFIED` に放置しない。明示的再試行は可能で、自動リトライはしない。通信開始後のモデル通信失敗は予算を消費したとして記録する。費用金額が取得できない場合は推測表示しない。
 - バトル開始時、前試合のワーカーが残っていればQtのinterruption flagを設定。P2のモデルstreamは中断を確認し、通信を止めて `CANCELLED_HOLD` へ。単発の試合後GPTレビューやP1の保存を巻き戻さない。
 - `matchup-learning.sqlite3` の `p2_causal_batches` は未検証研究の読戻し用。結果を `STORED_HOLD_UNVERIFIED` に固定、`live_applied=False`。研究結果はUIの既存「対戦後レビュー」に件数と保留を表示する。自動次戦反映は子Issue #118 / P5まで禁止する。
 
