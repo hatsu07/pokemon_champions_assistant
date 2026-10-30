@@ -30,6 +30,8 @@ MAX_INPUT_CHARS = 23000
 MAX_OUTPUT_CHARS = 16000
 MAX_FINDINGS = 6
 MAX_CALLS_PER_BATCH = 2  # one automatic try + at most one explicit retry
+MAX_GATE_RULE_CHARS = 10500
+MAX_GATE_SECTION_CHARS = 1400
 CAUSES = ("TEAM", "SELECTION", "PLAY", "SUPPORT", "OCR_SYNC", "LUCK", "UNKNOWN")
 OWNERS = ("TEAM", "USER", "SUPPORT", "RECOGNITION", "UNDETERMINED")
 GATE_STATUSES = ("EXISTING_GATE_CANDIDATE", "UNRESOLVED", "UNKNOWN")
@@ -94,6 +96,51 @@ def _small(value: object, bound: int = 180) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())[:bound]
+
+
+def _frozen_gate_rules(gate_text: str) -> dict[str, str]:
+    """Bounded, explicit IDs for CORE rules AND existing non-Rxx sections.
+
+    A SHA-matched text is essential; callers never pass a different gate
+    version to this function as proof of historical rule coverage. The most
+    safety-critical GATE sections are kept first under the byte budget.
+    """
+    sections: dict[str, list[str]] = {}
+    rules: dict[str, str] = {}
+    current = ""
+    for raw in gate_text.splitlines():
+        line = raw.strip()
+        section = re.fullmatch(r"\[([A-Z][A-Z0-9_]{1,63})\]", line)
+        if section:
+            current = section.group(1)
+            sections.setdefault(current, [])
+            continue
+        match = re.match(r"^(R\d{2})\s+(.+)$", line)
+        if match:
+            rules[match.group(1)] = _small(match.group(2), 200)
+        if current and line and not line.startswith("#"):
+            sections[current].append(line)
+    # Keep safety/decision gates ahead of informational setup sections.
+    ranked = sorted(sections, key=lambda sec: (
+        0 if sec.endswith("_GATE") else
+        1 if sec in ("LIVE_FORCE_ORDER", "LIVE_SPEED", "CORE",
+                     "FAINT_ENTRY", "OUTPUT_SELF_CHECK") else 2, sec))
+    used = len(_json(rules))
+    for name in ranked:
+        if name == "CORE":
+            continue  # Rxx rules already have exact standalone IDs
+        content = "\n".join(sections[name])
+        if not content:
+            continue
+        # Do not publish a partial section as though it were a complete
+        # prevention gate: skip long sections instead of silently truncating.
+        if len(content) > MAX_GATE_SECTION_CHARS:
+            continue
+        if used + len(name) + len(content) > MAX_GATE_RULE_CHARS:
+            continue
+        rules[name] = content
+        used += len(name) + len(content)
+    return rules
 
 
 def _confirmed(event: dict) -> bool:
@@ -263,12 +310,7 @@ class PostmatchCausalStore:
                             gate_sha = digest
                 except (OSError, UnicodeError, ValueError):
                     pass
-            gate_rules = {}
-            if gate_sha:
-                for line in gate_text.splitlines():
-                    match = re.match(r"^(R\d{2})\s+(.+)$", line.strip())
-                    if match:
-                        gate_rules[match.group(1)] = _small(match.group(2), 200)
+            gate_rules = _frozen_gate_rules(gate_text) if gate_sha else {}
             source = {
                 "schema": SCHEMA, "team_id": team_id, "team_signature": signature,
                 "p1_batch_sha": p1_batch["batch_sha"],
@@ -423,8 +465,19 @@ class PostmatchCausalStore:
                      source["gate_sha"],"RESERVED_UNVERIFIED","{}",1,_now(),""))
             db.commit()
         if cancel and cancel():
-            return {"status": "CANCELLED_RESERVED", "research_sha": digest,
-                    "calls_used": attempt_number}
+            # No network call was dispatched. Close the reservation AND
+            # refund its call slot; explicit retry remains possible while
+            # ordinary repeat callbacks cannot silently restart research.
+            with closing(self._db()) as db:
+                with db:
+                    db.execute("""UPDATE p2_causal_batches
+                        SET status='CANCELLED_HOLD', calls_used=?,
+                            completed_at=?
+                        WHERE research_sha=? AND status='RESERVED_UNVERIFIED'
+                          AND calls_used=?""",
+                        (attempt_number - 1, _now(), digest, attempt_number))
+            return {"status": "CANCELLED_HOLD", "research_sha": digest,
+                    "calls_used": attempt_number - 1, "dispatched": False}
         instructions = (
             "You are analyzing FINISHED Pokémon Champions singles battles, "
             "never advising during live play. The supplied capture snapshots "
