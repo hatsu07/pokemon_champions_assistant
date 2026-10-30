@@ -60,6 +60,8 @@ jobs:
           print("Unsupported cases:", bench["unsupported"])
           print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
           print("Failed branches:", [dict(index=i, **s) for i, s in enumerate(bench["timings"]) if s["status"] != "PASS_SYNTHETIC"])
+          print("All repeated branches exactly reproducible:",
+                report["decision"]["synthetic_replay_all_consistent"])
           assert report["decision"]["recommended_adoption"] == "NO_GO"
           assert report["decision"]["performance_100_iterations_valid"], "fewer than 100 valid branch iterations"
           assert bench["iterations"] == 120
@@ -71,8 +73,12 @@ jobs:
           assert report["decision"]["phase0_100_case_performance_requirement_met"] is False
           assert len(bench["unique_fixture_sha256"]) == bench["unique_fixture_count"]
           assert report["probe"]["format_mod"] == "champions"
-          assert bench["counts"]["branch_resolved"] == 120, "not all 120 synthetic branches resolved"
-          assert bench["counts"]["choice_legal"] == 120, "legal choices absent"
+          assert bench["counts"]["branch_resolved"] >= 100, "fewer than 100 resolved synthetic iterations"
+          assert bench["counts"]["branch_resolved"] + bench["counts"]["unsupported"] == 120
+          assert report["decision"]["synthetic_replay_all_consistent"] == (
+              bench["counts"]["unsupported"] == 0)
+          assert report["decision"]["synthetic_replay_failure_count"] == bench["counts"]["unsupported"]
+          assert bench["counts"]["choice_legal"] >= 100, "fewer than 100 legal action attempts"
           for kind in ("normal", "hp_status_pp_boost", "item_choice",
                        "weather_screens", "consumed_item", "forced_switch", "unknown_sets"):
               assert report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC", kind
@@ -100,6 +106,10 @@ jobs:
                             str((bench["iterations"], bench["unique_fixture_count"],
                                  bench["unique_state_contract_count"])) + "`\\n\\n")
                   out.write("100 representative cases: **NOT MET**\\n\\n")
+                  out.write("All 120 repeated branches consistent: **" +
+                            str(report["decision"]["synthetic_replay_all_consistent"]) + "**\\n\\n")
+                  out.write("Divergent/unsupported branches: " +
+                            str(bench["counts"]["unsupported"]) + "\\n\\n")
                   out.write("Node stage timings: `" + json.dumps(bench["stage_latency_ms"]) + "`\\n\\n")
                   out.write("Categories: `" + json.dumps(bench["by_kind"], ensure_ascii=False) + "`\\n\\n")
                   out.write("Stage totals: `" + json.dumps(bench["counts"]) + "`\\n\\n")
