@@ -420,7 +420,8 @@ class SettingsDialog(QDialog):
         self._candidates: tuple[WindowCandidate, ...] = ()
         self._preview_thread: QThread | None = None
         self._preview_worker: _PreviewWorker | None = None
-        self._selected_team_id = service.settings.teams.active_team_id
+        self._selected_team_id = (service.settings.teams.pending_team_id
+                                  or service.settings.teams.active_team_id)
         self._editing_document: TeamDocument | None = None
         self._editing_team_id: str | None = None
         self._last_preview: CapturePreviewResult | None = None
@@ -869,7 +870,7 @@ class SettingsDialog(QDialog):
         records = self.service.teams.list()
         active = self.service.settings.teams.active_team_id
         pending = self.service.settings.teams.pending_team_id
-        wanted = focus_id or self._editing_team_id or active
+        wanted = focus_id or self._editing_team_id or pending or active
         was_blocked = self.team_list.blockSignals(True)
         try:
             self.team_list.setRowCount(len(records))
@@ -983,7 +984,9 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "構築を削除できません", "試合中の構築は削除できません。")
             return
         active = self.service.settings.teams.active_team_id
-        marker = "（次戦に選択中）" if record.team_id == active else ""
+        pending = self.service.settings.teams.pending_team_id
+        marker = ("（次戦予約中）" if record.team_id == pending else
+                  "（現行構築）" if record.team_id == active else "")
         choice = QMessageBox.question(
             self, "構築の削除を確認",
             f"「{record.display_name}」{marker} を登録一覧から削除しますか？\\n"
