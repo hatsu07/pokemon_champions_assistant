@@ -69,6 +69,22 @@ class FrozenMatchAssets:
         default_factory=lambda: MappingProxyType({}))
     move_class_index: Mapping[str,str] = field(
         default_factory=lambda: MappingProxyType({}))
+    source_paths: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({}))
+    registered_team_id: str | None = None
+    registered_team_name: str | None = None
+
+    @property
+    def loaded_team_identity(self) -> dict:
+        """Actual fourth source, NOT the legacy fixed manifest dictionary key."""
+        team_key = REQUIRED_MASTER_FILES[3]
+        return {
+            "team_id": self.registered_team_id,
+            "registered_name": self.registered_team_name,
+            "csv_path": self.source_paths.get(team_key),
+            "sha256": self.sha256[team_key],
+            "members": list(self.own_team_names),
+        }
 
     @property
     def manifest(self) -> tuple[dict[str, str], ...]:
@@ -104,14 +120,19 @@ class MasterPreloader:
 
     def __init__(self, master_directory: str | Path, *, team_source: str | Path | None = None,
                  matrix_source: str | Path | None = None,
-                 lookup_source: str | Path | None = None) -> None:
+                 lookup_source: str | Path | None = None,
+                 registered_team_id: str | None = None,
+                 registered_team_name: str | None = None) -> None:
         self._master_directory = Path(master_directory)
         self._team_source = None if team_source is None else Path(team_source)
         self._matrix_source = None if matrix_source is None else Path(matrix_source)
         self._lookup_source = None if lookup_source is None else Path(lookup_source)
+        self._registered_team_id = registered_team_id
+        self._registered_team_name = registered_team_name
 
     def load_for_new_match(self) -> FrozenMatchAssets:
         raw_bytes: dict[str, bytes] = {}
+        source_paths: dict[str, str] = {}
         failures: dict[str, str] = {}
         for filename in REQUIRED_MASTER_FILES:
             try:
@@ -125,6 +146,7 @@ class MasterPreloader:
                 if not body:
                     raise ValueError("empty file")
                 raw_bytes[filename] = body
+                source_paths[filename] = str(source.resolve())
             except (OSError, ValueError) as exc:
                 failures[filename] = str(exc)
         if failures:
@@ -167,4 +189,7 @@ class MasterPreloader:
             frozen_at=datetime.now(timezone.utc).isoformat(),
             matchup_cache_index=matchup_cache,
             move_class_index=MappingProxyType(move_classes),
+            source_paths=MappingProxyType(source_paths),
+            registered_team_id=self._registered_team_id,
+            registered_team_name=self._registered_team_name,
         )
