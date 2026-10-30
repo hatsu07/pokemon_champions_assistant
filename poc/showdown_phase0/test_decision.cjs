@@ -78,3 +78,17 @@ test("claimed coverage without 100 distinct contracts is rejected", () => {
   });
   assert.equal(d.representative_100_cases_met, false);
 });
+
+test("a single divergent replay is explicitly recorded, never a consistency PASS", () => {
+  const d = assess({}, {
+    iterations: 120, unique_fixture_count: 5, unique_state_contract_count: 5,
+    representative_100_cases_met: false,
+    counts: {branch_resolved: 119, choice_legal: 120, reconstructed_ok: 120,
+      unsupported: 1}, p99_ms: 40,
+  });
+  assert.equal(d.performance_100_iterations_valid, true);
+  assert.equal(d.synthetic_replay_all_consistent, false);
+  assert.equal(d.synthetic_replay_failure_count, 1);
+  assert.equal(d.phase0_100_case_performance_requirement_met, false);
+  assert.equal(d.recommended_adoption, "NO_GO");
+});
