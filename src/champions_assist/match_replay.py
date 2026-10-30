@@ -1150,6 +1150,12 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             "lookup_rows_critical":lookup,
             "selected_team":[member for member in assets.own_team
                              if member["name"] in updated["selected_three"]],
+            # Selection already identified the three win roles. Reuse them
+            # instead of spending another inference pass merely renaming roles.
+            "selection_roles":{
+                key:(value if value in updated["selected_three"] else None)
+                for key in ("preserve","stopper","closer")
+                for value in [(updated.get("prep") or {}).get(key)]},
             "prep_gate_rules":(_prep_gate_excerpt(
                 assets.contents["Pokemon_Champions_MC_live_decision_gate.txt"])
                 if not provisional else ""),
