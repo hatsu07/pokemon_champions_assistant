@@ -600,7 +600,7 @@ class CausalResearchTests(unittest.TestCase):
         self.assertIn("SWITCH_GATE",shown)
         self.assertIn("PRIORITY_GATE",shown)
         original_sections=set(re.findall(
-            r"^\\[([A-Z][A-Z0-9_]{1,63})\\]$",gate,re.MULTILINE))
+            r"^\[([A-Z][A-Z0-9_]{1,63})\]$",gate,re.MULTILINE))
         self.assertEqual(original_sections,(
             shown|omitted)&original_sections)
         self.assertEqual(set(reasons),omitted)
@@ -615,6 +615,10 @@ class CausalResearchTests(unittest.TestCase):
         # for one P1 batch after gate changes. Never create a failing unique
         # index or delete audit. Seed one conservative no-more-calls budget.
         batch=self.ready()
+        # Initialize the pre-upgrade table once, then seed its historical
+        # rows as a legacy application version would have done.
+        with closing(self.p2._db()):
+            pass
         with closing(sqlite3.connect(self.learning.db_path)) as db:
             entries=[("legacy-1","FAILED_HOLD",1),
                      ("legacy-2","STORED_HOLD_UNVERIFIED",1)]
