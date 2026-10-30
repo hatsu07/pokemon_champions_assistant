@@ -1520,6 +1520,16 @@ class SettingsDialog(QDialog):
     def _matchup_ai_progress(self, report: dict) -> None:
         if report.get("team_id") != self._active_prep_team_id:
             return
+        # Keep the registered-team summary in sync with the active worker,
+        # not just the details beneath the preparation button.
+        for row in range(self.team_list.rowCount()):
+            item = self.team_list.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == report["team_id"]:
+                stage_status = report.get("run_status", "実行中")
+                target = self.team_list.item(row, 5)
+                if target is not None:
+                    target.setText(stage_status)
+                break
         record = self._selected_record()
         self._show_prep_readiness(record.team_id if record else None, report)
         counters = report.get("counters", {})
