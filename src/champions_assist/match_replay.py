@@ -1159,10 +1159,6 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
             },
         }
         prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
-    without_ocr={key:value for key,value in prompt.items()
-                 if key!="ocr_candidates_unverified"}
-    non_ocr_bytes=len(json.dumps(
-        without_ocr,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
         prompt_chars=len(prompt_text)
         model_started=perf_counter()
         stage="MODEL_RESPONSE"
@@ -2120,6 +2116,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         "no_visible_party_confirmation":switch_only,
     }
     prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
+    without_ocr={key:value for key,value in prompt.items()
+                 if key!="ocr_candidates_unverified"}
+    non_ocr_bytes=len(json.dumps(
+        without_ocr,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
     if diagnostic_sink is not None:
         from .live_diagnostics import ai_input_digest
         diagnostic_sink("AI_INPUT",ai_input_digest(prompt))
