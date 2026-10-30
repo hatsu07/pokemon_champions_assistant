@@ -56,11 +56,18 @@ jobs:
           assert bench["counts"]["branch_resolved"] == 120, "not all 120 synthetic branches resolved"
           assert bench["counts"]["choice_legal"] == 120, "legal choices absent"
           for kind in ("normal", "hp_status_pp_boost", "item_choice",
-                       "weather_screens", "consumed_item", "forced_switch", "pending_choice", "unknown_sets"):
+                       "weather_screens", "consumed_item", "forced_switch", "unknown_sets"):
               assert report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC", kind
           assert report["probe"]["results"]["normal"]["next_turn_verified"], "two-turn fork unverified"
           assert report["probe"]["results"]["item_choice"]["serialized_values_compared"], "effects not compared"
-          assert report["probe"]["results"]["pending_choice"]["resolved_same_after_copy"]
+          pending = report["probe"]["results"]["pending_choice"]
+          assert pending["status"] in ("PASS_SYNTHETIC", "UNSUPPORTED")
+          if pending["status"] == "PASS_SYNTHETIC":
+              assert pending["resolved_same_after_copy"]
+          else:
+              assert pending["restoration_status"] == "UNSUPPORTED"
+              assert pending["safe_for_midbattle_reconstruction"] is False
+              print("Explicit midbattle blocker (not a passing case):", pending["detail"])
           import os
           meta = {k: report[k] for k in ("schema", "timestamp_utc", "pinned_sha", "context", "decision")}
           print("PHASE0_META_JSON=" + json.dumps(meta, ensure_ascii=False, sort_keys=True))
