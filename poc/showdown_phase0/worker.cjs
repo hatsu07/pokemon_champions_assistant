@@ -140,12 +140,12 @@ function executeBranch(snapshot, kind) {
   const c = copy(snapshot);
   const before = digest(c);
   const beforeTurn = c.turn;
-  const beforeActive = c.p1.active[0]?.position;
+  const beforeActive = c.p1.active[0]?.species.id;
   if (kind === "forced_switch") {
     if (c.requestState !== "switch") throw Error("switch request expected");
     if (!c.choose("p1", "switch 2")) throw Error("forced switch choice illegal");
-    if (c.p1.active[0]?.position === beforeActive) throw Error("switch unresolved");
-    if (c.p1.active[0]?.position !== 1) throw Error("unexpected switch destination");
+    if (c.p1.active[0]?.species.id === beforeActive) throw Error("switch unresolved");
+    if (c.p1.active[0]?.species.id !== "primarina") throw Error("unexpected switch destination");
   } else {
     if (c.requestState !== "move") throw Error("move request expected");
     if (!c.choose("p1", "move 1")) throw Error("player 1 move illegal");
