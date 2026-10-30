@@ -14,7 +14,9 @@ from typing import Any
 
 from .app_config import atomic_write_text
 from .matchup_evidence import member_signature, SOURCE_FILES
-from .team_live_assets import SET_FIELDS
+from .team_live_assets import (
+    SET_FIELDS, MATRIX, LOOKUP, BASE_TEAM, _jsonhash, _parsed_team,
+)
 from .team_management import TeamDocument
 
 STAGES = (
@@ -206,7 +208,8 @@ def team_readiness(data_root: str | Path, team_id: str,
     result: dict[str, Any] = {
         "team_id": team_id, "status": "未準備", "run_status": "未実行",
         "team_match": False, "matrix": False, "lookup": False,
-        "total": None, "legacy_cells": None, "ai_v2": None,
+        "total": None, "legacy_cells": None, "confirmed_cells": None,
+        "ai_total": None, "ai_v1": None, "ai_v2": None,
         "source_gaps": None, "unknown": None,
         "prep_lead": None, "prep_bench": None,
         "quality_ready": False, "fingerprint": None,
@@ -306,10 +309,20 @@ def team_readiness(data_root: str | Path, team_id: str,
             return result
         result["total"] = total
         result["legacy_cells"] = int(counts.get("CONDITIONAL", 0))
+        result["confirmed_cells"] = int(counts.get("CONFIRMED", 0))
         result["unknown"] = int(counts.get("UNKNOWN", 0))
         result["source_gaps"] = sum(bool(x.get("missing_source"))
                                     for x in catalog.get("cells", []))
-        result["ai_v2"] = int(manifest.get("ai_proposal_cells", 0))
+        # Legacy published manifests contain only the combined count; never
+        # misrepresent that number as validated structured v2 coverage.
+        result["ai_total"] = int(manifest.get("ai_proposal_cells", 0))
+        if all(key in manifest for key in ("ai_v1_cells", "ai_v2_cells")):
+            result["ai_v1"] = int(manifest["ai_v1_cells"])
+            result["ai_v2"] = int(manifest["ai_v2_cells"])
+            if (result["ai_v1"] < 0 or result["ai_v2"] < 0
+                    or result["ai_v1"] + result["ai_v2"] != result["ai_total"]):
+                result["status"] = "生成物不整合"
+                return result
         result["quality_ready"] = bool(manifest.get("quality_gate", {})
                                        .get("live_ready", False))
         # Do not treat a v2 proposal as an 11/6-field completed PREP result.
@@ -321,6 +334,34 @@ def team_readiness(data_root: str | Path, team_id: str,
                    or _digest(masters / name) != recorded.get(name)
                    for name in SOURCE_FILES):
                 result["stale_reasons"].append("Champions固定マスターが更新されました")
+        if master_dir is not None:
+            # Compare the original sources of the team-scoped derived assets,
+            # not just the resulting matrix/lookup hashes. Old manifests
+            # without these input hashes cannot claim up-to-date readiness.
+            originals = {
+                "master_matrix_sha256": masters / MATRIX,
+                "master_lookup_sha256": masters / LOOKUP,
+            }
+            for field, source in originals.items():
+                if not source.is_file() or manifest.get(field) != _digest(source):
+                    result["stale_reasons"].append(
+                        ("LIVE元マトリクス" if field == "master_matrix_sha256"
+                         else "元60秒ルックアップ") + "が更新されました")
+            baseline = masters / BASE_TEAM
+            try:
+                baseline_hash = _jsonhash(_parsed_team(baseline))
+            except (OSError, ValueError, KeyError):
+                baseline_hash = None
+            if manifest.get("baseline_team_signature_sha256") != baseline_hash or baseline_hash is None:
+                result["stale_reasons"].append("基準構築が更新されました")
+            review_path = Path(data_root) / "matchup-reviews" / (team_id + ".json")
+            try:
+                review_bytes = review_path.read_bytes() if review_path.is_file() else b""
+                review_sha = sha256(review_bytes).hexdigest()
+            except OSError:
+                review_sha = None
+            if manifest.get("review_file_sha256") != review_sha or review_sha is None:
+                result["stale_reasons"].append("人間レビューが更新されました")
         if environment_snapshot is not None:
             snapshot = Path(environment_snapshot)
             current_environment_sha = _digest(snapshot) if snapshot.is_file() else ""
@@ -334,7 +375,7 @@ def team_readiness(data_root: str | Path, team_id: str,
         else:
             result["status"] = (
                 "評価検証済み" if result["quality_ready"] else
-                "条件付き準備" if result["ai_v2"] or result["legacy_cells"] else
+                "条件付き準備" if result["ai_total"] or result["legacy_cells"] or result["confirmed_cells"] else
                 "対面データ未評価")
         result["evidence_status"] = (
             "評価検証済み" if result["quality_ready"] else
