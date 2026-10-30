@@ -13,8 +13,7 @@ BENCH_TAGS = ("S", "OUR", "OPP", "PRI", "SAFE", "PROC")
 # the evaluator considered it but lacks reliable battle evidence; it is not
 # permission to leave every tactical field unassessed.
 NOT_ASSESSED_EVALUATION = frozenset({
-    "?", "未判定", "未評価", "SKIPPED", "not_assessed", "NOT_ASSESSED",
-    "not_evaluated", "NOT_EVALUATED",
+    "?", "未判定", "未評価", "skipped", "not_assessed", "not_evaluated",
 })
 EVIDENCE_LIMITED_EVALUATION = frozenset({
     "unknown", "unverified", "uncertain", "不明", "evidence_unknown",
@@ -22,7 +21,7 @@ EVIDENCE_LIMITED_EVALUATION = frozenset({
 # "unverified" is a deliberate conditional processor assessment, not a
 # claim that the opponent can be safely switched into or certainly KO'd.
 UNKNOWN_EVALUATION = NOT_ASSESSED_EVALUATION | frozenset({
-    "unknown", "UNKNOWN", "uncertain", "不明", "evidence_unknown",
+    "unknown", "uncertain", "不明", "evidence_unknown",
 })
 
 
@@ -94,17 +93,17 @@ def _validate_assessed_fields(parsed: dict[str, str], *, lead: bool) -> str | No
     required = LEAD_TAGS if lead else BENCH_TAGS
     if any(tag not in parsed for tag in required):
         return "LEAD_SIX_INCOMPLETE" if lead else "BENCH_TWELVE_INCOMPLETE"
-    if any(parsed[tag].strip() in NOT_ASSESSED_EVALUATION for tag in required):
+    if any(parsed[tag].strip().casefold() in NOT_ASSESSED_EVALUATION for tag in required):
         return "REQUIRED_FIELD_NOT_ASSESSED"
-    if parsed["PROC"].strip() in UNKNOWN_EVALUATION:
+    if parsed["PROC"].strip().casefold() in UNKNOWN_EVALUATION:
         return "PROCESSOR_NOT_ASSESSED"
-    if lead and any(parsed[tag].strip() in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
+    if lead and any(parsed[tag].strip().casefold() in UNKNOWN_EVALUATION for tag in ("ACT", "DPS")):
         return "LEAD_ACTION_NOT_ASSESSED"
     tactical = (
         ("KO", "PRI", "S", "OUR", "OPP", "SAFE", "LOCK", "MEGA")
         if lead else ("S", "OUR", "OPP", "PRI", "SAFE")
     )
-    if not any(parsed[tag].strip() not in EVIDENCE_LIMITED_EVALUATION
+    if not any(parsed[tag].strip().casefold() not in EVIDENCE_LIMITED_EVALUATION
                for tag in tactical):
         return "MATCHUP_NOT_ASSESSED"
     return None
@@ -114,7 +113,7 @@ def prep_evidence_status(rows: tuple[PrepMatchup, ...]) -> str:
     """Separate legitimate lack of evidence from absent assessment."""
     for row in rows:
         fields = _parse_eval_code(row.eval_code)
-        if fields and any(value.strip() in EVIDENCE_LIMITED_EVALUATION
+        if fields and any(value.strip().casefold() in EVIDENCE_LIMITED_EVALUATION
                           for value in fields.values()):
             return "ASSESSED_WITH_UNCERTAINTY"
     return "ASSESSED_CONDITIONAL"
