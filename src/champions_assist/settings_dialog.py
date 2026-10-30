@@ -1077,7 +1077,8 @@ class SettingsDialog(QDialog):
                     summary = team_readiness(
                         self.service.settings.storage.data_root,
                         record.team_id, record.csv_path,
-                        master_dir=self.service.master_directory)
+                        master_dir=self.service.master_directory,
+                        environment_snapshot=self.service.environment.snapshot)
                     self._team_readiness_snapshots[record.team_id] = summary
                     readiness = summary["status"]
                 values = (record.display_name, members, record.validation.status,
@@ -1156,7 +1157,8 @@ class SettingsDialog(QDialog):
             label += "（別構築の処理が進行中）"
         self.prep_target_label.setText(
             f"対象構築：{label}　"
-            f"状態：{workflow.get('run_status', '未実行')}")
+            f"工程実行：{workflow.get('run_status', '未実行')}　"
+            f"根拠充足：{workflow.get('evidence_status', stored.get('evidence_status', '未評価'))}")
         stages = workflow.get("stages", {})
         ended = 0
         for row, (key, name) in enumerate(STAGES):
@@ -1174,7 +1176,9 @@ class SettingsDialog(QDialog):
         def count(value):
             return str(value) if value is not None else "未確認"
         self.prep_readiness_detail.setPlainText(
-            f"構築一致：{'はい' if stored.get('team_match') else '未確認/不一致'}　"
+            f"CSV実体一致：{('一致' if stored.get('csv_match') else '不一致') if stored.get('csv_match') is not None else '未確認'}　"
+            f"型署名・生成物一致：{'はい' if stored.get('tactical_match') else '未確認/不一致'}　"
+            f"環境一致：{('はい' if stored.get('environment_match') else '更新済み') if stored.get('environment_match') is not None else '未確認'}\n"
             f"マトリクス：{'あり' if stored.get('matrix') else '未確認'}　"
             f"ルックアップ：{'あり' if stored.get('lookup') else '未確認'}\n"
             f"全対面：{count(total)}　"
@@ -1187,7 +1191,8 @@ class SettingsDialog(QDialog):
             f"実戦LIVE認証：{'あり' if stored.get('quality_ready') else '未認定'}\n"
             f"指紋：{stored.get('fingerprint') or '未確認'}　"
             f"更新：{stored.get('updated_at') or '未確認'}\n"
-            "注意：AI評価案・キャッシュ18枠の存在はPREP完了を意味しません。"
+            f"再準備理由：{', '.join(stored.get('stale_reasons') or []) or 'なし'}\n"
+            "注意：工程実行完了・評価根拠充足・実戦PREP完成は別です。"
         )
 
     def _show_team_validation(self, record: RegisteredTeam) -> None:
@@ -1583,8 +1588,9 @@ class SettingsDialog(QDialog):
             }
             label = labels.get(result["status"], result["status"])
             self.matchup_review_status.setText(
-                f"{label}。PREP準備全体："
-                f"{result.get('workflow_status', '未確認')}。"
+                f"{label}。工程実行："
+                f"{result.get('workflow_status', '未確認')}、"
+                f"根拠充足：{result.get('evidence_status', '未評価')}。"
                 f"今回追加 {result['count']}件、差分再利用"
                 f"{result.get('reused_cells', 0)}件、"
                 f"累計AI注記 {result.get('ai_proposal_cells', 0)}件。"
