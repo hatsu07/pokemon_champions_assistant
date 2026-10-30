@@ -117,10 +117,10 @@ class Issue136InterruptTests(unittest.TestCase):
         data = self.run_case("before_publish")
         self.assertEqual(data["stages"]["publish"]["status"], "未実行")
 
-    def test_stop_during_publication_before_prep_check(self):
+    def test_stop_during_publication_after_prep_check(self):
         data = self.run_case("publish")
         self.assertEqual(data["stages"]["publish"]["status"], "停止")
-        self.assertEqual(data["stages"]["prep"]["status"], "未実行")
+        self.assertEqual(data["stages"]["prep"]["status"], "一部完了")
 
     def test_stop_during_cache_check_cannot_be_reported_complete(self):
         data = self.run_case("cache")
