@@ -2036,7 +2036,9 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
     from .ocr_turn_context import (
         build_ocr_turn_context, apply_model_ocr_carryover,
         _own_actor_identification_candidate)
-    from .ocr_wire import pack_ocr_wire, resolve_ocr_wire_answer
+    from .ocr_wire import (
+        pack_ocr_wire, pack_pending_ocr_wire, explicit_legacy_ocr_refs,
+        resolve_ocr_wire_answer)
     candidates,pending_ocr,context_stats=build_ocr_turn_context(
         state,local_field_candidates,sent_ledger=sent_ocr_ledger,
         request_id=ocr_request_id)
@@ -2048,7 +2050,13 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             sent_ocr_ledger.release(ocr_request_id)
         return state,{"status":"BLOCKED",
                       "reason":"ACTOR_OCR_RESERVED_OR_UNAVAILABLE","images_sent":0}
-    transport_ocr, ocr_wire_evidence = pack_ocr_wire(candidates)
+    from uuid import uuid4
+    wire_scope = ocr_request_id or uuid4().hex
+    transport_ocr, ocr_wire_evidence = pack_ocr_wire(
+        candidates, request_id=wire_scope)
+    wire_pending, wire_pending_refs = pack_pending_ocr_wire(
+        pending_ocr, request_id=wire_scope)
+    legacy_refs = explicit_legacy_ocr_refs(transport_ocr)
     compact_before=len(json.dumps(candidates,ensure_ascii=False,
                                   separators=(",",":"),default=str).encode("utf-8"))
     compact_after=len(json.dumps(transport_ocr,ensure_ascii=False,
@@ -2118,7 +2126,7 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             or (state.get("battle_evidence") or {}).get(
                 "form_by_pokemon",{}).get("opponent",{}).get(opponent)),
         "ocr_candidates_unverified":transport_ocr,
-        "ocr_pending_questions_unverified":pending_ocr,
+        "ocr_pending_questions_unverified":wire_pending,
         "ocr_prior_rows_not_resent":context_stats["prior_observations_not_resent"],
         "no_visible_party_confirmation":switch_only,
     }
@@ -2165,8 +2173,11 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
             reasoning_effort="low" if reasoning_effort=="auto" else reasoning_effort,
             instructions=(
                 "Pokémon Champions singles, text only; all OCR evidence is "
-                "UNVERIFIED. OCR entries have id, field, text. Refer ONLY to "
-                "the id in evidence_frames, source_frames and processed_ocr_frames. "
+                "UNVERIFIED. OCR entries normally have id, field, text; "
+                "a size fallback can show original frame_id/source_frames. "
+                "Refer ONLY to IDs explicitly present in this request, never "
+                "to unseen raw frame names. Pending questions have short " 
+                "IDs in source_frames; cite these short IDs in your reply. "
                 "In one response reconcile evidence with existing state "
                 "(active Pokémon, HP, moves, faints, switches, items, boosts, "
                 "status, forms, weather, type, choice locks), supply grounded "
@@ -2188,7 +2199,10 @@ def run_replay_text_action(*, state: dict, assets: FrozenMatchAssets,
         mark_ocr_sent()
         ai_elapsed_ms=round((perf_counter()-api_started)*1000)
         # Resolve only this request's evidence IDs to original verified-proof inputs.
-        answer = resolve_ocr_wire_answer(answer, ocr_wire_evidence, candidates)
+        answer = resolve_ocr_wire_answer(
+            answer, ocr_wire_evidence, candidates,
+            pending_refs=wire_pending_refs,
+            explicit_legacy_refs=legacy_refs)
         if diagnostic_sink is not None:
             diagnostic_sink("AI_API_STAGE",{
                 "api_elapsed_ms":ai_elapsed_ms,
