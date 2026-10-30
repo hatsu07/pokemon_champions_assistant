@@ -213,9 +213,12 @@ class CachedPrepTests(unittest.TestCase):
             tactical,elapsed_seconds=lambda:1.0)
         self.assertEqual(result["status"],"PROVISIONAL_ADVICE")
         self.assertEqual(len(contexts),1)
-        self.assertEqual(len(contexts[0]["cached_matchup_hypotheses"]),3)
+        self.assertNotIn("cached_matchup_hypotheses",contexts[0])
+        self.assertEqual(len(contexts[0]["prep_matchup_evaluations"]),3)
         self.assertTrue(all(r["opponent"]==OPP[0] for r in
-                            contexts[0]["cached_matchup_hypotheses"]))
+                            contexts[0]["prep_matchup_evaluations"]))
+        self.assertTrue(all("eval_code" in r for r in
+                            contexts[0]["prep_matchup_evaluations"]))
         self.assertEqual(contexts[0]["cached_win_roles"]["preserve"],OWN[0])
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
 
