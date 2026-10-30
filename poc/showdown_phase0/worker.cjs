@@ -86,8 +86,8 @@ function alter(b, kind) {
       if (!a.volatiles.choicelock) throw new Error("choice lock absent in sampled state");
       break;
     case "weather_screens":
-      b.field.setWeather("raindance");
-      b.p1.addSideCondition("reflect");
+      b.field.setWeather("raindance", a);
+      b.p1.addSideCondition("reflect", a);
       break;
     case "consumed_item":
       a.item = "";
