@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .app_config import atomic_write_text
-from .matchup_evidence import member_signature, SOURCE_FILES
+from .matchup_evidence import member_signature, SOURCE_FILES, _source_hashes
 from .team_live_assets import (
     SET_FIELDS, MATRIX, LOOKUP, BASE_TEAM, _jsonhash, _parsed_team,
 )
@@ -285,8 +285,76 @@ def team_readiness(data_root: str | Path, team_id: str,
         if found_stale:
             result["status"] = "再準備が必要"
         return result
+    # Prefer the asset matching *current* Champions sources, rather than the
+    # manifest with the latest mtime. An A→B→A environment/review switch may
+    # legitimately reactivate cached A without touching its manifest.
+    current_masters = None
+    current_matrix_sha = current_lookup_sha = current_baseline_sha = None
+    if master_dir is not None:
+        masters = Path(master_dir)
+        try:
+            current_masters = _source_hashes(masters)
+            current_matrix_sha = _digest(masters / MATRIX)
+            current_lookup_sha = _digest(masters / LOOKUP)
+            current_baseline_sha = _jsonhash(_parsed_team(masters / BASE_TEAM))
+        except (OSError, ValueError, KeyError):
+            pass
+    review_path = Path(data_root) / "matchup-reviews" / (team_id + ".json")
+    try:
+        review_bytes = review_path.read_bytes() if review_path.is_file() else b""
+        current_review_sha = sha256(review_bytes).hexdigest()
+    except OSError:
+        current_review_sha = None
+    current_environment_sha = ""
+    current_environment_kind = "NONE"
+    if environment_snapshot is not None:
+        snapshot = Path(environment_snapshot)
+        try:
+            if snapshot.is_file():
+                raw = snapshot.read_bytes()
+                current_environment_sha = sha256(raw).hexdigest()
+                env = json.loads(raw)
+                receipt_path = snapshot.with_name("singles-provenance.json")
+                if receipt_path.is_file():
+                    receipt = _read_json(receipt_path)
+                    if (receipt.get("sha256") == _jsonhash(env)
+                            or receipt.get("sha256") == current_environment_sha):
+                        current_environment_kind = str(
+                            receipt.get("source_kind", "UNKNOWN"))[:64]
+        except (OSError, ValueError, TypeError):
+            current_environment_sha = None
+            current_environment_kind = None
+
+    def matches_current(row: tuple) -> bool:
+        _, manifest_file, entry, catalog_file, evidence = row
+        try:
+            if (current_masters is None or current_review_sha is None
+                    or current_matrix_sha is None or current_lookup_sha is None
+                    or current_baseline_sha is None):
+                return False
+            if not (
+                evidence.get("master_sha256") == current_masters
+                and entry.get("champions_master_sha256") == current_masters
+                and entry.get("master_matrix_sha256") == current_matrix_sha
+                and entry.get("master_lookup_sha256") == current_lookup_sha
+                and entry.get("baseline_team_signature_sha256") == current_baseline_sha
+                and entry.get("review_file_sha256") == current_review_sha
+                and (environment_snapshot is None or (
+                    entry.get("environment_source_sha256") == current_environment_sha
+                    and entry.get("environment_source_kind") == current_environment_kind))
+            ):
+                return False
+            return (
+                _digest(catalog_file) == entry.get("candidate_sha256")
+                and _digest(manifest_file.with_name("matrix.txt"))
+                    == entry.get("matrix_sha256")
+                and _digest(manifest_file.with_name("lookup.txt"))
+                    == entry.get("lookup_sha256"))
+        except (OSError, TypeError, ValueError):
+            return False
+
     _, manifest_path, manifest, catalog_path, catalog = max(
-        candidates, key=lambda row: row[0])
+        candidates, key=lambda row: (matches_current(row), row[0]))
     result["fingerprint"] = manifest.get("fingerprint")
     try:
         matrix_path = manifest_path.with_name("matrix.txt")
@@ -330,9 +398,9 @@ def team_readiness(data_root: str | Path, team_id: str,
         if master_dir is not None:
             masters = Path(master_dir)
             recorded = catalog.get("master_sha256", {})
-            if any(not (masters / name).is_file()
-                   or _digest(masters / name) != recorded.get(name)
-                   for name in SOURCE_FILES):
+            if (current_masters is None
+                    or recorded != current_masters
+                    or manifest.get("champions_master_sha256") != current_masters):
                 result["stale_reasons"].append("Champions固定マスターが更新されました")
         if master_dir is not None:
             # Compare the original sources of the team-scoped derived assets,
@@ -367,7 +435,9 @@ def team_readiness(data_root: str | Path, team_id: str,
             current_environment_sha = _digest(snapshot) if snapshot.is_file() else ""
             result["environment_match"] = (
                 manifest.get("environment_source_sha256", "") ==
-                current_environment_sha)
+                current_environment_sha
+                and manifest.get("environment_source_kind", "NONE") ==
+                    current_environment_kind)
             if not result["environment_match"]:
                 result["stale_reasons"].append("Singles環境スナップショットが更新されました")
         if result["stale_reasons"]:
