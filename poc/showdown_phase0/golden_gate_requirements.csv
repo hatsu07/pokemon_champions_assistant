@@ -18,3 +18,4 @@ B,unknown opponent sets,Use same observed state for at least two hypotheses and 
 B,random seed and clone,Reproduce same seed and separate divergent branches,PARTIAL,synthetic-only,M-C,Replay reproducibility
 D,Windows Node runtime,Offline onedir launch with license notices and SBOM,UNKNOWN,none,M-C,Distribution readiness
 D,end to end timing,Measure Android mirror OCR IPC and PySide6 to user display,UNKNOWN,none,M-C,Deadline performance
+B,pending unresolved choice,Preserve queued actions and choices across toJSON/fromJSON then resolve both sides,UNSUPPORTED,synthetic-only,M-C,Do not clone partially accepted moves as valid midbattle state
