@@ -59,7 +59,7 @@ async function run() {
   finally { worker.stop(); }
   const decision = assess(probe, benchmark);
   const result = {
-    schema: "phase0-poc-v2", timestamp_utc: startedAt,
+    schema: "phase0-poc-v3", timestamp_utc: startedAt,
     upstream: "smogon/pokemon-showdown", pinned_sha: "ccfaa20f32af363569cd21a9d501b2bc1ded26b1",
     target: "[Gen 9 Champions] BSS Reg M-C",
     context: {os: process.platform, arch: process.arch, node: process.version},
