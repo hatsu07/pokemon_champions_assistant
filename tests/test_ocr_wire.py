@@ -3,7 +3,9 @@ import json
 import unittest
 from copy import deepcopy
 from unittest.mock import patch
-from champions_assist.ocr_wire import pack_ocr_wire, resolve_ocr_wire_answer
+from champions_assist.ocr_wire import (
+    pack_ocr_wire, pack_pending_ocr_wire, resolve_ocr_wire_answer,
+    explicit_legacy_ocr_refs)
 from champions_assist.match_replay import new_replay, run_replay_text_action
 from tests.test_match_replay import fixture_assets
 
@@ -59,14 +61,91 @@ class Issue131WireTests(unittest.TestCase):
                 "pending_ocr_questions":[{"source_frames":[token]}]}
         mapped=resolve_ocr_wire_answer(answer,mapping,raw)
         self.assertEqual(mapped["state_updates"][0]["evidence_frames"],["b","c"])
-        self.assertEqual(mapped["processed_ocr_frames"],["a","b","c"])
+        # A grouped observation cannot safely ACK every individual frame.
+        self.assertEqual(mapped["processed_ocr_frames"],[])
         self.assertEqual(mapped["pending_ocr_questions"][0]["source_frames"],
                          ["a","b","c"])
         self.assertEqual(answer["processed_ocr_frames"],[token])
         invalid=resolve_ocr_wire_answer(
             {"state_updates":[{"kind":"SWITCH","evidence_frames":["fake"]}]},
             mapping,raw)
-        self.assertEqual(invalid["state_updates"][0]["evidence_frames"],["fake"])
+        self.assertEqual(invalid["state_updates"][0]["evidence_frames"],[])
+
+    def test_persisted_pending_questions_use_short_ids_and_roundtrip(self):
+        raw = [row("old-frame", "相手の持ち物は不明")]
+        pending = [{"source_frames":["old-frame"],
+                    "question":"持ち物は判明したか",
+                    "importance":"CRITICAL","recheck_when":"次ターン",
+                    "verified":False}]
+        outgoing, mapping = pack_pending_ocr_wire(pending, request_id="req-42")
+        self.assertEqual(len(outgoing),1)
+        self.assertNotIn("old-frame",json.dumps(outgoing,ensure_ascii=False))
+        token=outgoing[0]["source_frames"][0]
+        self.assertEqual(mapping[token],["old-frame"])
+        response={"pending_ocr_questions":[{
+            "source_frames":[token],"question":"まだ未確認",
+            "importance":"CRITICAL","recheck_when":"次ターン"}]}
+        restored=resolve_ocr_wire_answer(response,{},raw,pending_refs=mapping)
+        self.assertEqual(restored["pending_ocr_questions"][0]["source_frames"],
+                         ["old-frame"])
+        # A pending-only ID cannot certify a battle state or ACK a frame.
+        forbidden=resolve_ocr_wire_answer(
+            {"state_updates":[{"evidence_frames":[token]}],
+             "processed_ocr_frames":[token]}, {},raw,pending_refs=mapping)
+        self.assertEqual(forbidden["state_updates"][0]["evidence_frames"],[])
+        self.assertEqual(forbidden["processed_ocr_frames"],[])
+
+    def test_unknown_direct_raw_and_other_request_ids_are_rejected(self):
+        raw=[row("f1","ゆけっ！ゲンガー！")]
+        sent,mapping=pack_ocr_wire(raw,request_id="first")
+        other,_=pack_ocr_wire(raw,request_id="second")
+        self.assertNotEqual(sent[0]["id"],other[0]["id"])
+        for invalid in ("f1",other[0]["id"],"invented"):
+            result=resolve_ocr_wire_answer({
+                "state_updates":[{"evidence_frames":[invalid]}],
+                "processed_ocr_frames":[invalid],
+                "pending_ocr_questions":[{"source_frames":[invalid],
+                    "question":"要確認","importance":"IMPORTANT",
+                    "recheck_when":""}]},mapping,raw)
+            self.assertEqual(result["state_updates"][0]["evidence_frames"],[])
+            self.assertEqual(result["processed_ocr_frames"],[])
+            self.assertIsNone(result["pending_ocr_questions"])
+
+    def test_small_wire_never_exceeds_legacy_and_only_exposed_raw_ids_work(self):
+        from champions_assist.ocr_turn_context import compact_ocr_transport
+        for rows in ([],[{"frame_id":"x","field":"f","raw_text":"a"}],
+                     [row("f1","ゆけっ！ゲンガー！")]):
+            sent,mapping=pack_ocr_wire(rows,request_id="byte-test")
+            baseline=compact_ocr_transport(rows)
+            def size(x):
+                return len(json.dumps(x,ensure_ascii=False,
+                                      separators=(",",":")).encode())
+            self.assertLessEqual(size(sent),size(baseline))
+            refs=explicit_legacy_ocr_refs(sent)
+            if refs:
+                self.assertEqual(mapping,{})
+                self.assertTrue(refs <= {r.get("frame_id") for r in rows})
+                allowed=resolve_ocr_wire_answer(
+                    {"state_updates":[{"evidence_frames":[next(iter(refs))]}]},
+                    mapping,rows,explicit_legacy_refs=refs)
+                self.assertTrue(allowed["state_updates"][0]["evidence_frames"])
+            else:
+                self.assertTrue(all("id" in x for x in sent))
+
+    def test_group_ack_withheld_and_same_frame_multiple_fields_never_ack(self):
+        raw=[row("f1","ゆけっ！ゲンガー！"),
+             row("f2","ゆけっ!ゲンガー!",time=1.1)]
+        wire,source=pack_ocr_wire(raw,request_id="ack")
+        response={"processed_ocr_frames":[wire[0]["id"]]}
+        resolved=resolve_ocr_wire_answer(response,source,raw)
+        self.assertEqual(resolved["processed_ocr_frames"],[])
+        multiple=[row("shared","ゲンガー",field="screen_text.own_active_name"),
+                  row("shared","185/185",field="screen_text.own_hp_fraction")]
+        wire,mapping=pack_ocr_wire(multiple,request_id="shared")
+        self.assertEqual(len(wire),2)
+        resolved=resolve_ocr_wire_answer(
+            {"processed_ocr_frames":[wire[0]["id"]]},mapping,multiple)
+        self.assertEqual(resolved["processed_ocr_frames"],[])
 
     def test_turn_uses_only_short_ids_and_resolves_before_validation(self):
         assets=fixture_assets()
