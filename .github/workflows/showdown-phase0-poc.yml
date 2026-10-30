@@ -63,8 +63,9 @@ jobs:
           assert report["decision"]["recommended_adoption"] == "NO_GO"
           assert report["decision"]["performance_100_iterations_valid"], "fewer than 100 valid branch iterations"
           assert bench["iterations"] == 120
-          assert bench["unique_fixture_count"] == 6, "fixture count changed; inspect coverage"
-          assert bench["unique_state_contract_count"] == 6
+          assert bench["unique_fixture_count"] == 5, "fixture count changed; inspect coverage"
+          assert bench["unique_state_contract_count"] == 5
+          assert bench["scenario_kind_count"] == 6
           assert bench["representative_100_cases_met"] is False
           assert report["decision"]["representative_100_cases_met"] is False
           assert report["decision"]["phase0_100_case_performance_requirement_met"] is False
