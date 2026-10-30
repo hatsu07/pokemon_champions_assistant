@@ -13,6 +13,10 @@ function assess(probe, bench, realGameGoldens = []) {
     bench?.counts?.choice_legal >= 100 &&
     bench?.counts?.reconstructed_ok >= 100 &&
     Number.isFinite(bench?.p99_ms);
+  // 100 fast repetitions are NOT 100 representative fixtures.
+  const representativeCoverage = bench?.representative_100_cases_met === true &&
+    bench?.unique_fixture_count >= 100 &&
+    bench?.unique_state_contract_count >= 100;
   const gameValidated = Array.isArray(realGameGoldens) && realGameGoldens.length > 0 &&
     realGameGoldens.every(x => x?.verified === true && x?.matched === true);
   // The PoC cannot certify Champions equivalence from simulator-only data.
@@ -21,7 +25,14 @@ function assess(probe, bench, realGameGoldens = []) {
   const gateB = restoration.length ? "UNSUPPORTED" : "PARTIAL";
   return {gate_A_calculation: gateA, gate_B_midbattle: gateB,
     missing_restore_cases: restoration, synthetic_hypotheses_ok: hypothesisOk,
-    performance_100_valid: measured, game_golden_cases: realGameGoldens.length,
+    performance_100_valid: measured, // legacy: iterations only, NOT representative case count
+    performance_100_iterations_valid: measured,
+    representative_100_cases_met: representativeCoverage,
+    phase0_100_case_performance_requirement_met: measured && representativeCoverage,
+    benchmark_iterations: bench?.iterations || 0,
+    benchmark_unique_fixtures: bench?.unique_fixture_count || 0,
+    benchmark_unique_state_contracts: bench?.unique_state_contract_count || 0,
+    game_golden_cases: realGameGoldens.length,
     recommended_adoption: "NO_GO", final_adoption_gate_implemented: false,
     gate_A_requires_real_game_goldens: true,
     gate_B_requires_partial_observation_reconstruction: true,
