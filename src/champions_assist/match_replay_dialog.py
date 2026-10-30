@@ -186,6 +186,11 @@ class _ReplayWorker(QObject):
                 if self.cancel_event is not None and self.cancel_event.is_set():
                     self.finished.emit({"state":self.state,"report":{"status":"CANCELLED"}})
                     return
+                # Every PREP terminal path must notify the GUI exactly once.
+                # Without this, the QThread never receives quit() and the
+                # successful PREP is neither displayed nor logged.
+                self.finished.emit({"state":next_state,"report":report})
+                return
             elif self.job=="result":
                 # Non-interactive, bounded TEXT-ONLY check of an actual OCR
                 # result message. No battle screenshot is transmitted.
@@ -502,6 +507,8 @@ class MatchReplayDialog(QDialog):
         self._last_selection_text=""
         self._selection_screen_started=None
         self._prep_budget_seconds=90.0
+        self.registered_team_id=None
+        self.registered_team_name=None
         self._proposed_selection=None
         self._proposed_prep_key=None
         self._proposed_prep_payload=None
@@ -732,8 +739,11 @@ class MatchReplayDialog(QDialog):
             self.assets=MasterPreloader(
                 self.master_directory, team_source=self.team_path,
                 matrix_source=self.matrix_source,lookup_source=self.lookup_source,
+                registered_team_id=self.registered_team_id,
+                registered_team_name=self.registered_team_name,
             ).load_for_new_match()
             self.state=new_replay(self.assets)
+            self.state["loaded_team_identity"]=self.assets.loaded_team_identity
             # Read the optional PRIVATE ROI profile once at match start.
             # Calibration does not bypass or replace the four-master load.
             private_profile=self.store_root / "calibration" / "screen_fields.json"
@@ -799,6 +809,7 @@ class MatchReplayDialog(QDialog):
             self._set_ai_status("AI未送信（選出画面の登録／検出待ち）")
             self._update_menu_detection_label()
             self._trace_event("PRELOAD_4_FILES_COMPLETED",preload_count=4,
+                              team_identity=self.assets.loaded_team_identity,
                               matrix_compatible=self.state.get("matrix_compatible",False),
                               matrix_provisional=self.state.get("matrix_provisional",False))
             self._render({"status":"MATCH_STARTED","message":"4ファイル事前読込完了。自動キャプチャ開始で進めます。"})
@@ -1536,10 +1547,14 @@ class MatchReplayDialog(QDialog):
                                   frame_seq=self._last_capture_seq)
         if screen_label=="BATTLE_EVENT":
             self._note_battle_event()
-        # PREP remains valid during screen changes. It is cancelled only
-        # when the NEXT model request actually begins (_send_pending).
-        # An unclassified image change is not proof that battle has started.
-        # Let the visual AI observation confirm the opponent lead first.
+        # A verified actionable battle screen ends PREP immediately, even
+        # when OCR synchronization delays the next model request. An
+        # unclassified image change alone does not cancel preparation.
+        if (screen_label in _URGENT_SCREENS and self.state is not None
+                and self.state.get("phase")=="PREP"):
+            self._interrupt_prep()
+            self._trace_event("PREP_CANCELLED_ON_BATTLE_SCREEN",
+                              screen_label=screen_label)
         # At most one pending batch: new observed events replace stale ones.
         if (screen_label=="TEAM_SELECTION" and self._selection_screen_started is None
                 and self.state is not None
@@ -2697,7 +2712,7 @@ class MatchReplayDialog(QDialog):
             return
         if QMessageBox.question(
             self,"PREP再実行の確認",
-            "まだ対戦が始まっていない場合だけ40秒PREPを再実行しますか？",
+            "まだ対戦が始まっていない場合だけPREPを再実行しますか？",
             QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )!=QMessageBox.StandardButton.Yes:return
@@ -3073,7 +3088,11 @@ class MatchReplayDialog(QDialog):
         self._prep_timer.stop()
         self._prep_cancel_event.set()
         if self.state is not None and self.state.get("phase")=="PREP":
+            prior=(self.state.get("prep") or {})
             self.state["prep_status"]="INTERRUPTED_BY_NEW_BATTLE_SCREEN"
+            self._trace_event("PREP_INTERRUPTED",reason="BATTLE_SCREEN",
+                cached_matchups=prior.get("cached_matchups",0),
+                win_roles_status=prior.get("win_roles_status","UNKNOWN"))
 
     def _prep_deadline(self):
         if self._prep_thread is None:
