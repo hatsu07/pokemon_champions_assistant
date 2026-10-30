@@ -2728,7 +2728,8 @@ class MatchReplayDialog(QDialog):
         if (self.state is None or self.assets is None
                 or self.state.get("phase")!="PREP"):
             return
-        from .prep_cache import cached_pairs, cached_evidence_count
+        from .prep_cache import (cached_pairs, cached_evidence_count,
+                                 validate_cached_preparation)
         known = tuple(name for name in self.state.get("opponent_six",[])
                       if name not in (self.state.get("visual_unknown_opponents") or []))
         selected = tuple(self.state.get("selected_three") or ())
@@ -2746,9 +2747,11 @@ class MatchReplayDialog(QDialog):
                        for value in role_values)
         role_count=3 if role_ready else sum(
             isinstance(value,str) and value in selected for value in role_values)
-        all_cached=evaluated==len(pairs)
-        # Full PREP needs all 18 evaluated matchups AND the three win roles.
-        ready=all_cached and role_ready and not partial and len(pairs)==18
+        # Hints / matrix cells are not 11+6-tag evaluations. The same strict
+        # checker is used in the no-network PREP path and timing harness.
+        complete_fields,_=validate_cached_preparation(
+            self.assets,selected,known,lead,pairs,role_values)
+        ready=complete_fields and role_ready and not partial and len(pairs)==18
         status=("PREP_CACHE_KNOWN_ONLY" if partial and ready else
                 "PREP_CACHE_REUSED" if ready else
                 "PREP_CACHE_INCOMPLETE")
