@@ -14,6 +14,10 @@ from champions_assist.team_live_assets import (
 )
 from champions_assist.team_prep_readiness import team_readiness
 from champions_assist.team_matchup_reuse import reuse_unchanged_matchups
+from champions_assist.team_management import (
+    TeamDocument, validate_team_document, TEAM_STATUS_INVALID,
+)
+from champions_assist.app_config import ConfigurationError
 
 MASTER = Path(__file__).resolve().parents[1] / "masters"
 
@@ -90,14 +94,15 @@ class Review137CacheFreshnessTests(unittest.TestCase):
         self.assertEqual(json.loads(old_catalog.read_text(encoding="utf-8"))
                          ["master_sha256"], baseline_master_sha)
 
-    def _set_regulations(self, values):
-        from champions_assist.team_management import TeamDocument
+    def _set_regulations(self, values, *, team_reg=None):
         doc = TeamDocument.load(self.team)
         rows = [dict(row) for row in doc.rows]
         members = [row for row in rows if row.get("record") == "MON"]
         self.assertEqual(len(members), 6)
         for member, value in zip(members, values):
             member["reg"] = value
+        team = next(row for row in rows if row.get("record") == "TEAM")
+        team["reg"] = values[0] if team_reg is None else team_reg
         self.team.write_text(
             TeamDocument(doc.fieldnames, tuple(rows)).to_text(),
             encoding="utf-8")
@@ -134,29 +139,54 @@ class Review137CacheFreshnessTests(unittest.TestCase):
         self.assertEqual(self.readiness()["fingerprint"],
                          first.manifest_path.parent.name)
 
-    def test_other_member_regulation_change_does_not_reuse_old_scope(self):
-        # The evidence catalog records the first MON's regulation, but the
-        # source fingerprint covers all six MON records. The summary must
-        # not accept a different regulation in slot 2 as the same scope.
+    def test_mixed_member_regulation_rejected_in_validation_and_preparation(self):
         self._set_regulations(["REG_A"] * 6)
         old = self.prepare()
         self._set_regulations(["REG_A", "REG_B", "REG_A",
                                "REG_A", "REG_A", "REG_A"])
         stale = self.readiness()
-        self.assertEqual(stale["status"], "再準備が必要")
+        self.assertEqual(stale["status"], "構築確認不可")
         self.assertFalse(stale["team_match"])
-        self.assertIn("レギュレーションが変更されました",
-                      stale["stale_reasons"])
-        fresh = self.prepare()
-        self.assertNotEqual(old.manifest_path, fresh.manifest_path)
-        self.assertEqual(self.readiness()["fingerprint"],
-                         fresh.manifest_path.parent.name)
+        self.assertIn("レギュレーション不整合", " ".join(stale["stale_reasons"]))
+        validation = validate_team_document(TeamDocument.load(self.team), None)
+        self.assertEqual(validation.status, TEAM_STATUS_INVALID)
+        self.assertTrue(any("レギュレーション不整合" in reason
+                            for reason in validation.reasons))
+        with self.assertRaisesRegex(ConfigurationError, "レギュレーション不整合"):
+            self.prepare()
+        self.assertTrue(old.manifest_path.is_file())
+
+    def test_team_reg_only_change_is_invalid_not_a_cache_hit(self):
+        self._set_regulations(["REG_A"] * 6)
+        old = self.prepare()
+        self._set_regulations(["REG_A"] * 6, team_reg="REG_B")
+        self.assertEqual(self.readiness()["status"], "構築確認不可")
+        self.assertEqual(
+            validate_team_document(TeamDocument.load(self.team), None).status,
+            TEAM_STATUS_INVALID)
+        with self.assertRaisesRegex(ConfigurationError, "レギュレーション不整合"):
+            self.prepare()
+        self.assertTrue(old.manifest_path.is_file())
+
+    def test_six_matching_regs_with_team_row_are_valid(self):
+        self._set_regulations(["REG_A"] * 6)
+        prepared = self.prepare()
+        manifest = json.loads(prepared.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["team_regulation"], "REG_A")
+        self.assertEqual(manifest["team_regulations"], ["REG_A"] * 6)
+        catalog = json.loads(prepared.manifest_path.with_name(
+            "matchup-evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual(catalog["regulation"], "REG_A")
+        state = self.readiness()
+        self.assertTrue(state["team_match"])
+        self.assertNotEqual(state["status"], "構築確認不可")
 
     def test_missing_regulation_scope_in_old_manifest_is_not_ready(self):
         self._set_regulations(["REG_A"] * 6)
         original = self.prepare()
         manifest = json.loads(original.manifest_path.read_text(encoding="utf-8"))
         manifest.pop("team_regulations")
+        manifest.pop("team_regulation")
         original.manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         status = self.readiness()
