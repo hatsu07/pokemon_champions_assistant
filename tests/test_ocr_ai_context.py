@@ -236,8 +236,8 @@ class OcrAiContextRegression(unittest.TestCase):
             "state_updates":[switch()],
             "interpreted_own_active":"ドドゲザン",
             "interpreted_opponent_active":"マスカーニャ",
-            "processed_ocr_frames":["capture-505","capture-546",
-                                    "capture-not-sent"],
+            # A valid GPT reply cites only evidence IDs visible in this call.
+            "processed_ocr_frames":["capture-505","capture-546"],
             "action":{"action_kind":"NO_ACTION","switch_target":"",
                       "move":"","warning":""},
         }
