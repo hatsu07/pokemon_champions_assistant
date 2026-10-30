@@ -194,7 +194,9 @@ function testCase(b, kind) {
     if (digest(b) !== original) throw Error("source state mutated");
     const a = executeBranch(reconstructed, kind, milestones);
     const a2 = executeBranch(reconstructed, kind);
-    if (digest(a) !== digest(a2)) throw Error("seeded branch diverged");
+    if (digest(a) !== digest(a2))
+      throw Error("seeded branch diverged: " +
+        JSON.stringify(firstDifferentPaths(a.toJSON(), a2.toJSON())));
     let nextTurnVerified = false;
     if (a.requestState === "move" && a2.requestState === "move") {
       const nextA = executeBranch(a, "normal");
@@ -240,6 +242,7 @@ function probe() {
       throw Error("pending second choice illegal");
     const equalOutcome = digest(pending) === digest(recovered);
     pendingDiagnostics.equal_resolved_outcome = equalOutcome;
+    pendingDiagnostics.resolved_diff_paths = firstDifferentPaths(pending.toJSON(), recovered.toJSON());
     if (differentPaths.length || !equalOutcome)
       throw Error("pending snapshot not proven equivalent after restore; see diagnostic paths");
     results.pending_choice = {status: "PASS_SYNTHETIC", serialized_pending_action: true,
