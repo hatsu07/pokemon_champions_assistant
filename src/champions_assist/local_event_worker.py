@@ -101,14 +101,6 @@ class AsyncBattleEventReader:
         self._display_last_label: dict[str,str]={}
         self._counter=0
         self.skipped=0
-        # Track *all* offer attempts, including early validation rejects which
-        # did not previously increment ocr_skipped or create any OCR job.
-        self.offers=0
-        self.last_offer_reason="NOT_OFFERED"
-        self.rejection_counts={key:0 for key in (
-            "OCR_DISABLED", "PROFILE_MISSING", "IMAGE_FORMAT_INVALID",
-            "ASPECT_RATIO_MISMATCH", "LABEL_NOT_ELIGIBLE",
-            "NO_APPLICABLE_ROI", "ROI_UNCHANGED", "QUEUE_FULL")}
         self.overflow=0
         self.errors=0
         self.jobs_enqueued=0
@@ -176,11 +168,6 @@ class AsyncBattleEventReader:
             ocr_engine=TesseractJapaneseOcr()
         return cls(profile,ocr_engine=ocr_engine,lexicon=lexicon)
 
-    def _reject(self, reason: str) -> bool:
-        self.last_offer_reason=reason
-        self.rejection_counts[reason]+=1
-        return False
-
     def offer(self, image: np.ndarray, *, label: str,
               frame_id: str | None=None, timestamp: float | None=None) -> bool:
         """Fast ROI change gate. Never OCR or wait in the caller's thread.
@@ -188,22 +175,12 @@ class AsyncBattleEventReader:
         Only BATTLE_EVENT and verified local action/party UI are eligible.
         Work stays on the worker, never the render or AI turn thread.
         """
-        self.offers+=1
         profile=self.profile
-        if profile is None:
-            return self._reject("PROFILE_MISSING")
-        if not self.enabled or self._stop.is_set():
-            return self._reject("OCR_DISABLED")
-        if (not isinstance(image,np.ndarray) or image.ndim!=3
-                or image.shape[2]!=3 or image.dtype!=np.uint8
-                or not image.shape[0] or not image.shape[1]):
-            return self._reject("IMAGE_FORMAT_INVALID")
-        if not profile.compatible(image):
-            return self._reject("ASPECT_RATIO_MISMATCH")
-        if label not in ("BATTLE_EVENT","TURN_ACTION","SWITCH_SELECTION"):
-            return self._reject("LABEL_NOT_ELIGIBLE")
+        if (not self.enabled or self._stop.is_set() or profile is None
+                or not profile.compatible(image)
+                or label not in ("BATTLE_EVENT","TURN_ACTION","SWITCH_SELECTION")):
+            return False
         crops=[]
-        eligible_rois=0
         updated={}
         captured_at=monotonic() if timestamp is None else timestamp
         new_display_episodes={}
@@ -219,7 +196,6 @@ class AsyncBattleEventReader:
                 continue
             if label not in region.applicable_labels:
                 continue
-            eligible_rois+=1
             crop, preprocess=prepare_battle_message(image,profile,region)
             small=crop[::max(1,crop.shape[0]//20),
                        ::max(1,crop.shape[1]//48)].astype(np.float32)
@@ -247,8 +223,7 @@ class AsyncBattleEventReader:
                 updated[key]=small
         if not crops:
             self.skipped+=1
-            return self._reject("ROI_UNCHANGED" if eligible_rois
-                                else "NO_APPLICABLE_ROI")
+            return False
         self._counter+=1
         event_id=frame_id or f"local-frame-{self._counter}"
         # Messages precede HUD text within a frame; no semantic OCR parse.
@@ -259,7 +234,7 @@ class AsyncBattleEventReader:
             self._queue.put_nowait(job)
         except Full:
             self.overflow+=1
-            return self._reject("QUEUE_FULL")
+            return False
         # Commit dedup state only after a successful enqueue; lost events can
         # be retried on the next 300ms frame.
         self._signatures.update(updated)
@@ -267,7 +242,6 @@ class AsyncBattleEventReader:
         self._display_last_time.update(new_display_time)
         self._display_last_label.update(new_display_labels)
         self.jobs_enqueued+=1
-        self.last_offer_reason="ENQUEUED"
         return True
 
     def _run(self) -> None:
@@ -382,15 +356,6 @@ class AsyncBattleEventReader:
     def diagnostic_counts(self) -> dict[str,int]:
         """Cheap bounded, non-blocking aggregate metrics; no OCR text or ROI."""
         return {
-            "ocr_offers":self.offers,
-            "ocr_reject_disabled":self.rejection_counts["OCR_DISABLED"],
-            "ocr_reject_no_profile":self.rejection_counts["PROFILE_MISSING"],
-            "ocr_reject_bad_image":self.rejection_counts["IMAGE_FORMAT_INVALID"],
-            "ocr_reject_aspect":self.rejection_counts["ASPECT_RATIO_MISMATCH"],
-            "ocr_reject_label":self.rejection_counts["LABEL_NOT_ELIGIBLE"],
-            "ocr_reject_no_roi":self.rejection_counts["NO_APPLICABLE_ROI"],
-            "ocr_reject_unchanged":self.rejection_counts["ROI_UNCHANGED"],
-            "ocr_reject_queue_full":self.rejection_counts["QUEUE_FULL"],
             "ocr_jobs_enqueued":self.jobs_enqueued,
             "ocr_jobs_completed":self.jobs_completed,
             "ocr_rois_attempted":self.rois_attempted,
