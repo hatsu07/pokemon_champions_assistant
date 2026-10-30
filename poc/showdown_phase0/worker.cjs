@@ -215,14 +215,18 @@ function probe() {
     if (!pending.p1.choice.actions?.length) throw Error("pending choice missing");
     const before = JSON.stringify(pending.toJSON());
     const recovered = copy(pending);
-    if (JSON.stringify(recovered.toJSON()) !== before ||
-      !recovered.p1.choice.actions?.length) throw Error("pending action lost on copy");
+    const matchingSerialization = JSON.stringify(recovered.toJSON()) === before;
+    const recoveredActions = recovered.p1.choice.actions?.length || 0;
+    if (!matchingSerialization || !recoveredActions)
+      throw Error("pending action lost on copy: serialized_equal=" +
+        matchingSerialization + " restored_choice_actions=" + recoveredActions);
     if (!pending.choose("p2", "move 1") || !recovered.choose("p2", "move 1"))
       throw Error("pending second choice illegal");
     if (digest(pending) !== digest(recovered)) throw Error("pending resolution diverged");
     results.pending_choice = {status: "PASS_SYNTHETIC", serialized_pending_action: true,
       resolved_same_after_copy: true};
-  } catch (e) { results.pending_choice = {status: "UNSUPPORTED", detail: String(e.message)}; }
+  } catch (e) { results.pending_choice = {status: "UNSUPPORTED", restoration_status: "UNSUPPORTED",
+      detail: String(e.message), safe_for_midbattle_reconstruction: false}; }
   try {
     // Freeze a common observable board before *either* unknown set acts.
     const a = create([9, 8, 7, 6], 0, false);
