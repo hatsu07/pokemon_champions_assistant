@@ -215,3 +215,23 @@ class SimulationResult:
                     reason: str = "") -> "SimulationResult":
         return cls(request_id, canonical_json(dict(identity)), snapshot_sha256,
                    hypothesis_id, status, canonical_json(dict(payload)), reason)
+
+def window_from_preload(assets: Any, *, match_id: str,
+                        decision_window_id: str, window_kind: WindowKind,
+                        turn_epoch: int, state_revision: int, screen_kind: str,
+                        active_pokemon: str, regulation: str, simulator_sha: str,
+                        verified_action_ids: tuple[str, ...], request_id: str,
+                        deadline_monotonic: float) -> DecisionWindow:
+    """Bind an input window to the actual loaded four-master SHA manifest.
+
+    Never populate SHA fields from a filename or prior match's context.
+    """
+    from ..preload import REQUIRED_MASTER_FILES
+    sha = tuple((name, assets.sha256[name]) for name in REQUIRED_MASTER_FILES)
+    if any(not digest or len(digest) != 64 for _, digest in sha):
+        raise ValueError("four frozen file bodies and hashes required")
+    return DecisionWindow(
+        match_id, decision_window_id, window_kind, turn_epoch, state_revision,
+        screen_kind, active_pokemon, assets.sha256[REQUIRED_MASTER_FILES[3]],
+        sha, regulation, simulator_sha, action_digest(verified_action_ids),
+        request_id, deadline_monotonic)

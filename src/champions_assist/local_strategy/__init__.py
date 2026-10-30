@@ -2,7 +2,7 @@
 from .models import (
     ActionKind, CandidateAction, CapabilityStatus, DecisionWindow,
     FrozenBattleState, Hypothesis, LegalStatus, ObservedFact,
-    SimulationResult, WindowKind,
+    SimulationResult, WindowKind, window_from_preload,
 )
 from .legal_actions import generate_candidates, revalidate_candidate
 from .decision_service import accept_result, DecisionOutcome
@@ -12,4 +12,5 @@ __all__ = [
     "FrozenBattleState", "Hypothesis", "LegalStatus", "ObservedFact",
     "SimulationResult", "WindowKind", "generate_candidates",
     "revalidate_candidate", "accept_result", "DecisionOutcome",
+    "window_from_preload",
 ]

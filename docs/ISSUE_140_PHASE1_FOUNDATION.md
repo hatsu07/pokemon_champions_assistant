@@ -9,7 +9,7 @@ Parent: #138. Precondition: #139 Phase 0 independent A/B adoption gates.
 - Immutable JSON-backed `FrozenBattleState`, sourced `ObservedFact`,
   separate `Hypothesis`, `CandidateAction`, `SimulationResult`,
   `CapabilityStatus` and `DecisionWindow` contract.
-- Identity includes match, input window ID + kind, turn epoch, revision,
+- A helper binds four master SHAs from the actual FrozenMatchAssets preload.\n- Identity includes match, input window ID + kind, turn epoch, revision,
   screen, active Pokémon, team SHA, four master SHAs, regulation, pinned
   simulator SHA, current allowed-action digest, request ID and deadline.
 - Conservative action generation calls **the same**

@@ -15,7 +15,7 @@ import time
 from typing import Any, Mapping
 
 from .models import (
-    CapabilityStatus, DecisionWindow, PROTOCOL_VERSION,
+    CapabilityStatus, FrozenBattleState, PROTOCOL_VERSION,
     SimulationResult, canonical_json, fingerprint,
 )
 
@@ -126,7 +126,8 @@ class LocalSimulatorWorker:
                 if not isinstance(resp, dict):
                     self._failed = True
                     raise WorkerUnavailable("invalid worker response")
-                if (resp.get("request_id") != request.get("request_id")
+                if (resp.get("snapshot_sha256") != request.get("snapshot_sha256")
+                        or resp.get("request_id") != request.get("request_id")
                         or resp.get("identity") != request.get("identity")
                         or resp.get("protocol") != PROTOCOL_VERSION
                         or resp.get("op") != request.get("op")):
@@ -137,7 +138,7 @@ class LocalSimulatorWorker:
                     continue
                 return resp
 
-    def simulate(self, window: DecisionWindow, battle_json: Mapping[str, Any],
+    def simulate(self, snapshot: FrozenBattleState, battle_json: Mapping[str, Any],
                  own_choice: str, opponent_choice: str,
                  *, hypothesis_id: str = "") -> SimulationResult:
         """Only FULL_REPLAY_SYNTHETIC states. Always PARTIAL or UNSUPPORTED.
@@ -145,13 +146,15 @@ class LocalSimulatorWorker:
         No request or result is written to the evidence ledger.  Unknown
         real-game intermediate states cannot be reconstructed here.
         """
+        window = snapshot.window
         if window.simulator_sha != self._sha:
             raise WorkerUnavailable("engine SHA changed within match")
         payload = {"source": "FULL_REPLAY_SYNTHETIC",
                    "battle": dict(battle_json), "p1_choice": own_choice,
                    "p2_choice": opponent_choice,
                    "hypothesis_id": hypothesis_id}
-        snap_sha = fingerprint(payload)
+        snap_sha = snapshot.snapshot_sha256
+        payload["branch_input_sha256"] = fingerprint(payload)
         request = {"protocol": PROTOCOL_VERSION, "op": "SIMULATE",
                    "request_id": window.request_id, "identity": window.identity(),
                    "snapshot_sha256": snap_sha, "payload": payload}

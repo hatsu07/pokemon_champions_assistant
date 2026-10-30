@@ -45,7 +45,9 @@ function fingerprint(obj) {
 function reply(req, capability_status, reason, payload={}, ok=false) {
   const out = {
     protocol: VERSION, op: req && req.op, request_id: req && req.request_id,
-    identity: req && req.identity, capability_status, reason, payload, ok
+    identity: req && req.identity,
+    snapshot_sha256: req && req.snapshot_sha256,
+    capability_status, reason, payload, ok
   };
   process.stdout.write(JSON.stringify(out) + "\n");
 }

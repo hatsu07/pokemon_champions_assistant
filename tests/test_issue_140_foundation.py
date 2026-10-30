@@ -220,7 +220,7 @@ class WorkerTests(unittest.TestCase):
         try:
             w.start(timeout_seconds=1)
             s = frozen()
-            result = w.simulate(s.window, {"synthetic": True},
+            result = w.simulate(s, {"synthetic": True},
                                 "move 1", "move 1")
             self.assertEqual(result.capability_status, CapabilityStatus.PARTIAL)
         finally:
