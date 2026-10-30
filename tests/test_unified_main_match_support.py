@@ -1418,11 +1418,11 @@ class UnifiedMainWindowTests(unittest.TestCase):
             with patch.object(panel,"_send_pending") as queued:
                 panel._queue_batch([image],screen_label="TURN_ACTION")
                 queued.assert_called_once()
-                self.assertFalse(panel._prep_cancel_event.is_set())
-                self.assertEqual(panel.state["prep_status"],"RUNNING")
-            # Only the actual next AI dispatch, not detecting/queuing a
-            # screen, supersedes the PREP request.
-            panel._interrupt_prep()
+                # This is a verified command menu. Do not wait for API dispatch
+                # (which may be delayed by OCR) before cancelling PREP.
+                self.assertTrue(panel._prep_cancel_event.is_set())
+                self.assertEqual(panel.state["prep_status"],
+                                 "INTERRUPTED_BY_NEW_BATTLE_SCREEN")
             old={"state":{"phase":"PREP","prep_status":"STRUCTURE_COMPLETE"},
                  "report":{"status":"PREP_STRUCTURE_OK"}}
             panel._on_prep_result(old)
@@ -1664,6 +1664,68 @@ class UnifiedMainWindowTests(unittest.TestCase):
             self.assertTrue(panel._auto_running)
             self.assertIsNone(panel._background_capture)
         panel._stop_auto()
+
+    def test_prep_worker_success_emits_once_and_cancellation_never_adopts_result(self):
+        from threading import Event
+        from champions_assist.match_replay_dialog import _ReplayWorker
+        state={"phase":"PREP","prep_status":"RUNNING"}
+        cancellation=Event()
+        worker=_ReplayWorker(app_root=self.root,selected_model="test",
+                             assets=object(),state=state,job="prep",
+                             cancel_event=cancellation)
+        results=[]
+        worker.finished.connect(results.append)
+        completed={**state,"prep_status":"STRUCTURE_COMPLETE"}
+        with patch("champions_assist.match_replay_dialog.ChatGPTSignIn") as auth,patch(
+                "champions_assist.match_replay_dialog.run_replay_prep",
+                return_value=(completed,{"status":"PREP_STRUCTURE_OK"})) as prep:
+            auth.return_value.access_token.return_value="dummy"
+            worker.run()
+            prep.assert_called_once()
+        self.assertEqual(results,[{"state":completed,
+                                   "report":{"status":"PREP_STRUCTURE_OK"}}])
+        results.clear()
+        cancellation.set()
+        with patch("champions_assist.match_replay_dialog.run_replay_prep") as prep:
+            worker.run()
+            prep.assert_not_called()
+        self.assertEqual(len(results),1)
+        self.assertEqual(results[0]["report"]["status"],"CANCELLED")
+
+    def test_reserved_team_is_used_by_normal_gui_preload_not_current_match(self):
+        initial=self.service.import_team(
+            MASTER_DIR/"Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(initial.team_id,match_active=False)
+        original_path=self.service.teams.path_for_next_match(initial.team_id)
+        original_bytes=original_path.read_bytes()
+        alternative=self.root/"alternate-team.csv"
+        alternative.write_text(original_bytes.decode("utf-8").replace(
+            "BASE_SELECT=","BASE_SELECT_NOTE="),encoding="utf-8")
+        later=self.service.import_team(alternative,match_active=False)
+        from champions_assist.preload import MasterPreloader
+        original=MasterPreloader(MASTER_DIR,team_source=original_path).load_for_new_match()
+        self.assertEqual(self.service.select_team(later.team_id,match_active=True),
+                         "PENDING_NEXT_MATCH")
+        self.assertEqual(original.own_team_names[0],"マスカーニャ")
+        self.assertEqual(self.service.settings.teams.active_team_id,initial.team_id)
+        with patch("champions_assist.vision_preferences.VisionPreferenceStore") as prefs:
+            prefs.return_value.selected_model.return_value="mock-model"
+            prefs.return_value.reasoning_effort.return_value="low"
+            panel=self.window._match_panel
+            panel._new_match()
+        self.assertEqual(self.service.settings.teams.active_team_id,later.team_id)
+        self.assertIsNone(self.service.settings.teams.pending_team_id)
+        self.assertEqual(panel.assets.loaded_team_identity["team_id"],later.team_id)
+        self.assertEqual(panel.assets.loaded_team_identity["registered_name"],later.display_name)
+        self.assertEqual(panel.assets.loaded_team_identity["csv_path"],
+                         str(self.service.teams.path_for_next_match(later.team_id).resolve()))
+        self.assertEqual(panel.assets.loaded_team_identity["sha256"],
+                         panel.assets.sha256["Pokemon_Champions_MC_team_2026-10-03.csv"])
+        self.assertEqual(len(panel.assets.loaded_team_identity["members"]),6)
+        # Immutable first-match data is not retroactively modified by reservation.
+        self.assertEqual(original.sha256["Pokemon_Champions_MC_team_2026-10-03.csv"],
+                         __import__("hashlib").sha256(original_bytes).hexdigest())
 
     def test_prep_auth_error_does_not_leave_running_forever(self):
         panel=self.window._match_panel
