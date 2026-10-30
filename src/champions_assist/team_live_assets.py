@@ -16,6 +16,7 @@ import re
 
 from .app_config import ConfigurationError, atomic_write_text
 from .species_name_aliases import selection_base_name
+from .team_management import TeamDocument, regulation_scope
 from .matchup_evidence import (SOURCE_FILES, _source_hashes, build_candidate_catalog,
                                certified_review_counts, validate_review_packet)
 
@@ -93,13 +94,11 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         raise ConfigurationError("不正なチームID")
     master = Path(master_dir)
     source = Path(team_path)
+    team_reg, member_regs = regulation_scope(TeamDocument.load(source))
     registered = _parsed_team(source)
-    # Record every MON regulation field, not only the first regulation used
-    # for the per-opponent evidence catalog. A registration-only regulation
-    # change must not be rendered as readiness for a previous ruleset.
-    team_regulations = [
-        (member.get("reg") or "UNDECLARED").strip() for member in registered
-    ]
+    # TEAM.reg is canonical. Every MON.reg must be identical before the
+    # one-regulation matchup catalog is constructed or any asset is cached.
+    team_regulations = list(member_regs)
     baseline = _parsed_team(master / BASE_TEAM)
     matrix_bytes = (master / MATRIX).read_bytes()
     lookup_bytes = (master / LOOKUP).read_bytes()
@@ -160,7 +159,8 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     }
     fingerprint = _jsonhash({
         "version":GENERATED_VERSION, "form_evidence_revision":"exact-form-v2",
-        "team":registered, "master_matrix":sha256(matrix_bytes).hexdigest(),
+        "team":registered, "regulation":team_reg,
+        "master_matrix":sha256(matrix_bytes).hexdigest(),
         "master_lookup":sha256(lookup_bytes).hexdigest(),
         "baseline":_jsonhash(baseline), "environment":snapshot_sha,
         "environment_kind":env_kind,"reviews_sha256":sha256(review_bytes).hexdigest(),
@@ -174,6 +174,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
         if (saved.get("fingerprint")==fingerprint
                 and all(saved.get(k) == v for k, v in source_fingerprints.items())
                 and saved.get("team_regulations") == team_regulations
+                and saved.get("team_regulation") == team_reg
                 and sha256(matrix_path.read_bytes()).hexdigest()==saved.get("matrix_sha256")
                 and sha256(lookup_path.read_bytes()).hexdigest()==saved.get("lookup_sha256")
                 and sha256(evidence_path.read_bytes()).hexdigest()==saved.get("candidate_sha256")
@@ -183,7 +184,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
                                       saved["status"],saved["reviewed_members"],
                                       saved["opponent_rows"],True)
     full = all(i is not None for i in matched_columns)
-    team_reg=(registered[0].get("reg") or "UNDECLARED").strip()
+    # Canonical regulation already checked against all six MON entries.
     catalog=build_candidate_catalog(
         master_dir=master,team=registered,matrix_rows=matrix_rows,
         fields=SET_FIELDS,regulation=team_reg)
@@ -368,6 +369,7 @@ def prepare_team_assets(*, master_dir: Path | str, data_root: Path | str,
     manifest = {
         "schema":GENERATED_VERSION,"team_id":team_id,"fingerprint":fingerprint,
         "team_regulations": team_regulations,
+        "team_regulation": team_reg,
         **source_fingerprints,
         "status":status,"reviewed_members":sum(i is not None for i in matched_columns),
         "opponent_rows":len(matrix_rows),"unverified_cells":len(matrix_rows)*sum(i is None for i in matched_columns),
