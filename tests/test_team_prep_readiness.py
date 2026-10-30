@@ -118,6 +118,107 @@ class PrepReadinessTests(unittest.TestCase):
             json.loads(progress.path.read_text(encoding="utf-8"))
             ["stages"]["cache"]["status"], "未実行")
 
+    def test_execution_complete_does_not_certify_prep_quality(self):
+        journal = PrepWorkflowProgress(self.root, self.aid, self.a)
+        journal.start(evidence_version="masters-1")
+        for key, _ in STAGES:
+            journal.stage(key, "実行中")
+            journal.stage(key, "一部完了" if key == "prep" else "完了")
+        journal.evidence(
+            evaluated=100, proposals=15, total=120,
+            source_gaps=3, quality_ready=False)
+        journal.finish("完了")
+        saved = json.loads(journal.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["run_status"], "完了")
+        self.assertEqual(saved["stages"]["prep"]["status"], "一部完了")
+        self.assertEqual(saved["evidence_status"], "根拠不足")
+        self.assertFalse(saved["quality_ready"])
+
+    def test_resume_keeps_successful_stage_history_and_cumulative_counts(self):
+        first = PrepWorkflowProgress(self.root, self.aid, self.a)
+        first.start(evidence_version="master-A")
+        first.fingerprint("fingerprint-A")
+        first.stage("team", "実行中")
+        first.stage("team", "完了", "verified")
+        first.stage("analysis", "実行中", "12 cells", generated=12, attempts=1)
+        first.finish("停止")
+        later = PrepWorkflowProgress(self.root, self.aid, self.a)
+        state = later.start(evidence_version="master-A")
+        self.assertEqual(state["attempt"], 2)
+        self.assertEqual(len(state["history"]), 1)
+        self.assertEqual(state["history"][0]["stages"]["team"]["status"], "完了")
+        self.assertEqual(state["stages"]["team"]["status"], "完了")
+        self.assertEqual(state["counters"]["generated_total"], 12)
+        later.fingerprint("fingerprint-A")
+        later.stage("analysis", "実行中", "next six", generated=6, attempts=1)
+        later.stage("analysis", "完了", "total eighteen")
+        later.finish("完了")
+        final = json.loads(later.path.read_text(encoding="utf-8"))
+        self.assertEqual(final["counters"]["generated_total"], 18)
+        self.assertEqual(final["run_counters"]["generated"], 6)
+        self.assertEqual(final["history"][0]["run_status"], "停止")
+        snapshot = team_readiness(self.root, self.aid, self.a)
+        self.assertEqual(snapshot["run_status"], "完了")
+        self.assertEqual(snapshot["history_count"], 1)
+
+    def test_changed_evidence_version_does_not_reuse_previous_stage_success(self):
+        first = PrepWorkflowProgress(self.root, self.aid, self.a)
+        first.start(evidence_version="old-masters")
+        first.stage("team", "完了", "previous success")
+        first.finish("完了")
+        next_run = PrepWorkflowProgress(self.root, self.aid, self.a)
+        state = next_run.start(evidence_version="new-masters")
+        self.assertEqual(state["stages"]["team"]["status"], "未実行")
+        self.assertEqual(state["attempt"], 1)
+        self.assertFalse(state["history"])
+
+    def test_csv_metadata_change_preserves_tactical_match_but_marks_stale(self):
+        prepared = prepare_team_assets(
+            master_dir=MASTER, data_root=self.root,
+            team_id=self.aid, team_path=self.a)
+        journal = PrepWorkflowProgress(self.root, self.aid, self.a)
+        journal.start(evidence_version="current")
+        journal.finish("完了")
+        document = TeamDocument.load(self.a)
+        rows = [dict(row) for row in document.rows]
+        team_row = next(row for row in rows if row.get("record") == "TEAM")
+        team_row["name"] = "改名した登録構築"
+        self.a.write_text(
+            TeamDocument(document.fieldnames, tuple(rows)).to_text(),
+            encoding="utf-8")
+        result = team_readiness(self.root, self.aid, self.a, master_dir=MASTER)
+        self.assertEqual(result["status"], "再準備が必要")
+        self.assertFalse(result["csv_match"])
+        self.assertTrue(result["tactical_match"])
+        self.assertTrue(result["team_match"])
+        self.assertIn("構築CSVが更新されました", result["stale_reasons"])
+        self.assertTrue(prepared.manifest_path.is_file())
+
+    def test_environment_snapshot_change_invalidates_old_manifest(self):
+        snapshot = self.root / "environment.json"
+        snapshot.write_text(
+            json.dumps({"format": "Singles", "pokemon": []}),
+            encoding="utf-8")
+        prepare_team_assets(
+            master_dir=MASTER, data_root=self.root, team_id=self.aid,
+            team_path=self.a, environment_snapshot=snapshot)
+        good = team_readiness(
+            self.root, self.aid, self.a, master_dir=MASTER,
+            environment_snapshot=snapshot)
+        self.assertTrue(good["environment_match"])
+        snapshot.write_text(json.dumps({
+            "format": "Singles", "pokemon": [],
+            "generatedAt": "2026-10-30T16:50:00+09:00",
+        }), encoding="utf-8")
+        stale = team_readiness(
+            self.root, self.aid, self.a, master_dir=MASTER,
+            environment_snapshot=snapshot)
+        self.assertFalse(stale["environment_match"])
+        self.assertEqual(stale["status"], "再準備が必要")
+        self.assertIn("Singles環境スナップショットが更新されました",
+                      stale["stale_reasons"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
