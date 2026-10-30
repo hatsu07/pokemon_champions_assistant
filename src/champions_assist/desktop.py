@@ -893,7 +893,8 @@ class DesktopMainWindow(QMainWindow):
         try:
             prefs=VisionPreferenceStore(default_app_root())
             model=prefs.selected_model()
-            team_id=self.settings_service.settings.teams.active_team_id
+            teams=self.settings_service.settings.teams
+            team_id=teams.pending_team_id or teams.active_team_id
             if not model or not team_id:
                 raise ConfigurationError(
                     "設定でChatGPTモデルと次戦の自軍構築を選択してください")
@@ -929,13 +930,18 @@ class DesktopMainWindow(QMainWindow):
         model = preferences.selected_model()
         if not model:
             raise ConfigurationError("設定 → ChatGPTでモデルを選択してください。")
-        team_id = self.settings_service.settings.teams.active_team_id
+        # Commit a deferred A -> B reservation before ANY of the four reads.
+        # This uses the same transition as DesktopController.start_new_match.
+        team_id = self.settings_service.apply_pending_team_for_next_match()
         if not team_id:
             raise ConfigurationError("設定 → 自軍構築で次戦の構築を選択してください。")
         team_path = self.settings_service.teams.path_for_next_match(team_id)
         prepared = self.settings_service.prepare_team_live_assets(
             team_id, match_active=False)
         self._unified_team_id = team_id
+        self._match_panel.registered_team_id = team_id
+        self._match_panel.registered_team_name = (
+            self.settings_service.teams.get(team_id).display_name)
         from hashlib import sha256
         self._unified_team_sha = sha256(Path(team_path).read_bytes()).hexdigest()
         self._match_panel.matrix_source = str(prepared.matrix_path)
