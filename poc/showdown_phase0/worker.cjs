@@ -68,6 +68,19 @@ function projection(b) {
     })),
   };
 }
+function firstDifferentPaths(a, b, prefix = "$", out = []) {
+  if (out.length >= 12 || Object.is(a, b)) return out;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object" ||
+    Array.isArray(a) !== Array.isArray(b)) {
+    out.push(prefix);
+    return out;
+  }
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (out.length >= 12) break;
+    firstDifferentPaths(a[key], b[key], prefix + "." + key, out);
+  }
+  return out;
+}
 function digest(b) {
   return crypto.createHash("sha256").update(JSON.stringify(projection(b))).digest("hex");
 }
@@ -208,25 +221,31 @@ function probe() {
     try { results[kind] = testCase(b, kind); }
     catch (e) { results[kind] = {status: "UNSUPPORTED", detail: String(e.message)}; }
   }
+  let pendingDiagnostics = {};
   try {
     // A legal choice accepted before the other player's choice must survive restore.
     const pending = create([2, 7, 1, 8], 0, false);
     if (!pending.choose("p1", "move 1")) throw Error("pending choice illegal");
     if (!pending.p1.choice.actions?.length) throw Error("pending choice missing");
-    const before = JSON.stringify(pending.toJSON());
+    const beforeState = pending.toJSON();
     const recovered = copy(pending);
-    const matchingSerialization = JSON.stringify(recovered.toJSON()) === before;
+    const afterState = recovered.toJSON();
+    const differentPaths = firstDifferentPaths(beforeState, afterState);
     const recoveredActions = recovered.p1.choice.actions?.length || 0;
-    if (!matchingSerialization || !recoveredActions)
-      throw Error("pending action lost on copy: serialized_equal=" +
-        matchingSerialization + " restored_choice_actions=" + recoveredActions);
+    pendingDiagnostics = {different_serialized_paths: differentPaths,
+      original_choice_actions: pending.p1.choice.actions.length,
+      restored_choice_actions: recoveredActions};
+    if (!recoveredActions) throw Error("pending choice actions are absent after restore");
     if (!pending.choose("p2", "move 1") || !recovered.choose("p2", "move 1"))
       throw Error("pending second choice illegal");
-    if (digest(pending) !== digest(recovered)) throw Error("pending resolution diverged");
+    const equalOutcome = digest(pending) === digest(recovered);
+    pendingDiagnostics.equal_resolved_outcome = equalOutcome;
+    if (differentPaths.length || !equalOutcome)
+      throw Error("pending snapshot not proven equivalent after restore; see diagnostic paths");
     results.pending_choice = {status: "PASS_SYNTHETIC", serialized_pending_action: true,
-      resolved_same_after_copy: true};
+      resolved_same_after_copy: true, ...pendingDiagnostics};
   } catch (e) { results.pending_choice = {status: "UNSUPPORTED", restoration_status: "UNSUPPORTED",
-      detail: String(e.message), safe_for_midbattle_reconstruction: false}; }
+      detail: String(e.message), safe_for_midbattle_reconstruction: false, ...pendingDiagnostics}; }
   try {
     // Freeze a common observable board before *either* unknown set acts.
     const a = create([9, 8, 7, 6], 0, false);
