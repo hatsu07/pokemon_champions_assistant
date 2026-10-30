@@ -280,6 +280,71 @@ class CachedPrepTests(unittest.TestCase):
         self.assertEqual(prep_evidence_status(evaluated_rows),
                          "ASSESSED_WITH_UNCERTAINTY")
 
+    def test_concrete_first_move_is_required_even_if_all_18_rows_have_tags(self):
+        from champions_assist.prep import (
+            build_prep_input, PrepMatchup, PrepResult, validate_prep_result,
+            validate_partial_prep_result,
+        )
+        from itertools import product
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        chosen=tuple(OWN[:3])
+        moves={m["name"]:tuple(m[f"move{i}"] for i in range(1,5))
+               for m in assets.own_team if m["name"] in chosen}
+        inp=build_prep_input(chosen,chosen[0],tuple(OPP),
+                             tuple("matrix" for _ in OPP),
+                             registered_moves=moves)
+        lead=("ACT=attack|KO=unknown|DPS=registered_move|PRI=none|"
+              "S=unknown|OUR=registered_move|OPP=unknown|SAFE=unknown|"
+              "PROC=unverified|LOCK=unknown|MEGA=unknown")
+        bench=("S=unknown|OUR=registered_move|OPP=unknown|PRI=none|"
+               "SAFE=unknown|PROC=unverified")
+        rows=tuple(PrepMatchup(own,opp,lead if own==chosen[0] else bench)
+                   for own,opp in product(chosen,OPP))
+        all_ambiguous=PrepResult("COMPLETE",rows,*chosen)
+        result=validate_prep_result(inp,all_ambiguous)
+        self.assertFalse(result.complete)
+        self.assertEqual(result.reason,"MAX_DAMAGE_MOVE_NOT_REGISTERED")
+        partial=PrepResult(
+            "PARTIAL",tuple(r for r in rows if r.opponent_pokemon!=OPP[-1]),
+            *chosen)
+        self.assertFalse(validate_partial_prep_result(
+            chosen,chosen[0],tuple(OPP[:5]),("未判明相手6",),
+            partial,registered_moves=moves).complete)
+
+        legal=tuple(PrepMatchup(
+            r.our_pokemon,r.opponent_pokemon,
+            r.eval_code.replace("ACT=attack","ACT=move:じしん")
+                       .replace("registered_move","じしん"))
+            for r in rows)
+        self.assertTrue(validate_prep_result(
+            inp,PrepResult("COMPLETE",legal,*chosen)).complete)
+        wrong_action=tuple(PrepMatchup(
+            r.our_pokemon,r.opponent_pokemon,
+            r.eval_code.replace("ACT=attack","ACT=move:未登録技")
+                       .replace("registered_move","じしん"))
+            for r in rows)
+        self.assertEqual(validate_prep_result(
+            inp,PrepResult("COMPLETE",wrong_action,*chosen)).reason,
+            "FIRST_ACTION_NOT_CONCRETE")
+
+    def test_invalid_model_prep_counts_zero_evaluated_even_when_18_returned(self):
+        tmp,assets=loaded_assets()
+        self.addCleanup(tmp.cleanup)
+        state=chosen_state(assets)
+        bad={**evaluated_prep()}
+        bad["lead_six"]=[
+            row.replace("ACT=move:じしん","ACT=attack") for row in bad["lead_six"]]
+        with patch("champions_assist.match_replay._stream_json",return_value=bad):
+            updated,report=run_replay_prep(
+                state=state,assets=assets,access_token="dummy",
+                model="mock",client_factory=lambda **_:object())
+        self.assertEqual(report["status"],"PREP_INCOMPLETE")
+        self.assertEqual(report["reason"],"FIRST_ACTION_NOT_CONCRETE")
+        self.assertEqual(report["matchup_rows_returned"],18)
+        self.assertEqual(report["matchups_evaluated"],0)
+        self.assertIsNone(updated["prep"])
+
     def test_invalid_roles_never_promoted(self):
         tmp,assets=loaded_assets()
         self.addCleanup(tmp.cleanup)
