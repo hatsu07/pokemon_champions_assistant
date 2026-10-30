@@ -45,6 +45,18 @@ jobs:
           assert report["decision"]["performance_100_valid"], "fewer than 100 valid branches"
           assert report["probe"]["format_mod"] == "champions"
           PY
+      - name: Audit source-data parity (not game certification)
+        run: |
+          docker run --rm --entrypoint node champions-phase0 audit.cjs > phase0-audit.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-audit.json", encoding="utf-8") as f:
+              audit = json.load(f)
+          print("Source comparison:", audit["format"], audit["upstream_sha"])
+          print("Categories:", audit["totals"])
+          print("Mismatch count:", audit["mismatch_count"])
+          print("Sample discrepancies:", audit["mismatch_examples"][:8])
+          PY
       - name: Remove unneeded measurement file
         if: always()
-        run: rm -f phase0-result.json
+        run: rm -f phase0-result.json phase0-audit.json
