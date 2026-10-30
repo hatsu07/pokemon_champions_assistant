@@ -108,7 +108,7 @@ class CausalResearchTests(unittest.TestCase):
     def record(self, mid, *, signature=SIGNATURE, gate_sha=None,
                tactical_version="tactical-v1", environment_at="2026-10-29",
                with_p1=True, confirmed=False, control="UNKNOWN",
-               incomplete=False):
+               incomplete=False, issue="初手の見直し"):
         state={
             "phase":"ENDED","result":"LOSS",
             "opponent_six":["カバルドン"],
@@ -125,7 +125,7 @@ class CausalResearchTests(unittest.TestCase):
                 "findings":[{
                     "opponent":"カバルドン","our_pokemon":"ガブリアス",
                     "observation":"画面候補",
-                    "issue":"初手の見直し",
+                    "issue":issue,
                     "suggestion":"対面選択を再比較",
                     "certainty":"HYPOTHESIS"}],
                 "next_match_notes":"保留",
@@ -307,6 +307,119 @@ class CausalResearchTests(unittest.TestCase):
             gate_file=self.gate,client_factory=self.factory())
         self.assertEqual(result["status"],"ENVIRONMENT_VERSION_MISMATCH")
         self.assertFalse(self.clients)
+
+    def test_new_candidate_uses_new_three_matches_not_hash_first_old_pattern(self):
+        # First batch: three reviews mention old issue A. Second batch:
+        # another three reviews mention only issue B. P1 carries forward both
+        # candidate groups, but P2 MUST choose the issue supported by new IDs.
+        for index in range(3):
+            self.record(f"old-{index}",issue="旧候補A")
+        first=self.p1.aggregate_after_review(match_id="old-2")
+        self.assertEqual(first["status"],"STORED_PROVISIONAL_UNVERIFIED")
+        for index in range(3):
+            self.record(f"new-{index}",issue="新候補B")
+        second=self.p1.aggregate_after_review(match_id="new-2")
+        self.assertEqual(second["status"],"STORED_PROVISIONAL_UNVERIFIED")
+        cands=self.p1.candidates(batch_sha=second["batch_sha"])
+        self.assertEqual({c["issue"] for c in cands},{"旧候補A","新候補B"})
+        output=self.p2.analyze_after_review(
+            match_id="new-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(output["status"],"STORED_HOLD_UNVERIFIED")
+        payload=json.loads(self.clients[0].calls[0]["input"][0]["content"][0]["text"])
+        source=payload["source"]
+        self.assertEqual(source["pattern"]["issue"],"新候補B")
+        self.assertEqual({m["match_id"] for m in source["matches"]},
+                         {"new-0","new-1","new-2"})
+        self.assertIn("candidate_sha",source["pattern"])
+        self.assertEqual(self.p2.read(output["research_sha"])["analysis"]["sample_size"],3)
+
+    def test_no_repeated_new_pattern_does_not_recycle_old_issue_or_call_api(self):
+        for index in range(3):
+            self.record(f"old-{index}",issue="旧候補A")
+        self.p1.aggregate_after_review(match_id="old-2")
+        for index in range(3):
+            self.record(f"new-{index}",issue=f"各回別件{index}")
+        second=self.p1.aggregate_after_review(match_id="new-2")
+        self.assertEqual(second["status"],"STORED_PROVISIONAL_UNVERIFIED")
+        result=self.p2.analyze_after_review(
+            match_id="new-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(result["status"],"NO_RELEVANT_NEW_PATTERN")
+        self.assertEqual(result["calls_used"],0)
+        self.assertEqual(self.clients,[])
+
+    def test_cancel_after_reservation_refunds_without_stuck_reserved_state(self):
+        self.ready()
+        checks=iter((False, True))
+        first=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,cancel=lambda:next(checks),
+            client_factory=self.factory())
+        self.assertEqual(first["status"],"CANCELLED_HOLD")
+        self.assertEqual(first["calls_used"],0)
+        self.assertFalse(first["dispatched"])
+        self.assertEqual(self.clients,[])
+        self.assertEqual(self.p2.read(first["research_sha"])["status"],"CANCELLED_HOLD")
+        self.assertEqual(self.p2.read(first["research_sha"])["calls_used"],0)
+        # Re-entry is NOT automatic, but a deliberate explicit retry is safe.
+        repeat=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory())
+        self.assertEqual(repeat["status"],"CANCELLED_HOLD")
+        resumed=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,allow_retry=True,client_factory=self.factory())
+        self.assertEqual(resumed["status"],"STORED_HOLD_UNVERIFIED")
+        self.assertEqual(resumed["calls_used"],1)
+        self.assertEqual(len(self.clients),1)
+
+    def test_existing_unnumbered_gate_section_is_visible_and_hold_not_new_rule(self):
+        self.gate.write_text(
+            GATE_TEXT + "\n[SWITCH_GATE]\n"
+            "TRIGGER iff candidate_action in {HARD_SWITCH,PIVOT}\n"
+            "REJECT if switch_ok=N and no EXCEPTION\n"
+            "[HP_LOW_GATE]\nDO_NOT_SWITCH until current_KO assessed\n"
+            "[ROLE_END_GATE]\nIF role_end compare stay\n"
+            "[ATTACK_GATE]\nASSESS current KO before switch\n"
+            "[PRIORITY_GATE]\nCOMPARE speed and priority\n",
+            encoding="utf-8")
+        self.gate_sha=sha256(self.gate.read_bytes()).hexdigest()
+        self.ready(confirmed=True,control="HUMAN")
+        output=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory(
+                finding_factory=lambda source:[
+                    finding(source,gate_rule="SWITCH_GATE",
+                            gate_coverage="EXISTING_GATE_CANDIDATE")]))
+        self.assertEqual(output["status"],"STORED_HOLD_UNVERIFIED")
+        packet=json.loads(self.clients[0].calls[0]["input"][0]["content"][0]["text"])
+        rules=packet["source"]["existing_gate_rules"]
+        self.assertIn("SWITCH_GATE",rules)
+        self.assertIn("REJECT if switch_ok=N",rules["SWITCH_GATE"])
+        for section in ("HP_LOW_GATE","ROLE_END_GATE","ATTACK_GATE","PRIORITY_GATE"):
+            self.assertIn(section,rules)
+        finding_row=self.p2.read(output["research_sha"])["analysis"]["findings"][0]
+        self.assertEqual(finding_row["gate_rule_id"],"SWITCH_GATE")
+        self.assertEqual(finding_row["gate_status"],"EXISTING_GATE_EXECUTION_CANDIDATE")
+        self.assertEqual(finding_row["certainty"],"GPT_HYPOTHESIS_UNVERIFIED")
+        self.assertEqual(self.p2.read(output["research_sha"])["analysis"]["status"],"HOLD")
+
+    def test_mismatched_gate_sections_cannot_be_used_for_historic_claim(self):
+        # A postmatch gate that differs by one byte is NOT the frozen rules.
+        self.ready(confirmed=True,gate_sha="0"*64)
+        self.gate.write_text(GATE_TEXT+"\n[SWITCH_GATE]\nREJECT if unsafe\n",
+                             encoding="utf-8")
+        output=self.p2.analyze_after_review(
+            match_id="match-2",model="m",access_token="mock",
+            gate_file=self.gate,client_factory=self.factory(
+                finding_factory=lambda source:[
+                    finding(source,gate_rule="SWITCH_GATE",
+                            gate_coverage="EXISTING_GATE_CANDIDATE")]))
+        packet=json.loads(self.clients[0].calls[0]["input"][0]["content"][0]["text"])
+        self.assertEqual(packet["source"]["existing_gate_rules"],{})
+        stored=self.p2.read(output["research_sha"])["analysis"]["findings"][0]
+        self.assertEqual(stored["gate_status"],"RULE_COVERAGE_UNKNOWN")
 
     def test_never_attempt_when_cancelled_before_reservation(self):
         self.ready()
