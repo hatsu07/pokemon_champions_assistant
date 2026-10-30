@@ -421,7 +421,7 @@ class FullReplayTest(unittest.TestCase):
         state["opponent_six"]=list(OPP)
         state=confirm_actual_selection(state,compatible,list(OWN[:3]),OWN[0])
         lead_code=("ACT=move:10まんボルト|KO=uncertain|DPS=10まんボルト|PRI=none|"
-                   "S=unknown|OUR=電気|OPP=unknown|SAFE=unknown|PROC=move|"
+                   "S=unknown|OUR=10まんボルト|OPP=unknown|SAFE=unknown|PROC=move|"
                    "LOCK=none|MEGA=no")
         bench_code=("S=unknown|OUR=じしん|OPP=unknown|PRI=none|"
                     "SAFE=unknown|PROC=move")
