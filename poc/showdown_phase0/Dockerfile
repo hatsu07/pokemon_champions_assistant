@@ -14,6 +14,10 @@ WORKDIR /opt/pokemon-showdown
 RUN npm ci --no-audit --no-fund && npm run build
 RUN test -e LICENSE && test -e dist/sim/index.js
 COPY poc/showdown_phase0/ /opt/phase0/
+COPY masters/Pokemon_Champions_MC_move_master.csv /opt/phase0/masters/
+COPY masters/Pokemon_Champions_MC_usable_pokemon.csv /opt/phase0/masters/
+COPY masters/Pokemon_Champions_MC_pokemon_learnsets_linked.csv /opt/phase0/masters/
+COPY masters/Pokemon_Champions_MC_usable_held_items.csv /opt/phase0/masters/
 ENV SHOWDOWN_ROOT=/opt/pokemon-showdown
 WORKDIR /opt/phase0
 CMD ["node", "run.cjs"]
