@@ -19,13 +19,13 @@ P1にはゲーム内で実際に押された技を毎ターン確定できると
 ## 出力・費用・復旧
 
 - 構造化Responses API `champions_p2_causal`、`store=False`、`max_output_tokens=3500`、1件ずつ最大240文字の所見、最大6所見。モデルのID参照・イベント番号を実データと照合。架空のmatch ID・event番号は保存せず `FAILED_HOLD`。
-- プロンプト上限23000文字、最大3～6試合・1試合5イベント。結果/メモリが不足している場合は通信せず保留。**画像、OCR生テキスト、シークレット、未制限の全対戦ログは送信しない**。
-- バッチSHAで予約・冪等保存。自動通信は1バッチ1回まで、明示的な `allow_retry=True` 時だけもう1回可能（最大2回）。`BEGIN IMMEDIATE` で同時ワーカーの二重通信を抑制。**予約後、通信開始前のキャンセルは `CANCELLED_HOLD` に遷移し、未使用の通信枠を返す。** `RESERVED_UNVERIFIED` に放置しない。明示的再試行は可能で、自動リトライはしない。通信開始後のモデル通信失敗は予算を消費したとして記録する。費用金額が取得できない場合は推測表示しない。
+- プロンプト上限23000文字、最大3～6試合・1試合5イベント。**各試合5イベントの時点証拠を削らず**、まず追加試合（最低3独立試合は維持）を削減し、ゲート節は安全関連を優先して完全な節単位で掲載量を調整する。`selection_audit.eligible_match_ids`・`excluded_match_ids` と `gate_omitted_rule_ids` を入力・研究SHAに含め、未参照の証拠を使ったふりをしない。最低3試合の完全なイベントでも収まらない場合は `PROMPT_BUDGET_EXCEEDED` で通信せず保留。**画像、OCR生テキスト、シークレット、未制限の全対戦ログは送信しない**。
+- **P1の `p1_batch_sha` を一意キーとして**予約・冪等保存（`UNIQUE(p1_batch_sha)`）。自動通信はP1バッチにつき1回まで、明示的な `allow_retry=True` 時だけもう1回可能（最大2回）。ゲートSHAや入力研究SHAが変わっても別の予算は作らず、`SOURCE_CHANGED_HOLD` に止め、明示再試行でも元の凍結入力が復元されない限り通信しない。`BEGIN IMMEDIATE` で同時ワーカーの二重通信を抑制。**予約後、通信開始前のキャンセルは `CANCELLED_HOLD` に遷移し、未使用の通信枠を返す。** `RESERVED_UNVERIFIED` に放置しない。明示的再試行は可能で、自動リトライはしない。通信開始後のモデル通信失敗は予算を消費したとして記録する。費用金額が取得できない場合は推測表示しない。
 - バトル開始時、前試合のワーカーが残っていればQtのinterruption flagを設定。P2のモデルstreamは中断を確認し、通信を止めて `CANCELLED_HOLD` へ。単発の試合後GPTレビューやP1の保存を巻き戻さない。
 - `matchup-learning.sqlite3` の `p2_causal_batches` は未検証研究の読戻し用。結果を `STORED_HOLD_UNVERIFIED` に固定、`live_applied=False`。研究結果はUIの既存「対戦後レビュー」に件数と保留を表示する。自動次戦反映は子Issue #118 / P5まで禁止する。
 
 ## 受入検証
 
-`tests/test_postmatch_causal_analysis.py`: 合成3試合のゲートSHA照合、既存ルール仮説・O/X保留、架空試合ID拒否、構築/環境版不一致、P1欠損/不完全、通信予算・冪等性・明示再試行、APIを呼ばないケース、非公開ログ非送信、異常時の既存レビュー保持を検査する。`tests/test_autonomous_improvement.py` と既存のGUI・試合後レビューE2EはWindows CIで引き続き検証する。
+`tests/test_postmatch_causal_analysis.py`: 合成3試合×5イベント／6試合×5イベントの入力上限・完全イベント維持・省略監査、同一P1バッチのゲート変更による二重通信防止、合成3試合のゲートSHA照合、既存ルール仮説・O/X保留、架空試合ID拒否、構築/環境版不一致、P1欠損/不完全、通信予算・冪等性・明示再試行、APIを呼ばないケース、非公開ログ非送信、異常時の既存レビュー保持を検査する。`tests/test_autonomous_improvement.py` と既存のGUI・試合後レビューE2EはWindows CIで引き続き検証する。
 
 **重要**: 子Issue #115はCIと人間のPRレビューが揃うまでcloseしない。親Issue #92の統合ブランチをbaseとし、勝手にマージしない。ユーザーのレビューを待つ。
