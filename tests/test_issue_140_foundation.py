@@ -228,7 +228,15 @@ class WorkerTests(unittest.TestCase):
     def make_fake_worker(self, code: str):
         tmp = tempfile.TemporaryDirectory()
         script = Path(tmp.name, "fake_worker.py")
-        script.write_text(code, encoding="utf-8")
+        # Windows Python's redirected stdin may otherwise use the ANSI code
+        # page. The Node worker protocol is UTF-8, including Japanese names in
+        # DecisionWindow.identity(); a mojibake echo is correctly discarded
+        # by the adapter and can otherwise wait until the full turn deadline.
+        script.write_text(
+            "import sys\n"
+            "sys.stdin.reconfigure(encoding='utf-8', errors='strict')\n"
+            "sys.stdout.reconfigure(encoding='utf-8', errors='strict')\n"
+            + code, encoding="utf-8")
         worker = LocalSimulatorWorker(
             node_executable=sys.executable, worker_script=str(script),
             showdown_root=tmp.name,
@@ -244,6 +252,10 @@ class WorkerTests(unittest.TestCase):
             "  old=dict(r); old['snapshot_sha256']='stale-snapshot'\n"
             "  old.update(capability_status='CONFIRMED',ok=True)\n"
             "  print(json.dumps(old),flush=True)\n"
+            "  wrong_identity=dict(r); wrong_identity['identity']=dict(r['identity'])\n"
+            "  wrong_identity['identity']['active_pokemon']='ミミッキュ'\n"
+            "  wrong_identity.update(capability_status='CONFIRMED',ok=True)\n"
+            "  print(json.dumps(wrong_identity),flush=True)\n"
             " r.update(capability_status='PARTIAL',ok=True,payload={})\n"
             " print(json.dumps(r),flush=True)\n"
         )
