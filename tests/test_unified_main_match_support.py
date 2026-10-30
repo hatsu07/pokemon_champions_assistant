@@ -651,8 +651,9 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel=self.window._match_panel
         panel.assets=assets
         panel.state=chosen_state(assets)
-        panel._prefill_cached_prep(
-            roles={"preserve":OWN[0],"stopper":OWN[1],"closer":OWN[2]})
+        with patch.object(panel,"_render",wraps=panel._render) as render:
+            panel._prefill_cached_prep(
+                roles={"preserve":OWN[0],"stopper":OWN[1],"closer":OWN[2]})
         prep=panel.state["prep"]
         self.assertEqual(panel.state["prep_status"],"CACHE_INCOMPLETE")
         self.assertEqual(prep["cached_hint_count"],18)
@@ -661,7 +662,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
                    if item.get("event")=="PREP_CACHE_BASE_READY")
         self.assertEqual(event["cached_hint_count"],18)
         self.assertEqual(event["matchups_evaluated"],0)
-        report=panel.entries[-1]
+        report=render.call_args.args[0]
         self.assertEqual(report["cached_hint_count"],18)
         self.assertEqual(report["matchups_evaluated"],0)
         self.assertIn("評価済み0/18対面",report["message"])
