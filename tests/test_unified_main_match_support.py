@@ -1495,22 +1495,68 @@ class UnifiedMainWindowTests(unittest.TestCase):
             panel._prep_thread=None
             panel._prep_worker=None
 
-    def test_following_normal_switch_reuses_published_target(self):
+    def test_following_normal_switch_suppresses_duplicate_without_replay(self):
         panel=self.window._match_panel
         panel._auto_running=True
-        panel.state={"phase":"BATTLE","awaiting_replacement":False}
+        panel.state={"phase":"BATTLE","awaiting_replacement":False,
+                     "our_active":"マリルリ","_live_state_revision":4}
         panel._turn_epoch=7
         panel._turn_action_sent=True
         panel._turn_event_after_action=False
-        panel._last_advised_switch={"target":"ガブリアス","turn_epoch":7}
+        panel._last_action_request_screen="TURN_ACTION"
+        panel._pending_normal_switch={
+            "target":"ガブリアス","turn_epoch":7,
+            "source_active":"マリルリ","source_screen":"COMMAND_MENU",
+            "status":"ADVISED_NOT_CONFIRMED","state_revision":4}
+        panel.action_banner.setText("直前に表示された指示")
         with patch.object(panel,"_send_pending") as send:
             panel._queue_batch([np.zeros((12,20,3),dtype=np.uint8)],
                                screen_label="SWITCH_SELECTION")
         send.assert_not_called()
-        self.assertIn("ガブリアスに交代",panel.action_banner.text())
-        self.assertTrue(any(row["event"]=="PROPOSED_NORMAL_SWITCH_MENU_REUSED"
+        self.assertEqual(panel.action_banner.text(),"直前に表示された指示")
+        self.assertTrue(any(row["event"]=="NORMAL_SWITCH_NAVIGATION_SUPPRESSED"
                             for row in panel._timing_trace))
+        self.assertFalse(any(row["event"]=="PROPOSED_NORMAL_SWITCH_MENU_REUSED"
+                             for row in panel._timing_trace))
         panel._auto_running=False
+
+    def test_uncertain_switch_navigation_requests_new_decision(self):
+        panel=self.window._match_panel
+        panel._auto_running=True
+        panel.state={"phase":"BATTLE","awaiting_replacement":False,
+                     "our_active":"ドドゲザン","_live_state_revision":4}
+        panel._turn_epoch=7
+        panel._turn_action_sent=True
+        panel._turn_event_after_action=False
+        panel._last_action_request_screen="TURN_ACTION"
+        panel._pending_normal_switch={
+            "target":"ドドゲザン","turn_epoch":7,
+            "source_active":"ガブリアス","source_screen":"COMMAND_MENU",
+            "status":"ADVISED_NOT_CONFIRMED","state_revision":4}
+        with patch.object(panel,"_send_pending") as send:
+            panel._queue_batch([np.zeros((12,20,3),dtype=np.uint8)],
+                               screen_label="SWITCH_SELECTION")
+            send.assert_called_once()
+        self.assertEqual(panel._pending_screen_label,"SWITCH_SELECTION")
+        panel._pending_batch=None
+        panel._auto_running=False
+
+    def test_stop_does_not_replay_prior_gpt_advice(self):
+        panel=self.window._match_panel
+        panel.state={"phase":"BATTLE"}
+        panel._auto_running=True
+        panel.entries=[{"status":"ADVICE","screen":"COMMAND_MENU",
+                        "recommendation":"ドドゲザンに交代。",
+                        "action":{"kind":"SWITCH","target":"ドドゲザン"}}]
+        panel._last_action_text="ドドゲザンに交代。"
+        with patch.object(panel,"_diagnostic") as diagnostic:
+            panel._stop_auto()
+        self.assertIn("監視停止中",panel.action_banner.text())
+        self.assertNotIn("ドドゲザンに交代",panel.action_banner.text())
+        self.assertEqual(len(panel.entries),1)
+        self.assertFalse(any(args.args[0]=="GUI_DISPLAY"
+                             for args in diagnostic.call_args_list))
+
 
     def test_fainted_switch_is_new_request_even_after_old_switch_proposal(self):
         panel=self.window._match_panel
@@ -1520,7 +1566,7 @@ class UnifiedMainWindowTests(unittest.TestCase):
         panel._turn_action_sent=True
         panel._turn_event_after_action=False
         panel._last_action_request_screen="TURN_ACTION"
-        panel._last_advised_switch={"target":"ガブリアス","turn_epoch":7}
+        panel._pending_normal_switch={"target":"ガブリアス","turn_epoch":7}
         with patch.object(panel,"_send_pending") as send:
             panel._queue_batch([np.zeros((12,20,3),dtype=np.uint8)],
                                screen_label="SWITCH_SELECTION")

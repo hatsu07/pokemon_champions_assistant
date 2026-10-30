@@ -189,6 +189,46 @@ class AsyncBattleEventReaderTests(unittest.TestCase):
         finally:
             reader.stop()
 
+    def test_offer_rejections_are_diagnosed_even_when_no_jobs_started(self):
+        profile,image,engine=fixture()
+        reader=AsyncBattleEventReader(profile,ocr_engine=engine)
+        try:
+            self.assertFalse(reader.offer(np.zeros((24,24,3),dtype=np.uint8),
+                                          label="BATTLE_EVENT"))
+            self.assertEqual(reader.last_offer_reason,"ASPECT_RATIO_MISMATCH")
+            self.assertFalse(reader.offer(image.astype(np.float32),
+                                          label="BATTLE_EVENT"))
+            self.assertEqual(reader.last_offer_reason,"IMAGE_FORMAT_INVALID")
+            self.assertFalse(reader.offer(image,label="OTHER"))
+            self.assertEqual(reader.last_offer_reason,"LABEL_NOT_ELIGIBLE")
+            self.assertTrue(reader.offer(image,label="BATTLE_EVENT"))
+            self.assertEqual(reader.last_offer_reason,"ENQUEUED")
+            self.assertFalse(reader.offer(image,label="BATTLE_EVENT"))
+            self.assertEqual(reader.last_offer_reason,"ROI_UNCHANGED")
+            counters=reader.diagnostic_counts()
+            self.assertEqual(counters["ocr_offers"],5)
+            self.assertEqual(counters["ocr_reject_aspect"],1)
+            self.assertEqual(counters["ocr_reject_bad_image"],1)
+            self.assertEqual(counters["ocr_reject_label"],1)
+            self.assertEqual(counters["ocr_reject_unchanged"],1)
+            self.assertEqual(counters["ocr_jobs_enqueued"],1)
+            self.assertEqual(counters["ocr_skipped"],1)
+        finally:
+            reader.stop()
+
+    def test_no_applicable_rois_has_distinct_diagnostic(self):
+        profile,image,engine=fixture()
+        only_event=ScreenFieldProfile(
+            profile.reference_resolution,(profile.regions[0],),
+            "EVENT_ONLY")
+        reader=AsyncBattleEventReader(only_event,ocr_engine=engine)
+        try:
+            self.assertFalse(reader.offer(image,label="TURN_ACTION"))
+            self.assertEqual(reader.last_offer_reason,"NO_APPLICABLE_ROI")
+            self.assertEqual(reader.diagnostic_counts()["ocr_reject_no_roi"],1)
+        finally:
+            reader.stop()
+
     def test_missing_tesseract_is_nonfatal(self):
         profile,_,_=fixture()
         with patch("champions_assist.ocr.discover_japanese_tesseract",
