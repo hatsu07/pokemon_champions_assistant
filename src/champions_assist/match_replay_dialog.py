@@ -404,6 +404,9 @@ class MatchReplayDialog(QDialog):
         super().__init__(parent)
         self.embedded = embedded
         self.before_new_match = before_new_match
+        # The host commits a deferred team reservation only after the actual
+        # four frozen inputs have loaded successfully in this new match.
+        self.after_preload_success = None
         self.on_capture_reconnected = on_capture_reconnected
         self.match_id = None
         if embedded:
@@ -744,6 +747,8 @@ class MatchReplayDialog(QDialog):
             ).load_for_new_match()
             self.state=new_replay(self.assets)
             self.state["loaded_team_identity"]=self.assets.loaded_team_identity
+            if self.after_preload_success is not None:
+                self.after_preload_success()
             # Read the optional PRIVATE ROI profile once at match start.
             # Calibration does not bypass or replace the four-master load.
             private_profile=self.store_root / "calibration" / "screen_fields.json"
@@ -2750,6 +2755,13 @@ class MatchReplayDialog(QDialog):
             return
         partial = len(known)!=6
         evaluated=cached_evidence_count(pairs)
+        # The auto-start runs after selection response cleanup. Keep only
+        # roles explicitly tied to this exact selected three + lead; never
+        # reuse win roles from a different selection or match.
+        prior = self.state.get("prep") or {}
+        if roles is None and (prior.get("selection_key") ==
+                              [list(selected), lead]):
+            roles = {k: prior.get(k) for k in ("preserve","stopper","closer")}
         roles = roles or {}
         role_values = tuple(roles.get(k) for k in ("preserve","stopper","closer"))
         role_ready=all(isinstance(value,str) and value in selected
@@ -2770,6 +2782,7 @@ class MatchReplayDialog(QDialog):
         self.state["prep"] = {
             ("matchups_known" if partial else "matchups_18"):pairs,
             "source":"FROZEN_CACHE",
+            "selection_key":[list(selected), lead],
             "preserve":role_values[0] if role_ready else None,
             "stopper":role_values[1] if role_ready else None,
             "closer":role_values[2] if role_ready else None,
