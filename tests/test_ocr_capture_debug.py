@@ -48,7 +48,7 @@ class OcrCaptureDebugTests(unittest.TestCase):
         from champions_assist.local_event_worker import LocalFieldRead
         row=LocalFieldRead("screen_text.battle_message","recognized",
                            "capture-21",1.0,0.95,"battle_message",
-                           "テスト文字","ROI_OCR_UNVERIFIED")
+                           "ROI_OCR_UNVERIFIED","テスト文字")
         with TemporaryDirectory() as tmp:
             root=Path(tmp)
             self.assertFalse((root/"debug-logs").exists())
