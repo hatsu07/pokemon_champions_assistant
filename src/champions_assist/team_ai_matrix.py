@@ -29,7 +29,13 @@ def _safe_text(value: object, limit: int = 72) -> str:
     return " ".join(clean.split())[:limit]
 
 
-def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
+def proposal_notes(catalog_path: Path, *, with_counts: bool = False):
+    """Return verified hints, optionally with disjoint v1/v2 coverage counts.
+
+    Distinct (opponent, slot) keys use the higher schema version. An invalid
+    or outdated proposal is not counted. The legacy two-item result remains
+    available for existing callers.
+    """
     """Prefer validated v2 structured hints, fallback to previous v1 prose.
 
     Local JSON can be modified; validate each row again against the exact
@@ -120,6 +126,11 @@ def proposal_notes(catalog_path: Path) -> tuple[dict[str, dict[int, str]], int]:
                 notes.setdefault(opponent,{})[slot]=note
         except (OSError,ValueError,UnicodeError,TypeError,KeyError,ConfigurationError):
             continue
+    if with_counts:
+        return notes, len(versions), {
+            "ai_v1_cells": sum(v == 1 for v in versions.values()),
+            "ai_v2_cells": sum(v == 2 for v in versions.values()),
+        }
     return notes, len(versions)
 
 
@@ -142,7 +153,8 @@ def publish_ai_matrix(*, matrix_path: str | Path,
         raise ConfigurationError("LIVEマトリクスの内容が監査記録と一致しません")
     # An exactly matching old reviewed team needs no AI hypothesis matrix.
     if manifest.get("status") == "REVIEWED_REUSE":
-        return {"ai_proposal_cells": 0, "ai_proposal_opponents": 0,
+        return {"ai_proposal_cells": 0, "ai_v1_cells": 0,
+                "ai_v2_cells": 0, "ai_proposal_opponents": 0,
                 "ai_proposal_coverage": 0.0,
                 "ai_proposal_status": "EXACT_BASELINE_REUSED",
                 "ai_proposal_live_certified": False}
@@ -152,7 +164,8 @@ def publish_ai_matrix(*, matrix_path: str | Path,
     raw_catalog = catalog_path.read_bytes()
     if sha256(raw_catalog).hexdigest() != manifest.get("candidate_sha256"):
         raise ConfigurationError("LIVEマトリクスとAI評価案の構築根拠が一致しません")
-    notes, count = proposal_notes(catalog_path)
+    notes, count, by_version = proposal_notes(
+        catalog_path, with_counts=True)
     rows = []
     opponent_count = 0
     for line in old_text.splitlines():
@@ -178,6 +191,7 @@ def publish_ai_matrix(*, matrix_path: str | Path,
     generated = "\n".join(rows) + "\n"
     status = {
         "ai_proposal_cells": count,
+        **by_version,
         "ai_proposal_opponents": len(notes),
         "ai_proposal_coverage": round(count / max(1, opponent_count * 6), 6),
         "ai_proposal_status": "AI_PROPOSAL_UNVERIFIED",
