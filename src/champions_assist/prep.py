@@ -148,4 +148,4 @@ def mocked_complete_prep(prep_input: PrepInput) -> PrepResult:
         PrepMatchup(own, opponent, lead_code if own == prep_input.lead else bench_code)
         for own, opponent in product(prep_input.selected_three, prep_input.opponent_preview_six)
     )
-    return PrepResult("COMPLETE", rows, "SIMULATED_PRESERVE", "SIMULATED_STOPPER", "SIMULATED_CLOSER")
+    return PrepResult("COMPLETE", rows, *prep_input.selected_three)
