@@ -81,8 +81,20 @@ function firstDifferentPaths(a, b, prefix = "$", out = []) {
   }
   return out;
 }
+// Object property insertion order is not battle state. Sort keys recursively
+// while retaining array order (including queue order) for state comparison.
+function stableStringify(value) {
+  const normalize = x => {
+    if (Array.isArray(x)) return x.map(normalize);
+    if (x && typeof x === "object")
+      return Object.fromEntries(Object.keys(x).sort().filter(k => x[k] !== undefined)
+        .map(k => [k, normalize(x[k])]));
+    return x;
+  };
+  return JSON.stringify(normalize(value));
+}
 function digest(b) {
-  return crypto.createHash("sha256").update(JSON.stringify(projection(b))).digest("hex");
+  return crypto.createHash("sha256").update(stableStringify(projection(b))).digest("hex");
 }
 function copy(b) { return Battle.fromJSON(JSON.parse(JSON.stringify(b.toJSON()))); }
 function alter(b, kind) {
@@ -183,11 +195,11 @@ function testCase(b, kind) {
     const isolated = copy(b);
     alter(isolated, kind);
     const expected = digest(isolated);
-    const serializedBefore = JSON.stringify(isolated.toJSON());
+    const serializedBefore = stableStringify(isolated.toJSON());
     milestones.serialized_ok = 1;
     const reconstructed = copy(isolated);
     if (digest(reconstructed) !== expected ||
-      JSON.stringify(reconstructed.toJSON()) !== serializedBefore)
+      stableStringify(reconstructed.toJSON()) !== serializedBefore)
       throw Error("full serialized state roundtrip mismatch (including queue/effect values)");
     assertInjected(reconstructed, kind);
     milestones.reconstructed_ok = 1;
