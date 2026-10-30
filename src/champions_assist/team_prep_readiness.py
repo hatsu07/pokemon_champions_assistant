@@ -157,9 +157,14 @@ def team_readiness(data_root: str | Path, team_id: str,
                     result["updated_at"] = info.get("updated_at")
                     result["counters"] = info.get("counters", {})
                     if result["run_status"] == "実行中":
-                        # A live in-process worker is overlaid by GUI; on
-                        # application restart old RUNNING is not a success.
+                        # A read-only snapshot cannot prove that a worker is
+                        # alive after restart. The live GUI overlays in-memory
+                        # progress events while that worker is actually alive.
                         result["run_status"] = "停止（再開可能）"
+                        for stage in result["stages"].values():
+                            if stage.get("status") == "実行中":
+                                stage["status"] = "停止"
+                                stage["detail"] = "前回の実行は終了未確認です。再開可能"
                 else:
                     result["status"] = "再準備が必要"
                     result["run_status"] = "再準備が必要"
