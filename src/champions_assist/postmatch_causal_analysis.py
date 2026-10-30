@@ -157,12 +157,35 @@ class PostmatchCausalStore:
             candidates = self.p1_research.candidates(batch_sha=p1_batch["batch_sha"])
             if not candidates:
                 return {"status": "NO_REPEATED_PATTERN"}
-            # The repeated P1 finding is a research hypothesis, never a fact.
-            selected = candidates[0]["evidence_match_ids"][:MAX_MATCHES]
+            # P1 candidate list is ordered by its *hash*, not by recency.
+            # Require the triggering match AND three independent matches new
+            # to THIS batch to support the chosen issue. Otherwise an old
+            # candidate can silently consume a newly earned model budget.
             if match_id not in p1_batch["match_ids"]:
                 return {"status": "NOT_IN_RESEARCH_BATCH"}
-            if len(selected) < MIN_MATCHES:
-                return {"status": "INSUFFICIENT_INDEPENDENT_MATCHES"}
+            previous = self.p1_research.history(
+                team_id=team_id, team_signature=signature, limit=2)
+            old_ids = set(previous[1]["match_ids"]) if len(previous) > 1 else set()
+            fresh_ids = set(p1_batch["match_ids"]) - old_ids
+            relevant = []
+            for candidate in candidates:
+                evidence = set(candidate["evidence_match_ids"])
+                new_evidence = evidence & fresh_ids
+                if (match_id in new_evidence and
+                        len(new_evidence) >= MIN_MATCHES):
+                    relevant.append((candidate, new_evidence))
+            if not relevant:
+                return {"status": "NO_RELEVANT_NEW_PATTERN"}
+            # Stable, auditable priority: more fresh evidence first. Old
+            # evidence can give context but never replace the fresh minimum.
+            relevant.sort(key=lambda pair: (
+                -len(pair[1]), -len(pair[0]["evidence_match_ids"]),
+                pair[0]["candidate_sha"]))
+            candidate, new_evidence = relevant[0]
+            selected = sorted(new_evidence)[:MAX_MATCHES]
+            selected.extend(mid for mid in sorted(candidate["evidence_match_ids"])
+                            if mid not in new_evidence) 
+            selected = selected[:MAX_MATCHES]
 
             snapshots = []
             for mid in selected:
@@ -250,9 +273,10 @@ class PostmatchCausalStore:
                 "schema": SCHEMA, "team_id": team_id, "team_signature": signature,
                 "p1_batch_sha": p1_batch["batch_sha"],
                 "pattern": {
-                    "issue": _small(candidates[0]["issue"]),
-                    "opponent": _small(candidates[0]["opponent"]),
-                    "our_pokemon": _small(candidates[0]["our_pokemon"]),
+                    "candidate_sha": candidate["candidate_sha"],
+                    "issue": _small(candidate["issue"]),
+                    "opponent": _small(candidate["opponent"]),
+                    "our_pokemon": _small(candidate["our_pokemon"]),
                     "certainty": "GPT_HYPOTHESIS_UNVERIFIED",
                 },
                 "sample_size": len(snapshots),
