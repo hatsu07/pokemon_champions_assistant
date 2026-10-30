@@ -137,23 +137,33 @@ class TeamProvisionalMatrixTests(unittest.TestCase):
         def fake_stream(_client,**kwargs):
             prompt=json.loads(kwargs["content"][0]["text"])
             captured.append(prompt)
+            lead = ("ACT=conditional_attack|KO=unknown|DPS=registered_move|"
+                    "PRI=unknown|S=unknown|OUR=registered|OPP=unknown|"
+                    "SAFE=unknown|PROC=unverified|LOCK=unknown|MEGA=recheck")
+            bench = ("S=unknown|OUR=registered|OPP=unknown|PRI=unknown|"
+                     "SAFE=unknown|PROC=unverified")
             return {
                 "preserve":chosen[0],"stopper":chosen[1],"closer":chosen[2],
                 "warning":"既存評価を条件付きで使用",
+                "lead_six":[lead]*6, "bench_twelve":[bench]*12,
             }
         with patch("champions_assist.match_replay._stream_json",
                    side_effect=fake_stream):
             updated, result = run_replay_prep(
                 state=state,assets=assets,access_token="fake",model="fake",
                 client_factory=lambda **kwargs:object())
-        self.assertEqual(result["status"],"PREP_CACHE_REUSED")
+        # AI_UNVERIFIED matrix hints cannot become an already evaluated cache.
+        # The selected 3x6 must be assessed by the PREP model.
+        self.assertEqual(result["status"],"PREP_PROVISIONAL")
         self.assertEqual(result["matchups_evaluated"],18)
-        self.assertEqual(result["missing_matchups"],0)
-        self.assertEqual(len(captured[0]["cached_matchups"]),18)
-        self.assertNotIn("matrix_rows_six",captured[0])
+        self.assertEqual(updated["prep_status"],"STRUCTURE_COMPLETE")
+        self.assertEqual(len(captured),1)
+        self.assertEqual(len(captured[0]["matrix_rows_six"]),6)
+        self.assertLessEqual(len(captured[0]["lookup_rows_critical"]),2)
+        self.assertNotIn("cached_matchups",captured[0])
         self.assertEqual(len(updated["prep"]["matchups_18"]),18)
-        self.assertEqual(updated["prep"]["source"],"FROZEN_CACHE")
-        self.assertIn("実戦ログ",updated["prep"]["note"])
+        self.assertNotIn("source",updated["prep"])
+        self.assertIn("暫定AI評価",updated["prep"]["note"])
 
     def test_stale_or_fake_approved_proposals_cannot_contaminate_matrix(self):
         self.propose()
