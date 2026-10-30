@@ -3155,6 +3155,8 @@ class MatchReplayDialog(QDialog):
                           model_elapsed_ms=result.get("model_elapsed_ms"),
                           prompt_chars=result.get("prompt_chars"),
                           cached_matchups=result.get("cached_matchups"),
+                          cached_hint_count=result.get("cached_hint_count"),
+                          matchups_evaluated=result.get("matchups_evaluated",0),
                           win_conditions=result.get("win_conditions"))
         if (self.state.get("phase")=="SELECTION"
                 and self._proposed_prep_key is not None):
@@ -3173,7 +3175,10 @@ class MatchReplayDialog(QDialog):
                 or self.state.get("prep_status")!="RUNNING"
                 or self._prep_cancel_event.is_set()):
             return  # A new AI request or explicit stop supersedes PREP.
-        self._trace_event("PREP_RESULT",status=result.get("status","UNKNOWN"))
+        self._trace_event("PREP_RESULT",
+                          status=result.get("status","UNKNOWN"),
+                          matchups_evaluated=result.get("matchups_evaluated",0),
+                          cached_hint_count=result.get("cached_hint_count",0))
         if result.get("status")=="CANCELLED":
             return
         if result.get("status") in ("ERROR", "DEADLINE_EXCEEDED"):
