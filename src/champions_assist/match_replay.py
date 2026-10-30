@@ -1074,10 +1074,27 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
     partial=bool(unknown_slots)
     if (assets.matchup_cache_index and
             (updated["matrix_compatible"] or updated.get("matrix_provisional", False))):
-        return _run_cached_prep(
-            state=state, assets=assets, access_token=access_token, model=model,
-            limit_seconds=limit_seconds, client_factory=client_factory,
-            reasoning_effort=reasoning_effort)
+        # Only a fully reviewed, explicitly tagged 18-pair cache can bypass
+        # the full PREP evaluation. AI hints alone are NOT assessed fields.
+        from .prep_cache import cached_pairs, validate_cached_preparation
+        opponents=tuple(updated.get("opponent_six") or ())
+        known=tuple(name for name in opponents
+                    if name not in (updated.get("visual_unknown_opponents") or ()))
+        selected=tuple(updated.get("selected_three") or ())
+        lead=updated.get("lead")
+        if len(selected)==3 and lead in selected and len(known) in (4,5,6):
+            cache_rows=cached_pairs(assets,selected,known,lead)
+            roles_hint=(state.get("prep") or {})
+            verified,_=validate_cached_preparation(
+                assets,selected,known,lead,cache_rows,
+                tuple(roles_hint.get(k) or selected[0]
+                      for k in ("preserve","stopper","closer")))
+            if verified:
+                return _run_cached_prep(
+                    state=state, assets=assets, access_token=access_token,
+                    model=model, limit_seconds=limit_seconds,
+                    client_factory=client_factory,
+                    reasoning_effort=reasoning_effort)
     if not (updated["matrix_compatible"] or updated.get("matrix_provisional",False) or partial):
         updated["prep_status"]="UNAVAILABLE_MATRIX_MISMATCH"
         return updated,{"status":"PREP_UNAVAILABLE","reason":"OWN_MATRIX_MISMATCH",
