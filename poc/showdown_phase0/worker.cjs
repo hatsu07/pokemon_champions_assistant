@@ -4,7 +4,15 @@
 // All observations injected here are SYNTHETIC and are not Champions game evidence.
 const readline = require("node:readline");
 const path = require("node:path");
-const {stableStringify, fingerprint} = require("./state_compare.cjs");
+const {stableStringify, fingerprint, classifySerializedDivergence} = require("./state_compare.cjs");
+const fixtureManifest = JSON.parse(fs.readFileSync(path.join(__dirname, "fixture_manifest.json"), "utf8"));
+const CASES = fixtureManifest.cases;
+const CASE_BY_KIND = new Map(CASES.map(x => [x.kind, x]));
+if (new Set(CASES.map(x => x.case_id)).size !== CASES.length ||
+    CASE_BY_KIND.size !== CASES.length ||
+    CASES.some(x => !x.case_id || !x.preconditions || !x.expected ||
+      !Array.isArray(x.mechanism_tags) || !x.mechanism_tags.length))
+  throw Error("invalid synthetic case manifest");
 const fs = require("node:fs");
 
 const pinned = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
@@ -82,6 +90,18 @@ function firstDifferentPaths(a, b, prefix = "$", out = []) {
   return out;
 }
 function digest(b) { return fingerprint(projection(b)); }
+function mismatchedReplay(a, b, phase) {
+  const left = a.toJSON(), right = b.toJSON();
+  const diagnostics = {
+    phase, ...classifySerializedDivergence(left, right),
+    first_difference_paths: firstDifferentPaths(left, right),
+    before_log_tail: (left.log || []).slice(-5),
+    after_log_tail: (right.log || []).slice(-5),
+  };
+  const error = new Error("seeded replay mismatch: " + JSON.stringify(diagnostics));
+  error.replay_evidence = diagnostics;
+  return error;
+}
 function copy(b) { return Battle.fromJSON(JSON.parse(JSON.stringify(b.toJSON()))); }
 function alter(b, kind) {
   const a = b.p1.active[0];
@@ -175,11 +195,12 @@ function executeBranch(snapshot, kind, progress = {}) {
   return c;
 }
 function testCase(b, kind) {
+  let isolated = null;
   const milestones = {serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0};
   try {
     const original = digest(b);
     let started = process.hrtime.bigint();
-    const isolated = copy(b);
+    isolated = copy(b);
     const clone_ms = Number(process.hrtime.bigint() - started) / 1e6;
     alter(isolated, kind);
     const expected = digest(isolated);
@@ -198,17 +219,13 @@ function testCase(b, kind) {
     const a = executeBranch(reconstructed, kind, milestones);
     const branch_ms = Number(process.hrtime.bigint() - started) / 1e6;
     const a2 = executeBranch(reconstructed, kind);
-    if (digest(a) !== digest(a2))
-      throw Error("seeded branch diverged: " +
-        JSON.stringify({paths: firstDifferentPaths(a.toJSON(), a2.toJSON()),
-          aLogTail: (a.toJSON().log || []).slice(-5),
-          bLogTail: (a2.toJSON().log || []).slice(-5)}));
+    if (digest(a) !== digest(a2)) throw mismatchedReplay(a, a2, "first_branch");
     started = process.hrtime.bigint();
     let nextTurnVerified = false;
     if (a.requestState === "move" && a2.requestState === "move") {
       const nextA = executeBranch(a, "normal");
       const nextB = executeBranch(a2, "normal");
-      if (digest(nextA) !== digest(nextB)) throw Error("next-turn seeded branch diverged");
+      if (digest(nextA) !== digest(nextB)) throw mismatchedReplay(nextA, nextB, "continuation");
       nextTurnVerified = true;
     }
     const continuation_ms = Number(process.hrtime.bigint() - started) / 1e6;
@@ -221,6 +238,11 @@ function testCase(b, kind) {
       branch_digest: digest(a), next_turn_verified: nextTurnVerified,
       serialized_values_compared: true, action_kind: kind === "forced_switch" ? "switch" : "move"};
   } catch (error) {
+    // Synthetic-only failing fixture; never includes actual game observations.
+    if (isolated) {
+      error.fixture_digest = digest(isolated);
+      error.fixture_snapshot = isolated.toJSON();
+    }
     error.milestones = {...milestones};
     throw error;
   }
@@ -283,12 +305,32 @@ function probe() {
       hypothesis_probe_ms: Number(process.hrtime.bigint() - hypothesisStart) / 1e6,
       branch_1: digest(resolvedA), branch_2: digest(resolvedB)};
   } catch (e) { results.unknown_sets = {status: "UNSUPPORTED", detail: String(e.message)}; }
+  const historicalKinds = ["item_choice", "hp_status_pp_boost", "consumed_item", "forced_switch"];
+  const replayFailures = [];
+  const regressionBase = create([11, 22, 33, 44]);
+  for (const kind of historicalKinds) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try { testCase(regressionBase, kind); }
+      catch (e) {
+        replayFailures.push({kind, attempt, seed: [11, 22, 33, 44],
+          reason: String(e.message), replay_evidence: e.replay_evidence || null,
+          fixture_sha256: e.fixture_digest || null,
+          fixture_snapshot: e.fixture_snapshot || null});
+      }
+    }
+  }
+  results.replay_regression = {
+    status: replayFailures.length ? "UNSUPPORTED" : "PASS_SYNTHETIC",
+    attempts: historicalKinds.length * 8,
+    fixture_kinds: historicalKinds, failure_count: replayFailures.length,
+    failures: replayFailures, observation_scope: "synthetic-only seeded regression"};
   return {engine_sha: pinned, format: b.format.id, format_mod: b.format.mod,
     sample: "synthetic; not an observed Champions game", results};
 }
 function benchmark(count) {
   if (!Number.isInteger(count) || count < 100 || count > 10000) throw Error("count must be 100..10000");
-  const kinds = ["normal", "hp_status_pp_boost", "item_choice", "weather_screens", "consumed_item", "forced_switch"];
+  const kinds = CASES.map(x => x.kind);
+  if (kinds.length !== 6) throw Error("six synthetic benchmark scenarios expected");
   const base = create([11, 22, 33, 44]);
   const warmup = [];
   for (let i = 0; i < 20; i++) {
@@ -299,7 +341,7 @@ function benchmark(count) {
     choice_legal: 0, branch_resolved: 0, unsupported: 0};
   const by_kind = Object.fromEntries(kinds.map(k => [k, {requested: 0,
     serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0, unsupported: 0}]));
-  const samples = [], unsupported = {};
+  const samples = [], unsupported = {}, failed_cases = [];
   const uniqueFixtures = new Set();
   for (let i = 0; i < count; i++) {
     const kind = kinds[i % kinds.length], group = by_kind[kind];
@@ -313,7 +355,16 @@ function benchmark(count) {
       fixture_digest = result.fixture_digest;
       stage_ms = result.stage_ms;
       if (fixture_digest) uniqueFixtures.add(fixture_digest);
-    } catch (e) { error = String(e.message); milestones = e.milestones || {}; unsupported[kind] = (unsupported[kind] || 0) + 1; }
+    } catch (e) {
+      error = String(e.message); milestones = e.milestones || {};
+      unsupported[kind] = (unsupported[kind] || 0) + 1;
+      fixture_digest = e.fixture_digest || null;
+      failed_cases.push({index: i, case_id: CASE_BY_KIND.get(kind).case_id,
+        kind, seed: [11, 22, 33, 44], reason: error,
+        fixture_sha256: fixture_digest,
+        fixture_snapshot: e.fixture_snapshot || null,
+        replay_evidence: e.replay_evidence || null});
+    }
     for (const field of ["serialized_ok", "reconstructed_ok", "choice_legal", "branch_resolved"]) {
       if (milestones[field]) {counts[field]++; group[field]++;}
     }
@@ -322,6 +373,7 @@ function benchmark(count) {
       if (!error) error = "branch not resolved";
     }
     samples.push({kind, ms: Number(process.hrtime.bigint() - t) / 1e6,
+      case_id: CASE_BY_KIND.get(kind).case_id,
       status, milestones, fixture_digest, ...(stage_ms ? {stage_ms} : {}),
       ...(error ? {error} : {})});
   }
@@ -329,18 +381,37 @@ function benchmark(count) {
   const percentile = q => numbers.length ? numbers[Math.ceil(q * numbers.length) - 1] : null;
   // Repeated samples measure iteration latency; never interpret repetitions as distinct cases.
   const unique_fixture_count = uniqueFixtures.size;
-  // Scenario labels are not independent state contracts if their hashed input is identical.
-  const unique_state_contract_count = unique_fixture_count;
   const scenario_kind_count = kinds.length;
+  const evaluated_manifest_cases = CASES.map(entry => ({
+    ...entry, actual: {
+      requested: by_kind[entry.kind].requested,
+      passed: by_kind[entry.kind].branch_resolved,
+      failed: by_kind[entry.kind].unsupported,
+      status: by_kind[entry.kind].unsupported === 0 ? "PASS_SYNTHETIC" : "UNSUPPORTED",
+    },
+  }));
+  const distinct_mechanism_tags = [...new Set(CASES.flatMap(x => x.mechanism_tags))].sort();
+  const covered_required_groups = fixtureManifest.required_coverage_groups.filter(
+    tag => CASES.some(x => x.mechanism_tags.includes(tag) &&
+      by_kind[x.kind].unsupported === 0));
+  const missing_required_groups = fixtureManifest.required_coverage_groups.filter(
+    tag => !covered_required_groups.includes(tag));
+  const validated_manifest_case_count = evaluated_manifest_cases.filter(
+    x => x.actual.status === "PASS_SYNTHETIC").length;
+  // A hundred SHA variations is not 100 independent behavioral contracts.
   const representative_100_cases_met = unique_fixture_count >= 100 &&
-    unique_state_contract_count >= 100;
+    validated_manifest_case_count >= 100 && missing_required_groups.length === 0;
   const stagePercentile = (key, q) => {
     const vals = samples.filter(x => x.milestones.branch_resolved && x.stage_ms)
       .map(x => x.stage_ms[key]).sort((a, b) => a - b);
     return vals.length ? vals[Math.ceil(q * vals.length) - 1] : null;
   };
   return {requested: count, iterations: count, completed: counts.branch_resolved,
-    unique_fixture_count, unique_state_contract_count, scenario_kind_count,
+    unique_fixture_count, scenario_kind_count, distinct_mechanism_tag_count: distinct_mechanism_tags.length,
+    distinct_mechanism_tags, validated_manifest_case_count,
+    manifest_case_count: CASES.length, evaluated_manifest_cases,
+    manifest_required_groups: fixtureManifest.required_coverage_groups,
+    covered_required_groups, missing_required_groups,
     unique_fixture_sha256: [...uniqueFixtures].sort(),
     representative_100_cases_met, starting_seed_count: 1,
     team_composition_count: 1, scenario_kinds: kinds,
@@ -348,13 +419,14 @@ function benchmark(count) {
       "more_species_and_moves", "more_abilities_and_items", "HP_range_and_boost_distributions",
       "status_variations", "multiple_starting_seeds", "distribution_of_unknown_sets",
       "candidate_switch_choices", "observed_partial_information"],
-    counts, by_kind, unsupported, replay_consistency_full: counts.branch_resolved === count,
+    counts, by_kind, unsupported, failed_cases,
+    replay_consistency_full: counts.branch_resolved === count && counts.unsupported === 0,
     stage_latency_ms: Object.fromEntries(["clone", "restore", "legal_branch", "continuation"]
       .map(key => [key, {p50: stagePercentile(key, .5), p95: stagePercentile(key, .95),
         p99: stagePercentile(key, .99)}])),
     warmup_ms: warmup, p50_ms: percentile(.5), p95_ms: percentile(.95),
     p99_ms: percentile(.99), memory: process.memoryUsage(), timings: samples,
-    measurement_scope: "6 scenario labels / 5 unique normalized input fixtures, repeated on one team/seed. NOT 100 representative cases; NOT Windows UI E2E"};
+    measurement_scope: "6 manifest cases / 5 unique normalized input fixtures, repeated on one team/seed. NOT 100 representative cases; NOT Windows UI E2E"};
 }
 function handle(message) {
   if (loadError) return {status: "UNSUPPORTED", reason: loadError};
