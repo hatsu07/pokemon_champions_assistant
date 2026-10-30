@@ -56,8 +56,11 @@ jobs:
           assert bench["counts"]["branch_resolved"] == 120, "not all 120 synthetic branches resolved"
           assert bench["counts"]["choice_legal"] == 120, "legal choices absent"
           for kind in ("normal", "hp_status_pp_boost", "item_choice",
-                       "weather_screens", "consumed_item", "forced_switch", "unknown_sets"):
+                       "weather_screens", "consumed_item", "forced_switch", "pending_choice", "unknown_sets"):
               assert report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC", kind
+          assert report["probe"]["results"]["normal"]["next_turn_verified"], "two-turn fork unverified"
+          assert report["probe"]["results"]["item_choice"]["serialized_values_compared"], "effects not compared"
+          assert report["probe"]["results"]["pending_choice"]["resolved_same_after_copy"]
           import os
           meta = {k: report[k] for k in ("schema", "timestamp_utc", "pinned_sha", "context", "decision")}
           print("PHASE0_META_JSON=" + json.dumps(meta, ensure_ascii=False, sort_keys=True))
@@ -82,12 +85,18 @@ jobs:
           print("Source comparison:", audit["format"], audit["upstream_sha"])
           print("Categories:", audit["totals"])
           print("Mismatch count:", audit["mismatch_count"])
+          print("Provisional root-cause triage:", audit["provisional_cause_counts"])
+          assert audit["classification_status"].startswith("UNVERIFIED")
+          assert len(audit["mismatch_details"]) == audit["mismatch_count"]
+          assert sum(audit["provisional_cause_counts"].values()) == audit["mismatch_count"]
+          assert all(not x["cause_verified"] and x["validation_status"] == "UNKNOWN"
+                     for x in audit["mismatch_details"])
           print("Sample discrepancies:", audit["mismatch_examples"][:8])
           assert audit["status"] == "DIAGNOSTIC_ONLY", audit.get("reason")
           assert len(audit["master_sha256"]) == 4, "source SHA coverage"
           assert audit["totals"]["move_coverage"]["checked"] > 0
           print("PHASE0_AUDIT_SOURCE_SHA256=" + json.dumps(audit["master_sha256"], sort_keys=True))
-          for item in audit["mismatch_examples"]:
+          for item in audit["mismatch_details"]:
               print("PHASE0_AUDIT_MISMATCH_JSON=" + json.dumps(item, ensure_ascii=False, sort_keys=True))
           import os
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -96,6 +105,7 @@ jobs:
                   out.write("\\n### Static master audit (NOT game certification)\\n")
                   out.write("Inputs SHA256: `" + json.dumps(audit["master_sha256"], sort_keys=True) + "`\\n\\n")
                   out.write("Mismatch count: " + str(audit["mismatch_count"]) + "\\n")
+                  out.write("Provisional A/B/C/D/E: `" + json.dumps(audit["provisional_cause_counts"]) + "`\\n")
           PY
       - name: Assert audit fails closed without a required master
         run: |
