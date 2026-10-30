@@ -195,7 +195,14 @@ class AutonomousImprovementStore:
             for (opponent, own, issue), evidence in sorted(groups.items()):
                 if len(evidence) < MIN_INDEPENDENT_MATCHES:
                     continue
-                matches = sorted(evidence)[:MAX_EVIDENCE_PER_CANDIDATE]
+                # The review query is newest-first by observed_at. Keep
+                # the latest bounded evidence, not lexicographically first
+                # match IDs: new P2 cycles need the newest three match IDs
+                # even after a pattern recurs for more than twelve matches.
+                matches = sorted([
+                    record["match_id"] for record in reviews
+                    if record["match_id"] in evidence
+                ][:MAX_EVIDENCE_PER_CANDIDATE])
                 suggestions = [evidence[m]["suggestion"] for m in matches]
                 # Do not invent a composite recommendation: retain one exact
                 # GPT hypothesis, and expose disagreement as an open risk.
