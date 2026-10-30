@@ -70,6 +70,24 @@ class Issue136SettingsUITests(unittest.TestCase):
             "stages": {"analysis": {"status": "完了"}}})
         self.assertEqual(self.dialog.prep_stage_table.item(4, 1).text(), "実行中")
 
+    def test_completed_execution_and_incomplete_evidence_are_shown_separately(self):
+        self.dialog._team_readiness_snapshots[self.a.team_id] = {
+            "run_status": "完了", "evidence_status": "根拠不足",
+            "csv_match": False, "tactical_match": True,
+            "environment_match": False,
+            "stale_reasons": ["構築CSVが更新されました"],
+            "stages": {"team": {"status": "完了"}},
+        }
+        self.dialog._show_prep_readiness(self.a.team_id)
+        self.assertIn("工程実行：完了", self.dialog.prep_target_label.text())
+        self.assertIn("根拠充足：根拠不足", self.dialog.prep_target_label.text())
+        detail = self.dialog.prep_readiness_detail.toPlainText()
+        self.assertIn("CSV実体一致：不一致", detail)
+        self.assertIn("型署名・生成物一致：はい", detail)
+        self.assertIn("環境一致：更新済み", detail)
+        self.assertIn("再準備理由：構築CSVが更新されました", detail)
+
+
 
 if __name__ == "__main__":
     unittest.main()
