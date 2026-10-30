@@ -339,9 +339,8 @@ def team_readiness(data_root: str | Path, team_id: str,
                 and entry.get("master_lookup_sha256") == current_lookup_sha
                 and entry.get("baseline_team_signature_sha256") == current_baseline_sha
                 and entry.get("review_file_sha256") == current_review_sha
-                and (environment_snapshot is None or (
-                    entry.get("environment_source_sha256") == current_environment_sha
-                    and entry.get("environment_source_kind") == current_environment_kind))
+                and entry.get("environment_source_sha256", "") == current_environment_sha
+                and entry.get("environment_source_kind", "NONE") == current_environment_kind
             ):
                 return False
             return (
