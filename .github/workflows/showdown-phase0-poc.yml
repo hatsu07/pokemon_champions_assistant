@@ -31,7 +31,7 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs
+        run: docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs
       - name: Execute 120 synthetic fork samples
         run: |
           docker run --rm champions-phase0 > phase0-result.json
@@ -44,6 +44,14 @@ jobs:
           print("Independent gates:", report["decision"]["gate_A_calculation"], report["decision"]["gate_B_midbattle"])
           bench = report["benchmark"]
           print("Bench valid / requested:", bench["completed"], bench["requested"])
+          print("Iterations / unique fixture SHA256 / distinct state contracts:",
+                bench["iterations"], bench["unique_fixture_count"],
+                bench["unique_state_contract_count"])
+          print("Representative-100 requirement:", report["decision"]["representative_100_cases_met"])
+          print("Missing representative mechanisms:", bench["uncovered_mechanisms"])
+          print("Timed stages (Node synthetic):", bench["stage_latency_ms"])
+          print("Unknown opponent hypothesis probe ms:",
+                report["probe"]["results"]["unknown_sets"].get("hypothesis_probe_ms"))
           print("P50/P95/P99 ms:", bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])
           print("Startup and probe ms:", report["startup_and_probe_ms"])
           print("Worker memory bytes:", bench["memory"])
@@ -53,7 +61,14 @@ jobs:
           print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
           print("Failed branches:", [dict(index=i, **s) for i, s in enumerate(bench["timings"]) if s["status"] != "PASS_SYNTHETIC"])
           assert report["decision"]["recommended_adoption"] == "NO_GO"
-          assert report["decision"]["performance_100_valid"], "fewer than 100 valid branches"
+          assert report["decision"]["performance_100_iterations_valid"], "fewer than 100 valid branch iterations"
+          assert bench["iterations"] == 120
+          assert bench["unique_fixture_count"] == 6, "fixture count changed; inspect coverage"
+          assert bench["unique_state_contract_count"] == 6
+          assert bench["representative_100_cases_met"] is False
+          assert report["decision"]["representative_100_cases_met"] is False
+          assert report["decision"]["phase0_100_case_performance_requirement_met"] is False
+          assert len(bench["unique_fixture_sha256"]) == bench["unique_fixture_count"]
           assert report["probe"]["format_mod"] == "champions"
           assert bench["counts"]["branch_resolved"] == 120, "not all 120 synthetic branches resolved"
           assert bench["counts"]["choice_legal"] == 120, "legal choices absent"
@@ -80,6 +95,11 @@ jobs:
               with open(summary, "a", encoding="utf-8") as out:
                   out.write("### Phase 0 synthetic benchmark (NOT Champions game proof)\\n")
                   out.write("Head SHA: `" + os.environ["CHECKED_OUT_HEAD"] + "`\\n\\n")
+                  out.write("Iterations / unique SHA fixtures / state contracts: `" +
+                            str((bench["iterations"], bench["unique_fixture_count"],
+                                 bench["unique_state_contract_count"])) + "`\\n\\n")
+                  out.write("100 representative cases: **NOT MET**\\n\\n")
+                  out.write("Node stage timings: `" + json.dumps(bench["stage_latency_ms"]) + "`\\n\\n")
                   out.write("Categories: `" + json.dumps(bench["by_kind"], ensure_ascii=False) + "`\\n\\n")
                   out.write("Stage totals: `" + json.dumps(bench["counts"]) + "`\\n\\n")
                   out.write("P50/P95/P99 ms: " + str((bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])) + "\\n")
