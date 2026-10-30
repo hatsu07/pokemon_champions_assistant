@@ -1134,8 +1134,15 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         from .live_context import critical_lookup_rows
         # With 4-5 known opponents, never requery or invent unknown lookup rows.
         lookup=[] if partial else critical_lookup_rows(assets, opponents, rows)
+        registered_moves={
+            m["name"]:tuple(str(m.get(f"move{i}") or "").strip()
+                            for i in range(1,5)
+                            if str(m.get(f"move{i}") or "").strip())
+            for m in assets.own_team if m["name"] in updated["selected_three"]
+        }
         prep_input=(None if partial else build_prep_input(
-            tuple(updated["selected_three"]),updated["lead"],opponents,rows))
+            tuple(updated["selected_three"]),updated["lead"],opponents,rows,
+            registered_moves=registered_moves))
         # Even for a changed team with no tactical matrix, pinned row columns
         # 0-2 are immutable species/type/speed context; other team-specific
         # matchup cells must NOT leak into this partial tactical evaluation.
@@ -1186,7 +1193,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "lead_tags":"ACT|KO|DPS|PRI|S|OUR|OPP|SAFE|PROC|LOCK|MEGA",
                 "bench_tags":"S|OUR|OPP|PRI|SAFE|PROC",
                 "format":"Every string has TAG=value components separated by |; "
-                         "unknown is allowed except ACT/DPS/PROC must be assessed.",
+                         "ACT=move:<exact registered move>, "
+                         "ACT=switch:<selected teammate>, or "
+                         "ACT=pivot:<exact registered move>→<selected teammate>. "
+                         "DPS and OUR must be exact registered moves, not "
+                         "abstract labels such as 'registered_move'.",
             },
         }
         prompt_text=json.dumps(prompt,ensure_ascii=False,separators=(",",":"))
@@ -1217,6 +1228,11 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                 "six this is 6+12; for partial known five, 5+10. "
                 "Do NOT repeat Pokémon names inside each entry. "
                 "Every entry must include all its required tags. "
+                "Set ACT to an executable first action using the exact registered "
+                "move or selected switch destination; never write ACT=attack. "
+                "DPS and OUR are exact registered moves, not 'known_move' "
+                "or 'registered_move'. If unable to identify a move, use "
+                "unknown and accept an incomplete assessment; do not invent. "
                 "PROC=unknown or ACT=unknown is an incomplete assessment; "
                 "use PROC=unverified for explicitly assessed but uncertified "
                 "processing capability, never as a guaranteed processor. "
@@ -1255,7 +1271,8 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
         validation=(
             validate_partial_prep_result(
                 tuple(updated["selected_three"]), updated["lead"],
-                known, unknown_slots, result)
+                known, unknown_slots, result,
+                registered_moves=registered_moves)
             if partial else validate_prep_result(prep_input,result))
         elapsed=round((perf_counter()-started)*1000)
         # Completed PREP output remains useful after the soft time target.
@@ -1307,7 +1324,8 @@ def run_replay_prep(*, state: dict, assets: FrozenMatchAssets, access_token: str
                         "reason":validation.reason,"elapsed_ms":elapsed,
                         "request_stage":stage,"model_elapsed_ms":model_elapsed_ms,
                         "prompt_chars":prompt_chars,
-                        "matchups_evaluated":len(result.matchups_18),
+                        "matchups_evaluated":len(result.matchups_18) if validation.complete else 0,
+                        "matchup_rows_returned":len(result.matchups_18),
                         "unknown_matchups":3*len(unknown_slots),
                         "message":message}
     except Exception as exc:
