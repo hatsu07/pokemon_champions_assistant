@@ -518,10 +518,16 @@ class PostmatchCausalStore:
             # batch's budget. Retry requires an explicit caller opt-in.
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("""
-                SELECT research_sha,status,calls_used FROM p2_causal_batches
-                WHERE p1_batch_sha=?""", (prepared["p1_batch_sha"],)).fetchone()
+                SELECT canonical_research_sha,status,calls_used
+                  FROM p2_batch_budget WHERE p1_batch_sha=?""",
+                (prepared["p1_batch_sha"],)).fetchone()
             if existing:
                 stored_sha, status, used = existing
+                if status == "LEGACY_DUPLICATE_HOLD":
+                    db.rollback()
+                    return {"status":"LEGACY_DUPLICATE_HOLD",
+                            "research_sha":stored_sha,"calls_used":used,
+                            "created":False}
                 # Historical knowledge, gate file and chosen prompt can
                 # change without creating a second automatic API budget.
                 # Even explicit retry must use the SAME frozen source, not
@@ -545,6 +551,10 @@ class PostmatchCausalStore:
                                       calls_used=?,attempted_at=?,completed_at=''
                                 WHERE p1_batch_sha=? AND research_sha=?""",
                            (attempt_number,_now(),prepared["p1_batch_sha"],stored_sha))
+                db.execute("""UPDATE p2_batch_budget SET
+                          status='RESERVED_UNVERIFIED',calls_used=?
+                          WHERE p1_batch_sha=?""",
+                           (attempt_number,prepared["p1_batch_sha"]))
             else:
                 db.execute("""INSERT INTO p2_causal_batches(
                     research_sha,team_id,team_signature,p1_batch_sha,
@@ -554,6 +564,11 @@ class PostmatchCausalStore:
                     (digest,prepared["team_id"],prepared["team_signature"],
                      prepared["p1_batch_sha"],_sha(source["matches"]),model,
                      source["gate_sha"],"RESERVED_UNVERIFIED","{}",1,_now(),""))
+                db.execute("""INSERT INTO p2_batch_budget(
+                     p1_batch_sha,canonical_research_sha,calls_used,status,
+                     migrated_legacy_rows,created_at) VALUES(?,?,?,?,?,?)""",
+                     (prepared["p1_batch_sha"],digest,1,
+                      "RESERVED_UNVERIFIED",0,_now()))
             db.commit()
         if cancel and cancel():
             # No network call was dispatched. Close the reservation AND
@@ -567,6 +582,11 @@ class PostmatchCausalStore:
                         WHERE research_sha=? AND status='RESERVED_UNVERIFIED'
                           AND calls_used=?""",
                         (attempt_number - 1, _now(), digest, attempt_number))
+                    db.execute("""UPDATE p2_batch_budget
+                        SET status='CANCELLED_HOLD',calls_used=?
+                        WHERE p1_batch_sha=? AND canonical_research_sha=?
+                          AND status='RESERVED_UNVERIFIED'""",
+                        (attempt_number - 1,prepared["p1_batch_sha"],digest))
             return {"status": "CANCELLED_HOLD", "research_sha": digest,
                     "calls_used": attempt_number - 1, "dispatched": False}
         instructions = (
@@ -635,6 +655,11 @@ class PostmatchCausalStore:
                                 completed_at=?
                             WHERE research_sha=? AND status='RESERVED_UNVERIFIED'""",
                             (_json(packet),_now(),digest))
+                    db.execute("""UPDATE p2_batch_budget
+                        SET status='STORED_HOLD_UNVERIFIED'
+                        WHERE p1_batch_sha=? AND canonical_research_sha=?
+                          AND status='RESERVED_UNVERIFIED'""",
+                        (prepared["p1_batch_sha"],digest))
             return {"status":"STORED_HOLD_UNVERIFIED",
                     "research_sha":digest, "findings":len(packet["findings"]),
                     "sample_size":packet["sample_size"], "calls_used":attempt_number,
@@ -649,6 +674,11 @@ class PostmatchCausalStore:
                             WHERE research_sha=? AND status='RESERVED_UNVERIFIED'""",
                             ("CANCELLED_HOLD" if isinstance(exc,InterruptedError)
                              else "FAILED_HOLD",_now(),digest))
+                    db.execute("""UPDATE p2_batch_budget SET status=?
+                        WHERE p1_batch_sha=? AND canonical_research_sha=?
+                          AND status='RESERVED_UNVERIFIED'""",
+                        ("CANCELLED_HOLD" if isinstance(exc,InterruptedError)
+                         else "FAILED_HOLD",prepared["p1_batch_sha"],digest))
             return {"status": ("CANCELLED_HOLD" if isinstance(exc,InterruptedError)
                                else "FAILED_HOLD"), "research_sha":digest,
                     "reason":type(exc).__name__, "calls_used":attempt_number}
