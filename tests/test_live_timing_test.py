@@ -35,7 +35,7 @@ def prep_payload(state):
         for opponent in state["opponent_six"]:
             code="|".join(f"{tag}=" + (
                 "MOVE" if tag=="ACT" else
-                "registered_move" if tag=="DPS" else
+                "registered_move" if tag in ("DPS","OUR") else
                 "UNVERIFIED" if tag=="PROC" else
                 "unknown") for tag in tags)
             rows.append({"our_pokemon":name,"opponent_pokemon":opponent,
@@ -98,7 +98,7 @@ class TimingCoreTest(unittest.TestCase):
         lead_code=("ACT=conditional|KO=unknown|DPS=move|PRI=unknown|S=unknown|"
                    "OUR=unknown|OPP=unknown|SAFE=unknown|PROC=unverified|"
                    "LOCK=none|MEGA=unknown")
-        bench_code=("S=unknown|OUR=unknown|OPP=unknown|PRI=unknown|"
+        bench_code=("S=unknown|OUR=registered_move|OPP=unknown|PRI=unknown|"
                     "SAFE=unknown|PROC=unverified")
         answer={
             "lead_six":[lead_code]*5,
