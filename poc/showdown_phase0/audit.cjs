@@ -92,7 +92,7 @@ function compare() {
   }
   const uniqueLinks = new Map(links.map(x => [x.LearnsetKey, x]));
   for (const [key, row] of uniqueLinks) {
-    const got = dex.learnsets.get(key);
+    const got = dex.species.getLearnsetData(key);
     const expected = (row["習得MoveKey一覧"] || "").split(",").map(x=>x.trim()).filter(Boolean);
     const known = new Set(Object.keys(got.learnset || {}));
     for (const id of expected) check("learnset_membership", key, id, true, known.has(id));
