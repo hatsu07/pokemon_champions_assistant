@@ -1693,6 +1693,81 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(len(results),1)
         self.assertEqual(results[0]["report"]["status"],"CANCELLED")
 
+
+    def test_auto_prep_keeps_selection_roles_through_worker_cleanup_and_prompt(self):
+        """A second cache prefill must not erase roles inferred at selection."""
+        from copy import deepcopy
+        from tests.test_prep_cache import loaded_assets, chosen_state, evaluated_prep
+        from tests.test_match_replay import OWN
+        from champions_assist.match_replay import run_replay_prep
+        temp,assets=loaded_assets()
+        self.addCleanup(temp.cleanup)
+        preview=chosen_state(assets)
+        preview.update(phase="SELECTION",selected_three=[],lead=None,
+                       prep=None,prep_status="NOT_STARTED")
+        panel=self.window._match_panel
+        panel.assets=assets
+        panel.state=deepcopy(preview)
+        panel._active_job="batch"
+        panel._auto_running=True
+        panel._cancel_event.clear()
+        report={"status":"PROVISIONAL_ADVICE","screen":"TEAM_SELECTION",
+                "selected_three":list(OWN[:3]),"lead":OWN[0],
+                "preserve":OWN[1],"stopper":OWN[2],"closer":OWN[0],
+                "recommendation":"選出"}
+        panel._completed({"state":deepcopy(preview),"report":report})
+        roles=(OWN[1],OWN[2],OWN[0])
+        self.assertEqual(tuple(panel.state["prep"][k]
+                               for k in ("preserve","stopper","closer")),roles)
+        with patch("champions_assist.match_replay_dialog.QThread") as thread, patch(
+                "champions_assist.match_replay_dialog._ReplayWorker") as worker:
+            panel._cleanup()  # invokes the REAL _start_prep_auto
+            worker.assert_called_once()
+            prep_state=worker.call_args.kwargs["state"]
+            self.assertEqual(tuple(prep_state["prep"][k]
+                                   for k in ("preserve","stopper","closer")),roles)
+            panel._prep_thread=None
+            panel._prep_worker=None
+        captured=[]
+        def mock_response(_client,**kwargs):
+            captured.append(json.loads(kwargs["content"][0]["text"]))
+            return {**evaluated_prep(),"preserve":roles[0],
+                    "stopper":roles[1],"closer":roles[2]}
+        with patch("champions_assist.match_replay._stream_json",
+                   side_effect=mock_response):
+            _,result=run_replay_prep(
+                state=prep_state,assets=assets,access_token="dummy",
+                model="mock",client_factory=lambda **_:object())
+        self.assertEqual(result["status"],"PREP_PROVISIONAL")
+        self.assertEqual(captured[0]["selection_roles"],
+                         {"preserve":roles[0],"stopper":roles[1],
+                          "closer":roles[2]})
+
+    def test_failed_new_match_preload_does_not_consume_reserved_team(self):
+        first=self.service.import_team(
+            MASTER_DIR/"Pokemon_Champions_MC_team_2026-10-03.csv",
+            match_active=False)
+        self.service.select_team(first.team_id,match_active=False)
+        other=self.root/"next-team.csv"
+        other.write_bytes(Path(first.csv_path).read_bytes())
+        second=self.service.import_team(other,match_active=False)
+        self.service.select_team(second.team_id,match_active=True)
+        from champions_assist.preload import MasterPreloader
+        with patch("champions_assist.vision_preferences.VisionPreferenceStore") as prefs, patch(
+                "champions_assist.match_replay_dialog.QMessageBox.warning"):
+            prefs.return_value.selected_model.return_value="mock-model"
+            prefs.return_value.reasoning_effort.return_value="low"
+            # Prepared assets succeed but the actual four-file preload fails.
+            with patch.object(MasterPreloader,"load_for_new_match",
+                              side_effect=ValueError("broken frozen file")):
+                self.window._match_panel._new_match()
+        self.assertEqual(self.service.settings.teams.active_team_id,first.team_id)
+        self.assertEqual(self.service.settings.teams.pending_team_id,second.team_id)
+        self.assertIsNone(self.window._match_panel.assets)
+        self.assertIsNone(self.window._match_panel.state)
+        self.assertEqual(
+            self.service.store.load().settings.teams.pending_team_id,second.team_id)
+
     def test_reserved_team_is_used_by_normal_gui_preload_not_current_match(self):
         initial=self.service.import_team(
             MASTER_DIR/"Pokemon_Champions_MC_team_2026-10-03.csv",
