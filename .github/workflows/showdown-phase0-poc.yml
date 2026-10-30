@@ -1,0 +1,216 @@
+name: Phase 0 Showdown isolated PoC
+
+on:
+  pull_request:
+    paths:
+      - 'poc/showdown_phase0/**'
+      - '.github/workflows/showdown-phase0-poc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase0-linux-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert checkout matches current PR HEAD
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          echo "Verified checkout SHA: $(git rev-parse HEAD)"
+          echo "CHECKED_OUT_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Build fixed SHA in isolated container
+        run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+      - name: Test fail-closed adoption assessment
+        run: docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs
+      - name: Execute 120 synthetic fork samples
+        run: |
+          docker run --rm champions-phase0 > phase0-result.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-result.json", encoding="utf-8") as f:
+              report = json.load(f)
+          print("Showdown SHA:", report["pinned_sha"])
+          print("Format:", report["probe"]["format"])
+          print("Independent gates:", report["decision"]["gate_A_calculation"], report["decision"]["gate_B_midbattle"])
+          bench = report["benchmark"]
+          print("Bench valid / requested:", bench["completed"], bench["requested"])
+          print("Iterations / unique input hashes / manifest cases / mechanism tags:",
+                bench["iterations"], bench["unique_fixture_count"],
+                bench["validated_manifest_case_count"], bench["distinct_mechanism_tag_count"])
+          print("Manifest groups covered / missing:", bench["covered_required_groups"],
+                bench["missing_required_groups"])
+          print("Manifest case evidence:", bench["evaluated_manifest_cases"])
+          print("Representative-100 requirement:", report["decision"]["representative_100_cases_met"])
+          print("Missing representative mechanisms:", bench["uncovered_mechanisms"])
+          print("Timed stages (Node synthetic):", bench["stage_latency_ms"])
+          print("Unknown opponent hypothesis probe ms:",
+                report["probe"]["results"]["unknown_sets"].get("hypothesis_probe_ms"))
+          print("P50/P95/P99 ms:", bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])
+          print("Startup and probe ms:", report["startup_and_probe_ms"])
+          print("Worker memory bytes:", bench["memory"])
+          print("Unverified cases detail:", {k: v.get("detail") for k, v in report["probe"]["results"].items() if v.get("status") != "PASS_SYNTHETIC"})
+          print("Pending-choice trace:", json.dumps(report["probe"]["results"]["pending_choice"], ensure_ascii=False, sort_keys=True))
+          print("Unsupported cases:", bench["unsupported"])
+          print("Probe cases:", {k: v.get("status") for k, v in report["probe"]["results"].items()})
+          print("Failed branches:", [dict(index=i, **s) for i, s in enumerate(bench["timings"]) if s["status"] != "PASS_SYNTHETIC"])
+          for failure in bench["failed_cases"]:
+              print("PHASE0_REPLAY_FAILURE_JSON=" +
+                    json.dumps(failure, ensure_ascii=False, sort_keys=True))
+          regression = report["probe"]["results"]["replay_regression"]
+          print("Seeded regression cases / failures:", regression["attempts"], regression["failure_count"])
+          for failure in regression["failures"]:
+              print("PHASE0_REPLAY_REGRESSION_FAILURE_JSON=" +
+                    json.dumps(failure, ensure_ascii=False, sort_keys=True))
+          print("Diagnostic CI is not Phase 0 replay acceptance:",
+                report["decision"]["phase0_replay_acceptance_met"])
+          print("All repeated branches exactly reproducible:",
+                report["decision"]["synthetic_replay_all_consistent"])
+          print("Current run replay/probe regression PASS:",
+                report["decision"]["current_run_replay_consistency_pass"])
+          print("Known historical failures mean long-term stability is unproven.")
+          assert report["decision"]["recommended_adoption"] == "NO_GO"
+          assert report["decision"]["performance_100_iterations_valid"], "fewer than 100 valid branch iterations"
+          assert bench["iterations"] == 120
+          assert bench["unique_fixture_count"] == 5, "fixture count changed; inspect coverage"
+          assert bench["scenario_kind_count"] == 6
+          assert bench["manifest_case_count"] == 6
+          assert bench["validated_manifest_case_count"] <= 6
+          assert bench["distinct_mechanism_tag_count"] > 6
+          assert len(bench["missing_required_groups"]) > 0
+          assert len(bench["evaluated_manifest_cases"]) == 6
+          assert all(x.get("case_id") and x.get("preconditions") and x.get("expected")
+                     and x.get("mechanism_tags") and x.get("actual")
+                     for x in bench["evaluated_manifest_cases"])
+          assert bench["representative_100_cases_met"] is False
+          assert report["decision"]["representative_100_cases_met"] is False
+          assert report["decision"]["phase0_100_case_performance_requirement_met"] is False
+          assert report["decision"]["phase0_replay_acceptance_met"] is False
+          assert report["decision"]["benchmark_manifest_case_count"] == 6
+          assert report["decision"]["benchmark_distinct_mechanism_tags"] > 6
+          assert len(bench["unique_fixture_sha256"]) == bench["unique_fixture_count"]
+          assert report["probe"]["format_mod"] == "champions"
+          assert bench["counts"]["branch_resolved"] >= 100, "fewer than 100 resolved synthetic iterations"
+          assert bench["counts"]["branch_resolved"] + bench["counts"]["unsupported"] == 120
+          assert report["decision"]["synthetic_replay_all_consistent"] == (
+              bench["counts"]["unsupported"] == 0)
+          assert report["decision"]["synthetic_replay_failure_count"] == bench["counts"]["unsupported"]
+          assert bench["counts"]["choice_legal"] >= 100, "fewer than 100 legal action attempts"
+          probe_kinds = ("normal", "hp_status_pp_boost", "item_choice",
+                         "weather_screens", "consumed_item", "forced_switch", "unknown_sets")
+          failed_probes = {}
+          for kind in probe_kinds:
+              result = report["probe"]["results"][kind]
+              assert result["status"] in ("PASS_SYNTHETIC", "UNSUPPORTED"), kind
+              if result["status"] == "UNSUPPORTED":
+                  assert result.get("detail"), "unexplained probe failure: " + kind
+                  failed_probes[kind] = result["detail"]
+          print("Unresolved synthetic probe failures (not treated as PASS):", failed_probes)
+          assert sum(report["probe"]["results"][kind]["status"] == "PASS_SYNTHETIC"
+                     for kind in probe_kinds) >= 4, "too few diagnostic probes passed"
+          normal = report["probe"]["results"]["normal"]
+          if normal["status"] == "PASS_SYNTHETIC":
+              assert normal["next_turn_verified"], "two-turn fork unverified"
+          choice = report["probe"]["results"]["item_choice"]
+          if choice["status"] == "PASS_SYNTHETIC":
+              assert choice["serialized_values_compared"], "effects not compared"
+          assert report["decision"]["gate_B_midbattle"] == "UNSUPPORTED", "do not certify midbattle gate"
+          pending = report["probe"]["results"]["pending_choice"]
+          assert pending["status"] in ("PASS_SYNTHETIC", "UNSUPPORTED")
+          if pending["status"] == "PASS_SYNTHETIC":
+              assert pending["resolved_same_after_copy"]
+          else:
+              assert pending["restoration_status"] == "UNSUPPORTED"
+              assert pending["safe_for_midbattle_reconstruction"] is False
+              print("Explicit midbattle blocker (not a passing case):", pending["detail"])
+          import os
+          meta = {k: report[k] for k in ("schema", "timestamp_utc", "pinned_sha", "context", "decision")}
+          print("PHASE0_META_JSON=" + json.dumps(meta, ensure_ascii=False, sort_keys=True))
+          for index, sample in enumerate(bench["timings"]):
+              print("PHASE0_SAMPLE_JSON=" + json.dumps({"index": index, **sample}, ensure_ascii=False, sort_keys=True))
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as out:
+                  out.write("### Phase 0 synthetic benchmark (NOT Champions game proof)\\n")
+                  out.write("Head SHA: `" + os.environ["CHECKED_OUT_HEAD"] + "`\\n\\n")
+                  out.write("Iterations / unique SHA / manifest cases / mechanism tags: `" +
+                            str((bench["iterations"], bench["unique_fixture_count"],
+                                 bench["validated_manifest_case_count"],
+                                 bench["distinct_mechanism_tag_count"])) + "`\\n\\n")
+                  out.write("Uncovered required mechanism groups: `" +
+                            json.dumps(bench["missing_required_groups"]) + "`\\n\\n")
+                  out.write("100 representative cases: **NOT MET**\\n\\n")
+                  out.write("Diagnostic CI outcome (test execution): **evaluated**\\n\\n")
+                  out.write("Current-run replay/probe consistency: **" +
+                            str(report["decision"]["current_run_replay_consistency_pass"]) + "**\\n\\n")
+                  out.write("Phase 0 replay acceptance: **NOT MET** (independent multi-run evidence absent)\\n\\n")
+                  out.write("All 120 repeated branches consistent: **" +
+                            str(report["decision"]["synthetic_replay_all_consistent"]) + "**\\n\\n")
+                  out.write("Regression failures: `" +
+                            str(report["decision"]["replay_regression_failures"]) + "`\\n\\n")
+                  out.write("Divergent/unsupported branches: " +
+                            str(bench["counts"]["unsupported"]) + "\\n\\n")
+                  out.write("Node stage timings: `" + json.dumps(bench["stage_latency_ms"]) + "`\\n\\n")
+                  out.write("Categories: `" + json.dumps(bench["by_kind"], ensure_ascii=False) + "`\\n\\n")
+                  out.write("Stage totals: `" + json.dumps(bench["counts"]) + "`\\n\\n")
+                  out.write("P50/P95/P99 ms: " + str((bench["p50_ms"], bench["p95_ms"], bench["p99_ms"])) + "\\n")
+          PY
+      - name: Audit source-data parity (not game certification)
+        run: |
+          docker run --rm --entrypoint node champions-phase0 audit.cjs > phase0-audit.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-audit.json", encoding="utf-8") as f:
+              audit = json.load(f)
+          print("Source comparison:", audit["format"], audit["upstream_sha"])
+          print("Categories:", audit["totals"])
+          print("Mismatch count:", audit["mismatch_count"])
+          print("Provisional root-cause triage:", audit["provisional_cause_counts"])
+          assert audit["classification_status"].startswith("UNVERIFIED")
+          assert len(audit["mismatch_details"]) == audit["mismatch_count"]
+          assert sum(audit["provisional_cause_counts"].values()) == audit["mismatch_count"]
+          assert all(not x["cause_verified"] and x["validation_status"] == "UNKNOWN"
+                     for x in audit["mismatch_details"])
+          print("Sample discrepancies:", audit["mismatch_examples"][:8])
+          assert audit["status"] == "DIAGNOSTIC_ONLY", audit.get("reason")
+          assert len(audit["master_sha256"]) == 4, "source SHA coverage"
+          assert audit["totals"]["move_coverage"]["checked"] > 0
+          print("PHASE0_AUDIT_SOURCE_SHA256=" + json.dumps(audit["master_sha256"], sort_keys=True))
+          for item in audit["mismatch_details"]:
+              print("PHASE0_AUDIT_MISMATCH_JSON=" + json.dumps(item, ensure_ascii=False, sort_keys=True))
+          import os
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as out:
+                  out.write("\\n### Static master audit (NOT game certification)\\n")
+                  out.write("Inputs SHA256: `" + json.dumps(audit["master_sha256"], sort_keys=True) + "`\\n\\n")
+                  out.write("Mismatch count: " + str(audit["mismatch_count"]) + "\\n")
+                  out.write("Provisional A/B/C/D/E: `" + json.dumps(audit["provisional_cause_counts"]) + "`\\n")
+          PY
+      - name: Assert audit fails closed without a required master
+        run: |
+          set +e
+          docker run --rm -e CHAMPIONS_MASTERS_DIR=/nonexistent-source-directory \
+            --entrypoint node champions-phase0 audit.cjs > phase0-missing-master.json
+          status=$?
+          set -e
+          test "$status" -ne 0
+          python3 - <<'PY'
+          import json
+          with open("phase0-missing-master.json", encoding="utf-8") as f:
+              result = json.load(f)
+          assert result["status"] == "NOT_RUN"
+          print("Missing source correctly rejected:", result["status"])
+          PY
+      - name: Remove unneeded measurement file
+        if: always()
+        run: rm -f phase0-result.json phase0-audit.json phase0-missing-master.json

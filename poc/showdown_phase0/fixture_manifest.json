@@ -1,0 +1,123 @@
+{
+  "schema": "phase0-synthetic-fixture-manifest-v1",
+  "evidence_scope": "synthetic only; not real Champions observations",
+  "required_coverage_groups": [
+    "base_replay",
+    "hp_and_status",
+    "pp_and_boost",
+    "choice_lock",
+    "weather_and_field",
+    "held_item_consumption",
+    "forced_switch",
+    "mega_history",
+    "unknown_opponent_sets",
+    "pending_choices",
+    "species_and_move_diversity",
+    "real_partial_observation"
+  ],
+  "cases": [
+    {
+      "case_id": "SYN-001",
+      "kind": "normal",
+      "preconditions": "3v3 common board after first move; fixed team and seed",
+      "mechanism_tags": [
+        "base_replay",
+        "seeded_branch",
+        "next_turn"
+      ],
+      "expected": "serialized clone and identical legal branch and continuation",
+      "unsupported": []
+    },
+    {
+      "case_id": "SYN-002",
+      "kind": "hp_status_pp_boost",
+      "preconditions": "same board with own active HP-8 paralysis +1 attack PP-2",
+      "mechanism_tags": [
+        "hp_and_status",
+        "pp_and_boost",
+        "seeded_branch"
+      ],
+      "expected": "HP/status/PP/stages survive clone and action replay",
+      "unsupported": []
+    },
+    {
+      "case_id": "SYN-003",
+      "kind": "item_choice",
+      "preconditions": "same board; Choice Scarf and choice lock from played action",
+      "mechanism_tags": [
+        "choice_lock",
+        "held_item"
+      ],
+      "expected": "locked move and item survive restore and replay",
+      "unsupported": []
+    },
+    {
+      "case_id": "SYN-004",
+      "kind": "weather_screens",
+      "preconditions": "same board; injected rain and reflect durations",
+      "mechanism_tags": [
+        "weather_and_field",
+        "duration",
+        "seeded_branch"
+      ],
+      "expected": "weather and wall duration preserved and replayed",
+      "unsupported": []
+    },
+    {
+      "case_id": "SYN-005",
+      "kind": "consumed_item",
+      "preconditions": "same board; own active item consumed",
+      "mechanism_tags": [
+        "held_item_consumption",
+        "seeded_branch"
+      ],
+      "expected": "consumed item remains absent after restore",
+      "unsupported": []
+    },
+    {
+      "case_id": "SYN-006",
+      "kind": "forced_switch",
+      "preconditions": "same board; p1 switchFlag true and switch request",
+      "mechanism_tags": [
+        "forced_switch",
+        "seeded_branch"
+      ],
+      "expected": "legal switch 2 resolves to Primarina",
+      "unsupported": []
+    }
+  ],
+  "not_in_benchmark": [
+    {
+      "case_id": "SYN-P01",
+      "kind": "pending_choice",
+      "mechanism_tags": [
+        "pending_choices"
+      ],
+      "status": "probe_only"
+    },
+    {
+      "case_id": "SYN-P02",
+      "kind": "unknown_sets",
+      "mechanism_tags": [
+        "unknown_opponent_sets"
+      ],
+      "status": "probe_only"
+    },
+    {
+      "case_id": "SYN-U01",
+      "kind": "mega_history",
+      "mechanism_tags": [
+        "mega_history"
+      ],
+      "status": "UNSUPPORTED"
+    },
+    {
+      "case_id": "SYN-U02",
+      "kind": "real_partial_observation",
+      "mechanism_tags": [
+        "real_partial_observation"
+      ],
+      "status": "NOT_RUN"
+    }
+  ]
+}

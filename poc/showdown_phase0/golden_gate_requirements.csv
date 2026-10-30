@@ -1,0 +1,21 @@
+gate,feature,acceptance_evidence,status,observed_source,regulation,impact
+A,AP and nature,Official or user verified sample for stat rounding and speed,UNKNOWN,none,M-C,Speed ordering and damage
+A,move power and PP,Independent game sample for each modified move and PP cap,UNKNOWN,none,M-C,Move choice legality
+A,priority,Actual game action order including ties and priority modifiers,UNKNOWN,none,M-C,Survival and first move
+A,damage RNG and critical,Observed damage distributions with known attacker and defender sets,UNKNOWN,none,M-C,KO certainty
+A,move accuracy,Observed accuracy under representative conditions,UNKNOWN,none,M-C,Action guarantee
+A,ability and item,Verified activation and consumption with known sets,UNKNOWN,none,M-C,Safe entry and choice lock
+A,mega and form,Observed pre/post species type stat speed and ability,UNKNOWN,none,M-C,Mega matchup consistency
+A,weather screens hazards,Observed field changes and turns remaining,UNKNOWN,none,M-C,Entry and field damage
+A,status and boosts,Observed status and stage modifications plus duration,UNKNOWN,none,M-C,Turn order and damage
+A,regulation learnsets,Official current M-C restrictions and user game legality,UNKNOWN,none,M-C,Available legal moves
+B,observed midbattle 3vs3,Reconstruct from partial observation without knowing opponent private sets,UNKNOWN,none,M-C,Do not assert reconstructed state
+B,HP faint status boosts PP,Preserve all observed fields in clone with seeded replay,PARTIAL,synthetic-only,M-C,Branch accuracy
+B,choice lock and consumed item,Keep known history and reject missing information,PARTIAL,synthetic-only,M-C,Action legality
+B,forced replacement,Resolve legal substitute after the switch request in synthetic runtime,PARTIAL,synthetic-only,M-C,Input and continuation
+B,mega history,Reconstruct observed mega state without starting full battle from scratch,UNSUPPORTED,none,M-C,Post-mega action selection
+B,unknown opponent sets,Use same observed state for at least two hypotheses and keep outcomes isolated,PARTIAL,synthetic-only,M-C,Do not leak private inferred sets
+B,random seed and clone,Reproduce same seed and separate divergent branches,PARTIAL,synthetic-only,M-C,Replay reproducibility
+D,Windows Node runtime,Offline onedir launch with license notices and SBOM,UNKNOWN,none,M-C,Distribution readiness
+D,end to end timing,Measure Android mirror OCR IPC and PySide6 to user display,UNKNOWN,none,M-C,Deadline performance
+B,pending unresolved choice,Preserve queued actions and choices across toJSON/fromJSON then resolve both sides,PARTIAL,synthetic-only,M-C,Pending actions and seeded continuation tested only inside Showdown not observed game
