@@ -450,10 +450,10 @@ class PostmatchCausalStore:
                              reasoning_effort: str = "auto", client_factory=None,
                              cancel: Callable[[], bool] | None = None,
                              allow_retry: bool = False) -> dict:
-        """At most ONE additional Responses call per research batch.
+        """One automatic call per P1 batch; one *explicit* retry at most.
 
-        The one-call budget includes failed network attempts. No automatic
-        retries, and no research when the P1 evidence is absent/incomplete.
+        Usage is unique by P1 batch SHA, never by the gate-dependent prompt
+        digest. No automatic retry or research on incomplete evidence.
         """
         if cancel and cancel():
             return {"status": "CANCELLED", "calls_used": 0}
@@ -470,24 +470,33 @@ class PostmatchCausalStore:
             # batch's budget. Retry requires an explicit caller opt-in.
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("""
-                SELECT status,calls_used FROM p2_causal_batches
-                WHERE research_sha=?""", (digest,)).fetchone()
+                SELECT research_sha,status,calls_used FROM p2_causal_batches
+                WHERE p1_batch_sha=?""", (prepared["p1_batch_sha"],)).fetchone()
             if existing:
-                status, used = existing
+                stored_sha, status, used = existing
+                # Historical knowledge, gate file and chosen prompt can
+                # change without creating a second automatic API budget.
+                # Even explicit retry must use the SAME frozen source, not
+                # silently substitute new evidence under an old P1 batch.
+                if stored_sha != digest:
+                    db.rollback()
+                    return {"status": "SOURCE_CHANGED_HOLD",
+                            "research_sha": stored_sha, "calls_used": used,
+                            "created": False}
                 if status == "STORED_HOLD_UNVERIFIED" or not allow_retry:
                     db.rollback()
-                    return {"status": status, "research_sha": digest,
+                    return {"status": status, "research_sha": stored_sha,
                             "calls_used": used, "created": False}
                 if status == "RESERVED_UNVERIFIED" or used >= MAX_CALLS_PER_BATCH:
                     db.rollback()
-                    return {"status": "BUDGET_EXHAUSTED", "research_sha": digest,
+                    return {"status": "BUDGET_EXHAUSTED", "research_sha": stored_sha,
                             "calls_used": used}
                 attempt_number = used + 1
                 db.execute("""UPDATE p2_causal_batches
                                   SET status='RESERVED_UNVERIFIED',
                                       calls_used=?,attempted_at=?,completed_at=''
-                                WHERE research_sha=?""",
-                           (attempt_number,_now(),digest))
+                                WHERE p1_batch_sha=? AND research_sha=?""",
+                           (attempt_number,_now(),prepared["p1_batch_sha"],stored_sha))
             else:
                 db.execute("""INSERT INTO p2_causal_batches(
                     research_sha,team_id,team_signature,p1_batch_sha,
