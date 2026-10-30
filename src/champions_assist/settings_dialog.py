@@ -41,6 +41,10 @@ from .capture_settings import CapturePreviewResult, CapturePreviewService
 from .settings_management import DesktopSettingsService
 
 
+class _PreparationInterrupted(Exception):
+    """An explicit user stop between off-match preparation stages."""
+
+
 class _MatchupAIWorker(QThread):
     result_ready = Signal(object)
     progress = Signal(object)
@@ -50,10 +54,15 @@ class _MatchupAIWorker(QThread):
         self.service, self.team_id = service, team_id
         self.model, self.effort = model, effort
 
+    def _check_interrupted(self):
+        if self.isInterruptionRequested():
+            raise _PreparationInterrupted("user requested stop")
+
     def run(self):
         journal = None
 
         def step(key, status, detail="", **counts):
+            self._check_interrupted()
             state = journal.stage(key, status, detail, **counts)
             self.progress.emit({
                 "stage": key, "stage_status": status,
@@ -67,7 +76,8 @@ class _MatchupAIWorker(QThread):
             from .team_auto_analysis import run_automatic_analysis
             from .siwc_auth import ChatGPTSignIn, ProtectedSessionStore
             from .app_config import default_app_root
-            from .team_prep_readiness import PrepWorkflowProgress
+            from .team_prep_readiness import PrepWorkflowProgress, _digest
+            from .matchup_evidence import SOURCE_FILES
             from .matchup_learning_store import MatchupLearningStore
             from .team_matchup_reuse import reuse_unchanged_matchups
             from .team_ai_matrix import publish_ai_matrix, proposal_notes
@@ -80,7 +90,13 @@ class _MatchupAIWorker(QThread):
             source = self.service.teams.path_for_next_match(self.team_id)
             journal = PrepWorkflowProgress(
                 self.service.settings.storage.data_root, self.team_id, source)
-            journal.start()
+            # Resume only when the exact team CSV and Champions source set
+            # still match. Changes to environment/reviews are rechecked after
+            # prepare_team_live_assets supplies its full fingerprint.
+            evidence_version = sha256("".join(
+                name + ":" + _digest(Path(self.service.master_directory) / name)
+                for name in SOURCE_FILES).encode("utf-8")).hexdigest()
+            journal.start(evidence_version=evidence_version)
             step("team", "実行中", "登録構築の6匹・SHAを確認中")
             record = self.service.teams.get(self.team_id)
             if not record.validation.selectable_for_next_match:
@@ -146,46 +162,34 @@ class _MatchupAIWorker(QThread):
                     "counters": state["counters"],
                 })
 
-            report = None
-            try:
-                report = run_automatic_analysis(
-                    catalog_path, model=self.model,
-                    access_token=auth.access_token(),
-                    reasoning_effort=self.effort,
-                    interrupted=self.isInterruptionRequested,
-                    progress=on_analysis, priority_opponents=priority,
-                    structured=True,
-                    token_provider=lambda force: auth.access_token(force_refresh=force))
-            finally:
-                # Publish already committed batches even if the last request fails.
-                integrated = publish_ai_matrix(
-                    matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
-                    catalog_path=catalog_path)
-            if report is None:
-                raise RuntimeError("解析レポートを取得できませんでした")
-            step("analysis", "停止" if report["status"] == "INTERRUPTED"
-                 else "一部完了" if report["status"] in ("SOURCE_GAPS", "BATCH_LIMIT")
-                 else "完了",
-                 f"AI提案 {integrated['ai_proposal_cells']}/{total}件。"
-                 f"未検証のKO・安全受けは認定しません",
-                 ai_proposal_cells=integrated["ai_proposal_cells"])
-
+            report = run_automatic_analysis(
+                catalog_path, model=self.model,
+                access_token=auth.access_token(),
+                reasoning_effort=self.effort,
+                interrupted=self.isInterruptionRequested,
+                progress=on_analysis, priority_opponents=priority,
+                structured=True,
+                token_provider=lambda force: auth.access_token(force_refresh=force))
             if report["status"] == "INTERRUPTED":
-                # Stop immediately after committing the last successful AI
-                # batch and publishing its conditional hints. Do not continue
-                # with later preparation stages after explicit user stop.
-                journal.finish("停止")
-                self.progress.emit({
-                    "team_id": self.team_id, "run_status": "停止",
-                    "stages": journal.state["stages"],
-                    "counters": journal.state["counters"]})
-                self.result_ready.emit({
-                    "ok": True, "team_id": self.team_id,
-                    "workflow_status": "停止", "environment_refresh": refresh_status,
-                    **report, **reused, **integrated,
-                    "legacy_v28_imported": migrated_before["imported_cells"],
-                    "legacy_files_preserved": True})
-                return
+                journal.stage("analysis", "停止", "AI解析を停止・成功分は保存済み",
+                              generated=report["count"], batches=report["batches"])
+                raise _PreparationInterrupted("interrupted during AI analysis")
+            step("analysis", "一部完了" if report["status"] == "BATCH_LIMIT"
+                 else "完了",
+                 f"今回AI解析 {report['count']}対面。"
+                 f"確定KO・安全受けの根拠は別判定",
+                 generated=report["count"], batches=report["batches"],
+                 attempts=report.get("attempts", report["batches"]))
+
+            # A stop arriving after the last API response must be honored
+            # before the conditional-hint publication and all later stages.
+            self._check_interrupted()
+            step("publish", "実行中", "AI仮説を未検証注記として反映中")
+            integrated = publish_ai_matrix(
+                matrix_path=ready.matrix_path, manifest_path=ready.manifest_path,
+                catalog_path=catalog_path)
+            self._check_interrupted()
+            step("publish", "完了", "マトリクス補足欄のAI注記を保存")
 
             step("prep", "実行中", "PREPの11項目・6項目に対する根拠を検査")
             notes, note_cells = proposal_notes(catalog_path)
@@ -200,12 +204,12 @@ class _MatchupAIWorker(QThread):
                  f"PREP11・6項目の全件検証は未達",
                  legacy_cells=assessed, prep_lead_complete=0,
                  prep_bench_complete=0)
-
-            step("publish", "実行中", "構築専用マトリクス・ルックアップを確認")
-            # prepare_team_live_assets already generated lookup and the
-            # publish step has projected only explicitly unverified AI hints.
-            step("publish", "完了", "14列マトリクス＋12列ルックアップを保存")
-
+            # The prep quality gate is not a workflow execution failure.
+            journal.evidence(
+                evaluated=assessed, proposals=note_cells, total=total,
+                source_gaps=source_gaps,
+                quality_ready=bool(manifest.get("quality_gate", {})
+                                   .get("live_ready", False)))
             step("cache", "実行中", "4件の事前読込形式と高速対面索引を検査")
             frozen = MasterPreloader(
                 self.service.master_directory, team_source=source,
@@ -223,26 +227,47 @@ class _MatchupAIWorker(QThread):
             if sha256(source.read_bytes()).hexdigest() != journal.team_sha:
                 raise ValueError("実行中に構築CSVが変更されました")
             step("cache", "完了", "4件の凍結読込と6×相手候補の対面索引を確認")
-
+            self._check_interrupted()
             migrated_after = learning.import_legacy_assets()
+            self._check_interrupted()
             coverage = learning.coverage(catalog_path)
-            status = ("停止" if report["status"] == "INTERRUPTED"
-                      else "一部完了" if (source_gaps or
-                          integrated["ai_proposal_cells"] + assessed < total
-                          or not manifest["quality_gate"].get("live_ready"))
-                      else "完了")
+            self._check_interrupted()
+            # SOURCE_GAPS means the accessible work ended; it is not a
+            # failed execution. The separate evidence_status records gaps.
+            status = "一部完了" if report["status"] == "BATCH_LIMIT" else "完了"
             journal.finish(status)
             self.progress.emit({"team_id": self.team_id, "run_status": status,
+                                "evidence_status": journal.state["evidence_status"],
                                 "stages": journal.state["stages"],
                                 "counters": journal.state["counters"]})
             self.result_ready.emit({
                 "ok": True, "team_id": self.team_id, "workflow_status": status,
+                "evidence_status": journal.state["evidence_status"],
                 "environment_refresh": refresh_status,
                 **report, **reused, **integrated,
                 "legacy_v28_imported": (migrated_before["imported_cells"]
                                         + migrated_after["imported_cells"]),
                 "learning_coverage": coverage,
                 "legacy_files_preserved": True})
+        except _PreparationInterrupted:
+            if journal is not None and journal.state:
+                journal.finish("停止")
+                self.progress.emit({
+                    "team_id": self.team_id, "run_status": "停止",
+                    "evidence_status": journal.state["evidence_status"],
+                    "stages": journal.state["stages"],
+                    "counters": journal.state["counters"]})
+                counters = journal.state.get("run_counters", {})
+                self.result_ready.emit({
+                    "ok": True, "team_id": self.team_id,
+                    "workflow_status": "停止", "status": "INTERRUPTED",
+                    "evidence_status": journal.state["evidence_status"],
+                    "count": counters.get("generated", 0),
+                    "batches": counters.get("batches", 0),
+                    "attempts": counters.get("attempts", 0),
+                    "ai_proposal_cells": journal.state.get("counters", {})
+                        .get("ai_proposal_cells", 0),
+                })
         except Exception as exc:
             if journal is not None and journal.state:
                 journal.finish("失敗")
