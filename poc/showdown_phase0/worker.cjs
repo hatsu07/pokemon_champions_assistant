@@ -136,7 +136,7 @@ function assertInjected(b, kind) {
       break;
   }
 }
-function executeBranch(snapshot, kind) {
+function executeBranch(snapshot, kind, progress = {}) {
   const c = copy(snapshot);
   const before = digest(c);
   const beforeTurn = c.turn;
@@ -144,12 +144,14 @@ function executeBranch(snapshot, kind) {
   if (kind === "forced_switch") {
     if (c.requestState !== "switch") throw Error("switch request expected");
     if (!c.choose("p1", "switch 2")) throw Error("forced switch choice illegal");
+    progress.choice_legal = 1;
     if (c.p1.active[0]?.species.id === beforeActive) throw Error("switch unresolved");
     if (c.p1.active[0]?.species.id !== "primarina") throw Error("unexpected switch destination");
   } else {
     if (c.requestState !== "move") throw Error("move request expected");
     if (!c.choose("p1", "move 1")) throw Error("player 1 move illegal");
     if (!c.choose("p2", "move 1")) throw Error("player 2 move illegal");
+    progress.choice_legal = 1;
     if (c.turn <= beforeTurn && c.requestState === "move") throw Error("move turn not resolved");
   }
   if (digest(c) === before) throw Error("legal action produced unchanged board");
@@ -157,25 +159,29 @@ function executeBranch(snapshot, kind) {
 }
 function testCase(b, kind) {
   const milestones = {serialized_ok: 0, reconstructed_ok: 0, choice_legal: 0, branch_resolved: 0};
-  const original = digest(b);
-  const isolated = copy(b);
-  alter(isolated, kind);
-  const expected = digest(isolated);
-  milestones.serialized_ok = 1;
-  const reconstructed = copy(isolated);
-  if (digest(reconstructed) !== expected) throw Error("roundtrip mismatch");
-  assertInjected(reconstructed, kind);
-  milestones.reconstructed_ok = 1;
-  if (digest(b) !== original) throw Error("source state mutated");
-  const a = executeBranch(reconstructed, kind);
-  milestones.choice_legal = 1;
-  const a2 = executeBranch(reconstructed, kind);
-  if (digest(a) !== digest(a2)) throw Error("seeded branch diverged");
-  if (digest(reconstructed) !== expected || digest(b) !== original)
-    throw Error("branch mutated frozen source");
-  milestones.branch_resolved = 1;
-  return {status: "PASS_SYNTHETIC", digest: expected, milestones,
-    branch_digest: digest(a), action_kind: kind === "forced_switch" ? "switch" : "move"};
+  try {
+    const original = digest(b);
+    const isolated = copy(b);
+    alter(isolated, kind);
+    const expected = digest(isolated);
+    milestones.serialized_ok = 1;
+    const reconstructed = copy(isolated);
+    if (digest(reconstructed) !== expected) throw Error("roundtrip mismatch");
+    assertInjected(reconstructed, kind);
+    milestones.reconstructed_ok = 1;
+    if (digest(b) !== original) throw Error("source state mutated");
+    const a = executeBranch(reconstructed, kind, milestones);
+    const a2 = executeBranch(reconstructed, kind);
+    if (digest(a) !== digest(a2)) throw Error("seeded branch diverged");
+    if (digest(reconstructed) !== expected || digest(b) !== original)
+      throw Error("branch mutated frozen source");
+    milestones.branch_resolved = 1;
+    return {status: "PASS_SYNTHETIC", digest: expected, milestones,
+      branch_digest: digest(a), action_kind: kind === "forced_switch" ? "switch" : "move"};
+  } catch (error) {
+    error.milestones = {...milestones};
+    throw error;
+  }
 }
 function probe() {
   const results = {};
@@ -231,7 +237,7 @@ function benchmark(count) {
       const result = testCase(base, kind);
       status = result.status;
       milestones = result.milestones || {};
-    } catch (e) { error = String(e.message); unsupported[kind] = (unsupported[kind] || 0) + 1; }
+    } catch (e) { error = String(e.message); milestones = e.milestones || {}; unsupported[kind] = (unsupported[kind] || 0) + 1; }
     for (const field of ["serialized_ok", "reconstructed_ok", "choice_legal", "branch_resolved"]) {
       if (milestones[field]) {counts[field]++; group[field]++;}
     }
