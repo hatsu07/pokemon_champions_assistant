@@ -1860,6 +1860,15 @@ class MatchReplayDialog(QDialog):
             self._drain_event_candidates(include_snapshot=False)
             if self._last_capture_seq == capture_base+1:
                 record_event("FIRST_FRAME_OCR_DRAIN_COMPLETE")
+        # OCR-confirmed opponent lead is stronger than an unclassified
+        # visual transition. Cancel PREP now, not after the next API dispatch.
+        if (self.state is not None and self.state.get("phase")=="PREP"
+                and self.state.get("opponent_active")
+                and self._prep_thread is not None
+                and not self._prep_cancel_event.is_set()):
+            self._interrupt_prep()
+            self._trace_event("PREP_CANCELLED_ON_CONFIRMED_OPPONENT_LEAD",
+                              opponent=self.state["opponent_active"])
         if self._last_capture_seq == capture_base+1:
             record_event("FIRST_FRAME_MENU_OBSERVE_BEGIN")
         kind=self._turn_buffer.observe(image)
