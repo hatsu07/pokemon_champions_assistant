@@ -1,0 +1,113 @@
+{
+  "schema": "champions-source-rule-contracts-v1",
+  "regulation": "M-C",
+  "checked_at": "2026-10-31",
+  "scope": "OFFLINE_SOURCE_CONTRACTS_ONLY",
+  "actual_game_compatibility": "UNKNOWN",
+  "showdown_event_compatibility": "NOT_TESTED",
+  "priority": [
+    "CHAMPIONS_OFFICIAL",
+    "USER_GAME_CONFIRMATION",
+    "CHAMPIONS_FIXED_MASTER",
+    "BULBAPEDIA_CHAMPIONS_WORDING",
+    "OTHER_WIKIS"
+  ],
+  "rules": [
+    {
+      "id": "PROTEAN_FIRST_MOVE_TYPE",
+      "subject": "protean",
+      "category": "ability",
+      "evidence": "BULBAPEDIA_CHAMPIONS_TEXT_AND_MASTER",
+      "champions_source": "https://bulbapedia.bulbagarden.net/wiki/Protean_(Ability)",
+      "source_section": "Effect / In battle / Pokémon Champions; Champions flavor text",
+      "master": "Pokemon_Champions_MC_ability_master.csv",
+      "claims": [
+        "First move after entering changes the holder to the move type",
+        "Effect can occur only once until next entry"
+      ],
+      "test_scope": "first move, second move, switch-in reset",
+      "not_verified": [
+        "failed move/redirect/Struggle",
+        "type-changing moves with dynamic type",
+        "turn-action sequence relative to damage",
+        "non-Greninja mega evolution"
+      ]
+    },
+    {
+      "id": "PROTEAN_MEGA_GRENINJA_RESET",
+      "subject": "protean",
+      "category": "ability",
+      "evidence": "BULBAPEDIA_CHAMPIONS_TEXT",
+      "champions_source": "https://bulbapedia.bulbagarden.net/wiki/Protean_(Ability)",
+      "source_section": "Effect / In battle / Pokémon Champions",
+      "claims": [
+        "Greninja with Protean that changed type reverts to Water/Dark upon Mega Evolution",
+        "Mega Greninja gets a new Protean use"
+      ],
+      "test_scope": "Greninja-specific mega transition",
+      "not_verified": [
+        "other species/forms",
+        "mega evolution action timing"
+      ]
+    },
+    {
+      "id": "KNOCK_OFF_HELD_ITEM",
+      "subject": "knockoff",
+      "category": "move",
+      "evidence": "BULBAPEDIA_CHAMPIONS_DESCRIPTION_AND_MASTER",
+      "champions_source": "https://bulbapedia.bulbagarden.net/wiki/Knock_Off_(move)",
+      "source_section": "Description / Champs; Effect / Generation IX / Pokémon Champions",
+      "master": "Pokemon_Champions_MC_move_master.csv",
+      "claims": [
+        "Power increased by 50 percent when target holds a removable item",
+        "Successful hit removes that item",
+        "Item still removed even if attacker faints from target ability or Rocky Helmet"
+      ],
+      "test_scope": "known removable item; no held item; misses; attacker faints from contact",
+      "not_verified": [
+        "uncertain removability, Sticky Hold, substitute, ability interaction",
+        "damage and event ordering",
+        "held-items triggering during move"
+      ]
+    },
+    {
+      "id": "WHITE_HERB_ON_LOWERED_STATS",
+      "subject": "whiteherb",
+      "category": "item",
+      "evidence": "BULBAPEDIA_CHAMPIONS_DESCRIPTION_AND_MASTER",
+      "champions_source": "https://bulbapedia.bulbagarden.net/wiki/White_Herb",
+      "source_section": "Description / Champs",
+      "master": "Pokemon_Champions_MC_usable_held_items.csv",
+      "claims": [
+        "Lowered stages reset to neutral",
+        "Held item disappears after one use"
+      ],
+      "test_scope": "post-stat-drop evaluation with negative and positive stages",
+      "not_verified": [
+        "precise activation point during multi-hit/Knock Off",
+        "activation sequence with abilities"
+      ]
+    },
+    {
+      "id": "CHOICE_SCARF_MOVE_LOCK",
+      "subject": "choicescarf",
+      "category": "item",
+      "evidence": "BULBAPEDIA_CHAMPIONS_DESCRIPTION_AND_MASTER",
+      "champions_source": "https://bulbapedia.bulbagarden.net/wiki/Choice_Scarf",
+      "source_section": "Description / Champs",
+      "master": "Pokemon_Champions_MC_usable_held_items.csv",
+      "claims": [
+        "Speed stat boosted by 50 percent",
+        "After using a move cannot use another move until switching out"
+      ],
+      "test_scope": "executed move creates lock; same move can be repeated; different move is rejected; switching clears lock",
+      "not_verified": [
+        "choice lock when selected move never executes",
+        "removal of item midturn",
+        "exact speed rounding/interleaved modifiers"
+      ]
+    }
+  ],
+  "device_match_for_every_rule_required": false,
+  "full_game_compatibility_certification": "NOT_CLAIMED; source-derived contracts alone are insufficient"
+}
