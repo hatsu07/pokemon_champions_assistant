@@ -142,7 +142,7 @@ function validateChampionsScenario(s,dex,allowed){
 // simulator still selects exactly the first three from each after preview.
 function set(species,ability,move){
   return {species,level:50,nature:'Serious',ability,item:'',
-    evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:0},moves:[move]};
+    evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:2},moves:[move]};
 }
 const GARCHOMP=set('Garchomp','Rough Skin','Earthquake');
 const METAGROSS=set('Metagross','Clear Body','Bullet Punch');
