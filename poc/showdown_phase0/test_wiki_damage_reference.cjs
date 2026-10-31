@@ -53,6 +53,8 @@ test('real Champions master: all six team sets are legal and Metagross uses Bull
   const dex=Dex.forFormat('gen9championsbssregmc');
   const allowed=allowedChampionsSets(dex);
   const scenario=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
+  assert.ok(allowed.ambiguous.has('squawkabilly'));
+  assert.ok(!allowed.species.has('squawkabilly'), 'unresolved form key must not pass validation');
   const entry=allowed.species.get('metagross');
   assert.ok(entry);
   assert.ok(entry.learned.has('bulletpunch'));
