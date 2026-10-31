@@ -5,7 +5,6 @@
   "scope": "OFFLINE_SOURCE_CONTRACTS_ONLY",
   "actual_game_compatibility": "UNKNOWN",
   "showdown_event_compatibility": "NOT_TESTED",
-  "in_game_observation_required_for_full_certification": false,
   "priority": [
     "CHAMPIONS_OFFICIAL",
     "USER_GAME_CONFIRMATION",
@@ -108,5 +107,7 @@
         "exact speed rounding/interleaved modifiers"
       ]
     }
-  ]
+  ],
+  "device_match_for_every_rule_required": false,
+  "full_game_compatibility_certification": "NOT_CLAIMED; source-derived contracts alone are insufficient"
 }
