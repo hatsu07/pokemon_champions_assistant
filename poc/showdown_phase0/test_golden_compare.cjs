@@ -9,7 +9,7 @@ const crypto = require("node:crypto");
 const f = value => ({source: "SYNTHETIC", value});
 const ap = Object.fromEntries(["hp", "atk", "def", "spa", "spd", "spe"].map(k => [k, f(0)]));
 const boosts = Object.fromEntries(["atk", "def", "spa", "spd", "spe"].map(k => [k, f(0)]));
-const p = (species, ability) => ({species: f(species), level: f(50), nature: f("Serious"),
+const p = (species, ability) => ({species: f(species), nature: f("Serious"),
   ap: structuredClone(ap), ability: f(ability), item: f(""), status: f(""), boosts: structuredClone(boosts)});
 const base = () => ({case_id: "SYN-GOLDEN-1", observed_at: "2026-10-31T00:00:00Z",
   regulation: "M-C", evidence: {origin: "SYNTHETIC", verification: "UNVERIFIED", references: []},
@@ -107,7 +107,7 @@ test("CLI report keeps synthetic evidence outside verified game matches", () => 
   c.checks.pp = {pokemon: {species: f("Beedrill")}, move_id: f("Agility"), observed_battle_max_pp: f(20)};
   assert.throws(() => compareCase(c), /synthetic case cannot be user verified/);
 });
-test("ranked level and Stat Point limits reject impossible sets", () => {
+test("level-free Champions Stat Point limits reject impossible sets", () => {
   const c = base();
   c.checks.stats = {pokemon: p("Garchomp", "Rough Skin"), observed_stats:
     Object.fromEntries(["hp", "atk", "def", "spa", "spd", "spe"].map(k => [k, f(1)]))};
@@ -116,11 +116,50 @@ test("ranked level and Stat Point limits reject impossible sets", () => {
   assert.match(compareCase(c).checks[0].missing.join(" "), /0\.\.32/);
   mon.ap.atk = f(32); mon.ap.spe = f(32); mon.ap.hp = f(3);
   assert.match(compareCase(c).checks[0].missing.join(" "), /exceeds 66/);
-  mon.ap.hp = f(2); mon.level = f(51);
-  assert.match(compareCase(c).checks[0].missing.join(" "), /level 50/);
-  mon.level = f(50);
+  mon.ap.hp = f(2);
   assert.equal(compareCase(c).checks.length, 6);
+  mon.level = f(50);
+  assert.match(compareCase(c).checks[0].missing.join(" "), /not a Champions game observation/);
+  mon.level = {source: "UNKNOWN"};
+  assert.equal(compareCase(c).checks.length, 6, "legacy UNKNOWN level is ignored");
+  delete mon.level;
+  assert.equal(compareCase(c).checks.length, 6, "new cases need no level field");
 });
+test("synthetic level-free Azumarill stats match pinned Champions stat formula", () => {
+  // Synthesized arithmetic fixture; no user image, video, or real-game record is committed.
+  const c = base();
+  const pokemon = p("Azumarill", "Huge Power");
+  pokemon.nature = f("Adamant");
+  pokemon.ap.hp = f(32);
+  pokemon.ap.atk = f(32);
+  pokemon.ap.spe = f(2);
+  const expected = [207, 112, 100, 72, 100, 72];
+  c.checks.stats = {pokemon, observed_stats: Object.fromEntries(
+    ["hp", "atk", "def", "spa", "spd", "spe"].map((key, index) => [key, f(expected[index])]))};
+  const out = compareCase(c).checks;
+  assert.equal(out.length, 6);
+  assert.deepEqual(out.map(row => row.showdown), expected);
+  assert.ok(out.every(row => row.status === "MATCH_SYNTHETIC"));
+  assert.ok(out.every(row => !Object.hasOwn(row, "level")));
+  assert.equal(run(path.join(__dirname, "synthetic_golden_example.json")).simulator_context.game_observed_level, false);
+});
+
+test("game-observed level is rejected even when numeric value equals simulator setting", () => {
+  const c = base();
+  c.checks.damage = {attacker: p("Garchomp", "Rough Skin"),
+    defender: p("Hippowdon", "Sand Stream"), move_id: f("Earthquake"),
+    defender_hp_before: f(100), defender_hp_after: f(70),
+    critical: f(false), direct_hit_only: f(true), conditions_complete: f(true),
+    defender_substitute: f(false), defender_endure: f(false),
+    field: {weather: f(""), terrain: f(""), defender_screen: f("")}};
+  c.checks.damage.attacker.level = f(50);
+  assert.match(compareCase(c).checks[0].missing.join(" "), /not a Champions game observation/);
+  c.checks.damage.attacker.level = {source: "UNKNOWN"};
+  assert.equal(compareCase(c).checks[0].rolls.length, 16);
+  delete c.checks.damage.attacker.level;
+  assert.equal(compareCase(c).checks[0].rolls.length, 16);
+});
+
 test("Champions species, form, ability and move must be legal", () => {
   const c = base();
   c.checks.damage = {attacker: p("Garchomp", "Rough Skin"), defender: p("Hippowdon", "Sand Stream"),
@@ -178,7 +217,7 @@ test("one verified stats case has six verified checks, and gate A stays UNKNOWN"
   c.case_id = "REAL-1";
   c.evidence = {origin: "REAL_GAME", verification: "USER_VERIFIED",
     references: [{id: "frame-1", description: "test-only synthetic reference"}]};
-  c.checks.stats = {pokemon: {species: g("Garchomp"), level: g(50), nature: g("Serious"),
+  c.checks.stats = {pokemon: {species: g("Garchomp"), nature: g("Serious"),
     ap: Object.fromEntries(["hp", "atk", "def", "spa", "spd", "spe"].map(k => [k, g(0)]))},
   observed_stats: Object.fromEntries(["hp", "atk", "def", "spa", "spd", "spe"].map((k, i) =>
     [k, g([183, 150, 115, 100, 105, 122][i])]))};

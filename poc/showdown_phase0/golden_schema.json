@@ -23,7 +23,7 @@
       "properties": {"hp": {"$ref": "#/$defs/fact"}, "atk": {"$ref": "#/$defs/fact"}, "def": {"$ref": "#/$defs/fact"}, "spa": {"$ref": "#/$defs/fact"}, "spd": {"$ref": "#/$defs/fact"}, "spe": {"$ref": "#/$defs/fact"}}, "additionalProperties": false},
     "boosts": {"type": "object", "required": ["atk", "def", "spa", "spd", "spe"],
       "properties": {"atk": {"$ref": "#/$defs/fact"}, "def": {"$ref": "#/$defs/fact"}, "spa": {"$ref": "#/$defs/fact"}, "spd": {"$ref": "#/$defs/fact"}, "spe": {"$ref": "#/$defs/fact"}}, "additionalProperties": false},
-    "pokemon": {"type": "object", "required": ["species", "level", "nature", "ap"],
+    "pokemon": {"type": "object", "required": ["species", "nature", "ap"],
       "properties": {"species": {"$ref": "#/$defs/fact"}, "form": {"$ref": "#/$defs/fact"},
         "mega_state": {"$ref": "#/$defs/fact"}, "level": {"$ref": "#/$defs/fact"},
         "nature": {"$ref": "#/$defs/fact"}, "ap": {"$ref": "#/$defs/stats"},
