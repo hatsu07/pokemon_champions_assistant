@@ -104,7 +104,9 @@ function mismatchedReplay(a, b, phase) {
   error.replay_evidence = diagnostics;
   return error;
 }
-function copy(b) { return Battle.fromJSON(JSON.parse(JSON.stringify(b.toJSON()))); }
+function serialize(b) { return JSON.parse(JSON.stringify(b.toJSON())); }
+function restore(json) { return Battle.fromJSON(json); }
+function copy(b) { return restore(serialize(b)); }
 function alter(b, kind) {
   const a = b.p1.active[0];
   if (!a) throw new Error("no active pokemon");
@@ -138,8 +140,9 @@ function alter(b, kind) {
     default: throw new Error("unknown fixture");
   }
 }
-// Only public, actually visible synthetic board fields. Opponent hidden moves,
-// item and ability are *not* promoted into an observation.
+// Synthetic public-board projection only. Exact opponent HP here is a simulator
+// value and is not proven readable from a Champions game screen. Opponent hidden
+// moves, item and ability are *not* promoted into an observation.
 function observed(b) {
   return {turn: b.turn, requestState: b.requestState,
     weather: b.field.weather, sides: b.sides.map(s => ({
@@ -436,6 +439,7 @@ function handle(message) {
   if (message.method === "benchmark") return {status: "OK", ...benchmark(message.count)};
   return {status: "UNSUPPORTED", reason: "unknown method"};
 }
+if (require.main === module) {
 const input = readline.createInterface({input: process.stdin});
 input.on("line", line => {
   try {
@@ -448,3 +452,6 @@ input.on("line", line => {
     process.stdout.write(JSON.stringify({id, status: "UNSUPPORTED", reason: String(e.message)}) + "\n");
   }
 });
+}
+module.exports = {create, copy, serialize, restore, observed, projection, firstDifferentPaths,
+  own, opponents, pinned, loadError};

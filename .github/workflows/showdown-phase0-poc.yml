@@ -31,7 +31,46 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs
+      - name: Diagnose Gate B full snapshots and partial observations
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 gate_b_probe.cjs > phase0-gate-b.json
+          python3 - <<'PY'
+          import json
+          with open('phase0-gate-b.json', encoding='utf-8') as stream:
+              report = json.load(stream)
+          with open('poc/showdown_phase0/gate_b_cases.json', encoding='utf-8') as stream:
+              manifest = json.load(stream)
+          assert report['schema'] == 'phase0-gate-b-diagnostics-v1'
+          assert (report['gate_A'], report['gate_B'], report['adoption']) == ('UNKNOWN', 'UNSUPPORTED', 'NO_GO')
+          assert report['pinned_showdown_sha'] == 'ccfaa20f32af363569cd21a9d501b2bc1ded26b1'
+          assert len(report['champions_master_sha256']) == 4
+          assert all(len(value) == 64 for value in report['champions_master_sha256'].values())
+          assert report['case_count'] == len(manifest['cases']) == 14
+          assert report['mechanism_count'] == 14
+          assert report['unique_input_state_count'] == 11
+          assert report['representative_100_cases_met'] is False
+          actual = [(r['case_id'], r['mechanism'], r['status']) for r in report['results']]
+          expected = [(r['id'], r['mechanism'], r['expected_status']) for r in manifest['cases']]
+          print('Gate B B1/B2 counts:', report['counts'])
+          print('Gate B distinct state inputs / cases:', report['unique_input_state_count'], report['case_count'])
+          print('Gate B stage latency ms:', report['stage_latency_ms'])
+          for result in report['results']:
+              print('GATE_B_CASE_JSON=' + json.dumps({
+                  key: result.get(key) for key in ('case_id', 'phase', 'mechanism', 'status',
+                      'evidence_class', 'input_state_sha256', 'first_difference_field',
+                      'continuation_actions', 'action_ids', 'branch_independence',
+                      'unsupported_fields', 'reason')}, sort_keys=True))
+          if actual != expected:
+              print('::error title=Gate B regression::Case status or coverage changed')
+              print('EXPECTED=' + json.dumps(expected))
+              print('ACTUAL=' + json.dumps(actual))
+              raise SystemExit(1)
+          assert report['counts']['B1']['PASS_SYNTHETIC'] == 12
+          assert report['counts']['B2']['INCONCLUSIVE'] == 2
+          assert all(result['status'] != 'PASS_SYNTHETIC' for result in report['results'] if result['phase'] == 'B2')
+          PY
       - name: Compare source contracts with executed pinned Showdown turns
         shell: bash
         run: |
