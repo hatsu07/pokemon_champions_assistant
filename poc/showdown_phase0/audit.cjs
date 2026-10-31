@@ -130,11 +130,11 @@ function compare() {
     if (categories[row["分類"]]) check("move_category", id, "category", categories[row["分類"]], got.category);
     for (const [column, field, group] of [["威力", "basePower", "move_power"],
       ["優先度", "priority", "move_priority"]]) {
-      if (/^-?\\d+$/.test(row[column])) check(group, id, field, Number(row[column]), got[field]);
+      if (/^-?\d+$/.test(row[column])) check(group, id, field, Number(row[column]), got[field]);
     }
     // Compare like layers: master raw PP -> source-cap -> Showdown Dex.pp.
     // Display PP is derived separately, and never certified from this audit.
-    if (/^\\d+$/.test(row["PP"])) {
+    if (/^\d+$/.test(row["PP"])) {
       const rawPP = Number(row["PP"]), expectedDexPP = cappedSourcePP(rawPP);
       check("move_pp", id, "pp", expectedDexPP, got.pp);
       if (rawPP > 20) sourcePPCapCases.push({
