@@ -31,7 +31,21 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs
+        run: docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs
+      - name: Compare documented Wiki arithmetic to pinned Showdown (diagnostic only)
+        shell: bash
+        run: |
+          set +e
+          docker run --rm --network none --read-only --entrypoint node champions-phase0 wiki_damage_compare.cjs
+          result=$?
+          set -e
+          if [ "$result" -eq 2 ]; then
+            echo "::error::Wiki comparison did not run; inspect pinned engine or fixture failure"
+            exit 2
+          fi
+          if [ "$result" -ne 0 ]; then
+            echo "::warning::Wiki and Showdown calculation differ; triage source versions and rules. Not real-game proof."
+          fi
       - name: Execute 120 synthetic fork samples
         run: |
           docker run --rm champions-phase0 > phase0-result.json

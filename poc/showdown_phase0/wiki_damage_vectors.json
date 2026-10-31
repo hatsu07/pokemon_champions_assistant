@@ -1,0 +1,52 @@
+{
+  "schema": "champions-wiki-reference-v1",
+  "regulation": "M-C",
+  "sources": {
+    "damage_order": {
+      "url": "https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
+      "page_updated": "2026-10-30",
+      "checked_at": "2026-10-31",
+      "provenance": "SECONDARY_COMMUNITY_REFERENCE_UNVERIFIED_FOR_CHAMPIONS",
+      "source_priority": "SECONDARY_COMMUNITY",
+      "note": "The published numerical example is retained as a regression fixture. Bulbapedia's Damage article explicitly notes Champions coverage gaps; do not relabel this example as Bulbapedia-verified or device-verified."
+    }
+  },
+  "cases": [
+    {
+      "id": "WIKI-EARTHQUAKE-GARCHOMP-METAGROSS",
+      "source_ids": [
+        "damage_order"
+      ],
+      "meaning": "Wiki example: Garchomp Earthquake (physical) against Metagross, +2 type effectiveness",
+      "input": {
+        "attack": 182,
+        "defense": 150,
+        "basePower": 100,
+        "powerMultiplier": [
+          1,
+          1
+        ],
+        "weatherMultiplier": [
+          1,
+          1
+        ],
+        "critical": false,
+        "stabMultiplier": [
+          3,
+          2
+        ],
+        "typeMultiplier": [
+          2,
+          1
+        ],
+        "otherMultiplier": [
+          1,
+          1
+        ]
+      },
+      "expected_min": 138,
+      "expected_max": 164,
+      "comparison_scope": "PINNED_CHAMPIONS_COMPARABLE"
+    }
+  ]
+}

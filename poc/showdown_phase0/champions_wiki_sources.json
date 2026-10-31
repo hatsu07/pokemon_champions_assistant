@@ -1,0 +1,75 @@
+{
+  "schema": "champions-community-reference-index-v1",
+  "checked_at": "2026-10-31",
+  "regulation": "M-C",
+  "source_order": [
+    "OFFICIAL_CHAMPIONS",
+    "OFFICIAL_HOME",
+    "USER_GAME_OBSERVATION",
+    "CHAMPIONS_FIXED_MASTERS",
+    "BULBAPEDIA_CHAMPIONS_SPECIFIC",
+    "OTHER_CHAMPIONS_WIKIS"
+  ],
+  "guidance": "Community documentation supplements but never overrides official data, latest user game observations or Champions fixed masters. Never silently adopt Gen IX/SV/ZA rules without an explicit Champions section and corroboration.",
+  "references": [
+    {
+      "id": "bulbapedia_champions_roster",
+      "url": "https://bulbapedia.bulbagarden.net/wiki/List_of_Pok%C3%A9mon_in_Pok%C3%A9mon_Champions",
+      "role": "SPECIES_FORM_AVAILABILITY",
+      "status": "CHAMPIONS_SECTION_PRESENT",
+      "priority": "PRIMARY_COMMUNITY"
+    },
+    {
+      "id": "bulbapedia_champions_moves",
+      "url": "https://bulbapedia.bulbagarden.net/wiki/List_of_moves_by_availability_in_Pok%C3%A9mon_Champions",
+      "role": "MOVE_AVAILABILITY",
+      "status": "CHAMPIONS_SECTION_PRESENT",
+      "priority": "PRIMARY_COMMUNITY"
+    },
+    {
+      "id": "bulbapedia_champions_stats",
+      "url": "https://bulbapedia.bulbagarden.net/wiki/Statistic",
+      "role": "STAT_FORMULA",
+      "status": "CHAMPIONS_SECTION_PRESENT",
+      "priority": "PRIMARY_COMMUNITY",
+      "note": "Pokémon Champions section gives HP = Base + StatPoints + 75 and other stats = floor((Base+StatPoints+20)*alignment); separate from dynamic battle modifiers."
+    },
+    {
+      "id": "bulbapedia_knock_off",
+      "url": "https://bulbapedia.bulbagarden.net/wiki/Knock_Off_(move)",
+      "role": "MOVE_EFFECT",
+      "status": "CHAMPIONS_SECTION_PRESENT",
+      "priority": "PRIMARY_COMMUNITY",
+      "note": "Use the Champions changes/description, not other-generation effects by default."
+    },
+    {
+      "id": "bulbapedia_protean",
+      "url": "https://bulbapedia.bulbagarden.net/wiki/Protean_(Ability)",
+      "role": "ABILITY_EFFECT",
+      "status": "CHAMPIONS_SECTION_PRESENT",
+      "priority": "PRIMARY_COMMUNITY",
+      "note": "Dedicated Pokémon Champions section; do not import Terastallization rules."
+    },
+    {
+      "id": "bulbapedia_damage",
+      "url": "https://bulbapedia.bulbagarden.net/wiki/Damage",
+      "role": "DAMAGE_MODIFIERS",
+      "status": "INCOMPLETE_FOR_CHAMPIONS",
+      "priority": "PRIMARY_COMMUNITY",
+      "note": "Page itself flags that it is unclear whether Pokémon Champions uses the presented general formula and lists missing Champions-specific modifiers. It is not a complete Champions damage specification."
+    },
+    {
+      "id": "secondary_damage_order",
+      "url": "https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
+      "role": "PROVISIONAL_REFERENCE_ARITHMETIC",
+      "status": "UNVERIFIED_FOR_CHAMPIONS",
+      "priority": "SECONDARY_COMMUNITY",
+      "note": "Existing PR #149 numeric reference and published example; not independently certified as the complete Champions formula. Keep for regression with source label."
+    }
+  ],
+  "guarantees": {
+    "game_equivalence": false,
+    "full_damage_coverage": false,
+    "bulk_device_testing_required": false
+  }
+}
