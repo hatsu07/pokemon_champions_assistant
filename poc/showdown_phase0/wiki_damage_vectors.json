@@ -7,11 +7,6 @@
       "page_updated": "2026-10-30",
       "checked_at": "2026-10-31",
       "provenance": "UNOFFICIAL_CHAMPIONS_WIKI"
-    },
-    "damage_formula": {
-      "url": "https://champions.pokewiki.net/ダメージ計算式",
-      "checked_at": "2026-10-31",
-      "provenance": "UNOFFICIAL_CHAMPIONS_WIKI"
     }
   },
   "cases": [
@@ -50,43 +45,6 @@
       "expected_min": 138,
       "expected_max": 164,
       "comparison_scope": "PINNED_CHAMPIONS_COMPARABLE"
-    },
-    {
-      "id": "WIKI-STONEEDGE-GARCHOMP-CRESSELIA",
-      "source_ids": [
-        "damage_formula"
-      ],
-      "meaning": "Wiki example: Garchomp Stone Edge (physical), attack 182 defense 189, before other type/ability modifiers",
-      "input": {
-        "attack": 182,
-        "defense": 189,
-        "basePower": 100,
-        "powerMultiplier": [
-          1,
-          1
-        ],
-        "weatherMultiplier": [
-          1,
-          1
-        ],
-        "critical": false,
-        "stabMultiplier": [
-          1,
-          1
-        ],
-        "typeMultiplier": [
-          1,
-          1
-        ],
-        "otherMultiplier": [
-          1,
-          1
-        ]
-      },
-      "expected_min": 37,
-      "expected_max": 44,
-      "comparison_scope": "FORMULA_ONLY_NOT_CHAMPIONS_COMPARABLE",
-      "source_caveat": "The cited 189 Defense Cresselia example is not a validated M-C Champions party: Cresselia is absent from the pinned Champions usable-pokemon master, and the pinned engine computes 178 from the source example set. Treat this as a formula/rounding example only."
     }
   ]
 }
