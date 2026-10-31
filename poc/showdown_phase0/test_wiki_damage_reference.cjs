@@ -56,3 +56,21 @@ test('Champions usability gate rejects unavailable species and unlearned moves',
   assert.throws(()=>validateChampionsScenario({...scenario,defender:{species:'Cresselia'}},dex,allowed),/not registered in Champions usable master/);
   assert.throws(()=>validateChampionsScenario({...scenario,move:'Unavailable Move'},dex,allowed),/absent from Champions learnset/);
 });
+
+test('Bulbapedia is preferred among community references; incomplete Champions damage rules cannot be certified',()=>{
+  const registry=JSON.parse(fs.readFileSync(path.join(__dirname,'champions_wiki_sources.json'),'utf8'));
+  assert.equal(registry.schema,'champions-community-reference-index-v1');
+  assert.equal(registry.regulation,'M-C');
+  assert.equal(registry.guarantees.game_equivalence,false);
+  assert.equal(registry.guarantees.full_damage_coverage,false);
+  assert.ok(registry.source_order.indexOf('BULBAPEDIA_CHAMPIONS_SPECIFIC') <
+    registry.source_order.indexOf('OTHER_CHAMPIONS_WIKIS'));
+  const references=new Map(registry.references.map(r=>[r.id,r]));
+  for(const id of ['bulbapedia_champions_roster','bulbapedia_champions_moves',
+    'bulbapedia_champions_stats','bulbapedia_knock_off','bulbapedia_protean']){
+    assert.equal(references.get(id)?.status,'CHAMPIONS_SECTION_PRESENT');
+    assert.ok(references.get(id)?.url?.startsWith('https://bulbapedia.bulbagarden.net/wiki/'));
+  }
+  assert.equal(references.get('bulbapedia_damage')?.status,'INCOMPLETE_FOR_CHAMPIONS');
+  assert.equal(references.get('secondary_damage_order')?.priority,'SECONDARY_COMMUNITY');
+});
