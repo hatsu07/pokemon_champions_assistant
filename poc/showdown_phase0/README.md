@@ -93,3 +93,10 @@ docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
 docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs
 docker run --rm --entrypoint node champions-phase0 audit.cjs > phase0-audit.json
 ```
+
+### 2026-10-31 追補：ハガネールの「あまごい」習得リスト修正
+
+- M-CのChampions専用習得技表の独立照合：Serebii [Rain Dance / Pokémon That Learn Rain Dance as standard in Pokémon Champions](https://www.serebii.net/attackdex-champions/raindance.shtml) にSteelixの記載なし。[PChamp DB ハガネール](https://app.gamepedia.jp/pokemon-champions/pokemon/208) と [AppMedia ハガネール](https://appmedia.jp/pokemonchampions/79876502) にも「あまごい」は掲載されていない（2026-10-31取得）。Showdown固定SHAの `data/mods/champions/learnsets.ts` にも `steelix.raindance` は存在しない。
+- `masters/Pokemon_Champions_MC_pokemon_learnsets_linked.csv` の通常ハガネール／メガハガネールの共有 `steelix` リストから `raindance` と日本語「あまごい」をそれぞれ1件削除し、習得技数67→66に同期。過去の一般作品の習得技を流用せず、**Champions用の独立した公開資料と固定ソースの合致**を根拠とする。ゲーム内直接確認は未実施。
+- `test_audit.cjs` に両行の技ID・日本語名・件数の一貫性テストを追加。現行の静的監査は差分 `59→0` を期待する。**静的データ比較の一致は、実ゲームでの習得可否の最終保証、ダメージ互換性、任意の途中局面復元の証拠ではない。**
+- 独立ゲートは **A=UNKNOWN / B=UNSUPPORTED / Phase 0 adoption=NO_GO** のまま。100代表局面・実ゲームゴールデンケース・Windows E2Eも未達。
