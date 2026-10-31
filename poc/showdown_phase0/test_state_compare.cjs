@@ -1,7 +1,7 @@
 "use strict";
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
-const {stableStringify, fingerprint, classifySerializedDivergence} = require("./state_compare.cjs");
+const {stableStringify, fingerprint, normalizeReplayTimestamps, classifySerializedDivergence} = require("./state_compare.cjs");
 
 // Artificial persisted-state shape: these are comparator regression tests,
 // NOT evidence that Showdown serializes every case or that Champions agrees.
@@ -84,5 +84,53 @@ test("PRNG, queues, effects or HP divergence is a state/queue failure", () => {
     const changed = structuredClone(base);
     mutate(changed);
     assert.equal(classifySerializedDivergence(base, changed).kind, "STATE_OR_QUEUE");
+  }
+});
+
+test("only exact Showdown wall-clock |t:| seconds are ignored in replay fingerprints", () => {
+  const left = sample();
+  left.log = [
+    "|turn|3",
+    "|t:|1793405687",
+    "|move|p1a: Garchomp|Earthquake|p2a: Hippowdon",
+    "|-damage|p2a: Hippowdon|60/100",
+    "|-weather|RainDance|[upkeep]",
+  ];
+  const right = structuredClone(left);
+  right.log[1] = "|t:|1793405688";
+
+  assert.notEqual(fingerprint(left), fingerprint(right), "raw log evidence is different");
+  assert.equal(fingerprint(normalizeReplayTimestamps(left)),
+    fingerprint(normalizeReplayTimestamps(right)), "only clock variance is ignored");
+  assert.equal(left.log[1], "|t:|1793405687", "the source must remain unchanged");
+  assert.equal(right.log[1], "|t:|1793405688", "neither source is rewritten");
+  assert.equal(normalizeReplayTimestamps(left).log[1], "|t:|<wallclock>");
+  assert.equal(normalizeReplayTimestamps(right).log[1], "|t:|<wallclock>");
+});
+
+test("normalization never masks damage, moves, weather, timestamp-shaped data, or battle state", () => {
+  const baseline = sample();
+  baseline.log = [
+    "|turn|3",
+    "|t:|1793405687",
+    "|move|p1a: Garchomp|Earthquake|p2a: Hippowdon",
+    "|-damage|p2a: Hippowdon|60/100",
+    "|-weather|RainDance|[upkeep]",
+  ];
+  const changes = [
+    x => { x.log[2] = "|move|p1a: Garchomp|Dragon Claw|p2a: Hippowdon"; },
+    x => { x.log[3] = "|-damage|p2a: Hippowdon|61/100"; },
+    x => { x.log[4] = "|-weather|Sandstorm|[upkeep]"; },
+    x => { x.log[1] = "|t:|1793405688|unexpected"; },
+    x => { x.log.splice(1, 1); },
+    x => { x.queue[0].moveid = "dragonclaw"; },
+    x => { x.sides[0].sideConditions.reflect.duration = 3; },
+    x => { x.field.weatherState.duration = 2; },
+  ];
+  for (const mutate of changes) {
+    const changed = structuredClone(baseline);
+    mutate(changed);
+    assert.notEqual(fingerprint(normalizeReplayTimestamps(baseline)),
+      fingerprint(normalizeReplayTimestamps(changed)));
   }
 });
