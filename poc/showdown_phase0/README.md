@@ -72,3 +72,24 @@ B = 途中局面復元。残HP/ひんし/能力変化/状態異常/残PP/消費�
 - `state_compare.cjs::normalizeReplayTimestamps` は **リプレイ同一性を計算する時だけ**、ログ行全体が `|t:|<数字>` と一致する場合に限り秒数をプレースホルダーへ置き換える。`worker.cjs::projection` のハッシュで使用し、`Battle.toJSON()` の元データ・本番証拠・ユーザー観測・診断用生ログは変更しない。
 - 技、ダメージ、持続ターン、天候、行動キュー、乱数、ログ欠落・差し込み、`|t:|` 以外の文字列差異は引き続き不一致として検出する。対象外の `LOG_ONLY` 不一致を一律成功へ昇格させない。
 - 回帰テストは `test_state_compare.cjs` に追加。Linux/WindowsのCI結果と、独立複数runでの再現性・重要ケース不一致0件を別々に確認する。**ゲートA=UNKNOWN、B=UNSUPPORTED、Phase 0=NO_GOのまま**。ゲーム実機との互換性を示す変更ではない。
+
+## 2026-10-31 静的監査59件の再比較（#139：Source-only）
+
+**今回変更したのは比較層と明確な通常形マスターデータの訂正だけ。Champions実ゲームとの計算互換性を認定しない。**
+- 旧監査は習得技共通キー（LearnsetKey）で種族値・タイプも参照していた。これにより、パンプジンのサイズ3種類（9差分）、ポワルンの天候3形態（3差分）、ギルガルドのブレード（4差分）、イルカマンのマイティ（4差分）が通常形との比較になっていた。新版では該当行のフォーム名を固定Showdownの個別Dex種族キーへ明示対応付けして比較する。比較キーは `explicit_form_comparisons` に列挙する。これらの**実戦フォーム変化の動作検証は別**。
+- 旧監査のPP33差分は固定マスターの元PP25–40と、Champions mod初期化時の `min(元PP,20)` 後のDex PPを直接比較したもの。新版は同一レイヤーへ写像して比較し、変換した33件を `source_pp_cap_cases` に残す。`calculatePP` は通常技に対して戦闘時最大PPを別計算し、例えば元PP5→戦闘最大PP8。**マスターの元PPを実戦PPの列として書き換えない。** 実戦でのPP使用・回復・技合法性の独立観測はゲートAで必要。
+- 通常メガニウムの固定マスターはメガ形と同じ種族値・タイプ・特性の誤登録だったため、通常形のみくさ単／しんりょく・リーフガード／80-82-100-83-100-80（525）へ修正。メガ形はくさ・フェアリー／メガソーラー／80-92-115-143-115-80（625）のまま。Champions特化資料を複数突合した（後掲）。
+- ハガネールの「あまごい」は固定習得マスターにあり、固定Showdownの該当習得データにはない。Champions攻略サイトのハガネール習得技一覧にも見当たらないが、**ゲーム内の全技確認がないため削除せず `UNKNOWN` の1差分に残す**。不一致を単純にShowdownのバグと断定しない。
+- 調査時点：2026-10-31、レギュレーションM-C。ユーザー指定の https://wiki.pokemonwiki.com/wiki/Pok%C3%A9mon_Champions は閲覧先が403を返したため本文の断定根拠には使用していない。
+- 根拠（通常メガニウムとメガメガニウム）：https://gamewith.jp/pokemon-champions/553243 、https://gamewith.jp/pokemon-champions/553244 、https://appmedia.jp/pokemonchampions/79876418 、https://appmedia.jp/pokemonchampions/79876421
+- 参考（ハガネール習得一覧）：https://gamewith.jp/pokemon-champions/553318 および https://app.gamepedia.jp/pokemon-champions/pokemon/208
+- 固定Showdownの検証対象：`smogon/pokemon-showdown@ccfaa20f32af363569cd21a9d501b2bc1ded26b1` の `data/mods/champions/scripts.ts`（PP制限と計算）、`data/pokedex.ts`（フォーム別種族キー）、`data/mods/champions/learnsets.ts`。
+- 回帰テスト：`test_audit.cjs`（フォーム個別キー、PP比較層と実戦PPの区別、メガニウム通常/メガ別値、ハガネール未確定差分保持）。`audit.mismatch_count` が1まで減っても、**計算互換性A=UNKNOWN、途中復元B=UNSUPPORTED、採用=NO_GO**を維持する。
+
+再現（Dockerイメージは現ブランチから再ビルド）：
+
+```bash
+docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+docker run --rm --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs
+docker run --rm --entrypoint node champions-phase0 audit.cjs > phase0-audit.json
+```
