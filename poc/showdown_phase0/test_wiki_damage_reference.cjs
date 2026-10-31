@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {calculate,halfDownRatio}=require('./wiki_damage_reference.cjs');
+const {validateChampionsScenario}=require('./wiki_damage_compare.cjs');
 const {cases, sources, schema}=JSON.parse(fs.readFileSync(path.join(__dirname,'wiki_damage_vectors.json'),'utf8'));
 const neutral={attack:182,defense:150,basePower:100,powerMultiplier:[1,1],weatherMultiplier:[1,1],critical:false,stabMultiplier:[3,2],typeMultiplier:[2,1],otherMultiplier:[1,1]};
 test('reference data has source URLs and independent wiki expectations',()=>{
@@ -45,4 +46,13 @@ test('unknown inputs, extra fields, and invalid types fail closed',()=>{
 test('immunity is 0 damage and low effectiveness never returns negative',()=>{
   assert.deepEqual(new Set(calculate({...neutral,typeMultiplier:[0,1]}).rolls),new Set([0]));
   assert.ok(calculate({...neutral,attack:1,defense:999999,basePower:1,stabMultiplier:[1,1],typeMultiplier:[1,4]}).rolls.every(d=>d>=1));
+});
+
+test('Champions usability gate rejects unavailable species and unlearned moves',()=>{
+  const dex={species:{get:x=>({id:x.toLowerCase()})},moves:{get:x=>({id:x.toLowerCase()})}};
+  const allowed=new Map([['garchomp',new Set(['earthquake'])],['metagross',new Set(['tackle'])]]);
+  const scenario={attacker:{species:'Garchomp'},defender:{species:'Metagross'},move:'Earthquake'};
+  assert.doesNotThrow(()=>validateChampionsScenario(scenario,dex,allowed));
+  assert.throws(()=>validateChampionsScenario({...scenario,defender:{species:'Cresselia'}},dex,allowed),/not registered in Champions usable master/);
+  assert.throws(()=>validateChampionsScenario({...scenario,move:'Unavailable Move'},dex,allowed),/absent from Champions learnset/);
 });
