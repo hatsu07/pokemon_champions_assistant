@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {calculate,halfDownRatio}=require('./wiki_damage_reference.cjs');
-const {allowedChampionsSets,validateChampionsScenario,SCENARIOS,FILLER}=require('./wiki_damage_compare.cjs');
+const {allowedChampionsSets,validateChampionsScenario,validateTeamConstraints,SCENARIOS}=require('./wiki_damage_compare.cjs');
 const {cases, sources, schema}=JSON.parse(fs.readFileSync(path.join(__dirname,'wiki_damage_vectors.json'),'utf8'));
 const neutral={attack:182,defense:150,basePower:100,powerMultiplier:[1,1],weatherMultiplier:[1,1],critical:false,stabMultiplier:[3,2],typeMultiplier:[2,1],otherMultiplier:[1,1]};
 test('reference data has source URLs and independent wiki expectations',()=>{
@@ -48,66 +48,88 @@ test('immunity is 0 damage and low effectiveness never returns negative',()=>{
   assert.ok(calculate({...neutral,attack:1,defense:999999,basePower:1,stabMultiplier:[1,1],typeMultiplier:[1,4]}).rolls.every(d=>d>=1));
 });
 
-test('real Champions master: all six team sets are legal and Metagross uses Bullet Punch',()=>{
-  const {Dex}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
+
+function actualDex(){
+  const {Dex,TeamValidator}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
   const dex=Dex.forFormat('gen9championsbssregmc');
-  const allowed=allowedChampionsSets(dex);
-  const scenario=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
+  return {dex,validator:TeamValidator.get('gen9championsbssregmc'),allowed:allowedChampionsSets(dex)};
+}
+const SCENARIO=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
+test('real masters: both full registered six-member teams pass set and format checks',()=>{
+  const {dex,allowed,validator}=actualDex();
   assert.ok(allowed.ambiguous.has('squawkabilly'));
-  assert.ok(!allowed.species.has('squawkabilly'), 'unresolved form key must not pass validation');
-  const entry=allowed.species.get('metagross');
-  assert.ok(entry);
-  assert.ok(entry.learned.has('bulletpunch'));
-  assert.ok(!entry.learned.has('tackle'));
-  assert.deepEqual(scenario.defender.moves,['Bullet Punch']);
-  const teams=validateChampionsScenario(scenario,dex,allowed);
-  assert.equal(teams.length,2);
-  assert.deepEqual(teams.map(t=>t.length),[3,3]);
-  for(const team of teams)for(const mon of team){
-    assert.ok(allowed.species.has(dex.species.get(mon.species).id));
-    assert.ok(mon.moves.every(m=>allowed.species.get(dex.species.get(mon.species).id).learned.has(dex.moves.get(m).id)));
+  assert.ok(!allowed.species.has('squawkabilly'));
+  assert.ok(allowed.species.get('metagross').learned.has('bulletpunch'));
+  assert.ok(!allowed.species.get('metagross').learned.has('tackle'));
+  assert.deepEqual(SCENARIO.defender.moves,['Bullet Punch']);
+  const teams=validateChampionsScenario(SCENARIO,dex,allowed);
+  assert.deepEqual(teams.map(team=>team.length),[6,6]);
+  assert.deepEqual(teams.map(team=>team.slice(0,3).map(m=>m.species)),[
+    ['Garchomp','Metagross','Venusaur'],['Metagross','Garchomp','Venusaur']]);
+  assert.notEqual(teams[0][2],teams[1][2],'teams must not share set objects');
+  assert.notEqual(teams[0][2].evs,teams[1][2].evs,'no shared mutable EV objects');
+  for(const team of teams){
+    assert.equal(validator.validateTeam(structuredClone(team)),null);
+    assert.equal(new Set(team.map(m=>allowed.species.get(dex.species.get(m.species).id).nationalNo)).size,6);
   }
 });
-test('real Champions master: unknown species, unequipped and illegal moves fail closed',()=>{
-  const {Dex}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
-  const dex=Dex.forFormat('gen9championsbssregmc');
-  const allowed=allowedChampionsSets(dex);
-  const s=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
-  const withDefender=mon=>({...s,defender:{...s.defender,...mon}});
-  assert.throws(()=>validateChampionsScenario(withDefender({moves:['Tackle']}),dex,allowed),
+test('real masters: unavailable species, illegal moves, unselected moves, and bench are rejected',()=>{
+  const {dex,allowed}=actualDex();
+  const s=SCENARIO;
+  assert.throws(()=>validateChampionsScenario({...s,defender:{...s.defender,moves:['Tackle']}},dex,allowed),
     /set move absent from Champions master and pinned learnset/);
-  assert.throws(()=>validateChampionsScenario(withDefender({species:'Cresselia'}),dex,allowed),
-    /not registered in Champions usable master/);
+  assert.throws(()=>validateChampionsScenario({...s,defender:{...s.defender,species:'Cresselia'}},dex,allowed),
+    /unknown Champions base species identity/);
   assert.throws(()=>validateChampionsScenario({...s,move:'Dragon Claw'},dex,allowed),
     /attack move not equipped/);
   assert.throws(()=>validateChampionsScenario({...s,attacker:{...s.attacker,moves:['Tackle']}},dex,allowed),
     /set move absent from Champions master and pinned learnset/);
-  assert.throws(()=>validateChampionsScenario({...s,bench:[{...FILLER,moves:['Tackle']},FILLER]},dex,allowed),
+  assert.throws(()=>validateChampionsScenario({...s,p1bench:[{...s.p1bench[0],moves:['Tackle']},...s.p1bench.slice(1)]},dex,allowed),
     /set move absent from Champions master and pinned learnset/);
 });
-test('real Champions master: ability/item/form and malformed moves fail closed',()=>{
-  const {Dex}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
-  const dex=Dex.forFormat('gen9championsbssregmc');
-  const allowed=allowedChampionsSets(dex);
-  const s=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
-  const withAttacker=mon=>({...s,attacker:{...s.attacker,...mon}});
-  const withDefender=mon=>({...s,defender:{...s.defender,...mon}});
-  assert.throws(()=>validateChampionsScenario(withDefender({ability:'Rough Skin'}),dex,allowed),
-    /ability absent\/unmapped/);
-  assert.throws(()=>validateChampionsScenario(withAttacker({ability:'Clear Body'}),dex,allowed),
-    /ability absent\/unmapped/);
-  assert.throws(()=>validateChampionsScenario(withAttacker({item:'Unobtainium'}),dex,allowed),
-    /item absent/);
-  assert.throws(()=>validateChampionsScenario(withAttacker({species:'Garchomp-Mega'}),dex,allowed),
-    /not registered in Champions usable master/);
-  assert.throws(()=>validateChampionsScenario(withDefender({moves:[]}),dex,allowed),
-    /invalid move slots/);
-  assert.throws(()=>validateChampionsScenario(withDefender({moves:['Bullet Punch','Bullet Punch']}),dex,allowed),
-    /duplicate move slot/);
-  assert.throws(()=>validateChampionsScenario({...s,bench:[FILLER]},dex,allowed),
-    /exactly two bench sets/);
+test('real masters: abilities, items, unsupported forms, malformed moves fail closed',()=>{
+  const {dex,allowed}=actualDex();
+  const s=SCENARIO;
+  const attacker=fields=>({...s,attacker:{...s.attacker,...fields}});
+  const defender=fields=>({...s,defender:{...s.defender,...fields}});
+  assert.throws(()=>validateChampionsScenario(defender({ability:'Rough Skin'}),dex,allowed),/ability absent\/unmapped/);
+  assert.throws(()=>validateChampionsScenario(attacker({ability:'Clear Body'}),dex,allowed),/ability absent\/unmapped/);
+  assert.throws(()=>validateChampionsScenario(attacker({item:'Unobtainium'}),dex,allowed),/item absent/);
+  assert.throws(()=>validateChampionsScenario(attacker({species:'Garchomp-Mega'}),dex,allowed),/unknown Champions base species identity/);
+  assert.throws(()=>validateChampionsScenario(defender({moves:[]}),dex,allowed),/invalid move slots/);
+  assert.throws(()=>validateChampionsScenario(defender({moves:['Bullet Punch','Bullet Punch']}),dex,allowed),/duplicate move slot/);
+  assert.throws(()=>validateChampionsScenario({...s,p1bench:[s.p1bench[0]]},dex,allowed),/two independent five-member benches/);
 });
-
+test('registered team cannot repeat a species; opponent may use the same species',()=>{
+  const {dex,allowed}=actualDex();
+  const [p1,p2]=validateChampionsScenario(SCENARIO,dex,allowed);
+  assert.doesNotThrow(()=>validateTeamConstraints(p1,dex,allowed));
+  assert.doesNotThrow(()=>validateTeamConstraints(p2,dex,allowed));
+  const duplicate=[p1[0],{...p1[0]},...p1.slice(2)];
+  assert.throws(()=>validateTeamConstraints(duplicate,dex,allowed),/duplicate Champions named species/);
+  assert.throws(()=>validateChampionsScenario({...SCENARIO,p1bench:[p1[0],...SCENARIO.p1bench.slice(1)]},dex,allowed),
+    /duplicate Champions named species/);
+});
+test('regional form and regular form share the same Champions species identity',()=>{
+  const {dex,allowed}=actualDex();
+  const [p1]=validateChampionsScenario(SCENARIO,dex,allowed);
+  // Both Raichu forms are in the actual M-C master under National No. #0026.
+  assert.equal(allowed.species.get('raichu')?.nationalNo,'#0026');
+  assert.equal(allowed.species.get('raichualola')?.nationalNo,'#0026');
+  const team=[{...p1[0],species:'Raichu'},{...p1[1],species:'Raichu-Alola'},...p1.slice(2)];
+  assert.throws(()=>validateTeamConstraints(team,dex,allowed),/duplicate Champions named species/);
+});
+test('registered team item IDs must be unique; empty item may repeat',()=>{
+  const {dex,allowed}=actualDex();
+  const [p1]=validateChampionsScenario(SCENARIO,dex,allowed);
+  assert.doesNotThrow(()=>validateTeamConstraints(p1,dex,allowed)); // all six have empty item
+  assert.ok(allowed.availableItems.has('leftovers'));
+  assert.ok(allowed.availableItems.has('sitrusberry'));
+  const duplicate=[{...p1[0],item:'Leftovers'},{...p1[1],item:'Leftovers'},...p1.slice(2)];
+  assert.throws(()=>validateTeamConstraints(duplicate,dex,allowed),/duplicate Champions held item/);
+  const distinct=[{...p1[0],item:'Leftovers'},{...p1[1],item:'Sitrus Berry'},...p1.slice(2)];
+  assert.doesNotThrow(()=>validateTeamConstraints(distinct,dex,allowed));
+});
 test('Bulbapedia is preferred among community references; incomplete Champions damage rules cannot be certified',()=>{
   const registry=JSON.parse(fs.readFileSync(path.join(__dirname,'champions_wiki_sources.json'),'utf8'));
   assert.equal(registry.schema,'champions-community-reference-index-v1');
