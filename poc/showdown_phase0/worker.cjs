@@ -5,7 +5,7 @@
 const readline = require("node:readline");
 const path = require("node:path");
 const fs = require("node:fs");
-const {stableStringify, fingerprint, classifySerializedDivergence} = require("./state_compare.cjs");
+const {stableStringify, fingerprint, normalizeReplayTimestamps, classifySerializedDivergence} = require("./state_compare.cjs");
 const fixtureManifest = JSON.parse(fs.readFileSync(path.join(__dirname, "fixture_manifest.json"), "utf8"));
 const CASES = fixtureManifest.cases;
 const CASE_BY_KIND = new Map(CASES.map(x => [x.kind, x]));
@@ -61,7 +61,9 @@ function projection(b) {
   // Serialized values include effect durations, lock targets and pending actions.
   // toJSON normalizes references; comparing only effect keys would miss state loss.
   return {
-    persisted_state: b.toJSON(),
+    // Ignore only Showdown's real-time |t:| seconds in replay identity.
+    // Keep the raw toJSON() state and all other battle-log events intact.
+    persisted_state: normalizeReplayTimestamps(b.toJSON()),
     turn: b.turn, requestState: b.requestState, rng: b.prng.getSeed(),
     weather: b.field.weather, pseudoWeather: Object.keys(b.field.pseudoWeather).sort(),
     sides: b.sides.map(s => ({
