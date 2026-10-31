@@ -6,9 +6,16 @@
 
 ダメージ比較の状態異常は固定modのID（`brn`, `par`, `psn`, `tox`, `slp`, `frz`、状態異常なしは空文字）のみ。`burn` 等の別名は自動変換せず `INCONCLUSIVE` にする。天候は空文字、`raindance`, `sunnyday`, `sandstorm`, `snowscape` のみ。ゲーム画面の「ゆき」を人が `snowscape` と確認した場合にそのIDで記録し、`snow` は未対応にする。固定modで天候を適用した結果も確認する。持ち物はChampions使用可能持ち物マスターの収録IDに限る。
 
+### ゲームに存在しないレベルとShowdown内部値の区別
+
+- ゲーム内のスクリーンショットからレベルを読み取った事実として扱わない。新しい`checks.stats.pokemon`・`checks.damage.attacker/defender` に`level`を記録しない。レベルなしの能力値計算に必要なのは種族・フォーム・性格・AP・表示実数値。
+- Showdownのバトル生成には内部の数値設定`SIMULATOR_LEVEL = 50`を引き続き渡す。**これはShowdownを動作させるための実装値であり、Championsにレベル50が存在するという根拠ではない**。固定modの通常のChampions能力値計算分岐はゲームレベルを使用しない。一方、ダメージ計算はShowdown内部でこの数値を参照するため、実ゲームとの一致は別途ゲートAで検証する。
+- 旧ローカルJSONの`"level": {"source": "UNKNOWN"}`は互換性のため無視できる。新しいJSONからは省略する。`GAME_OBSERVED` / `INFERRED` / `SYNTHETIC`でレベルの数値を入れた旧ケースは、ゲーム由来の根拠として誤認させないよう`INCONCLUSIVE`とする。
+- `simulator_context.internal_level = 50`, `simulator_context.game_observed_level = false`を出力する。ステータス`MATCH`は個々の観測値の比較結果であり、この内部数値をゲームで確認したことを意味しない。観測根拠をユーザーが照合していない実ゲームケースは`MATCH_UNVERIFIED`のまま。
+
 `golden_schema.json` が記録形式、`golden_compare.cjs` が比較CLI。実画面の内容を人が確認し、1件ごとにケースID・UTC観測日時・M-Cレギュレーション・根拠ID/説明/任意のローカルパスとSHA256を記録する。各事実は `{ "source": "GAME_OBSERVED", "value": ..., "evidence_ids": ["frame-1"] }` とし、推測は `INFERRED`、未判明は `{ "source": "UNKNOWN" }` にする。空文字の持ち物/状態/天候は「ないと観測済み」、UNKNOWNは未確認を意味する。`evidence.verification` は画面を本人が照合した場合だけ `USER_VERIFIED` にする。参照IDの存在はCLIで検査するが、映像の真偽やユーザー確認そのものは自動認定できない。
 
-`checks.stats` は正確なShowdown種族・フォームキー、レベル、性格、6能力分のAPとゲーム表示6能力値を要する。M-Cランクマッチ比較はレベル50、APは各0–32・合計66以下に限定する。`checks.pp` は種族キー・技IDと画面の戦闘時最大PPが必須で、元PP（マスター）、Champions制限後Dex PP、実際の戦闘最大PPを別欄に出す。残PPは記録と範囲チェックのみで、使用履歴なしには初期値からの一致を主張しない。`checks.damage` は攻防双方の正確な種族/フォーム・性格・AP・特性・持ち物・状態・能力ランク、技、天候・フィールド・防御側壁、急所、HP前後、身代わり・こらえるの有無、単一直接命中/条件網羅の人手確認を要する。メガ状態はフォーム込み種族キーで表し、`mega_state`を併記したときは矛盾を検査する。種族・フォーム・技はChampionsマスターと固定modの両方、特性は固定modの該当種族枠と照合する。未確認の相手型・道具・場の状態を補完しない。
+`checks.stats` は正確なShowdown種族・フォームキー、性格、6能力分のAPとゲーム表示6能力値を要する。**Pokémon Championsにはゲーム内のレベルという観測項目がないため、レベル入力を要求しない。** APは各0–32・合計66以下に限定する。`checks.pp` は種族キー・技IDと画面の戦闘時最大PPが必須で、元PP（マスター）、Champions制限後Dex PP、実際の戦闘最大PPを別欄に出す。残PPは記録と範囲チェックのみで、使用履歴なしには初期値からの一致を主張しない。`checks.damage` は攻防双方の正確な種族/フォーム・性格・AP・特性・持ち物・状態・能力ランク、技、天候・フィールド・防御側壁、急所、HP前後、身代わり・こらえるの有無、単一直接命中/条件網羅の人手確認を要する。メガ状態はフォーム込み種族キーで表し、`mega_state`を併記したときは矛盾を検査する。種族・フォーム・技はChampionsマスターと固定modの両方、特性は固定modの該当種族枠と照合する。未確認の相手型・道具・場の状態を補完しない。
 
 比較対象のダメージは、固定威力・単発・直接命中の技に限る。16個の乱数係数を固定Champions modの`getDamage`に通し、実HP減少が実現可能な値か調べる。`getDamage`後に発動する特性/道具（きあいのタスキ、がんじょう、ばけのかわ、アイスフェイス等）、身代わり・こらえる、複数回攻撃、可変威力、天候以外の地形、複合HP変化などは `INCONCLUSIVE`。急所・技の成立・実際の行動順やダメージ分布全体の妥当性は、この単発照合だけでは証明しない。1件のMATCHはゲートA完了を意味しない。
 
