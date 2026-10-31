@@ -8,6 +8,9 @@ const {rows, speciesKeyForRow, cappedSourcePP, types} = require("./audit.cjs");
 
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const FORMAT = "gen9championsbssregmc";
+// Showdown battle construction needs a numeric level. Champions does not expose
+// a player-observed level; this is simulator infrastructure, not game evidence.
+const SIMULATOR_LEVEL = 50;
 const STATS = ["hp", "atk", "def", "spa", "spd", "spe"];
 const root = process.env.SHOWDOWN_ROOT;
 const {Battle, Dex} = require(path.join(root || "", "dist", "sim", "index.js"));
@@ -136,13 +139,16 @@ function fstr(obj, key, ev, missing, optional = false) {
 function mon(spec, ev, missing, requireEffects = true) {
   const {mon: speciesRecord, mapped} = identity(spec, ev, missing);
   const species = speciesRecord?.id;
-  const level = fnum(spec, "level", ev, missing);
+  // Legacy cases may contain level: UNKNOWN. It is ignored. Numeric/claimed
+  // observed levels must never silently become Champions evidence.
+  if (spec?.level !== undefined &&
+      (spec.level?.source !== "UNKNOWN" || Object.hasOwn(spec.level, "value")))
+    missing.push("level is not a Champions game observation; omit the legacy level field");
   const nature = fstr(spec, "nature", ev, missing);
   const ability = requireEffects ? fstr(spec, "ability", ev, missing) : "";
   const item = requireEffects ? fstr(spec, "item", ev, missing) : "";
   const ap = {};
   for (const s of STATS) ap[s] = fnum(spec?.ap, s, ev, missing);
-  if (level !== undefined && level !== 50) missing.push("M-C ranked comparison requires level 50");
   if (Object.values(ap).some(v => v !== undefined && (v < 0 || v > 32)))
     missing.push("Champions AP must be 0..32 per stat");
   if (Object.values(ap).every(v => v !== undefined) && Object.values(ap).reduce((a, b) => a + b, 0) > 66)
@@ -159,7 +165,7 @@ function mon(spec, ev, missing, requireEffects = true) {
   if (missing.length) return null;
   const firstMove = mapped.moves.values().next().value;
   if (!firstMove) {missing.push("empty Champions learnset"); return null;}
-  return {species, level, nature, ability, item, evs: ap, moves: [firstMove]};
+  return {species, level: SIMULATOR_LEVEL, nature, ability, item, evs: ap, moves: [firstMove]};
 }
 function battle(attacker, defender) {
   const fillers = [{species: "Garchomp", level: 50, nature: "Serious", ability: "Rough Skin",
@@ -190,7 +196,7 @@ function statsCheck(check, ev) {
   const p = battle(set, set).p1.pokemon[0];
   const actual = {hp: p.maxhp, ...p.baseStoredStats};
   return STATS.map(s => result("stats." + s, actual[s], observed[s], ev, [],
-    {species: set.species, level: set.level}));
+    {species: set.species}));
 }
 function ppCheck(check, ev) {
   const missing = [];
@@ -344,6 +350,7 @@ function run(file) {
   const verifiedCases = cases.filter(c => c.origin === "REAL_GAME" && c.verification === "USER_VERIFIED");
   const verifiedChecks = verifiedCases.flatMap(c => c.checks).filter(x => x.status === "MATCH" || x.status === "MISMATCH");
   return {schema: "champions-golden-comparison-v2", pinned_sha: PIN, format: FORMAT,
+    simulator_context: {internal_level: SIMULATOR_LEVEL, game_observed_level: false},
     input_sha256: sha256(input), master_sha256: sources().master_sha256,
     gate_A_calculation: "UNKNOWN", scope: "OFFLINE_DIAGNOSTIC_ONLY; NOT_GATE_A_CERTIFICATION", cases,
     counts: {match: all.filter(x => x.status.startsWith("MATCH")).length,
