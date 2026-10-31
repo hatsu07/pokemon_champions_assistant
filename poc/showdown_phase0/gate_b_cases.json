@@ -1,0 +1,19 @@
+{
+  "schema": "phase0-gate-b-cases-v1",
+  "cases": [
+    {"id":"B1-01","phase":"B1","mechanism":"normal_after_turn","setup":"normal","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-02","phase":"B1","mechanism":"both_hp_damaged","setup":"both_hp","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-03","phase":"B1","mechanism":"pp_consumed","setup":"pp","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-04","phase":"B1","mechanism":"boost_changed","setup":"boost","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-05","phase":"B1","mechanism":"status_applied","setup":"status","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-06","phase":"B1","mechanism":"item_consumed","setup":"item","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-07","phase":"B1","mechanism":"choice_lock","setup":"choice","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-08","phase":"B1","mechanism":"choice_unlock_after_switch","setup":"unlock","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-09","phase":"B1","mechanism":"weather_and_wall_duration","setup":"weather","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-10","phase":"B1","mechanism":"post_mega_history","setup":"mega","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-11","phase":"B1","mechanism":"forced_switch_request","setup":"forced","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B1-12","phase":"B1","mechanism":"one_pending_choice","setup":"pending","expected_status":"PASS_SYNTHETIC"},
+    {"id":"B2-13","phase":"B2","mechanism":"unknown_opponent_move_ability_item","setup":"unknown_set","expected_status":"INCONCLUSIVE"},
+    {"id":"B2-14","phase":"B2","mechanism":"multiple_sets_same_observation","setup":"multiple_sets","expected_status":"INCONCLUSIVE"}
+  ]
+}

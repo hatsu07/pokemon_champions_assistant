@@ -1,5 +1,10 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 Gate B 独立合成診断（2026-10-31）
+
+- 固定ShowdownとChampions固定マスターを照合したGate B専用の14ケースを追加。B1完全状態12/12 `PASS_SYNTHETIC`、B2部分観測0/2成功・2 `INCONCLUSIVE`。局面定義14、ユニーク入力状態11、反復0。失敗・保留を成功件数へ加算しない。メガ後、技固定解除、消費道具、未解決選択・キュー、天候/壁の残ターンを含む実シリアライズ状態と負例を検査した。
+- B1の一部は合成注入またはShowdown APIによる条件設定。B2には実ゲーム由来の途中局面がなく、相手未公開情報・内部乱数・未観測履歴の復元は未対応。実機互換、100代表局面、Windows Node実行は未検証。Gate A=`UNKNOWN`、Gate B=`UNSUPPORTED`、総合=`NO_GO` を維持。
+
 ## Issue #139 Phase 0 ゲートA検証基盤（2026-10-31）
 
 - PR #150後続: 固定Showdownの実ターンイベント診断プローブを追加。5契約の合成18記録で14 MATCH / 0 MISMATCH / 4 INCONCLUSIVE。実ゲーム観測・ダメージ倍率・複合効果は未確認。技IDを固定Champions MoveKeyで正規化し、未収録/未習得技を拒否。Linux Phase 0 CIへ新テストを追加。Gate A=UNKNOWN、Gate B=UNSUPPORTED、採用=NO_GO。次はGate Bの途中局面復元検証。
