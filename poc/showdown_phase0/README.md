@@ -103,6 +103,10 @@ B = 途中局面復元。残HP/ひんし/能力変化/状態異常/残PP/消費�
 - 技、ダメージ、持続ターン、天候、行動キュー、乱数、ログ欠落・差し込み、`|t:|` 以外の文字列差異は引き続き不一致として検出する。対象外の `LOG_ONLY` 不一致を一律成功へ昇格させない。
 - 回帰テストは `test_state_compare.cjs` に追加。Linux/WindowsのCI結果と、独立複数runでの再現性・重要ケース不一致0件を別々に確認する。**ゲートA=UNKNOWN、B=UNSUPPORTED、Phase 0=NO_GOのまま**。ゲーム実機との互換性を示す変更ではない。
 
+## 2026-10-31 技・特性・持ち物の実ターン診断（#139）
+
+`champions_event_probe.cjs`は固定Showdownの実ターンを進め、独立した`champions_rule_reference.cjs`の期待状態と比較する。出力は`champions-showdown-event-diagnostics-v1`のJSONで、5契約の実行前状態・操作・期待状態・実状態・フィールド差分・出典・未確認条件を含む。固定seed `[1,2,3,4]`では **14 WIKI_SPEC_MATCH / 0 WIKI_SPEC_MISMATCH / 4 INCONCLUSIVE**。内訳と判定境界は`CHAMPIONS_RULE_CONTRACTS.md`を参照。Linux Phase 0 CIは新規Node回帰と診断CLIを実行する。Windows Ready PR CIは既存のデスクトップテスト・ビルドを担当し、Showdownイベント検証の代替にはならない。**実ゲーム互換・Gate B途中局面復元・本番採用は未確認**。
+
 ## 2026-10-31 静的監査59件の再比較（#139：Source-only）
 
 **今回変更したのは比較層と明確な通常形マスターデータの訂正だけ。Champions実ゲームとの計算互換性を認定しない。**

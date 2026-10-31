@@ -4,9 +4,10 @@
   "checked_at": "2026-10-31",
   "scope": "OFFLINE_SOURCE_CONTRACTS_ONLY",
   "actual_game_compatibility": "UNKNOWN",
-  "showdown_event_compatibility": "NOT_TESTED",
+  "showdown_event_compatibility": "SELECTED_SYNTHETIC_TURNS_ONLY",
   "priority": [
     "CHAMPIONS_OFFICIAL",
+    "OFFICIAL_HOME",
     "USER_GAME_CONFIRMATION",
     "CHAMPIONS_FIXED_MASTER",
     "BULBAPEDIA_CHAMPIONS_WORDING",
@@ -29,7 +30,8 @@
       "not_verified": [
         "failed move/redirect/Struggle",
         "type-changing moves with dynamic type",
-        "turn-action sequence relative to damage",
+        "same-type charge consumption and failed move timing",
+        "turn-action sequence beyond the first ordinary direct hit",
         "non-Greninja mega evolution"
       ]
     },
