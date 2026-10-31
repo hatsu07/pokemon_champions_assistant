@@ -55,3 +55,44 @@ test('unlearnable or unknown move cannot enter the pinned fixture',()=>{
   team[0].moves=['Uninvented Attack'];
   assert.throws(()=>validate(team,dex,allowed,validator),/unlearnable\/unknown Champions move/);
 });
+
+// Pin the full set of *individual* synthetic checks. Detect early-return case loss,
+// duplicate IDs and any unexpected transition to MISMATCH or INCONCLUSIVE.
+const EVENT_BASELINE=require('./champions_event_baseline.json');
+function assertEventBaseline(report){
+  assert.equal(EVENT_BASELINE.schema,'champions-event-probe-baseline-v1');
+  assert.equal(report.pinned_sha,EVENT_BASELINE.pinned_sha);
+  const actual=report.results.map(({id,rule_id,status,observation_basis})=>
+    ({id,rule_id,status,observation_basis}));
+  assert.equal(new Set(actual.map(x=>x.id)).size,actual.length,'duplicate event ID');
+  assert.deepEqual(actual,EVENT_BASELINE.cases,'required event cases or outcomes changed');
+  const statusCount=(status)=>actual.filter(x=>x.status===status).length;
+  assert.deepEqual(report.counts,{
+    WIKI_SPEC_MATCH:statusCount('WIKI_SPEC_MATCH'),
+    WIKI_SPEC_MISMATCH:statusCount('WIKI_SPEC_MISMATCH'),
+    INCONCLUSIVE:statusCount('INCONCLUSIVE')
+  },'reported status counts differ from case results');
+  const kinds=['EXECUTED_TURN','REQUEST_AFTER_TURN','SOURCE_ONLY'];
+  assert.deepEqual(report.observation_basis_counts,Object.fromEntries(kinds.map(kind=>
+    [kind,actual.filter(x=>x.observation_basis===kind).length])));
+  assert.ok(actual.some(x=>x.observation_basis==='SOURCE_ONLY'&&x.status==='INCONCLUSIVE'));
+}
+test('all 18 pinned events are present with precisely the reviewed statuses and evidence basis',()=>{
+  assertEventBaseline(main());
+});
+test('baseline regression fails closed for missing, duplicated, mismatched and newly inconclusive cases',()=>{
+  const original=main();
+  const variants=[
+    report=>{report.results.splice(report.results.findIndex(x=>x.id==='herb-first-drop'),1);},
+    report=>{report.results.push({...report.results[0]});},
+    report=>{report.results.find(x=>x.id==='scarf-switch-unlock').status='WIKI_SPEC_MISMATCH';},
+    report=>{report.results.find(x=>x.id==='herb-second-drop').status='INCONCLUSIVE';},
+    report=>{report.results.find(x=>x.id==='scarf-other-move').observation_basis='SOURCE_ONLY';},
+    report=>{report.results[0].id='new-unreviewed-case';}
+  ];
+  for(const mutate of variants){
+    const broken=structuredClone(original);
+    mutate(broken);
+    assert.throws(()=>assertEventBaseline(broken),/event|required|duplicate|counts/i);
+  }
+});

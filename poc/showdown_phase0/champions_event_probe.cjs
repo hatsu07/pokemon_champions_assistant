@@ -84,7 +84,11 @@ function compare(id,rule,{before,action,reference,expected,actual,events,precond
   const diff=fieldDiff(expected||{},actual||{});
   const valid=precondition&&reference?.status===STATUS&&reason===null&&
     actual!==undefined&&actual!==null&&expected&&Object.keys(expected).length>0;
-  return caseResult(id,rule,{before,action,reference_result:reference||null,
+  // Distinguish real executed-turn evidence, next-request inspection, and source-only unknowns.
+  const observation_basis=action?.kind==='inspect-next-move-request'?'REQUEST_AFTER_TURN':
+    Array.isArray(events)&&events.some(x=>/^\|(move|switch|-mega)\|/.test(x))?
+      'EXECUTED_TURN':'SOURCE_ONLY';
+  return caseResult(id,rule,{observation_basis,before,action,reference_result:reference||null,
     reference_state:reference?.state||null,
     expected_state:expected||null,actual_state:actual||null,events:events||[],
     matched_fields:diff.matches,mismatched_fields:valid?diff.mismatches:[],
@@ -345,9 +349,12 @@ function main(seed=SEED){
     ...scarfCases(dex,validator,allowed,seed)];
   const counts=Object.fromEntries(['WIKI_SPEC_MATCH','WIKI_SPEC_MISMATCH','INCONCLUSIVE'].map(s=>
     [s,results.filter(r=>r.status===s).length]));
+  const observation_basis_counts=Object.fromEntries(
+    ['EXECUTED_TURN','REQUEST_AFTER_TURN','SOURCE_ONLY'].map(b=>
+      [b,results.filter(r=>r.observation_basis===b).length]));
   return {schema:'champions-showdown-event-diagnostics-v1',scope:'OFFLINE_SYNTHETIC_ONLY',
     pinned_sha:PIN,format:FORMAT,seed,source_checked_at:LEDGER.checked_at,
-    gate_A:'UNKNOWN',gate_B:'UNSUPPORTED',adoption:'NO_GO',counts,results};
+    gate_A:'UNKNOWN',gate_B:'UNSUPPORTED',adoption:'NO_GO',counts,observation_basis_counts,results};
 }
 if(require.main===module){
   try{process.stdout.write(JSON.stringify(main(),null,2)+'\n');}

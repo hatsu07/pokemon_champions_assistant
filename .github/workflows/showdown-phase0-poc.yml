@@ -51,10 +51,42 @@ jobs:
                   assert item['reason'] and item['unverified_conditions']
               if item['status'] == 'WIKI_SPEC_MATCH':
                   assert not item['mismatched_fields']
+          # Diagnostic discovery and regression acceptance are separate: a mismatch is
+          # not a Champions game bug, but an unreviewed difference MUST fail this CI.
+          with open('poc/showdown_phase0/champions_event_baseline.json', encoding='utf-8') as stream:
+              baseline = json.load(stream)
+          assert baseline['schema'] == 'champions-event-probe-baseline-v1'
+          assert baseline['pinned_sha'] == report['pinned_sha']
+          expected = baseline['cases']
+          observed = [{k: item[k] for k in ('id', 'rule_id', 'status', 'observation_basis')}
+                      for item in report['results']]
           print('Pinned turn diagnostics:', report['counts'])
+          print('Evidence basis:', report['observation_basis_counts'])
           for item in report['results']:
               if item['status'] != 'WIKI_SPEC_MATCH':
-                  print(item['id'], item['status'], item['reason'], item['mismatched_fields'])
+                  level = 'error' if item['status'] == 'WIKI_SPEC_MISMATCH' else 'warning'
+                  print('::' + level + ' title=Champions source-rule diagnostic::' +
+                        item['id'] + ': ' + item['status'])
+                  print('TRIAGE_EVENT_JSON=' + json.dumps({
+                      k: item.get(k) for k in ('id','rule_id','status','reason','mismatched_fields',
+                                                   'observation_basis','unverified_conditions')
+                  }, ensure_ascii=False, sort_keys=True))
+          expected_kinds = ('EXECUTED_TURN','REQUEST_AFTER_TURN','SOURCE_ONLY')
+          actual_kind_counts = {k: sum(x['observation_basis'] == k for x in observed)
+                                for k in expected_kinds}
+          if (observed != expected
+                  or len({x['id'] for x in observed}) != len(observed)
+                  or report['observation_basis_counts'] != actual_kind_counts):
+              print('::error title=Champions event regression::Expected individual case IDs, '
+                    'status and observation basis differ from the reviewed baseline')
+              print('EXPECTED_CASES=' + json.dumps(expected, sort_keys=True))
+              print('ACTUAL_CASES=' + json.dumps(observed, sort_keys=True))
+              raise SystemExit(1)
+          assert report['counts'] == {
+              k: sum(x['status'] == k for x in observed)
+              for k in ('WIKI_SPEC_MATCH','WIKI_SPEC_MISMATCH','INCONCLUSIVE')
+          }
+          print('Reviewed event baseline: PASS (not actual-game compatibility)')
           PY
       - name: Compare documented Wiki arithmetic to pinned Showdown (diagnostic only)
         shell: bash

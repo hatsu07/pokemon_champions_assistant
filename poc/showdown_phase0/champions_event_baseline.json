@@ -1,0 +1,116 @@
+{
+  "schema": "champions-event-probe-baseline-v1",
+  "scope": "SYNTHETIC_PINNED_SHOWDOWN_REGRESSION_ONLY",
+  "pinned_sha": "ccfaa20f32af363569cd21a9d501b2bc1ded26b1",
+  "description": "Expected IDs, rule association, observed evidence basis and status for the narrow source-to-pinned-Showdown checks. Changes require explicit review. No actual-game certification.",
+  "cases": [
+    {
+      "id": "protean-first-move",
+      "rule_id": "PROTEAN_FIRST_MOVE_TYPE",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "protean-second-move",
+      "rule_id": "PROTEAN_FIRST_MOVE_TYPE",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "protean-switch-reset",
+      "rule_id": "PROTEAN_FIRST_MOVE_TYPE",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "protean-after-switch",
+      "rule_id": "PROTEAN_FIRST_MOVE_TYPE",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "protean-same-type-unknown",
+      "rule_id": "PROTEAN_FIRST_MOVE_TYPE",
+      "status": "INCONCLUSIVE",
+      "observation_basis": "SOURCE_ONLY"
+    },
+    {
+      "id": "protean-failed-move",
+      "rule_id": "PROTEAN_FIRST_MOVE_TYPE",
+      "status": "INCONCLUSIVE",
+      "observation_basis": "SOURCE_ONLY"
+    },
+    {
+      "id": "mega-prior-protean",
+      "rule_id": "PROTEAN_MEGA_GRENINJA_RESET",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "mega-reset",
+      "rule_id": "PROTEAN_MEGA_GRENINJA_RESET",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "knock-held-item",
+      "rule_id": "KNOCK_OFF_HELD_ITEM",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "knock-no-item",
+      "rule_id": "KNOCK_OFF_HELD_ITEM",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "knock-contact-faint",
+      "rule_id": "KNOCK_OFF_HELD_ITEM",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "knock-unknown-removability",
+      "rule_id": "KNOCK_OFF_HELD_ITEM",
+      "status": "INCONCLUSIVE",
+      "observation_basis": "SOURCE_ONLY"
+    },
+    {
+      "id": "knock-power-multiplier",
+      "rule_id": "KNOCK_OFF_HELD_ITEM",
+      "status": "INCONCLUSIVE",
+      "observation_basis": "SOURCE_ONLY"
+    },
+    {
+      "id": "herb-first-drop",
+      "rule_id": "WHITE_HERB_ON_LOWERED_STATS",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "herb-second-drop",
+      "rule_id": "WHITE_HERB_ON_LOWERED_STATS",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "scarf-first-lock",
+      "rule_id": "CHOICE_SCARF_MOVE_LOCK",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    },
+    {
+      "id": "scarf-other-move",
+      "rule_id": "CHOICE_SCARF_MOVE_LOCK",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "REQUEST_AFTER_TURN"
+    },
+    {
+      "id": "scarf-switch-unlock",
+      "rule_id": "CHOICE_SCARF_MOVE_LOCK",
+      "status": "WIKI_SPEC_MATCH",
+      "observation_basis": "EXECUTED_TURN"
+    }
+  ]
+}
