@@ -5,6 +5,7 @@ const STATUS='SOURCE_RULE_SIMULATION_ONLY';
 const TYPES=new Set(['Normal','Fire','Water','Electric','Grass','Ice','Fighting','Poison','Ground',
   'Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel','Fairy']);
 const STAGES=['atk','def','spa','spd','spe','accuracy','evasion'];
+const {moveKey}=require('./champions_move_key.cjs');
 const unsupported=(reason)=>({status:'UNSUPPORTED',reason});
 function exact(value,keys,label){
   if(!value||typeof value!=='object'||Array.isArray(value)||
@@ -35,8 +36,11 @@ function protean(state,event){
   if(event.kind!=='use-move')return unsupported('Only successful ordinary move use has a rule contract');
   exact(event,['kind','moveType'],'Protean move');
   if(!TYPES.has(event.moveType))throw Error('unknown move type');
-  return {status:STATUS,state:state.used?{types:[...state.types],used:true}:
-    {types:[event.moveType],used:true},rule_id:'PROTEAN_FIRST_MOVE_TYPE'};
+  if(!state.used&&state.types.length===1&&state.types[0]===event.moveType)
+    return unsupported('Same-type Protean charge consumption is not established for Champions');
+  return {status:STATUS,activation_phase:'BEFORE_MOVE_DAMAGE',state_phase:'AFTER_EXECUTED_MOVE',
+    state:state.used?{types:[...state.types],used:true}:
+      {types:[event.moveType],used:true},rule_id:'PROTEAN_FIRST_MOVE_TYPE'};
 }
 function knockOff(event){
   exact(event,['hit','heldItem','removable','attackerFaintedFromContact'],'Knock Off event');
@@ -69,8 +73,8 @@ function whiteHerb(state){
 function choiceScarf(state,event){
   exact(state,['item','lockedMove'],'Choice Scarf state');
   if(state.item!=='choicescarf'&&state.item!==null)return unsupported('Unexpected held item');
-  if(state.lockedMove!==null&&(typeof state.lockedMove!=='string'||!state.lockedMove))
-    throw Error('unknown locked move');
+  const locked=state.lockedMove===null?null:moveKey(state.lockedMove);
+  if(state.lockedMove!==null&&!locked)return unsupported('Locked move absent from Champions move master');
   if(state.item===null&&state.lockedMove!==null)
     return unsupported('Item-removed move-lock persistence is not specified by this contract');
   if(!event||typeof event!=='object')throw Error('unknown Choice Scarf event');
@@ -83,12 +87,13 @@ function choiceScarf(state,event){
   if(event.kind!=='try-move'&&event.kind!=='use-move')
     return unsupported('Forced move use or item removal is not modeled');
   exact(event,['kind','move'],'Choice Scarf move');
-  if(typeof event.move!=='string'||!event.move)throw Error('unknown move');
-  const allowed=state.item!=='choicescarf'||!state.lockedMove||state.lockedMove===event.move;
+  const move=moveKey(event.move);
+  if(!move)return unsupported('Move absent from Champions move master');
+  const allowed=state.item!=='choicescarf'||!locked||locked===move;
   if(event.kind==='use-move'&&!allowed)
     return unsupported('Caller supplied an impossible executed move under Choice lock');
   const lockedMove=state.item==='choicescarf'&&event.kind==='use-move'?
-    (state.lockedMove||event.move):state.lockedMove;
+    (locked||move):locked;
   return {status:STATUS,rule_id:'CHOICE_SCARF_MOVE_LOCK',
     speed_multiplier:state.item==='choicescarf'?[3,2]:[1,1],
     state:{item:state.item,lockedMove},allowed:!!allowed};

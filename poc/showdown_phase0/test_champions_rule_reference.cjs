@@ -13,7 +13,9 @@ test('source ledger: separate source contracts, evidence types and unresolved ex
   assert.equal(d.schema,'champions-source-rule-contracts-v1');
   assert.equal(d.regulation,'M-C');
   assert.equal(d.actual_game_compatibility,'UNKNOWN');
-  assert.equal(d.showdown_event_compatibility,'NOT_TESTED');
+  assert.equal(d.showdown_event_compatibility,'SELECTED_SYNTHETIC_TURNS_ONLY');
+  assert.deepEqual(d.priority.slice(0,4),[
+    'CHAMPIONS_OFFICIAL','OFFICIAL_HOME','USER_GAME_CONFIRMATION','CHAMPIONS_FIXED_MASTER']);
   assert.equal(d.rules.length,5);
   for(const r of d.rules){
     assert.ok(r.id&&r.subject&&r.claims.length&&r.not_verified.length);
@@ -54,6 +56,7 @@ test('Protean: Champions-specific Mega Greninja resets typing and Protean charge
 });
 test('Protean: ambiguous move events and missing type remain unhandled',()=>{
   assert.equal(protean({types:['Dark'],used:false},{kind:'failed-move'}).status,'UNSUPPORTED');
+  assert.equal(protean({types:['Dark'],used:false},{kind:'use-move',moveType:'Dark'}).status,'UNSUPPORTED');
   assert.throws(()=>protean({types:['Dark'],used:false},{kind:'use-move'}),/incomplete/);
   assert.throws(()=>protean({types:['Dark'],used:null},{kind:'use-move',moveType:'Dark'}),/unknown/);
 });
@@ -125,4 +128,13 @@ test('Choice Scarf: no item never locks; forced executed move conflict unmodeled
   assert.equal(choiceScarf({item:'choicescarf',lockedMove:'knockoff'},{kind:'use-move',move:'uturn'}).status,'UNSUPPORTED');
   assert.equal(choiceScarf({item:'choicescarf',lockedMove:null},{kind:'item-removed'}).status,'UNSUPPORTED');
   assert.equal(choiceScarf({item:null,lockedMove:'knockoff'},{kind:'try-move',move:'uturn'}).status,'UNSUPPORTED');
+});
+test('Choice Scarf: names resolve through Champions MoveKey and unknown keys fail closed',()=>{
+  const initial={item:'choicescarf',lockedMove:null};
+  const used=choiceScarf(initial,{kind:'use-move',move:'Knock Off'});
+  assert.equal(used.state.lockedMove,'knockoff');
+  assert.equal(choiceScarf(used.state,{kind:'try-move',move:'はたきおとす'}).allowed,true);
+  assert.equal(choiceScarf(used.state,{kind:'try-move',move:'Knock-Off'}).allowed,true);
+  assert.equal(choiceScarf(used.state,{kind:'try-move',move:'Fake New Move'}).status,'UNSUPPORTED');
+  assert.equal(choiceScarf({item:'choicescarf',lockedMove:'Fake New Move'},{kind:'try-move',move:'Knock Off'}).status,'UNSUPPORTED');
 });

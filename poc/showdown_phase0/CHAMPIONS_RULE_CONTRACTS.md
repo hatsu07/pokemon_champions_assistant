@@ -25,7 +25,7 @@ The machine-readable source ledger is `champions_rule_contracts.json`, with `cla
 
 ### Important verification boundary
 
-**This PR validates the *internal consistency of a narrow independently coded interpretation of documentation*. It does not yet compare each transition with an executed Showdown turn.** Simultaneous mechanics, in-engine event order, numerical damage application, temporary ability suppression, incompatible items, game-specific mega conditions, and all undocumented exceptions are explicitly outside the contract. A future separate pinned Showdown event-probe must classify results as `WIKI_SPEC_MATCH/MISMATCH` versus `UNKNOWN`; a discrepancy is not automatic evidence of a Champions game bug.
+The pure reference tests validate the *internal consistency of a narrow independently coded interpretation of documentation*. The separate event probe below now compares selected transitions with executed Showdown turns. Simultaneous mechanics, numerical damage distribution, temporary ability suppression, incompatible items, and undocumented exceptions remain outside the checked conditions. A discrepancy is not automatic evidence of a Champions game bug.
 
 Examples of deliberately unsupported inputs:
 - Knock Off against a target whose item removability is unknown, or where Sticky Hold/substitute/mega-item exceptions may apply.
@@ -45,6 +45,28 @@ docker run --rm --network none --read-only --entrypoint node champions-phase0 \
 
 These are **synthetic reference-model tests**. Passing is not equivalent to Champions real-device verification. Current gates remain **Gate A=UNKNOWN, Gate B=UNSUPPORTED, adoption=NO_GO**. The output does not include user screenshots, match histories or local personal Golden JSON.
 
-## Next bounded step
+## Executed-turn event probe (Issue #139 successor)
 
-Add event-level observations from the **pinned Showdown model** for the same events without deriving expectations from simulator output. Preserve source-text expected poststates separately, compare to resulting simulator state, and record only the actually checked conditions. Give priority to Protean's use limit/Mega reset, Knock Off removal despite contact retaliation, White Herb negative-stage reset, and Choice Scarf move lock and switch reset. If the simulation cannot supply a valid exact event state or a Champions-specific source is missing, return `INCONCLUSIVE` and request no dedicated match.
+`champions_event_probe.cjs` runs real turns in the pinned `gen9championsbssregmc` battle. It uses the pure functions in `champions_rule_reference.cjs` for expectations, then independently reads battle state, the turn log, and the next move request. Teams are checked against the fixed Champions usable roster, ability list, held items, move master, linked learnsets, pinned Dex, and format TeamValidator before play. The Mega probe wraps `runMegaEvo` only to take a snapshot immediately after that transition; the original function still executes. There is no call to `getDamage` for event classification.
+
+With seed `[1,2,3,4]` and Showdown SHA `ccfaa20f32af363569cd21a9d501b2bc1ded26b1`, the 18 diagnostic records are **14 WIKI_SPEC_MATCH / 0 WIKI_SPEC_MISMATCH / 4 INCONCLUSIVE**. **Evidence basis is separate from status:** 13 records inspect executed turns, 1 inspects the next move request after an executed turn (`scarf-other-move`), and 4 are `SOURCE_ONLY` inconclusive declarations without an executed comparison. These are synthetic Showdown observations or source-only declarations, not actual-game observations. The matched fields are:
+
+| Rule | Checked turn results | Remaining limits |
+|---|---|---|
+| Protean first move | Brick Break changes type before damage, second Knock Off does not reactivate; switching out and back restores base typing and allows reactivation | Same-type charge consumption and failed/dynamic-type move timing are `INCONCLUSIVE` |
+| Mega Greninja | Initial Ice Beam changes type; after Mega, the immediate snapshot is Water/Dark and subsequent Dark Pulse reactivates Protean | Direct internal charge is inferred from the later action; other Mega timing is untested |
+| Knock Off | Rocky Helmet removal, empty-item case, and removal after the attacker faints from contact retaliation | Unknown removability and the 1.5 power multiplier are `INCONCLUSIVE`; one random hit does not isolate power |
+| White Herb | First Close Combat drop is cleared and item consumed; second drop persists without the item | Simultaneous effects and the intermediate activation frame remain untested |
+| Choice Scarf | Speed is within integer rounding of ×1.5; used Earthquake locks, Dragon Claw is disabled in next request, and switching clears lock | Exact rounding with other modifiers and selected-but-unexecuted actions remain untested |
+
+Each JSON record contains pre-state, requested actions, reference post-state, observed state, matched/mismatched fields, turn events, source URL/section, and unresolved conditions. `INCONCLUSIVE` records contain a reason and `UNKNOWN`/`UNSUPPORTED` auxiliary status. `WIKI_SPEC_MATCH` applies only to the fields listed in that record. The source ledger priority now explicitly includes official Pokémon HOME, and move names/IDs are resolved through the fixed Champions MoveKey master before reference locking. Unknown IDs and unlearnable fixture moves are rejected.
+
+```bash
+docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+docker run --rm --network none --read-only --entrypoint node champions-phase0 champions_event_probe.cjs
+docker run --rm --network none --read-only --entrypoint node champions-phase0 --test test_champions_rule_reference.cjs test_champions_event_probe.cjs
+```
+
+Regression acceptance: `champions_event_baseline.json` explicitly pins each of the 18 case IDs, its rule, expected result and evidence basis. Node regression tests fail on missing/duplicate IDs, unexpected mismatch, newly inconclusive status and basis changes. Linux CI compares the diagnostic JSON against the independent checked-in baseline and emits GitHub Actions warnings for known `INCONCLUSIVE` results plus a failing error for any unreviewed change; changes to that baseline require review. The event diagnostic CLI is for discovery and is not by itself a passing acceptance gate. An observed WIKI mismatch is **not** automatically a Champions game defect.
+
+Gate A remains `UNKNOWN`, Gate B remains `UNSUPPORTED`, and adoption remains `NO_GO`. The next separate Gate B step is to restore a synthetic **midbattle** state, clone it at the same RNG state, continue both branches, and verify divergence and unknown-state handling without treating a start-to-finish simulation as restoration proof.

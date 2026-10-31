@@ -2,6 +2,7 @@
 
 ## Issue #139 Phase 0 ゲートA検証基盤（2026-10-31）
 
+- PR #150後続: 固定Showdownの実ターンイベント診断プローブを追加。5契約の合成18記録で14 MATCH / 0 MISMATCH / 4 INCONCLUSIVE。実ゲーム観測・ダメージ倍率・複合効果は未確認。技IDを固定Champions MoveKeyで正規化し、未収録/未習得技を拒否。Linux Phase 0 CIへ新テストを追加。Gate A=UNKNOWN、Gate B=UNSUPPORTED、採用=NO_GO。次はGate Bの途中局面復元検証。
 - PR #147追加レビュー追補: 防御側のきのみ消費・回復等、直撃後に持ち物イベントが動く可能性のあるダメージケースをINCONCLUSIVEにする。オボン/オレンの合成負例を追加し、HPの直撃直前/直後と後続回復の時系列境界をREADMEに明記。実ゲーム観測・Gate A認定は引き続き未実施。
 - PR #147再レビュー追補: 非正規天候`snow`・状態異常`burn`をINCONCLUSIVEにし、`snowscape`と`brn`を正規IDとして検査。天候適用後の固定mod状態を確認。持ち物を使用可能マスターで照合し、同マスターのSHA256も出力。A=UNKNOWN、B=UNSUPPORTED、採用=NO_GOのまま。
 - PR #147レビュー追補: M-Cのレベル50・AP各0–32/合計66、種族/フォーム/特性/技のChampions合法性を検査。`getDamage`後の特性・道具、身代わり/こらえるを未対応としてINCONCLUSIVEに止める。入力と参照マスターのSHA256を報告し、ケース数とチェック数を区別する。実ゲーム証拠の自動真偽判定やゲートA認定は行わない。
