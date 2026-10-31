@@ -2,6 +2,7 @@
 
 ## Issue #139 Phase 0 ゲートA検証基盤（2026-10-31）
 
+- PR #147再レビュー追補: 非正規天候`snow`・状態異常`burn`をINCONCLUSIVEにし、`snowscape`と`brn`を正規IDとして検査。天候適用後の固定mod状態を確認。持ち物を使用可能マスターで照合し、同マスターのSHA256も出力。A=UNKNOWN、B=UNSUPPORTED、採用=NO_GOのまま。
 - PR #147レビュー追補: M-Cのレベル50・AP各0–32/合計66、種族/フォーム/特性/技のChampions合法性を検査。`getDamage`後の特性・道具、身代わり/こらえるを未対応としてINCONCLUSIVEに止める。入力と参照マスターのSHA256を報告し、ケース数とチェック数を区別する。実ゲーム証拠の自動真偽判定やゲートA認定は行わない。
 - `poc/showdown_phase0/golden_schema.json` と `golden_compare.cjs` に、独立ゲーム観測の根拠・確度・未判明を保持するローカルJSON形式と固定SHAオフライン比較を追加。能力実数値、PPの3層、単発直接ダメージの16乱数値を診断する。条件不足はINCONCLUSIVE、合成はSYNTHETIC表示。CIは合成ケースのみ。
 - 実ゲーム画面は未提供。本人確認済み実測ケース0件、ゲートA=UNKNOWN。実機での互換性・行動順・命中・複合効果・100代表局面・ゲートBは未検証。次は`poc/showdown_phase0/README.md`の手順で、非公開の実ゲーム観測ケースを作成しローカルで比較する。

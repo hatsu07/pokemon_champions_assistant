@@ -14,7 +14,9 @@ const {Battle, Dex} = require(path.join(root || "", "dist", "sim", "index.js"));
 const dex = Dex.forFormat(FORMAT);
 const schema = JSON.parse(fs.readFileSync(path.join(__dirname, "golden_schema.json"), "utf8"));
 const MASTER_FILES = ["Pokemon_Champions_MC_move_master.csv", "Pokemon_Champions_MC_usable_pokemon.csv",
-  "Pokemon_Champions_MC_pokemon_learnsets_linked.csv"];
+  "Pokemon_Champions_MC_pokemon_learnsets_linked.csv", "Pokemon_Champions_MC_usable_held_items.csv"];
+const WEATHER_IDS = new Set(["", "raindance", "sunnyday", "sandstorm", "snowscape"]);
+const STATUS_IDS = new Set(["", "brn", "par", "psn", "tox", "slp", "frz"]);
 const masterBase = path.resolve(process.env.CHAMPIONS_MASTERS_DIR || path.join(__dirname, "masters"));
 const sha256 = data => crypto.createHash("sha256").update(data).digest("hex");
 let sourceCache;
@@ -23,7 +25,7 @@ function sources() {
   if (sourceCache) return sourceCache;
   const data = Object.fromEntries(MASTER_FILES.map(name => [name, fs.readFileSync(path.join(masterBase, name))]));
   const master_sha256 = Object.fromEntries(MASTER_FILES.map(name => [name, sha256(data[name])]));
-  const [moves, pokemon, links] = MASTER_FILES.map(name => rows(data[name].toString("utf8")));
+  const [moves, pokemon, links, heldItems] = MASTER_FILES.map(name => rows(data[name].toString("utf8")));
   const pokemonByName = new Map(pokemon.map(r =>
     [r["ポケモン名"] + "|" + r["フォーム/姿"] + "|" + r["区分"], r]));
   const speciesRows = new Map();
@@ -44,7 +46,8 @@ function sources() {
     const entry = {row, link, moves: new Set(link["習得MoveKey一覧"].split(",").map(x => x.trim()))};
     speciesRows.set(selected.id, speciesRows.has(selected.id) ? null : entry);
   }
-  sourceCache = {master_sha256, moves: new Map(moves.map(r => [r.MoveKey, r])), speciesRows};
+  sourceCache = {master_sha256, moves: new Map(moves.map(r => [r.MoveKey, r])), speciesRows,
+    items: new Set(heldItems.map(r => dex.items.get(r["英語名"]).id))};
   return sourceCache;
 }
 
@@ -151,6 +154,8 @@ function mon(spec, ev, missing, requireEffects = true) {
     dex.abilities.get(x).id === dex.abilities.get(ability).id))
     missing.push("ability not legal for Champions species/form: " + ability);
   if (item && !dex.items.get(item).exists) missing.push("unknown item " + item);
+  if (item && dex.items.get(item).exists && !sources().items.has(dex.items.get(item).id))
+    missing.push("item absent from Champions held-item master: " + item);
   if (missing.length) return null;
   const firstMove = mapped.moves.values().next().value;
   if (!firstMove) {missing.push("empty Champions learnset"); return null;}
@@ -241,6 +246,8 @@ function damageCheck(check, ev) {
     for (const s of STATS.slice(1)) values[s] = fact(check[side]?.boosts?.[s], side + ".boosts." + s, ev, missing, "number");
     boosts.push(values);
   }
+  if (status.some(s => s !== undefined && !STATUS_IDS.has(s)))
+    missing.push("status must use a pinned canonical ID (brn/par/psn/tox/slp/frz or empty)");
   const move = moveId && dex.moves.get(moveId);
   if (moveId && (!move.exists || move.category === "Status" || !move.basePower || move.basePowerCallback ||
     move.multihit || move.damage || move.damageCallback || move.ohko)) missing.push("unsupported damage move");
@@ -251,7 +258,9 @@ function damageCheck(check, ev) {
   if (substitute || endure) missing.push("substitute or endure changes final HP loss");
   if (defend && (postDamageEffect(dex.abilities.get(defend.ability)) || postDamageEffect(dex.items.get(defend.item))))
     missing.push("defender ability/item applies after raw getDamage");
-  if (terrain || !["", "raindance", "sunnyday", "sandstorm", "snow"].includes(weather) ||
+  const weatherEffect = weather !== undefined && weather !== "" ? dex.conditions.get(weather) : null;
+  if (terrain || !WEATHER_IDS.has(weather) ||
+    (weatherEffect && (!weatherEffect.exists || weatherEffect.id !== weather || weatherEffect.effectType !== "Weather")) ||
     !["", "reflect", "lightscreen"].includes(screen)) missing.push("unsupported field condition");
   if (hpBefore !== undefined && hpAfter !== undefined && (hpAfter > hpBefore || hpBefore < 1 || hpAfter < 0))
     missing.push("invalid HP interval");
@@ -272,8 +281,12 @@ function damageCheck(check, ev) {
       p.boosts[s] = boosts[index][s];
     }
   }
-  if (b.field.weather) b.field.clearWeather();
-  if (weather) b.field.setWeather(weather, a);
+  if (b.field.weather && !b.field.clearWeather())
+    return result("damage", null, null, ev, ["initial weather could not be cleared"]);
+  if (weather && !b.field.setWeather(weather, a))
+    return result("damage", null, null, ev, ["requested weather was not applied"]);
+  if (b.field.weather !== weather)
+    return result("damage", null, null, ev, ["applied weather differs from observed canonical ID"]);
   if (screen) b.p2.addSideCondition(screen, d);
   const rolls = [];
   for (let factor = 85; factor <= 100; factor++) {

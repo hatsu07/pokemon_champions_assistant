@@ -94,7 +94,7 @@ test("CLI report keeps synthetic evidence outside verified game matches", () => 
   assert.equal(report.gate_A_calculation, "UNKNOWN");
   assert.equal(report.input_sha256, crypto.createHash("sha256").update(
     fs.readFileSync(path.join(__dirname, "synthetic_golden_example.json"))).digest("hex"));
-  assert.equal(Object.keys(report.master_sha256).length, 3);
+  assert.equal(Object.keys(report.master_sha256).length, 4);
   for (const [name, hash] of Object.entries(report.master_sha256)) {
     assert.equal(hash, crypto.createHash("sha256").update(fs.readFileSync(path.join(__dirname, "masters", name))).digest("hex"));
   }
@@ -193,4 +193,51 @@ test("one verified stats case has six verified checks, and gate A stays UNKNOWN"
     assert.equal(report.counts.verified_game_matching_case_count, 1);
     assert.equal(report.gate_A_calculation, "UNKNOWN");
   } finally {fs.rmSync(dir, {recursive: true, force: true});}
+});
+test("unknown snow fails closed and canonical Snowscape changes Ice defense", () => {
+  const c = base();
+  c.checks.damage = {attacker: p("Garchomp", "Rough Skin"), defender: p("Mamoswine", "Snow Cloak"),
+    move_id: f("Earthquake"), defender_hp_before: f(100), defender_hp_after: f(70),
+    critical: f(false), direct_hit_only: f(true), conditions_complete: f(true),
+    defender_substitute: f(false), defender_endure: f(false),
+    field: {weather: f(""), terrain: f(""), defender_screen: f("")}};
+  const clear = compareCase(c).checks[0];
+  assert.equal(clear.kind, "damage");
+  assert.ok(clear.rolls?.length === 16);
+  c.checks.damage.field.weather = f("snow");
+  assert.match(compareCase(c).checks[0].missing.join(" "), /unsupported field condition/);
+  c.checks.damage.field.weather = f("snowscape");
+  const snow = compareCase(c).checks[0];
+  assert.equal(snow.kind, "damage");
+  assert.ok(snow.showdown[1] < clear.showdown[1], "canonical Snowscape increases Ice defense");
+  c.checks.damage.defender_hp_after = f(100 - snow.rolls[0]);
+  assert.equal(compareCase(c).checks[0].status, "MATCH_SYNTHETIC");
+});
+test("noncanonical burn fails closed while brn changes physical damage", () => {
+  const c = base();
+  c.checks.damage = {attacker: p("Garchomp", "Rough Skin"), defender: p("Hippowdon", "Sand Stream"),
+    move_id: f("Earthquake"), defender_hp_before: f(100), defender_hp_after: f(70),
+    critical: f(false), direct_hit_only: f(true), conditions_complete: f(true),
+    defender_substitute: f(false), defender_endure: f(false),
+    field: {weather: f(""), terrain: f(""), defender_screen: f("")}};
+  const healthy = compareCase(c).checks[0];
+  c.checks.damage.attacker.status = f("burn");
+  assert.match(compareCase(c).checks[0].missing.join(" "), /canonical ID/);
+  c.checks.damage.attacker.status = f("brn");
+  const burned = compareCase(c).checks[0];
+  assert.ok(burned.showdown[1] < healthy.showdown[1]);
+  c.checks.damage.defender_hp_after = f(100 - burned.rolls[0]);
+  assert.equal(compareCase(c).checks[0].status, "MATCH_SYNTHETIC");
+});
+test("Showdown-only held items fail Champions master legality", () => {
+  const c = base();
+  c.checks.damage = {attacker: p("Garchomp", "Rough Skin"), defender: p("Hippowdon", "Sand Stream"),
+    move_id: f("Earthquake"), defender_hp_before: f(100), defender_hp_after: f(70),
+    critical: f(false), direct_hit_only: f(true), conditions_complete: f(true),
+    defender_substitute: f(false), defender_endure: f(false),
+    field: {weather: f(""), terrain: f(""), defender_screen: f("")}};
+  c.checks.damage.defender.item = f("Heavy-Duty Boots");
+  assert.match(compareCase(c).checks[0].missing.join(" "), /item absent from Champions held-item master/);
+  c.checks.damage.defender.item = f("Leftovers");
+  assert.ok(compareCase(c).checks[0].rolls?.length === 16);
 });

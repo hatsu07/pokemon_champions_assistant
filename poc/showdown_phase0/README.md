@@ -2,6 +2,8 @@
 
 ## ゲートA：実ゲームの独立観測とオフライン照合
 
+ダメージ比較の状態異常は固定modのID（`brn`, `par`, `psn`, `tox`, `slp`, `frz`、状態異常なしは空文字）のみ。`burn` 等の別名は自動変換せず `INCONCLUSIVE` にする。天候は空文字、`raindance`, `sunnyday`, `sandstorm`, `snowscape` のみ。ゲーム画面の「ゆき」を人が `snowscape` と確認した場合にそのIDで記録し、`snow` は未対応にする。固定modで天候を適用した結果も確認する。持ち物はChampions使用可能持ち物マスターの収録IDに限る。
+
 `golden_schema.json` が記録形式、`golden_compare.cjs` が比較CLI。実画面の内容を人が確認し、1件ごとにケースID・UTC観測日時・M-Cレギュレーション・根拠ID/説明/任意のローカルパスとSHA256を記録する。各事実は `{ "source": "GAME_OBSERVED", "value": ..., "evidence_ids": ["frame-1"] }` とし、推測は `INFERRED`、未判明は `{ "source": "UNKNOWN" }` にする。空文字の持ち物/状態/天候は「ないと観測済み」、UNKNOWNは未確認を意味する。`evidence.verification` は画面を本人が照合した場合だけ `USER_VERIFIED` にする。参照IDの存在はCLIで検査するが、映像の真偽やユーザー確認そのものは自動認定できない。
 
 `checks.stats` は正確なShowdown種族・フォームキー、レベル、性格、6能力分のAPとゲーム表示6能力値を要する。M-Cランクマッチ比較はレベル50、APは各0–32・合計66以下に限定する。`checks.pp` は種族キー・技IDと画面の戦闘時最大PPが必須で、元PP（マスター）、Champions制限後Dex PP、実際の戦闘最大PPを別欄に出す。残PPは記録と範囲チェックのみで、使用履歴なしには初期値からの一致を主張しない。`checks.damage` は攻防双方の正確な種族/フォーム・性格・AP・特性・持ち物・状態・能力ランク、技、天候・フィールド・防御側壁、急所、HP前後、身代わり・こらえるの有無、単一直接命中/条件網羅の人手確認を要する。メガ状態はフォーム込み種族キーで表し、`mega_state`を併記したときは矛盾を検査する。種族・フォーム・技はChampionsマスターと固定modの両方、特性は固定modの該当種族枠と照合する。未確認の相手型・道具・場の状態を補完しない。
@@ -17,7 +19,7 @@ docker run --rm --network none --read-only -v "$PWD/poc/showdown_phase0/local_go
 docker run --rm --network none --entrypoint node champions-phase0 golden_compare.cjs synthetic_golden_example.json
 ```
 
-出力スキーマ `champions-golden-comparison-v2` は固定Showdown SHA、入力JSONのSHA256、実際に読んだChampionsマスター3件のSHA256、ケース別の判定と集計を含む。`verified_game_case_count` は人手確認済みの独立ケース数、`verified_game_check_count` はそのうち判定可能な能力値・PP・ダメージのチェック数。1ケースの能力値6件を6ケースとして数えない。根拠ID文字列や申告されたSHA256が実ファイルと一致するかはCLIで確認できないため、元画面とハッシュの**人手確認が必要**。出力は `MATCH` / `MISMATCH` / `INCONCLUSIVE`、合成と未検証データにはそれぞれ `_SYNTHETIC` / `_UNVERIFIED` を付ける。`MISMATCH` は終了コード1、入力・固定SHA・実行エラーは2。標準出力JSONを保存する場合もローカルの非公開領域を使う。`synthetic_golden_example.json` は使い方の例に過ぎず、実ゲーム証拠ではない。実ゲームの検証済みケースは未収集で、ゲートAは引き続きUNKNOWN。
+出力スキーマ `champions-golden-comparison-v2` は固定Showdown SHA、入力JSONのSHA256、実際に読んだChampionsマスター4件のSHA256、ケース別の判定と集計を含む。`verified_game_case_count` は人手確認済みの独立ケース数、`verified_game_check_count` はそのうち判定可能な能力値・PP・ダメージのチェック数。1ケースの能力値6件を6ケースとして数えない。根拠ID文字列や申告されたSHA256が実ファイルと一致するかはCLIで確認できないため、元画面とハッシュの**人手確認が必要**。出力は `MATCH` / `MISMATCH` / `INCONCLUSIVE`、合成と未検証データにはそれぞれ `_SYNTHETIC` / `_UNVERIFIED` を付ける。`MISMATCH` は終了コード1、入力・固定SHA・実行エラーは2。標準出力JSONを保存する場合もローカルの非公開領域を使う。`synthetic_golden_example.json` は使い方の例に過ぎず、実ゲーム証拠ではない。実ゲームの検証済みケースは未収集で、ゲートAは引き続きUNKNOWN。
 
 本番アプリ・GPT経路・ゲーム操作は変更しない。合成データを使う隔離実験としてのみ利用する。
 
