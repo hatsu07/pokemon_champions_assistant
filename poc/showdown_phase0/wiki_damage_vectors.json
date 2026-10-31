@@ -6,7 +6,9 @@
       "url": "https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
       "page_updated": "2026-10-30",
       "checked_at": "2026-10-31",
-      "provenance": "UNOFFICIAL_CHAMPIONS_WIKI"
+      "provenance": "SECONDARY_COMMUNITY_REFERENCE_UNVERIFIED_FOR_CHAMPIONS",
+      "source_priority": "SECONDARY_COMMUNITY",
+      "note": "The published numerical example is retained as a regression fixture. Bulbapedia's Damage article explicitly notes Champions coverage gaps; do not relabel this example as Bulbapedia-verified or device-verified."
     }
   },
   "cases": [
