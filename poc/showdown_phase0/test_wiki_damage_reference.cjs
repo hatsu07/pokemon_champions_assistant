@@ -11,10 +11,11 @@ test('reference data has source URLs and independent wiki expectations',()=>{
   for(const c of cases){
     assert.ok(c.source_ids.length);
     for(const id of c.source_ids)assert.ok(sources[id]?.url?.startsWith('https://'));
-    assert.ok(['PINNED_CHAMPIONS_COMPARABLE','FORMULA_ONLY_NOT_CHAMPIONS_COMPARABLE'].includes(c.comparison_scope));
+    assert.equal(c.comparison_scope,'PINNED_CHAMPIONS_COMPARABLE');
   }
   assert.equal(cases.filter(c=>c.comparison_scope==='PINNED_CHAMPIONS_COMPARABLE').length,1);
-  assert.equal(cases.filter(c=>c.comparison_scope==='FORMULA_ONLY_NOT_CHAMPIONS_COMPARABLE').length,1);
+  assert.equal(cases.length,1);
+  assert.ok(cases.every(c=>!/cresselia/i.test(c.id)));
 });
 for(const c of cases){test(c.id+' matches a published expected range',()=>{
   const r=calculate(c.input);
