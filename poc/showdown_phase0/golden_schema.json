@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Independent Champions observation for Phase 0 gate A",
+  "type": "object",
+  "required": ["schema", "cases"],
+  "properties": {
+    "schema": {"const": "champions-real-game-golden-v1"},
+    "cases": {"type": "array", "items": {"$ref": "#/$defs/case"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": {"enum": ["GAME_OBSERVED", "INFERRED", "UNKNOWN", "SYNTHETIC"]},
+        "value": {},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "stats": {"type": "object", "required": ["hp", "atk", "def", "spa", "spd", "spe"],
+      "properties": {"hp": {"$ref": "#/$defs/fact"}, "atk": {"$ref": "#/$defs/fact"}, "def": {"$ref": "#/$defs/fact"}, "spa": {"$ref": "#/$defs/fact"}, "spd": {"$ref": "#/$defs/fact"}, "spe": {"$ref": "#/$defs/fact"}}, "additionalProperties": false},
+    "boosts": {"type": "object", "required": ["atk", "def", "spa", "spd", "spe"],
+      "properties": {"atk": {"$ref": "#/$defs/fact"}, "def": {"$ref": "#/$defs/fact"}, "spa": {"$ref": "#/$defs/fact"}, "spd": {"$ref": "#/$defs/fact"}, "spe": {"$ref": "#/$defs/fact"}}, "additionalProperties": false},
+    "pokemon": {"type": "object", "required": ["species", "level", "nature", "ap"],
+      "properties": {"species": {"$ref": "#/$defs/fact"}, "form": {"$ref": "#/$defs/fact"},
+        "mega_state": {"$ref": "#/$defs/fact"}, "level": {"$ref": "#/$defs/fact"},
+        "nature": {"$ref": "#/$defs/fact"}, "ap": {"$ref": "#/$defs/stats"},
+        "ability": {"$ref": "#/$defs/fact"}, "item": {"$ref": "#/$defs/fact"},
+        "status": {"$ref": "#/$defs/fact"}, "boosts": {"$ref": "#/$defs/boosts"}},
+      "additionalProperties": false},
+    "case": {
+      "type": "object",
+      "required": ["case_id", "observed_at", "regulation", "evidence", "checks"],
+      "properties": {
+        "case_id": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "regulation": {"type": "string", "minLength": 1},
+        "evidence": {
+          "type": "object", "required": ["origin", "verification", "references"],
+          "properties": {
+            "origin": {"enum": ["REAL_GAME", "SYNTHETIC"]},
+            "verification": {"enum": ["USER_VERIFIED", "UNVERIFIED"]},
+            "references": {"type": "array", "items": {"type": "object", "required": ["id", "description"], "properties": {"id": {"type": "string"}, "description": {"type": "string"}, "local_path": {"type": "string"}, "sha256": {"type": "string"}, "frame_or_time": {"type": "string"}}, "additionalProperties": false}}
+          }, "additionalProperties": false
+        },
+        "checks": {"type": "object", "properties": {
+          "stats": {"type": "object", "required": ["pokemon", "observed_stats"],
+            "properties": {"pokemon": {"$ref": "#/$defs/pokemon"}, "observed_stats": {"$ref": "#/$defs/stats"}}, "additionalProperties": false},
+          "pp": {"type": "object", "required": ["move_id", "observed_battle_max_pp"],
+            "properties": {"move_id": {"$ref": "#/$defs/fact"}, "observed_base_pp": {"$ref": "#/$defs/fact"},
+              "observed_battle_max_pp": {"$ref": "#/$defs/fact"}, "observed_remaining_pp": {"$ref": "#/$defs/fact"}}, "additionalProperties": false},
+          "damage": {"type": "object", "required": ["attacker", "defender", "move_id", "defender_hp_before", "defender_hp_after", "critical", "direct_hit_only", "conditions_complete", "field"],
+            "properties": {"attacker": {"$ref": "#/$defs/pokemon"}, "defender": {"$ref": "#/$defs/pokemon"},
+              "move_id": {"$ref": "#/$defs/fact"}, "defender_hp_before": {"$ref": "#/$defs/fact"},
+              "defender_hp_after": {"$ref": "#/$defs/fact"}, "critical": {"$ref": "#/$defs/fact"},
+              "direct_hit_only": {"$ref": "#/$defs/fact"}, "conditions_complete": {"$ref": "#/$defs/fact"},
+              "field": {"type": "object", "required": ["weather", "terrain", "defender_screen"],
+                "properties": {"weather": {"$ref": "#/$defs/fact"}, "terrain": {"$ref": "#/$defs/fact"},
+                  "defender_screen": {"$ref": "#/$defs/fact"}}, "additionalProperties": false}},
+            "additionalProperties": false}
+        }, "minProperties": 1, "additionalProperties": false},
+        "notes": {"type": "string"}
+      }, "additionalProperties": false
+    }
+  }
+}

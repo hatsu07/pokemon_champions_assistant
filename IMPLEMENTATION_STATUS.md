@@ -1,5 +1,10 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 Phase 0 ゲートA検証基盤（2026-10-31）
+
+- `poc/showdown_phase0/golden_schema.json` と `golden_compare.cjs` に、独立ゲーム観測の根拠・確度・未判明を保持するローカルJSON形式と固定SHAオフライン比較を追加。能力実数値、PPの3層、単発直接ダメージの16乱数値を診断する。条件不足はINCONCLUSIVE、合成はSYNTHETIC表示。CIは合成ケースのみ。
+- 実ゲーム画面は未提供。本人確認済み実測ケース0件、ゲートA=UNKNOWN。実機での互換性・行動順・命中・複合効果・100代表局面・ゲートBは未検証。次は`poc/showdown_phase0/README.md`の手順で、非公開の実ゲーム観測ケースを作成しローカルで比較する。
+
 - 引き継ぎパッケージ準備済み: 2026-10-21
 - v2.3契約参照テスト: **16/16成功**（引き継ぎ環境のLinux / Python。Windows・実機では未検証）
 - Phase 0: 完了（Docker開発環境、Python package、offline CLI、設定雛形、テスト）

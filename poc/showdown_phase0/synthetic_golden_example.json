@@ -1,0 +1,20 @@
+{
+  "schema": "champions-real-game-golden-v1",
+  "cases": [
+    {
+      "case_id": "SYNTHETIC-PP-001",
+      "observed_at": "2026-10-31T00:00:00Z",
+      "regulation": "M-C",
+      "evidence": {"origin": "SYNTHETIC", "verification": "UNVERIFIED", "references": []},
+      "checks": {
+        "pp": {
+          "move_id": {"source": "SYNTHETIC", "value": "Agility"},
+          "observed_base_pp": {"source": "UNKNOWN"},
+          "observed_battle_max_pp": {"source": "SYNTHETIC", "value": 20},
+          "observed_remaining_pp": {"source": "UNKNOWN"}
+        }
+      },
+      "notes": "CLI demonstration only. This is not a Champions game observation."
+    }
+  ]
+}
