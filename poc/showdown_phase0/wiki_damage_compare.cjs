@@ -30,6 +30,7 @@ function allowedChampionsSets(dex){
   const byName=new Map(pokemon.filter(r=>r['区分']!=='メガシンカ'&&r['姿を直接登録']==='○')
     .map(r=>[r['ポケモン名']+'|'+r['フォーム/姿']+'|'+r['区分'],r]));
   const species=new Map();
+  const ambiguous=new Set();
   for(const link of links){
     const key=link['ポケモン名']+'|'+link['フォーム/姿']+'|'+link['区分'];
     const row=byName.get(key);
@@ -37,7 +38,15 @@ function allowedChampionsSets(dex){
     const id=speciesKeyForRow(row,link.LearnsetKey);
     const mon=dex.species.get(id);
     if(!mon.exists)continue;
-    if(species.has(mon.id))throw Error('ambiguous Champions species mapping: '+mon.id);
+    // Several distinct Champions appearances share one unresolved source key
+    // (e.g. Squawkabilly colours). Exclude that key entirely until mapped.
+    // Never abort unrelated, unambiguous fixture validation.
+    if(ambiguous.has(mon.id))continue;
+    if(species.has(mon.id)){
+      species.delete(mon.id);
+      ambiguous.add(mon.id);
+      continue;
+    }
     const typeNames=[row['タイプ1'],row['タイプ2']].filter(Boolean).map(t=>types[t]);
     if(typeNames.some(x=>!x)||typeNames.join('/')!==mon.types.join('/'))
       throw Error('Champions type mapping disagrees with pinned Dex: '+mon.id);
@@ -48,7 +57,7 @@ function allowedChampionsSets(dex){
     species.set(mon.id,{learned,learnsetKey:link.LearnsetKey,abilities:new Set(
       row['特性'].split('/').map(x=>x.trim()).filter(Boolean))});
   }
-  return {species,availableMoves,availableItems};
+  return {species,ambiguous,availableMoves,availableItems};
 }
 function teamsForScenario(s){
   // The exact six sets here are also the sets passed to Battle below.
