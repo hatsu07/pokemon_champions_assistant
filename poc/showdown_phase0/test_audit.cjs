@@ -59,7 +59,7 @@ test("normal and Mega Meganium are distinct in the source master", () => {
     [80, 92, 115, 143, 115, 80]);
 });
 
-test("fixed-source audit accounts for forms and PP cap yet keeps unverified Steelix discrepancy", () => {
+test("fixed-source audit aligns PP/forms/learnsets without promoting game gate", () => {
   const audit = compare();
   assert.equal(audit.status, "DIAGNOSTIC_ONLY");
   assert.equal(audit.totals.move_pp.checked, 510);
@@ -68,11 +68,30 @@ test("fixed-source audit accounts for forms and PP cap yet keeps unverified Stee
   assert.equal(audit.totals.species_base_stats.mismatched, 0);
   assert.equal(audit.totals.species_types.mismatched, 0);
   assert.equal(audit.explicit_form_comparisons.length, 8);
-  assert.equal(audit.totals.learnset_membership.mismatched, 1);
-  assert.equal(audit.mismatch_count, 1);
-  assert.equal(audit.mismatch_details[0].group, "learnset_membership");
-  assert.equal(audit.mismatch_details[0].key, "steelix");
-  assert.equal(audit.mismatch_details[0].field, "raindance");
-  assert.equal(audit.mismatch_details[0].validation_status, "UNKNOWN");
+  assert.equal(audit.totals.learnset_membership.mismatched, 0);
+  assert.equal(audit.mismatch_count, 0);
+  assert.deepEqual(audit.mismatch_details, []);
+  assert.deepEqual(audit.provisional_cause_counts, {A: 0, B: 0, C: 0, D: 0, E: 0});
   assert.equal(audit.classification_status, "UNVERIFIED_HYPOTHESES; NO_CHAMPIONS_GOLDEN");
+});
+
+test("Steelix regular/Mega share corrected 66-move list without Rain Dance", () => {
+  const filename = path.resolve(__dirname, "masters", "Pokemon_Champions_MC_pokemon_learnsets_linked.csv");
+  const masters = rows(fs.readFileSync(filename, "utf8"));
+  const steelix = masters.filter(x => x.LearnsetKey === "steelix");
+  assert.equal(steelix.length, 2);
+  for (const row of steelix) {
+    assert.ok(["ハガネール", "メガハガネール"].includes(row["ポケモン名"]));
+    assert.equal(row["習得技数"], "66");
+    const ids = row["習得MoveKey一覧"].split(", ");
+    const names = row["習得技名一覧"].split("、");
+    assert.equal(ids.length, 66);
+    assert.equal(names.length, 66);
+    assert.ok(!ids.includes("raindance"));
+    assert.ok(!names.includes("あまごい"));
+    assert.ok(ids.includes("rest"), "other moves remain untouched");
+    assert.ok(names.includes("ねむる"));
+  }
+  assert.equal(steelix[0]["習得MoveKey一覧"], steelix[1]["習得MoveKey一覧"]);
+  assert.equal(steelix[0]["習得技名一覧"], steelix[1]["習得技名一覧"]);
 });
