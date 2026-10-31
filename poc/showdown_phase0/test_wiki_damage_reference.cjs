@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {calculate,halfDownRatio}=require('./wiki_damage_reference.cjs');
-const {validateChampionsScenario}=require('./wiki_damage_compare.cjs');
+const {allowedChampionsSets,validateChampionsScenario,SCENARIOS,FILLER}=require('./wiki_damage_compare.cjs');
 const {cases, sources, schema}=JSON.parse(fs.readFileSync(path.join(__dirname,'wiki_damage_vectors.json'),'utf8'));
 const neutral={attack:182,defense:150,basePower:100,powerMultiplier:[1,1],weatherMultiplier:[1,1],critical:false,stabMultiplier:[3,2],typeMultiplier:[2,1],otherMultiplier:[1,1]};
 test('reference data has source URLs and independent wiki expectations',()=>{
@@ -48,13 +48,62 @@ test('immunity is 0 damage and low effectiveness never returns negative',()=>{
   assert.ok(calculate({...neutral,attack:1,defense:999999,basePower:1,stabMultiplier:[1,1],typeMultiplier:[1,4]}).rolls.every(d=>d>=1));
 });
 
-test('Champions usability gate rejects unavailable species and unlearned moves',()=>{
-  const dex={species:{get:x=>({id:x.toLowerCase()})},moves:{get:x=>({id:x.toLowerCase()})}};
-  const allowed=new Map([['garchomp',new Set(['earthquake'])],['metagross',new Set(['tackle'])]]);
-  const scenario={attacker:{species:'Garchomp'},defender:{species:'Metagross'},move:'Earthquake'};
-  assert.doesNotThrow(()=>validateChampionsScenario(scenario,dex,allowed));
-  assert.throws(()=>validateChampionsScenario({...scenario,defender:{species:'Cresselia'}},dex,allowed),/not registered in Champions usable master/);
-  assert.throws(()=>validateChampionsScenario({...scenario,move:'Unavailable Move'},dex,allowed),/absent from Champions learnset/);
+test('real Champions master: all six team sets are legal and Metagross uses Bullet Punch',()=>{
+  const {Dex}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
+  const dex=Dex.forFormat('gen9championsbssregmc');
+  const allowed=allowedChampionsSets(dex);
+  const scenario=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
+  const entry=allowed.species.get('metagross');
+  assert.ok(entry);
+  assert.ok(entry.learned.has('bulletpunch'));
+  assert.ok(!entry.learned.has('tackle'));
+  assert.deepEqual(scenario.defender.moves,['Bullet Punch']);
+  const teams=validateChampionsScenario(scenario,dex,allowed);
+  assert.equal(teams.length,2);
+  assert.deepEqual(teams.map(t=>t.length),[3,3]);
+  for(const team of teams)for(const mon of team){
+    assert.ok(allowed.species.has(dex.species.get(mon.species).id));
+    assert.ok(mon.moves.every(m=>allowed.species.get(dex.species.get(mon.species).id).learned.has(dex.moves.get(m).id)));
+  }
+});
+test('real Champions master: unknown species, unequipped and illegal moves fail closed',()=>{
+  const {Dex}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
+  const dex=Dex.forFormat('gen9championsbssregmc');
+  const allowed=allowedChampionsSets(dex);
+  const s=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
+  const withDefender=mon=>({...s,defender:{...s.defender,...mon}});
+  assert.throws(()=>validateChampionsScenario(withDefender({moves:['Tackle']}),dex,allowed),
+    /set move absent from Champions master and pinned learnset/);
+  assert.throws(()=>validateChampionsScenario(withDefender({species:'Cresselia'}),dex,allowed),
+    /not registered in Champions usable master/);
+  assert.throws(()=>validateChampionsScenario({...s,move:'Dragon Claw'},dex,allowed),
+    /attack move not equipped/);
+  assert.throws(()=>validateChampionsScenario({...s,attacker:{...s.attacker,moves:['Tackle']}},dex,allowed),
+    /set move absent from Champions master and pinned learnset/);
+  assert.throws(()=>validateChampionsScenario({...s,bench:[{...FILLER,moves:['Tackle']},FILLER]},dex,allowed),
+    /set move absent from Champions master and pinned learnset/);
+});
+test('real Champions master: ability/item/form and malformed moves fail closed',()=>{
+  const {Dex}=require(path.join(process.env.SHOWDOWN_ROOT,'dist','sim','index.js'));
+  const dex=Dex.forFormat('gen9championsbssregmc');
+  const allowed=allowedChampionsSets(dex);
+  const s=SCENARIOS['WIKI-EARTHQUAKE-GARCHOMP-METAGROSS'];
+  const withAttacker=mon=>({...s,attacker:{...s.attacker,...mon}});
+  const withDefender=mon=>({...s,defender:{...s.defender,...mon}});
+  assert.throws(()=>validateChampionsScenario(withDefender({ability:'Rough Skin'}),dex,allowed),
+    /ability absent\/unmapped/);
+  assert.throws(()=>validateChampionsScenario(withAttacker({ability:'Clear Body'}),dex,allowed),
+    /ability absent\/unmapped/);
+  assert.throws(()=>validateChampionsScenario(withAttacker({item:'Unobtainium'}),dex,allowed),
+    /item absent/);
+  assert.throws(()=>validateChampionsScenario(withAttacker({species:'Garchomp-Mega'}),dex,allowed),
+    /not registered in Champions usable master/);
+  assert.throws(()=>validateChampionsScenario(withDefender({moves:[]}),dex,allowed),
+    /invalid move slots/);
+  assert.throws(()=>validateChampionsScenario(withDefender({moves:['Bullet Punch','Bullet Punch']}),dex,allowed),
+    /duplicate move slot/);
+  assert.throws(()=>validateChampionsScenario({...s,bench:[FILLER]},dex,allowed),
+    /exactly two bench sets/);
 });
 
 test('Bulbapedia is preferred among community references; incomplete Champions damage rules cannot be certified',()=>{
