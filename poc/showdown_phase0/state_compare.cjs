@@ -15,6 +15,21 @@ function stableStringify(value) {
 function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
 }
+// Showdown inserts wall-clock seconds into the protocol log at the start of
+// each turn (|t:|<unix-seconds>). It is not part of the battle mechanics.
+// Normalize ONLY this exact line for deterministic replay fingerprints.
+// Preserve every other log entry and do not mutate source observations.
+function normalizeReplayTimestamps(state) {
+  if (!state || typeof state !== "object" || !Array.isArray(state.log)) return state;
+  return {
+    ...state,
+    log: state.log.map(line =>
+      typeof line === "string" && /^\|t:\|\d+$/.test(line)
+        ? "|t:|<wallclock>"
+        : line),
+  };
+}
+
 // Diagnose serialized diff without treating log-only mismatches as a full pass.
 // Log text can still carry tactically meaningful events: all mismatches fail.
 function classifySerializedDivergence(a, b) {
@@ -30,4 +45,4 @@ function classifySerializedDivergence(a, b) {
     log_equal: fingerprint(a?.log || []) === fingerprint(b?.log || []),
   };
 }
-module.exports = {stableStringify, fingerprint, classifySerializedDivergence};
+module.exports = {stableStringify, fingerprint, normalizeReplayTimestamps, classifySerializedDivergence};
