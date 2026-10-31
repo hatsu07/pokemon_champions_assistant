@@ -4,12 +4,40 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {execFileSync}=require('node:child_process');
 const {calculate}=require('./wiki_damage_reference.cjs');
+const {rows,speciesKeyForRow}=require('./audit.cjs');
 const PIN='ccfaa20f32af363569cd21a9d501b2bc1ded26b1';
 const FORMAT='gen9championsbssregmc';
 const ROOT=process.env.SHOWDOWN_ROOT;
 const FILLER={species:'Garchomp',level:50,nature:'Serious',ability:'Rough Skin',item:'',
   evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:0},moves:['Earthquake']};
 // Fixed synthetic sets: only named published examples, not the user's private battle data.
+function allowedChampionsSets(dex) {
+  const masterDir=path.resolve(process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,'masters'));
+  const read=name=>rows(fs.readFileSync(path.join(masterDir,name),'utf8'));
+  const pokemon=read('Pokemon_Champions_MC_usable_pokemon.csv');
+  const learnsets=read('Pokemon_Champions_MC_pokemon_learnsets_linked.csv');
+  const allowed=new Map();
+  const byName=new Map(pokemon.filter(row=>row['区分']!=='メガシンカ').map(row=>
+    [row['ポケモン名']+'|'+row['フォーム/姿']+'|'+row['区分'],row]));
+  for(const link of learnsets){
+    const row=byName.get(link['ポケモン名']+'|'+link['フォーム/姿']+'|'+link['区分']);
+    if(!row)continue;
+    const mon=dex.species.get(speciesKeyForRow(row,link.LearnsetKey));
+    if(!mon.exists)continue;
+    const learned=new Set((link['習得MoveKey一覧']||'').split(',').map(x=>x.trim()));
+    allowed.set(mon.id,learned);
+  }
+  return allowed;
+}
+function validateChampionsScenario(s,dex,allowed){
+  for(const mon of [s.attacker,s.defender]){
+    const id=dex.species.get(mon.species).id;
+    if(!allowed.has(id))throw Error('not registered in Champions usable master: '+mon.species);
+  }
+  const moveId=dex.moves.get(s.move).id;
+  if(!allowed.get(dex.species.get(s.attacker.species).id).has(moveId))
+    throw Error('attack move absent from Champions learnset: '+s.attacker.species+'/'+s.move);
+}
 const SCENARIOS={
   'WIKI-EARTHQUAKE-GARCHOMP-METAGROSS':{
     attacker:{...FILLER,evs:{...FILLER.evs,atk:32}},
@@ -25,10 +53,12 @@ function main(){
   if(dex.currentMod!=='champions')throw Error('Champions mod inactive');
   const doc=JSON.parse(fs.readFileSync(path.join(__dirname,'wiki_damage_vectors.json'),'utf8'));
   if(doc.schema!=='champions-wiki-reference-v1')throw Error('unexpected reference schema');
+  const allowed=allowedChampionsSets(dex);
   const results=[];
   for(const c of doc.cases){
     const s=SCENARIOS[c.id];
     if(!s)throw Error('No exact scenario mapping for '+c.id);
+    validateChampionsScenario(s,dex,allowed);
     for(const id of c.source_ids)if(!doc.sources[id]?.url)throw Error('missing source '+id);
     const independent=calculate(c.input);
     if(independent.minimum!==c.expected_min||independent.maximum!==c.expected_max)
@@ -68,4 +98,4 @@ if(require.main===module){
  try{const out=main();process.stdout.write(JSON.stringify(out,null,2)+'\n');if(out.mismatch_count)process.exitCode=1;}
  catch(e){process.stdout.write(JSON.stringify({status:'NOT_RUN',reason:e.message})+'\n');process.exitCode=2;}
 }
-module.exports={main};
+module.exports={main,validateChampionsScenario};
