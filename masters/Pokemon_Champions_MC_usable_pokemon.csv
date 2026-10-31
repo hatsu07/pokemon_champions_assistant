@@ -59,7 +59,7 @@
 #0143,カビゴン,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ノーマル,,めんえき / あついしぼう / くいしんぼう,160,110,65,65,110,30,540,https://pchamdb.com/pokemon/
 #0149,カイリュー,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ドラゴン,ひこう,せいしんりょく / マルチスケイル,91,134,95,100,100,80,600,https://pchamdb.com/pokemon/
 #0149,メガカイリュー,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,ドラゴン,ひこう,マルチスケイル,91,124,115,145,125,100,700,https://pchamdb.com/pokemon/
-#0154,メガニウム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,フェアリー,メガソーラー,80,92,115,143,115,80,625,https://pchamdb.com/pokemon/
+#0154,メガニウム,,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,くさ,,しんりょく / リーフガード,80,82,100,83,100,80,525,https://pchamdb.com/pokemon/
 #0154,メガメガニウム,,メガシンカ,×,メガシンカで種族値・特性・場合によりタイプが変化,対応する通常ポケモン＋メガストーンから戦闘中に変化,M-Cでは1試合につきメガシンカは1回。,https://www.serebii.net/pokemonchampions/pokemon.shtml,くさ,フェアリー,メガソーラー,80,92,115,143,115,80,625,https://pchamdb.com/pokemon/
 #0157,バクフーン,通常のすがた,通常,○,—,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,,もうか / もらいび,78,84,78,109,85,100,534,https://pchamdb.com/pokemon/
 #0157,バクフーン,ヒスイのすがた,地域フォーム,○,タイプ・種族値・特性・習得技が通常種と異なる,通常（スカウト/HOME等）,,https://www.serebii.net/pokemonchampions/recruit/regularrosterm-c.shtml,ほのお,ゴースト,もうか / おみとおし,73,84,78,119,85,95,534,https://pchamdb.com/pokemon/
