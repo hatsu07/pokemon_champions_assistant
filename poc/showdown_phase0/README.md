@@ -2,6 +2,8 @@
 
 ## ゲートA：実ゲームの独立観測とオフライン照合
 
+ダメージ比較に使える `defender_hp_before` は命中直前、`defender_hp_after` は**直撃ダメージがHPに反映された直後、きのみ消費・回復・ターン終了時の定数ダメージや回復より前**に読めた値だけ。画面や映像からこの境界を切り分けられない場合は `direct_hit_only` を真にせず `INCONCLUSIVE` とする。`direct_hit_only: true` は人の申告であり、CLIが映像の時系列を証明するものではない。さらに防御側に直撃後の消費・更新イベントを持つ道具（オボンのみ、オレンのみ等）がある場合は、真と申告されても `INCONCLUSIVE` にする。
+
 ダメージ比較の状態異常は固定modのID（`brn`, `par`, `psn`, `tox`, `slp`, `frz`、状態異常なしは空文字）のみ。`burn` 等の別名は自動変換せず `INCONCLUSIVE` にする。天候は空文字、`raindance`, `sunnyday`, `sandstorm`, `snowscape` のみ。ゲーム画面の「ゆき」を人が `snowscape` と確認した場合にそのIDで記録し、`snow` は未対応にする。固定modで天候を適用した結果も確認する。持ち物はChampions使用可能持ち物マスターの収録IDに限る。
 
 `golden_schema.json` が記録形式、`golden_compare.cjs` が比較CLI。実画面の内容を人が確認し、1件ごとにケースID・UTC観測日時・M-Cレギュレーション・根拠ID/説明/任意のローカルパスとSHA256を記録する。各事実は `{ "source": "GAME_OBSERVED", "value": ..., "evidence_ids": ["frame-1"] }` とし、推測は `INFERRED`、未判明は `{ "source": "UNKNOWN" }` にする。空文字の持ち物/状態/天候は「ないと観測済み」、UNKNOWNは未確認を意味する。`evidence.verification` は画面を本人が照合した場合だけ `USER_VERIFIED` にする。参照IDの存在はCLIで検査するが、映像の真偽やユーザー確認そのものは自動認定できない。

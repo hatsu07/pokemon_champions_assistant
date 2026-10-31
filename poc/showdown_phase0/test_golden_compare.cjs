@@ -241,3 +241,20 @@ test("Showdown-only held items fail Champions master legality", () => {
   c.checks.damage.defender.item = f("Leftovers");
   assert.ok(compareCase(c).checks[0].rolls?.length === 16);
 });
+test("Sitrus and Oran post-hit healing stays INCONCLUSIVE despite direct_hit_only", () => {
+  const c = base();
+  c.checks.damage = {attacker: p("Garchomp", "Rough Skin"), defender: p("Hippowdon", "Sand Stream"),
+    move_id: f("Earthquake"), defender_hp_before: f(120), defender_hp_after: f(80),
+    critical: f(false), direct_hit_only: f(true), conditions_complete: f(true),
+    defender_substitute: f(false), defender_endure: f(false),
+    field: {weather: f(""), terrain: f(""), defender_screen: f("")}};
+  const raw = compareCase(c).checks[0];
+  assert.ok(raw.rolls[0] < 120, "defender survives the direct hit before eating a berry");
+  for (const [item, heal] of [["Sitrus Berry", 45], ["Oran Berry", 10]]) {
+    c.checks.damage.defender.item = f(item);
+    c.checks.damage.defender_hp_after = f(120 - raw.rolls[0] + heal);
+    const got = compareCase(c).checks[0];
+    assert.equal(got.status, "INCONCLUSIVE", item);
+    assert.match(got.missing.join(" "), /berry healing/, item);
+  }
+});

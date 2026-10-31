@@ -258,6 +258,8 @@ function damageCheck(check, ev) {
   if (substitute || endure) missing.push("substitute or endure changes final HP loss");
   if (defend && (postDamageEffect(dex.abilities.get(defend.ability)) || postDamageEffect(dex.items.get(defend.item))))
     missing.push("defender ability/item applies after raw getDamage");
+  if (defend && postHitItemEffect(dex.items.get(defend.item)))
+    missing.push("defender item may change displayed HP after direct damage (including berry healing)");
   const weatherEffect = weather !== undefined && weather !== "" ? dex.conditions.get(weather) : null;
   if (terrain || !WEATHER_IDS.has(weather) ||
     (weatherEffect && (!weatherEffect.exists || weatherEffect.id !== weather || weatherEffect.effectType !== "Weather")) ||
@@ -302,6 +304,12 @@ function damageCheck(check, ev) {
 }
 function postDamageEffect(effect) {
   return !!(effect?.onDamage || effect?.onTryHit);
+}
+function postHitItemEffect(item) {
+  // getDamage omits item consumption and post-hit/Update events. Block these
+  // even when direct_hit_only was asserted; the observation timing is external.
+  return !!(item?.onEat || item?.onUpdate || item?.onDamagingHit ||
+    item?.onAfterMoveSecondary || item?.onAfterMoveSecondarySelf);
 }
 function compareCase(c) {
   if (!c || typeof c.case_id !== "string" || !c.case_id ||
