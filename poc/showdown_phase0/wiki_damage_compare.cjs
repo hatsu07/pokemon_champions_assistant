@@ -13,7 +13,7 @@ const FILLER={species:'Garchomp',level:50,nature:'Serious',ability:'Rough Skin',
   evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:0},moves:['Earthquake']};
 // These bilingual mappings are explicitly scoped to this ONE test fixture.
 // Unknown translations must be independently confirmed, never guessed from other games.
-const ABILITY_JA=Object.freeze({roughskin:'さめはだ',clearbody:'クリアボディ'});
+const ABILITY_JA=Object.freeze({roughskin:'さめはだ',clearbody:'クリアボディ',overgrow:'しんりょく',torrent:'げきりゅう',blaze:'もうか',intimidate:'いかく'});
 const STATS=['hp','atk','def','spa','spd','spe'];
 const COLUMNS=['H','A','B','C','D','S'];
 const MASTER_DIR=path.resolve(process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,'masters'));
@@ -54,19 +54,42 @@ function allowedChampionsSets(dex){
       if(Number(row[COLUMNS[i]])!==mon.baseStats[STATS[i]])
         throw Error('Champions base stat mapping disagrees with pinned Dex: '+mon.id);
     const learned=new Set((link['習得MoveKey一覧']||'').split(',').map(x=>x.trim()).filter(Boolean));
-    species.set(mon.id,{learned,learnsetKey:link.LearnsetKey,abilities:new Set(
+    species.set(mon.id,{learned,learnsetKey:link.LearnsetKey,nationalNo:row['全国No.'],abilities:new Set(
       row['特性'].split('/').map(x=>x.trim()).filter(Boolean))});
   }
   return {species,ambiguous,availableMoves,availableItems};
 }
+// Identifiers are taken only from the Champions master. This catches regional
+// forms sharing a National Dex number, independent of Showdown form string.
+function validateTeamConstraints(team,dex,allowed){
+  if(!Array.isArray(team)||team.length!==6)throw Error('Champions team registration requires exactly six');
+  const names=new Set(),items=new Set();
+  for(const mon of team){
+    const id=dex.species.get(mon?.species).id;
+    const entry=allowed.species.get(id);
+    if(!entry?.nationalNo)throw Error('unknown Champions base species identity: '+String(mon?.species));
+    if(names.has(entry.nationalNo))throw Error('duplicate Champions named species: '+entry.nationalNo);
+    names.add(entry.nationalNo);
+    if(typeof mon.item!=='string')throw Error('unknown item: '+mon.species);
+    if(mon.item){
+      const item=dex.items.get(mon.item);
+      if(!item.exists||!allowed.availableItems.has(item.id))throw Error('item absent from Champions held-item master: '+mon.item);
+      if(items.has(item.id))throw Error('duplicate Champions held item: '+item.id);
+      items.add(item.id);
+    }
+  }
+}
 function teamsForScenario(s){
-  // The exact six sets here are also the sets passed to Battle below.
-  const bench=s.bench??[FILLER,FILLER];
-  if(!Array.isArray(bench)||bench.length!==2)throw Error('exactly two bench sets are required');
-  return [[s.attacker,...bench],[s.defender,...bench]];
+  if(!Array.isArray(s.p1bench)||!Array.isArray(s.p2bench)||
+     s.p1bench.length!==5||s.p2bench.length!==5)
+    throw Error('two independent five-member benches are required');
+  // No shared set references: TeamValidator may normalize input objects.
+  const copy=mon=>({...mon,evs:{...mon.evs},moves:[...mon.moves]});
+  return [[s.attacker,...s.p1bench].map(copy),[s.defender,...s.p2bench].map(copy)];
 }
 function validateChampionsScenario(s,dex,allowed){
   const teams=teamsForScenario(s);
+  for(const team of teams)validateTeamConstraints(team,dex,allowed);
   if(!s.move||!dex.moves.get(s.move).exists)throw Error('unknown attack move: '+s.move);
   for(const team of teams)for(const mon of team){
     const record=mon&&dex.species.get(mon.species);
@@ -115,11 +138,26 @@ function validateChampionsScenario(s,dex,allowed){
     throw Error('attack move not equipped on attacker: '+s.attacker.species+'/'+s.move);
   return teams;
 }
+// The fixed fixture uses two separate six-member registered teams. The
+// simulator still selects exactly the first three from each after preview.
+function set(species,ability,move){
+  return {species,level:50,nature:'Serious',ability,item:'',
+    evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:0},moves:[move]};
+}
+const GARCHOMP=set('Garchomp','Rough Skin','Earthquake');
+const METAGROSS=set('Metagross','Clear Body','Bullet Punch');
+const VENUSAUR=set('Venusaur','Overgrow','Giga Drain');
+const BLASTOISE=set('Blastoise','Torrent','Surf');
+const CHARIZARD=set('Charizard','Blaze','Flamethrower');
+const GYARADOS=set('Gyarados','Intimidate','Waterfall');
 const SCENARIOS={
   'WIKI-EARTHQUAKE-GARCHOMP-METAGROSS':{
-    attacker:{...FILLER,evs:{...FILLER.evs,atk:32}},
-    defender:{species:'Metagross',level:50,nature:'Serious',ability:'Clear Body',item:'',
-      evs:{...FILLER.evs},moves:['Bullet Punch']},
+    attacker:{...GARCHOMP,evs:{...GARCHOMP.evs,atk:32}},
+    defender:METAGROSS,
+    // Each registered six is unique by Champions National number; common
+    // species across opponents are permitted and do not count as duplicates.
+    p1bench:[METAGROSS,VENUSAUR,BLASTOISE,CHARIZARD,GYARADOS],
+    p2bench:[GARCHOMP,VENUSAUR,BLASTOISE,CHARIZARD,GYARADOS],
     move:'Earthquake'
   }
 };
@@ -127,7 +165,7 @@ function main(){
   if(!ROOT)throw Error('SHOWDOWN_ROOT required; run inside pinned Phase 0 Docker');
   const sha=execFileSync('git',['-C',ROOT,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
   if(sha!==PIN)throw Error('Pinned source mismatch: '+sha);
-  const {Battle,Dex}=require(path.join(ROOT,'dist','sim','index.js'));
+  const {Battle,Dex,TeamValidator}=require(path.join(ROOT,'dist','sim','index.js'));
   const dex=Dex.forFormat(FORMAT);
   if(dex.currentMod!=='champions')throw Error('Champions mod inactive');
   const doc=JSON.parse(fs.readFileSync(path.join(__dirname,'wiki_damage_vectors.json'),'utf8'));
@@ -138,6 +176,11 @@ function main(){
     const s=SCENARIOS[c.id];
     if(!s)throw Error('No exact scenario mapping for '+c.id);
     const [p1team,p2team]=validateChampionsScenario(s,dex,allowed);
+    const validator=TeamValidator.get(FORMAT);
+    for(const team of [p1team,p2team]){
+      const problems=validator.validateTeam(team.map(mon=>({...mon,evs:{...mon.evs},moves:[...mon.moves]})));
+      if(problems?.length)throw Error('pinned M-C TeamValidator rejected team: '+problems.join(' | '));
+    }
     for(const id of c.source_ids)if(!doc.sources[id]?.url)throw Error('missing source '+id);
     const independent=calculate(c.input);
     if(independent.minimum!==c.expected_min||independent.maximum!==c.expected_max)
@@ -165,7 +208,9 @@ function main(){
       rolls.push(damage);
     }
     results.push({id:c.id,evidence:'UNOFFICIAL_WIKI_ARITHMETIC_NOT_GAME_PROOF',
-      source_ids:c.source_ids,validated_team_members:6,reference_rolls:independent.rolls,showdown_rolls:rolls,
+      source_ids:c.source_ids,validated_registered_teams:2,validated_registered_team_members:12,
+      selected_team_size:3,pinned_format_team_validator_passed:true,
+      reference_rolls:independent.rolls,showdown_rolls:rolls,
       status:JSON.stringify(rolls)===JSON.stringify(independent.rolls)?'WIKI_SPEC_MATCH':'WIKI_SPEC_MISMATCH'});
   }
   return {scope:'OFFLINE_DIAGNOSTIC_ONLY',pinned_sha:PIN,format:FORMAT,
@@ -177,4 +222,4 @@ if(require.main===module){
  try{const out=main();process.stdout.write(JSON.stringify(out,null,2)+'\n');if(out.mismatch_count)process.exitCode=1;}
  catch(e){process.stdout.write(JSON.stringify({status:'NOT_RUN',reason:e.message})+'\n');process.exitCode=2;}
 }
-module.exports={main,allowedChampionsSets,validateChampionsScenario,SCENARIOS,FILLER};
+module.exports={main,allowedChampionsSets,validateChampionsScenario,validateTeamConstraints,teamsForScenario,SCENARIOS};
