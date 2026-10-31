@@ -216,4 +216,4 @@ if (require.main === module) {
     process.exitCode = 2;
   }
 }
-module.exports = {rows, compare, speciesKeyForRow, cappedSourcePP, calculatedBattleMaxPP};
+module.exports = {rows, compare, speciesKeyForRow, cappedSourcePP, calculatedBattleMaxPP, types};
