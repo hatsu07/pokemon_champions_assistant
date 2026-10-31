@@ -43,8 +43,9 @@ function knockOff(event){
   if(typeof event.hit!=='boolean'||typeof event.attackerFaintedFromContact!=='boolean'||
     !(event.heldItem===null||typeof event.heldItem==='string'&&event.heldItem.length>0))
     throw Error('unknown hit/item/attacker fate');
-  if(!event.hit)return {status:STATUS,power_multiplier:[1,1],next_item:event.heldItem,
-    rule_id:'KNOCK_OFF_HELD_ITEM',removed:false};
+  if(!event.hit)return {status:STATUS,power_multiplier:null,next_item:event.heldItem,
+    rule_id:'KNOCK_OFF_HELD_ITEM',removed:false,
+    note:'Power is not inferred from an unlanded move; damage event did not occur'};
   if(event.heldItem===null)return {status:STATUS,power_multiplier:[1,1],next_item:null,
     rule_id:'KNOCK_OFF_HELD_ITEM',removed:false};
   if(event.removable!==true)return unsupported('Item cannot be verified removable in the stated conditions');
@@ -70,6 +71,8 @@ function choiceScarf(state,event){
   if(state.item!=='choicescarf'&&state.item!==null)return unsupported('Unexpected held item');
   if(state.lockedMove!==null&&(typeof state.lockedMove!=='string'||!state.lockedMove))
     throw Error('unknown locked move');
+  if(state.item===null&&state.lockedMove!==null)
+    return unsupported('Item-removed move-lock persistence is not specified by this contract');
   if(!event||typeof event!=='object')throw Error('unknown Choice Scarf event');
   if(event.kind==='switch-out'){
     exact(event,['kind'],'Choice Scarf switch');
