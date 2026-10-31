@@ -2,6 +2,21 @@
 
 **実ゲーム互換性の認定ではありません。** 固定Champions Showdownが扱う通常ダメージの算術的な一部を、**Showdownへ依存しない**小さな参照計算器 `wiki_damage_reference.cjs` で検査します。ユーザーの実画面・ローカルGoldens・個別の対戦データはリポジトリに持ち込みません。
 
+## コミュニティWikiの参照順位（2026-10-31改訂）
+
+**BulbapediaのChampions固有記載をコミュニティ資料の第一候補にする。** 出典URL、確認日、Champions固有節の有無、未記載領域、使用レギュレーション、確度は `champions_wiki_sources.json` に明示する。全資料はゲーム公式・Pokémon HOME等公式・ユーザーの最新ゲーム内観測・Champions固定マスターより下位。別作品・一般世代の記事をChampionsルールとして推測補完しない。
+
+主なBulbapedia参照先：
+- [List of Pokémon in Pokémon Champions](https://bulbapedia.bulbagarden.net/wiki/List_of_Pok%C3%A9mon_in_Pok%C3%A9mon_Champions)：実装・フォームの候補確認（**本実装では固定使用可能マスターが第一ゲート**）。
+- [List of moves by availability in Pokémon Champions](https://bulbapedia.bulbagarden.net/wiki/List_of_moves_by_availability_in_Pok%C3%A9mon_Champions)：Champions技の存在可否。
+- [Stat](https://bulbapedia.bulbagarden.net/wiki/Statistic)：Champions固有の能力値計算式。HP=`Base+StatPoints+75`、その他=`floor((Base+StatPoints+20)*Alignment)`。
+- [Knock Off](https://bulbapedia.bulbagarden.net/wiki/Knock_Off_(move))、[Protean](https://bulbapedia.bulbagarden.net/wiki/Protean_(Ability))：Champions固有の効果・更新点がある。
+- [Damage](https://bulbapedia.bulbagarden.net/wiki/Damage)：**「Championsがこの式を使用するか未確定」「固有の補正が未反映」と記載された不完全資料**。Championsの完全なダメージ算式・補正順序の確定根拠には**使わない**。
+
+### 既存の2次Wiki由来ゴールデンについて
+
+このPRの `wiki_damage_reference.cjs` と `wiki_damage_vectors.json` が使用する数式・公開「ガブリアスのじしん→メタグロス」例は、**従来の2次Wikiに基づく暫定算術テスト**として保持する。Bulbapediaで独立に全式・補正順・端数が確認されたものへ**出典を付け替えたり、実機互換性確認と呼んだりしない**。出典不一致やChampions固有の未確定係数は`UNKNOWN`。Bulbapediaの個別効果の記載は今後の独立ルール・状態遷移テストの根拠候補とする。
+
 ## 出典（非公式／2026-10-31確認、レギュレーションM-C候補）
 
 - [ダメージ計算の処理順](https://pkmn-cp-dataportal.com/battle/damage/damage-order/)：公開ページ更新日2026-10-30。基礎式、天候→急所→乱数→STAB→相性→その他、補正位置と五捨五超入、公開例のガブリアス「じしん」→メタグロス138〜164。
@@ -20,6 +35,7 @@
 
 ## ファイル
 
+- `champions_wiki_sources.json` — Bulbapediaをコミュニティ資料の第一候補とする出典台帳。Championsのダメージ記事が未完成であることを明示。
 - `wiki_damage_reference.cjs` — 独立した整数比/BigIntベースの算術。Showdown/Dexをimportしない。
 - `wiki_damage_vectors.json` — **公開Wikiの例のみ**を入力・記事の期待範囲・URL・出典区分付きで記録。ユーザー個人の観測は入れない。
 - `test_wiki_damage_reference.cjs` — 参照例、端数境界、合成の急所倍率、未知入力の拒否、無効相性。通常のNodeだけでテスト可。
