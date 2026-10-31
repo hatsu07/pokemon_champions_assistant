@@ -2,8 +2,9 @@
 // Offline, isolated Phase 0 diagnostic. No live recommendations or game controls.
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const {execFileSync} = require("node:child_process");
-const {rows, cappedSourcePP} = require("./audit.cjs");
+const {rows, speciesKeyForRow, cappedSourcePP, types} = require("./audit.cjs");
 
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const FORMAT = "gen9championsbssregmc";
@@ -12,6 +13,62 @@ const root = process.env.SHOWDOWN_ROOT;
 const {Battle, Dex} = require(path.join(root || "", "dist", "sim", "index.js"));
 const dex = Dex.forFormat(FORMAT);
 const schema = JSON.parse(fs.readFileSync(path.join(__dirname, "golden_schema.json"), "utf8"));
+const MASTER_FILES = ["Pokemon_Champions_MC_move_master.csv", "Pokemon_Champions_MC_usable_pokemon.csv",
+  "Pokemon_Champions_MC_pokemon_learnsets_linked.csv"];
+const masterBase = path.resolve(process.env.CHAMPIONS_MASTERS_DIR || path.join(__dirname, "masters"));
+const sha256 = data => crypto.createHash("sha256").update(data).digest("hex");
+let sourceCache;
+
+function sources() {
+  if (sourceCache) return sourceCache;
+  const data = Object.fromEntries(MASTER_FILES.map(name => [name, fs.readFileSync(path.join(masterBase, name))]));
+  const master_sha256 = Object.fromEntries(MASTER_FILES.map(name => [name, sha256(data[name])]));
+  const [moves, pokemon, links] = MASTER_FILES.map(name => rows(data[name].toString("utf8")));
+  const pokemonByName = new Map(pokemon.map(r =>
+    [r["ポケモン名"] + "|" + r["フォーム/姿"] + "|" + r["区分"], r]));
+  const speciesRows = new Map();
+  const allSpecies = dex.species.all();
+  for (const link of links) {
+    const row = pokemonByName.get(link["ポケモン名"] + "|" + link["フォーム/姿"] + "|" + link["区分"]);
+    if (!row) continue;
+    const expectedTypes = [row["タイプ1"], row["タイプ2"]].filter(Boolean).map(x => types[x]);
+    if (expectedTypes.some(x => !x)) continue;
+    const candidates = allSpecies.filter(s => dex.species.get(s.baseSpecies).id === link.LearnsetKey &&
+      !!s.isMega === (row["区分"] === "メガシンカ") &&
+      STATS.every((stat, i) => s.baseStats[stat] === Number(row[["H", "A", "B", "C", "D", "S"][i]])) &&
+      s.types.join("/") === expectedTypes.join("/"));
+    const preferred = speciesKeyForRow(row, link.LearnsetKey);
+    const selected = row["区分"] !== "メガシンカ" && candidates.find(s => s.id === preferred) ||
+      (candidates.length === 1 ? candidates[0] : null);
+    if (!selected) continue; // ambiguous or absent source mapping: fail closed
+    const entry = {row, link, moves: new Set(link["習得MoveKey一覧"].split(",").map(x => x.trim()))};
+    speciesRows.set(selected.id, speciesRows.has(selected.id) ? null : entry);
+  }
+  sourceCache = {master_sha256, moves: new Map(moves.map(r => [r.MoveKey, r])), speciesRows};
+  return sourceCache;
+}
+
+function identity(spec, ev, missing) {
+  const species = fstr(spec, "species", ev, missing);
+  const form = fstr(spec, "form", ev, missing, true);
+  const mega = fact(spec?.mega_state, "mega_state", ev, missing, "boolean", true);
+  const mon = species && dex.species.get(species);
+  if (species && !mon.exists) missing.push("unknown species " + species);
+  const mapped = mon?.exists && sources().speciesRows.get(mon.id);
+  if (mon?.exists && !mapped) missing.push("species/form absent or ambiguous in Champions master: " + species);
+  if (mapped && form !== undefined && form !== mapped.row["フォーム/姿"] && form !== (mon.forme || ""))
+    missing.push("form contradicts exact species key and Champions master");
+  if (mon?.exists && mega !== undefined && mega !== !!mon.isMega)
+    missing.push("mega state contradicts exact species key");
+  return {mon, mapped};
+}
+function legalMove(species, moveId, missing) {
+  const mapped = sources().speciesRows.get(dex.species.get(species).id);
+  if (!mapped) {missing.push("species absent from Champions learnset"); return;}
+  const learned = dex.species.getLearnsetData(mapped.link.LearnsetKey)?.learnset || {};
+  if (!mapped.moves.has(moveId) || !Object.hasOwn(learned, moveId))
+    missing.push("move not in Champions master and pinned learnset for " + species + ": " + moveId);
+}
 
 function validateShape(value, rule, at = "$") {
   if (rule.$ref) return validateShape(value, schema.$defs[rule.$ref.split("/").at(-1)], at);
@@ -74,30 +131,34 @@ function fstr(obj, key, ev, missing, optional = false) {
   return fact(obj?.[key], key, ev, missing, "string", optional);
 }
 function mon(spec, ev, missing, requireEffects = true) {
-  const species = fstr(spec, "species", ev, missing);
-  fstr(spec, "form", ev, missing, true); // provenance only; the species key selects the exact body
-  const mega = fact(spec?.mega_state, "mega_state", ev, missing, "boolean", true);
+  const {mon: speciesRecord, mapped} = identity(spec, ev, missing);
+  const species = speciesRecord?.id;
   const level = fnum(spec, "level", ev, missing);
   const nature = fstr(spec, "nature", ev, missing);
   const ability = requireEffects ? fstr(spec, "ability", ev, missing) : "";
   const item = requireEffects ? fstr(spec, "item", ev, missing) : "";
   const ap = {};
   for (const s of STATS) ap[s] = fnum(spec?.ap, s, ev, missing);
-  if (level !== undefined && (level < 1 || level > 9999)) missing.push("level outside engine range");
-  if (Object.values(ap).some(v => v !== undefined && v < 0)) missing.push("negative AP");
-  if (species && !dex.species.get(species).exists) missing.push("unknown species " + species);
-  if (species && mega !== undefined && mega !== !!dex.species.get(species).isMega)
-    missing.push("mega state contradicts exact species key");
+  if (level !== undefined && level !== 50) missing.push("M-C ranked comparison requires level 50");
+  if (Object.values(ap).some(v => v !== undefined && (v < 0 || v > 32)))
+    missing.push("Champions AP must be 0..32 per stat");
+  if (Object.values(ap).every(v => v !== undefined) && Object.values(ap).reduce((a, b) => a + b, 0) > 66)
+    missing.push("Champions AP total exceeds 66");
   if (requireEffects && !ability) missing.push("ability must be explicitly known");
   if (nature && !dex.natures.get(nature).exists) missing.push("unknown nature " + nature);
   if (ability && !dex.abilities.get(ability).exists) missing.push("unknown ability " + ability);
+  if (ability && mapped && !Object.values(speciesRecord.abilities).some(x =>
+    dex.abilities.get(x).id === dex.abilities.get(ability).id))
+    missing.push("ability not legal for Champions species/form: " + ability);
   if (item && !dex.items.get(item).exists) missing.push("unknown item " + item);
   if (missing.length) return null;
-  return {species, level, nature, ability, item, evs: ap, moves: ["Tackle"]};
+  const firstMove = mapped.moves.values().next().value;
+  if (!firstMove) {missing.push("empty Champions learnset"); return null;}
+  return {species, level, nature, ability, item, evs: ap, moves: [firstMove]};
 }
 function battle(attacker, defender) {
   const fillers = [{species: "Garchomp", level: 50, nature: "Serious", ability: "Rough Skin",
-    item: "", evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}, moves: ["Tackle"]}];
+    item: "", evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}, moves: ["Earthquake"]}];
   const b = new Battle({formatid: FORMAT, seed: [1, 2, 3, 4],
     p1: {name: "Golden attacker", team: [attacker, ...fillers, ...fillers]},
     p2: {name: "Golden defender", team: [defender, ...fillers, ...fillers]}, strictChoices: true});
@@ -128,25 +189,27 @@ function statsCheck(check, ev) {
 }
 function ppCheck(check, ev) {
   const missing = [];
+  const {mon: speciesRecord, mapped} = identity(check.pokemon, ev, missing);
   const moveId = fstr(check, "move_id", ev, missing);
   const battleMax = fnum(check, "observed_battle_max_pp", ev, missing);
   const remaining = fnum(check, "observed_remaining_pp", ev, missing, true);
   const observedBase = fnum(check, "observed_base_pp", ev, missing, true);
   const move = moveId && dex.moves.get(moveId);
   if (moveId && !move.exists) missing.push("unknown move " + moveId);
+  if (move?.exists && mapped) legalMove(speciesRecord.id, move.id, missing);
   if (remaining !== undefined && battleMax !== undefined && remaining > battleMax)
     missing.push("remaining PP exceeds observed maximum");
   if ([battleMax, remaining, observedBase].some(v => v !== undefined && v < 0))
     missing.push("negative PP");
   if (missing.length) return result("pp", null, null, ev, missing);
-  const masterPath = path.join(__dirname, "masters", "Pokemon_Champions_MC_move_master.csv");
-  const row = rows(fs.readFileSync(masterPath, "utf8")).find(r => r.MoveKey === move.id);
+  const row = sources().moves.get(move.id);
   if (!row || !/^\d+$/.test(row.PP)) return result("pp", null, null, ev, ["source raw PP unavailable"]);
   const raw = Number(row.PP), capped = cappedSourcePP(raw);
-  const b = battle({species: "Garchomp", level: 50, nature: "Serious", ability: "Rough Skin",
-    item: "", evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}, moves: [move.id]},
+  const b = battle({species: speciesRecord.id, level: 50, nature: "Serious",
+    ability: Object.values(speciesRecord.abilities)[0], item: "",
+    evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}, moves: [move.id]},
     {species: "Garchomp", level: 50, nature: "Serious", ability: "Rough Skin",
-      item: "", evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}, moves: ["Tackle"]});
+      item: "", evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0}, moves: ["Earthquake"]});
   const slot = b.p1.pokemon[0].moveSlots.find(s => s.id === move.id);
   if (!slot) return result("pp", null, null, ev, ["move not initialized in battle"]);
   const details = {move_id: move.id, master_raw_pp: raw, showdown_capped_source_pp: move.pp,
@@ -166,6 +229,8 @@ function damageCheck(check, ev) {
   const critical = fact(check.critical, "critical", ev, missing, "boolean");
   const isolated = fact(check.direct_hit_only, "direct_hit_only", ev, missing, "boolean");
   const complete = fact(check.conditions_complete, "conditions_complete", ev, missing, "boolean");
+  const substitute = fact(check.defender_substitute, "defender_substitute", ev, missing, "boolean");
+  const endure = fact(check.defender_endure, "defender_endure", ev, missing, "boolean");
   const weather = fstr(check.field, "weather", ev, missing);
   const terrain = fstr(check.field, "terrain", ev, missing);
   const screen = fstr(check.field, "defender_screen", ev, missing);
@@ -179,8 +244,13 @@ function damageCheck(check, ev) {
   const move = moveId && dex.moves.get(moveId);
   if (moveId && (!move.exists || move.category === "Status" || !move.basePower || move.basePowerCallback ||
     move.multihit || move.damage || move.damageCallback || move.ohko)) missing.push("unsupported damage move");
+  if (move?.exists && postDamageEffect(move)) missing.push("move applies after raw getDamage");
+  if (move?.exists && attack) legalMove(attack.species, move.id, missing);
   if (!isolated) missing.push("HP change is not verified as one direct hit");
   if (!complete) missing.push("attacker, defender and field conditions are not verified complete");
+  if (substitute || endure) missing.push("substitute or endure changes final HP loss");
+  if (defend && (postDamageEffect(dex.abilities.get(defend.ability)) || postDamageEffect(dex.items.get(defend.item))))
+    missing.push("defender ability/item applies after raw getDamage");
   if (terrain || !["", "raindance", "sunnyday", "sandstorm", "snow"].includes(weather) ||
     !["", "reflect", "lightscreen"].includes(screen)) missing.push("unsupported field condition");
   if (hpBefore !== undefined && hpAfter !== undefined && (hpAfter > hpBefore || hpBefore < 1 || hpAfter < 0))
@@ -189,6 +259,10 @@ function damageCheck(check, ev) {
   attack.moves = [move.id];
   const b = battle(attack, defend);
   const a = b.p1.active[0], d = b.p2.active[0];
+  if (a.ability !== dex.abilities.get(attack.ability).id ||
+      d.ability !== dex.abilities.get(defend.ability).id ||
+      a.item !== dex.items.get(attack.item).id || d.item !== dex.items.get(defend.item).id)
+    return result("damage", null, null, ev, ["battle initialization changed observed ability/item"]);
   if (hpBefore > d.maxhp) return result("damage", null, null, ev, ["observed HP exceeds Showdown max HP"]);
   d.hp = hpBefore;
   for (const [p, index] of [[a, 0], [d, 1]]) {
@@ -213,6 +287,9 @@ function damageCheck(check, ev) {
   const expected = [Math.min(...rolls), Math.max(...rolls)];
   return result("damage", expected, hpBefore - hpAfter, ev, [], {move_id: move.id, rolls});
 }
+function postDamageEffect(effect) {
+  return !!(effect?.onDamage || effect?.onTryHit);
+}
 function compareCase(c) {
   if (!c || typeof c.case_id !== "string" || !c.case_id ||
       !Number.isFinite(Date.parse(c.observed_at)) || c.regulation !== "M-C" ||
@@ -231,7 +308,8 @@ function compareCase(c) {
 }
 function run(file) {
   assertPinned();
-  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  const input = fs.readFileSync(file);
+  const doc = JSON.parse(input.toString("utf8"));
   validateShape(doc, schema);
   if (doc.schema !== "champions-real-game-golden-v1" || !Array.isArray(doc.cases))
     throw Error("invalid golden document schema");
@@ -242,11 +320,17 @@ function run(file) {
     return compareCase(c);
   });
   const all = cases.flatMap(c => c.checks);
-  return {schema: "champions-golden-comparison-v1", pinned_sha: PIN, format: FORMAT,
-    scope: "OFFLINE_DIAGNOSTIC_ONLY; NOT_GATE_A_CERTIFICATION", cases,
+  const verifiedCases = cases.filter(c => c.origin === "REAL_GAME" && c.verification === "USER_VERIFIED");
+  const verifiedChecks = verifiedCases.flatMap(c => c.checks).filter(x => x.status === "MATCH" || x.status === "MISMATCH");
+  return {schema: "champions-golden-comparison-v2", pinned_sha: PIN, format: FORMAT,
+    input_sha256: sha256(input), master_sha256: sources().master_sha256,
+    gate_A_calculation: "UNKNOWN", scope: "OFFLINE_DIAGNOSTIC_ONLY; NOT_GATE_A_CERTIFICATION", cases,
     counts: {match: all.filter(x => x.status.startsWith("MATCH")).length,
       mismatch: all.filter(x => x.status.startsWith("MISMATCH")).length,
-      verified_game_match: all.filter(x => x.status === "MATCH").length,
+      verified_game_case_count: verifiedCases.length,
+      verified_game_check_count: verifiedChecks.length,
+      verified_game_match_check_count: verifiedChecks.filter(x => x.status === "MATCH").length,
+      verified_game_matching_case_count: verifiedCases.filter(c => c.checks.every(x => x.status === "MATCH")).length,
       inconclusive: all.filter(x => x.status === "INCONCLUSIVE").length,
       synthetic: all.filter(x => x.status.endsWith("_SYNTHETIC")).length,
       unverified: all.filter(x => x.status.endsWith("_UNVERIFIED")).length}};
@@ -262,4 +346,4 @@ if (require.main === module) {
     process.exitCode = 2;
   }
 }
-module.exports = {run, compareCase, assertPinned};
+module.exports = {run, compareCase, assertPinned, postDamageEffect};

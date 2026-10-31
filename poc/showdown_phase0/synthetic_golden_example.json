@@ -8,6 +8,7 @@
       "evidence": {"origin": "SYNTHETIC", "verification": "UNVERIFIED", "references": []},
       "checks": {
         "pp": {
+          "pokemon": {"species": {"source": "SYNTHETIC", "value": "Beedrill"}},
           "move_id": {"source": "SYNTHETIC", "value": "Agility"},
           "observed_base_pp": {"source": "UNKNOWN"},
           "observed_battle_max_pp": {"source": "SYNTHETIC", "value": 20},
