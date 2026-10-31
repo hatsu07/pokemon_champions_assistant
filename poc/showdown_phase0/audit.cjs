@@ -19,6 +19,30 @@ const types = {
   "はがね": "Steel", "フェアリー": "Fairy",
 };
 const categories = {"物理": "Physical", "特殊": "Special", "変化": "Status"};
+// LearnsetKey is shared by forms, but stats/types are form-specific.
+const battleFormSpeciesKeys = new Map([
+  ["パンプジン|おおきいサイズ", "gourgeistlarge"],
+  ["パンプジン|ちいさいサイズ", "gourgeistsmall"],
+  ["パンプジン|とくだいサイズ", "gourgeistsuper"],
+  ["パンプジン|ふつうのサイズ", "gourgeist"],
+  ["ポワルン|通常のすがた", "castform"],
+  ["ポワルン|あまみずのすがた", "castformrainy"],
+  ["ポワルン|たいようのすがた", "castformsunny"],
+  ["ポワルン|ゆきぐものすがた", "castformsnowy"],
+  ["ギルガルド|シールドフォルム", "aegislash"],
+  ["ギルガルド|ブレードフォルム", "aegislashblade"],
+  ["イルカマン|ナイーブフォルム", "palafin"],
+  ["イルカマン|マイティフォルム", "palafinhero"],
+]);
+function speciesKeyForRow(row, learnsetKey) {
+  return battleFormSpeciesKeys.get(row["ポケモン名"] + "|" + (row["フォーム/姿"] || "")) || learnsetKey;
+}
+// Pinned Champions mod caps source PP above 20 at 20 in scripts.ts:init.
+// The displayed battle max comes from calculatePP and is a DIFFERENT layer.
+function cappedSourcePP(pp) { return Math.min(pp, 20); }
+function calculatedBattleMaxPP(move) {
+  return move.noPPBoosts ? move.pp : (move.pp / 5 + 1) * 4;
+}
 // Handles quoted commas, CRLF and doubled quotes; refuses malformed source CSV.
 function rows(csv) {
   let result = [], row = [], field = "", quoted = false;
@@ -87,6 +111,8 @@ function compare() {
   const links = load("Pokemon_Champions_MC_pokemon_learnsets_linked.csv");
   const items = load("Pokemon_Champions_MC_usable_held_items.csv");
   const discrepancies = [];
+  const sourcePPCapCases = [];
+  const explicitFormComparisons = [];
   const totals = {};
   function check(group, key, field, expected, actual) {
     totals[group] ??= {checked: 0, matching: 0, mismatched: 0, missing: 0};
@@ -103,8 +129,20 @@ function compare() {
     if (types[row["タイプ"]]) check("move_type", id, "type", types[row["タイプ"]], got.type);
     if (categories[row["分類"]]) check("move_category", id, "category", categories[row["分類"]], got.category);
     for (const [column, field, group] of [["威力", "basePower", "move_power"],
-      ["PP", "pp", "move_pp"], ["優先度", "priority", "move_priority"]]) {
-      if (/^-?\d+$/.test(row[column])) check(group, id, field, Number(row[column]), got[field]);
+      ["優先度", "priority", "move_priority"]]) {
+      if (/^-?\\d+$/.test(row[column])) check(group, id, field, Number(row[column]), got[field]);
+    }
+    // Compare like layers: master raw PP -> source-cap -> Showdown Dex.pp.
+    // Display PP is derived separately, and never certified from this audit.
+    if (/^\\d+$/.test(row["PP"])) {
+      const rawPP = Number(row["PP"]), expectedDexPP = cappedSourcePP(rawPP);
+      check("move_pp", id, "pp", expectedDexPP, got.pp);
+      if (rawPP > 20) sourcePPCapCases.push({
+        move: id, master_raw_pp: rawPP, expected_dex_pp: expectedDexPP,
+        actual_dex_pp: got.pp, calculated_battle_max_pp: calculatedBattleMaxPP(got),
+        evidence: "pinned_champions_scripts_init_and_calculatePP",
+        status: "SOURCE_RULE_ONLY; NOT_REAL_GAME_VALIDATED",
+      });
     }
     if (row["命中"] === "必中") check("move_accuracy", id, "accuracy", true, got.accuracy);
     else if (/^\d+$/.test(row["命中"])) check("move_accuracy", id, "accuracy", Number(row["命中"]), got.accuracy);
@@ -113,8 +151,13 @@ function compare() {
   for (const row of pokemon) {
     // Compare only directly registrable non-Mega bodies, not derived forme inheritance.
     if (row["区分"] === "メガシンカ") continue;
-    const key = linked.get(row["ポケモン名"] + "|" + row["フォーム/姿"]);
-    if (!key) {check("pokemon_link", row["ポケモン名"], "learnsetKey", "present", undefined);continue;}
+    const learnsetKey = linked.get(row["ポケモン名"] + "|" + row["フォーム/姿"]);
+    if (!learnsetKey) {check("pokemon_link", row["ポケモン名"], "learnsetKey", "present", undefined);continue;}
+    const key = speciesKeyForRow(row, learnsetKey);
+    if (key !== learnsetKey) explicitFormComparisons.push({
+      pokemon: row["ポケモン名"], form: row["フォーム/姿"],
+      shared_learnset_key: learnsetKey, battle_species_key: key,
+    });
     const mon = dex.species.get(key);
     check("species_coverage", key, "exists", true, !!mon.exists);
     if (!mon.exists) continue;
@@ -145,7 +188,10 @@ function compare() {
     throw Error("discrepancy triage incomplete");
   return {status: "DIAGNOSTIC_ONLY", master_sha256, master_scope: "4 source CSV files / M-C candidate; observation unverified", source: "Champions fixed masters versus pinned Showdown mod, static comparison",
     format: "gen9championsbssregmc", upstream_sha: "ccfaa20f32af363569cd21a9d501b2bc1ded26b1",
-    totals, mismatch_count: discrepancies.length,
+    totals, source_pp_cap_cases: sourcePPCapCases,
+    source_pp_cap_case_count: sourcePPCapCases.length,
+    explicit_form_comparisons: explicitFormComparisons,
+    mismatch_count: discrepancies.length,
     provisional_cause_counts: triage_counts,
     classification_status: "UNVERIFIED_HYPOTHESES; NO_CHAMPIONS_GOLDEN",
     mismatch_details: triaged, mismatch_examples: triaged.slice(0, 100),
@@ -155,6 +201,8 @@ function compare() {
       "Effects/ability semantics and damage sequences are not proved by this audit.",
       "Mega/forms and known aliases need independent observational validation.",
       "A/B/D triage is provisional; C requires source provenance; E requires reproduction against independent goldens.",
+      "Master PP is raw/source-layer PP; pinned Champions scripts caps source PP to 20 before separate battle maximum PP calculation.",
+      "PP cap and form-key matches are comparison-layer evidence, NOT independently verified live Champions mechanics.",
       "Never overwrite Champions masters to match Showdown on the basis of this static audit.",
     ]};
 }
@@ -168,4 +216,4 @@ if (require.main === module) {
     process.exitCode = 2;
   }
 }
-module.exports = {rows, compare};
+module.exports = {rows, compare, speciesKeyForRow, cappedSourcePP, calculatedBattleMaxPP};
