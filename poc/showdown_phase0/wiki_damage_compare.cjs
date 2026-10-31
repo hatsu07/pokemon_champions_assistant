@@ -14,11 +14,7 @@ const SCENARIOS={
   'WIKI-EARTHQUAKE-GARCHOMP-METAGROSS':{
     attacker:{...FILLER,evs:{...FILLER.evs,atk:32}},
     defender:{species:'Metagross',level:50,nature:'Serious',ability:'Clear Body',item:'',
-      evs:{...FILLER.evs},moves:['Tackle']},move:'Earthquake'},
-  'WIKI-STONEEDGE-GARCHOMP-CRESSELIA':{
-    attacker:{...FILLER,evs:{...FILLER.evs,atk:32},moves:['Stone Edge']},
-    defender:{species:'Cresselia',level:50,nature:'Impish',ability:'Levitate',item:'',
-      evs:{...FILLER.evs,def:32},moves:['Tackle']},move:'Stone Edge'},
+      evs:{...FILLER.evs},moves:['Tackle']},move:'Earthquake'}
 };
 function main(){
   if(!ROOT)throw Error('SHOWDOWN_ROOT required; run inside pinned Phase 0 Docker');
@@ -37,11 +33,6 @@ function main(){
     const independent=calculate(c.input);
     if(independent.minimum!==c.expected_min||independent.maximum!==c.expected_max)
       throw Error('published expectation mismatch for '+c.id);
-    if(c.comparison_scope==='FORMULA_ONLY_NOT_CHAMPIONS_COMPARABLE'){
-      results.push({id:c.id,source_ids:c.source_ids,reference_rolls:independent.rolls,
-        source_caveat:c.source_caveat,status:'FORMULA_ONLY_NOT_CHAMPIONS_COMPARABLE'});
-      continue;
-    }
     if(c.comparison_scope!=='PINNED_CHAMPIONS_COMPARABLE')
       throw Error('unreviewed comparison scope for '+c.id);
     const b=new Battle({formatid:FORMAT,seed:[1,2,3,4],strictChoices:true,
@@ -70,8 +61,7 @@ function main(){
   }
   return {scope:'OFFLINE_DIAGNOSTIC_ONLY',pinned_sha:PIN,format:FORMAT,
     game_observed_level:false,gate_A_calculation:'UNKNOWN',gate_B_reconstruction:'UNSUPPORTED',
-    result_count:results.length,comparable_count:results.filter(x=>x.status.startsWith('WIKI_SPEC_')).length,
-    formula_only_count:results.filter(x=>x.status==='FORMULA_ONLY_NOT_CHAMPIONS_COMPARABLE').length,
+    result_count:results.length,comparable_count:results.length,
     mismatch_count:results.filter(x=>x.status==='WIKI_SPEC_MISMATCH').length,results};
 }
 if(require.main===module){
