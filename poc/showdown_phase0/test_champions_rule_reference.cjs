@@ -71,7 +71,7 @@ test('Knock Off: held item is still removed on post-contact attacker faint',()=>
 });
 test('Knock Off: empty item and non-contact leaves ordinary power',()=>{
   const miss=knockOff({hit:false,heldItem:'whiteherb',removable:true,attackerFaintedFromContact:false});
-  assert.deepEqual(miss.power_multiplier,[1,1]);
+  assert.equal(miss.power_multiplier,null); // unlanded attack has no damage multiplier claim
   assert.equal(miss.next_item,'whiteherb');
   const empty=knockOff({hit:true,heldItem:null,removable:null,attackerFaintedFromContact:false});
   assert.deepEqual(empty.power_multiplier,[1,1]);
@@ -124,4 +124,5 @@ test('Choice Scarf: no item never locks; forced executed move conflict unmodeled
   assert.equal(choiceScarf({item:null,lockedMove:null},{kind:'use-move',move:'knockoff'}).state.lockedMove,null);
   assert.equal(choiceScarf({item:'choicescarf',lockedMove:'knockoff'},{kind:'use-move',move:'uturn'}).status,'UNSUPPORTED');
   assert.equal(choiceScarf({item:'choicescarf',lockedMove:null},{kind:'item-removed'}).status,'UNSUPPORTED');
+  assert.equal(choiceScarf({item:null,lockedMove:'knockoff'},{kind:'try-move',move:'uturn'}).status,'UNSUPPORTED');
 });
