@@ -14,7 +14,7 @@ const FILLER={species:'Garchomp',level:50,nature:'Serious',ability:'Rough Skin',
   evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:0},moves:['Earthquake']};
 // These bilingual mappings are explicitly scoped to this ONE test fixture.
 // Unknown translations must be independently confirmed, never guessed from other games.
-const ABILITY_JA=Object.freeze({roughskin:'さめはだ',clearbody:'クリアボディ',overgrow:'しんりょく',torrent:'げきりゅう',blaze:'もうか',intimidate:'いかく',static:'せいでんき',surgesurfer:'サーフテール'});
+const ABILITY_JA=Object.freeze({roughskin:'さめはだ',sandveil:'すながくれ',clearbody:'クリアボディ',overgrow:'しんりょく',torrent:'げきりゅう',blaze:'もうか',intimidate:'いかく',static:'せいでんき',surgesurfer:'サーフテール'});
 const STATS=['hp','atk','def','spa','spd','spe'];
 const COLUMNS=['H','A','B','C','D','S'];
 const MASTER_DIR=path.resolve(process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,'masters'));
