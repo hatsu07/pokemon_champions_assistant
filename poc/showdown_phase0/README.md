@@ -1,4 +1,10 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
+
+## PR #166：Phase 0採否レポート（現時点NO_GO）
+
+[PHASE0_ADOPTION_ASSESSMENT.md](./PHASE0_ADOPTION_ASSESSMENT.md) に、計算互換性Gate A、部分観測中途復元Gate B、127合成代表状態の性能、Windows同梱/IPC、依存ライセンス/SBOM、研究用代替案を証拠階層別に整理した。Linux CIで既存5診断JSONを消費する `phase0_final_adoption_report.cjs` を実行し、`test_phase0_final_adoption_report.cjs` が実ゲーム未検証を合格扱いする改変を拒否する。これは実ゲームGoldenの再実行ではなく、過去Issue #139の6ケース/11チェックは履歴要約として別記する。
+
+**現状：Gate A=UNKNOWN / Gate B=UNSUPPORTED / Phase 1 NO_GO。127ケースとWindows native NodeのPoC成功はWindows製品E2Eの証明ではない。LIVE・固定マスター・実戦推薦・upstream SHAは変更しない。**
 ## PR #165（Phase 0）：やけど＋リフレクターの1/4端数差・実行HP監査
 
 - **二次資料を独立に再確認**。Champions専用[データポータルの計算順序](https://pkmn-cp-dataportal.com/battle/damage/damage-order/)は「やけど＋リフレクターを最終段階で掛け合わせ1回五捨五超入」、[damekeiの計算式](https://damekei.com/formula)は「やけどと壁を別段階に並べ、各段階floor」と説明。**後者は前段階の丸め規則など計算式全体も異なり、独立した実ゲーム観測ではない**。比較するのは共通の「最終補正直前整数」を与えた場合の補正段階のみ。資料の独立性・どちらが実機と合うかは未確定。

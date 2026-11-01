@@ -33,7 +33,7 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs test_phase0_final_adoption_report.cjs
       - name: Audit 16 actual executed synthetic Earthquake HP deltas and independent source descriptions
         shell: bash
         run: |
@@ -731,6 +731,46 @@ jobs:
                   out.write("Inputs SHA256: `" + json.dumps(audit["master_sha256"], sort_keys=True) + "`\\n\\n")
                   out.write("Mismatch count: " + str(audit["mismatch_count"]) + "\\n")
                   out.write("Provisional A/B/C/D/E: `" + json.dumps(audit["provisional_cause_counts"]) + "`\\n")
+          PY
+      - name: Build fail-closed Phase 0 adoption evidence report from completed diagnostics
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp \
+            --mount type=bind,source="$PWD",target=/audit,readonly \
+            --entrypoint node champions-phase0 phase0_final_adoption_report.cjs \
+            /audit/phase0-gate-a-evidence.json \
+            /audit/phase0-gate-b.json \
+            /audit/phase0-partial-observation.json \
+            /audit/phase0-representative-states.json \
+            /audit/phase0-cross-process.json > phase0-final-adoption-report.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-final-adoption-report.json",encoding="utf-8") as f:
+              r=json.load(f)
+          assert r["schema"]=="phase0-final-adoption-evidence-v1",r
+          assert r["pinned_sha"]=="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
+          assert r["regulation"]=="M-C"
+          assert r["gates"]["A"]=="UNKNOWN"
+          assert r["gates"]["B"]=="UNSUPPORTED"
+          assert r["gates"]["phase1_adoption"]=="NO_GO"
+          assert not r["gates"]["live_recommendations_permitted"]
+          assert r["gate_A"]["feature_count"]==10
+          assert r["gate_A"]["known_source_method_disagreements"]==1
+          assert r["gate_A"]["discriminating_damage_rolls"]==4
+          assert r["gate_B"]["full_synthetic_snapshots_passed"]==12
+          assert r["gate_B"]["partial_projection_cases"]==2
+          assert not r["gate_B"]["reconstructs_real_game_partial_state"]
+          assert r["performance"]["synthetic_representative_state_cases"]==127
+          assert r["performance"]["cross_process_runs"]==3
+          assert not r["performance"]["p95_product_e2e_measured"]
+          assert r["deployment"]["windows_onedir_offline_worker"]=="NOT_TESTED"
+          assert r["deployment"]["sbom_and_redistribution_notices"]=="NOT_TESTED"
+          assert r["real_game_evidence"]["ci_input_game_observations"]==0
+          assert r["real_game_evidence"]["provenance"]=="ISSUE_139_USER_VERIFIED_LOCAL_HISTORICAL_SUMMARY_NOT_REEXECUTED_IN_CI"
+          assert r["phase0_ready_to_close"] is False
+          assert r["evidence_does_not_enable_phase1"] is True
+          print("PHASE0_ADOPTION: NO_GO; Gate A UNKNOWN, Gate B UNSUPPORTED")
+          print("Synthetic cases are not Champions game compatibility; source and historical local Golden kept separate")
           PY
       - name: Assert audit fails closed without a required master
         run: |
