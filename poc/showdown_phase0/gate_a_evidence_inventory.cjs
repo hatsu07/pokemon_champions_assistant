@@ -259,6 +259,11 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
    turn_order_inconclusive_ties:turnCounts.ties,
    turn_order_scope:"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE",
    turn_order_diagnostic:"champions_turn_order_probe.cjs",
+   paralysis_source_order_matches:paralysisCounts.matches,
+   paralysis_unknown_compound_rounding:paralysisCounts.rounding_unknown,
+   paralysis_scope:paralysisCounts.scope,
+   paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
+   paralysis_diagnostic:"champions_paralysis_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -270,4 +275,4 @@ if(require.main===module){
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
 module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,
- checkTurnOrderEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+ checkTurnOrderEvidence,checkParalysisEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
