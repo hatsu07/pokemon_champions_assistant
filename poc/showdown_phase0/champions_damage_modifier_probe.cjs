@@ -3,58 +3,99 @@
 // This is NOT evidence of real Pokémon Champions device parity.
 const fs=require("node:fs"),path=require("node:path");
 const {execFileSync}=require("node:child_process");
-const {calculate}=require("./wiki_damage_reference.cjs");
+const {calculate,halfDownRatio}=require("./wiki_damage_reference.cjs");
 const {allowedChampionsSets,teamsForScenario,validateChampionsScenario,
   SCENARIOS}=require("./wiki_damage_compare.cjs");
 const LEDGER=require("./champions_damage_modifier_source_ledger.json");
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const FORMAT="gen9championsbssregmc";
-const REVIEWED_IDS=[
- "neutral","critical","burn","reflect","burn-and-reflect",
- "critical-ignores-reflect","critical-preserves-burn",
- "critical-ignores-reflect-preserves-burn"
-];
-const RATIO_REVIEWED={
- neutral:"1/1",critical:"1/1",burn:"1/2",reflect:"1/2",
- "burn-and-reflect":"1/4","critical-ignores-reflect":"1/1",
- "critical-preserves-burn":"1/2",
- "critical-ignores-reflect-preserves-burn":"1/2"
-};
-function validateSource(){
- if(LEDGER.schema!=="phase0-champions-damage-modifier-source-v1"||
-    LEDGER.regulation!=="M-C"||LEDGER.private_golden_read!==false||
-    LEDGER.game_verified_check_count!==0||LEDGER.live_use_approved!==false||
-    LEDGER.sources.length!==3||
-    LEDGER.sources.some(s=>s.source_type!=="SECONDARY_COMMUNITY"||
-      !s.url.startsWith("https://"))||
-    JSON.stringify(LEDGER.scenarios.map(s=>s.id))!==JSON.stringify(REVIEWED_IDS))
+const WITNESS_ID="neutral-type-burn-and-reflect";
+const REVIEWED_SOURCE_URLS=Object.freeze({
+ damage_order:"https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
+ critical:"https://pkmn-cp-dataportal.com/battle/damage/critical-hit/",
+ burn:"https://pkmn-cp-dataportal.com/status/burn/"
+});
+// An ID must not silently change its actual conditions, even when its
+// final numeric otherMultiplier happens to be identical (critical vs wall).
+const REVIEWED_CONTRACTS=Object.freeze([
+ ["neutral",false,false,false,"1/1",["damage_order"]],
+ ["critical",false,false,true,"1/1",["damage_order","critical"]],
+ ["burn",true,false,false,"1/2",["damage_order","burn"]],
+ ["reflect",false,true,false,"1/2",["damage_order"]],
+ ["burn-and-reflect",true,true,false,"1/4",["damage_order","burn"]],
+ ["critical-ignores-reflect",false,true,true,"1/1",["critical"]],
+ ["critical-preserves-burn",true,false,true,"1/2",["critical","burn"]],
+ ["critical-ignores-reflect-preserves-burn",true,true,true,"1/2",["critical","burn"]],
+ [WITNESS_ID,true,true,false,"1/4",["damage_order","burn"]]
+].map(([id,burn,reflect,critical,other,source_ids])=>
+ Object.freeze({id,burn,reflect,critical,other,source_ids:Object.freeze(source_ids)})));
+const REVIEWED_IDS=REVIEWED_CONTRACTS.map(r=>r.id);
+function validateSource(input=LEDGER){
+ if(input.schema!=="phase0-champions-damage-modifier-source-v1"||
+    input.regulation!=="M-C"||input.private_golden_read!==false||
+    input.game_verified_check_count!==0||input.live_use_approved!==false||
+    !Array.isArray(input.sources)||input.sources.length!==3||
+    Object.keys(REVIEWED_SOURCE_URLS).some((id,index)=>{
+      const s=input.sources[index];
+      return s?.id!==id||s?.url!==REVIEWED_SOURCE_URLS[id]||
+        s?.source_type!=="SECONDARY_COMMUNITY";
+    })||
+    JSON.stringify(input.scenarios?.map(s=>s.id))!==JSON.stringify(REVIEWED_IDS))
    throw Error("unreviewed damage source or scenario manifest");
- for(const c of LEDGER.scenarios){
-   if(typeof c.critical!=="boolean"||typeof c.burn!=="boolean"||
-      typeof c.reflect!=="boolean"||
-      c.other.join("/")!==RATIO_REVIEWED[c.id]||
-      !Array.isArray(c.source_ids)||!c.source_ids.length||
-      c.source_ids.some(id=>!LEDGER.sources.some(s=>s.id===id))||
-      c.other.length!==2)
+ for(let i=0;i<input.scenarios.length;i++){
+   const c=input.scenarios[i],expected=REVIEWED_CONTRACTS[i];
+   if(c.burn!==expected.burn||c.reflect!==expected.reflect||
+      c.critical!==expected.critical||
+      !Array.isArray(c.other)||c.other.length!==2||
+      c.other.join("/")!==expected.other||
+      JSON.stringify(c.source_ids)!==JSON.stringify(expected.source_ids)||
+      (c.id===WITNESS_ID ?
+         (c.fixture!=="DERIVED_NEUTRAL_GROUND_BLASTOISE"||
+          c.numeric_basis!=="INDEPENDENT_DAMAGE_FORMULA_NOT_PUBLISHED_NUMERIC_EXAMPLE"||
+          c.required_discriminating_witness!==true) :
+         Object.hasOwn(c,"fixture")))
      throw Error("unreviewed damage modifier contract: "+c.id);
-   const expectedOtherDenom=2**(Number(c.burn)+Number(c.reflect&&!c.critical));
-   if(c.other[0]!==1||c.other[1]!==expectedOtherDenom)
+   const denom=2**(Number(c.burn)+Number(c.reflect&&!c.critical));
+   if(c.other[0]!==1||c.other[1]!==denom)
      throw Error("burn/reflect/critical source rule disagreement: "+c.id);
  }
  return true;
 }
-function referenceFor(c){
- validateSource();
+function referenceInput(c,overrideOther=null){
  const f=LEDGER.fixture;
  if(f.attacker!=="Garchomp"||f.defender!=="Metagross"||
     f.move!=="Earthquake"||f.atk!==182||f.def!==150||
     f.basePower!==100||f.stab.join("/")!=="3/2"||
     f.effectiveness.join("/")!=="2/1")
    throw Error("unreviewed source fixture drift");
- const input={attack:f.atk,defense:f.def,basePower:f.basePower,
-   powerMultiplier:[1,1],weatherMultiplier:[1,1],
+ const special=c.id===WITNESS_ID;
+ return {attack:f.atk,defense:special?120:f.def,
+   basePower:f.basePower,powerMultiplier:[1,1],weatherMultiplier:[1,1],
    critical:c.critical,stabMultiplier:f.stab,
-   typeMultiplier:f.effectiveness,otherMultiplier:c.other};
+   typeMultiplier:special?[1,1]:f.effectiveness,
+   otherMultiplier:overrideOther||c.other};
+}
+function oddRoundingWitnesses(c){
+ if(c.id!==WITNESS_ID)throw Error("odd-rounding witness only for reviewed neutral case");
+ const preFinal=calculate(referenceInput(c,[1,1])).rolls;
+ const final=calculate(referenceInput(c)).rolls;
+ const witnesses=preFinal.flatMap((value,index)=>{
+   const combined=Number(halfDownRatio(BigInt(value),[1n,4n]));
+   const split=Number(halfDownRatio(
+     halfDownRatio(BigInt(value),[1n,2n]),[1n,2n]));
+   return combined===split?[]:[{roll_pct:85+index,pre_final_modifier:value,
+     combined_rounding:combined,split_rounding:split,
+     reference_damage:final[index]}];
+ });
+ if(!witnesses.length||witnesses.some(w=>w.pre_final_modifier%2===0||
+    w.combined_rounding!==w.reference_damage||
+    w.combined_rounding===w.split_rounding))
+   throw Error("P1: no discriminating odd pre-final-damage witness");
+ return witnesses;
+}
+function referenceFor(c){
+ validateSource();
+ const input=referenceInput(c);
  const result=calculate(input);
  if(result.status!=="WIKI_ARITHMETIC_ONLY"||result.rolls.length!==16)
    throw Error("independent damage source returned unexpected status");
@@ -88,7 +129,18 @@ function main(){
  const results=[];
  for(const variant of LEDGER.scenarios){
    const ref=referenceFor(variant);
-   const teams=validateChampionsScenario(fixture,dex,allowed);
+   // Existing legal Blastoise bench member becomes p2 lead; displaced
+   // Metagross becomes bench. No new move/ability/species is guessed.
+   let caseFixture=fixture;
+   if(variant.id===WITNESS_ID){
+     if(fixture.p2bench[2]?.species!=="Blastoise"||
+        fixture.defender.species!=="Metagross")
+       throw Error("unreviewed legal Blastoise bench placement");
+     const bench=[...fixture.p2bench];
+     bench[2]=fixture.defender;
+     caseFixture={...fixture,defender:fixture.p2bench[2],p2bench:bench};
+   }
+   const teams=validateChampionsScenario(caseFixture,dex,allowed);
    const validator=TeamValidator.get(FORMAT);
    for(const team of teams){
      const problems=validator.validateTeam(structuredClone(team));
@@ -101,11 +153,15 @@ function main(){
      if(battle.requestState==="teampreview")
        battle.makeChoices("team 123","team 123");
      const attacker=battle.p1.active[0],defender=battle.p2.active[0];
-     if(attacker.species.id!=="garchomp"||defender.species.id!=="metagross"||
+     const odd=variant.id===WITNESS_ID;
+     if(attacker.species.id!=="garchomp"||
+        defender.species.id!==(odd?"blastoise":"metagross")||
         attacker.baseStoredStats.atk!==LEDGER.fixture.atk||
-        defender.baseStoredStats.def!==LEDGER.fixture.def||
-        attacker.ability!=="roughskin"||defender.ability!=="clearbody")
-       throw Error("reviewed 2-species stat/ability precondition drift");
+        defender.baseStoredStats.def!==(odd?120:LEDGER.fixture.def)||
+        attacker.ability!=="roughskin"||
+        defender.ability!==(odd?"torrent":"clearbody")||
+        (odd&&defender.types.join("/")!=="Water"))
+       throw Error("reviewed legal damage stat/ability/type precondition drift");
      const move=dex.moves.get("Earthquake");
      if(!move.exists||move.category!=="Physical"||move.basePower!==100||
         move.type!=="Ground"||move.id!=="earthquake")
@@ -129,7 +185,13 @@ function main(){
        rolls.push(damage);
      }
      const result=compareRolls(ref.rolls,rolls);
+     const witnesses=variant.id===WITNESS_ID?oddRoundingWitnesses(variant):[];
+     if(witnesses.some(w=>rolls[w.roll_pct-85]!==w.combined_rounding))
+       throw Error("Pinned Showdown differs at odd pre-final-damage witness");
      results.push({id:variant.id,source_ids:variant.source_ids,
+       defender:odd?"Blastoise":"Metagross",
+       source_numeric_basis:odd?"DERIVED_FORMULA_ONLY":"PUBLISHED_FIXTURE_AND_DERIVED_MODIFIERS",
+       odd_rounding_witnesses:witnesses,
        conditions:{burn:variant.burn,reflect:variant.reflect,critical:variant.critical},
        reference_range:[ref.minimum,ref.maximum],
        pinned_range:[Math.min(...rolls),Math.max(...rolls)],
@@ -145,6 +207,10 @@ function main(){
    executed_turns:0,live_use_approved:false,gate_A:"UNKNOWN",
    gate_B:"UNSUPPORTED",adoption:"NO_GO",
    scenario_count:results.length,individual_roll_comparisons:results.length*16,
+   odd_rounding_witness_count:results.reduce((n,r)=>n+r.odd_rounding_witnesses.length,0),
+   odd_rounding_witness_verified_in_pinned_getDamage:
+     results.some(r=>r.id===WITNESS_ID&&r.odd_rounding_witnesses.length>0&&
+       r.status==="WIKI_SPEC_MATCH"),
    counts:{WIKI_SPEC_MATCH:results.filter(r=>r.status==="WIKI_SPEC_MATCH").length,
      WIKI_SPEC_MISMATCH:results.filter(r=>r.status==="WIKI_SPEC_MISMATCH").length},
    unverified:LEDGER.not_verified,results};
@@ -159,4 +225,5 @@ if(require.main===module){
    process.exitCode=2;
  }
 }
-module.exports={main,compareRolls,referenceFor,validateSource,REVIEWED_IDS,LEDGER};
+module.exports={main,compareRolls,referenceFor,validateSource,referenceInput,
+ oddRoundingWitnesses,REVIEWED_IDS,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,WITNESS_ID,LEDGER};

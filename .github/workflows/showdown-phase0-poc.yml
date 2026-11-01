@@ -46,8 +46,10 @@ jobs:
           assert r["pinned_sha"]=="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
           assert r["format"]=="gen9championsbssregmc"
           assert (r["gate_A"],r["gate_B"],r["adoption"])==("UNKNOWN","UNSUPPORTED","NO_GO")
-          assert r["scenario_count"]==8 and r["individual_roll_comparisons"]==128
-          assert r["counts"]=={"WIKI_SPEC_MATCH":8,"WIKI_SPEC_MISMATCH":0}
+          assert r["scenario_count"]==9 and r["individual_roll_comparisons"]==144
+          assert r["odd_rounding_witness_count"]>0
+          assert r["odd_rounding_witness_verified_in_pinned_getDamage"] is True
+          assert r["counts"]=={"WIKI_SPEC_MATCH":9,"WIKI_SPEC_MISMATCH":0}
           assert r["game_verified_check_count"]==0
           assert r["executed_turns"]==0
           assert r["private_golden_read"] is False and r["live_use_approved"] is False
@@ -59,7 +61,8 @@ jobs:
                   "id":row["id"],"conditions":row["conditions"],
                   "reference_range":row["reference_range"],
                   "pinned_range":row["pinned_range"],
-                  "status":row["status"]
+                  "status":row["status"],
+                  "odd_rounding_witnesses":row["odd_rounding_witnesses"]
               },sort_keys=True))
           print("Champions secondary-source rounding only, not device or action-order compatibility")
           PY

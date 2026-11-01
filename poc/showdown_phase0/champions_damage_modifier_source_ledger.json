@@ -167,16 +167,34 @@
         "critical",
         "burn"
       ]
+    },
+    {
+      "id": "neutral-type-burn-and-reflect",
+      "burn": true,
+      "reflect": true,
+      "critical": false,
+      "other": [
+        1,
+        4
+      ],
+      "source_ids": [
+        "damage_order",
+        "burn"
+      ],
+      "fixture": "DERIVED_NEUTRAL_GROUND_BLASTOISE",
+      "numeric_basis": "INDEPENDENT_DAMAGE_FORMULA_NOT_PUBLISHED_NUMERIC_EXAMPLE",
+      "required_discriminating_witness": true
     }
   ],
-  "scope": "PINNED_M_C_REGISTERED_SIX_SELECTED_THREE_GETDAMAGE_16_ROLLS_ONLY",
+  "scope": "PINNED_M_C_TWO_LEGAL_DEFENDERS_NINE_CONDITIONS_GETDAMAGE_16_ROLLS_ONLY",
   "not_verified": [
     "Real Champions device calculation and official damage algorithm",
     "Turn-based order or action priority; getDamage called directly, not 8 actual executed turns",
     "Weather, field, item modifiers, dynamic attack/defense stages and critical stage bypass",
     "Other Pokémon/forms/moves, including weather-specific fire and water moves",
     "Probabilities for critical, move accuracy, random seed distribution, real-game KO threshold",
-    "Burn and Reflect application timing in an executed live turn"
+    "Burn and Reflect application timing in an executed live turn",
+    "Additional neutral-effectiveness Blastoise fixture is derived from sourced formula and fixed Champions master; not a published damage numeric example or game observation"
   ],
   "private_golden_read": false,
   "game_verified_check_count": 0,
