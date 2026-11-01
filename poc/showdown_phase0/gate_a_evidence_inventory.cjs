@@ -6,6 +6,9 @@ const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
 const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
 const {run:paralysisOrder}=require("./champions_paralysis_probe.cjs");
+const {checkParalysisEvidence}=require("./champions_paralysis_gate_a_contract.cjs");
+let cachedParalysis=null;
+function paralysisOnce(){return cachedParalysis||(cachedParalysis=paralysisOrder());}
 const {LEDGER:TURN_LEDGER,referenceCase}=require("./champions_turn_order_reference.cjs");
 const {moveKey}=require("./champions_move_key.cjs");
 const {main:modifier,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,
