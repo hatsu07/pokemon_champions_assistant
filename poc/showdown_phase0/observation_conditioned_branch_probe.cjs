@@ -28,6 +28,9 @@ function condition(obs, ctx = context()) {
   ["opponent_hp_exact", known(obs,"opponent_hp_exact")],
   ["opponent_boosts", known(obs,"opponent_boosts")],
   ["opponent_status", known(obs,"opponent_status")],
+  ["opponent_current_type", known(obs,"opponent_current_type")],
+  ["terrain", known(obs,"terrain")],
+  ["hazards", known(obs,"hazards")],
   ["screens", known(obs,"screens")],
   ["weather", known(obs,"weather")],
   ["request_state", known(obs,"request_state")],
@@ -61,6 +64,26 @@ function condition(obs, ctx = context()) {
    return deny("screen duration contradicts empty screen list",originHash);
  // Exclude weather effects rather than inventing weather/turn-history.
  if(f.weather.value!=="") return deny("nonempty weather requires duration/history reconstruction",originHash);
+ // A fresh selected-turn Battle has no terrain or hazards. These must be
+ // explicitly observed as absent, not silently assumed absent when UNKNOWN.
+ if(f.terrain.value!=="") return deny("observed terrain is not represented in conditioned Battle",originHash);
+ if(!Array.isArray(f.hazards.value)||f.hazards.value.length)
+   return deny("observed hazards are not represented in conditioned Battle",originHash);
+ // Only the unchanged current form/type is supported. The frozen Champions
+ // master and the pinned Dex were cross-checked during context() construction.
+ // A known changed type MUST NOT be ignored by makeCandidates().
+ const currentForm=ctx.dex.species.get(f.opponent_form.value);
+ const reportedTypes=f.opponent_current_type.value;
+ if(!known(obs,"opponent_form")||!currentForm.exists||
+    !Array.isArray(reportedTypes)||reportedTypes.length!==currentForm.types.length||
+    !reportedTypes.every((type,index)=>type===currentForm.types[index]))
+   return deny("observed current type differs from the pinned Champions base form or is malformed",
+     originHash);
+ // Exclude observed effects that this narrow probe cannot reconstruct.
+ for(const k of ["effect_remaining_turns","opponent_mega_history",
+   "opponent_consumed_item","choice_lock","action_history"]){
+   if(known(obs,k))return deny("known hidden-history field not represented: "+k,originHash);
+ }
  if(!["",null].includes(f.opponent_status.value)&&known(obs,"opponent_status"))
    return deny("opponent status duration/history not reconstructable here",originHash);
  if(known(obs,"opponent_mega_state")&&f.opponent_mega_state.value===true)
@@ -129,11 +152,12 @@ function condition(obs, ctx = context()) {
   game_compatibility_verified:false,real_game_partial_state_restored:false,
   live_recommendation_permitted:false,
   admitted_evidence_fields:["opponent_hp_exact","opponent_boosts","screens",
-    ...(screens.length?["screen_remaining_turns"]:[])],
+    ...(screens.length?["screen_remaining_turns"]:[]),
+    "opponent_current_type","terrain","hazards"],
   unrecovered_hidden_fields:["opponent_revealed_moves","opponent_remaining_pp",
     "opponent_item","opponent_ability","opponent_ap","opponent_mega_history",
     "unresolved_queue","internal_rng","action_history",
-    "terrain","hazards","effect_remaining_turns","own_side_unknown_history"],
+    "effect_remaining_turns","own_side_unknown_history"],
   assumption:"fixed registered teams, other hidden facts and move boundary are hypotheses",
   candidate_count:candidates.length,unevaluated_candidate_count:generated.unevaluated_candidate_count,
   candidates,rejected,not_a_unique_true_state:true};
