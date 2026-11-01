@@ -168,7 +168,8 @@ function runCase(entry, ctx) {
       throw Error("serialized complete state changed after restore");
     const before = fingerprint(state(snapshot));
     const restoredBefore = fingerprint(state(restored));
-    const aAction = "move 1", bAction = "switch 1";
+    // Showdown reorders active Pokémon to position 1 on switches; slot 1 is active.
+    const aAction = "move 1", bAction = "switch 2";
     const ids = [actionId(restored, aAction), actionId(restored, bAction)];
     if (!ids[0] || !ids[1] || ids[0] === ids[1])
       throw Error("branch actions do not identify different legal actions");
