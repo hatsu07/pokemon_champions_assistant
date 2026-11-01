@@ -1,5 +1,10 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## 消費済みきのみの条件付き仮説（PR #170）
+
+[CONSUMED_BERRY_CONDITIONAL_BRANCHES.md](./CONSUMED_BERRY_CONDITIONAL_BRANCHES.md) は、現在の道具なしと既知のきのみ消費を独立の証拠で確認した場合に限り、Champions固定持ち物マスターの「対戦中1回」きのみ所持候補を選別し、現在道具なしの合成局面へ条件付き変換する。**きのみの発動・回復量や消費ログの復元ではない**。非消費品・不明な道具・履歴不足は拒否する。Gate A=UNKNOWN、Gate B=UNSUPPORTED、Phase 1 NO_GO、LIVE不変。
+
+
 ## PR #169：観測済みHP・能力段階・壁からの条件付きGate B分岐
 
 [OBSERVED_CONDITIONAL_BRANCHES.md](./OBSERVED_CONDITIONAL_BRANCHES.md) と`observation_conditioned_branch_probe.cjs`。既存26件の部分観測仮説テストとは別に、固定の合法候補Battleへ**独立に確認された整数HP・全7能力変化・壁と残ターン**を反映し、コピー・シリアライズ往復・合成継続の独立性を検証する。HP/能力/壁ターンの未知値や天候・メガ・未解決キューはフェイルクローズし、初手フルHPなどで空欄を埋めない。これはあくまで`PROVISIONAL_CONDITIONAL_SYNTHETIC`であり、実ゲームの部分観測から唯一の真の状態へ復元したわけではない。**Gate B=UNSUPPORTED、Gate A=UNKNOWN、採用NO_GO、LIVE不変**。

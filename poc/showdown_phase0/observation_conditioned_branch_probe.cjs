@@ -3,6 +3,8 @@
 // Showdown midbattle branches. NOT real-game reconstruction or LIVE advice.
 // The current-turn request boundary and unknown RNG/history remain assumptions.
 const {context} = require("./six_team_selection_probe.cjs");
+const fs=require("node:fs"),path=require("node:path");
+const {rows}=require("./audit.cjs");
 const {assertObservation, makeCandidates} = require("./partial_observation_probe.cjs");
 const {copy, serialize, pinned} = require("./worker.cjs");
 const {restoreChecked, state} = require("./gate_b_probe.cjs");
@@ -13,6 +15,17 @@ const BOOSTS = ["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"];
 const SCREENS = ["reflect", "lightscreen"];
 const observedSource = f => ["SYNTHETIC", "GAME_OBSERVED"].includes(f.source);
 const known = (obs,k) => observedSource(obs.facts[k]);
+// Only one-use berries in the current Champions fixed item master are
+// accepted as a "consumed" source item in this narrow experiment.
+// Choice Scarf/Leftovers or a Knock Off removal is NOT an item consumption.
+function observedConsumableBerry(ctx,itemId){
+ const dir=path.resolve(process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,"masters"));
+ const entries=rows(fs.readFileSync(path.join(dir,
+   "Pokemon_Champions_MC_usable_held_items.csv"),"utf8"));
+ const matches=entries.filter(row=>ctx.dex.items.get(row["英語名"]).id===itemId);
+ if(matches.length!==1)throw Error("fixed Champions held item master ambiguous: "+itemId);
+ return matches[0]["区分"]==="きのみ"&&matches[0]["発動/消費"]==="対戦中1回";
+}
 function deny(reason, obsHash, info = {}) {
  return {status:"UNSUPPORTED",reason,observation_sha256:obsHash,
    gate_B:"UNSUPPORTED",game_compatibility_verified:false,
@@ -81,7 +94,7 @@ function condition(obs, ctx = context()) {
      originHash);
  // Exclude observed effects that this narrow probe cannot reconstruct.
  for(const k of ["effect_remaining_turns","opponent_mega_history",
-   "opponent_consumed_item","choice_lock","action_history"]){
+   "choice_lock","action_history"]){
    if(known(obs,k))return deny("known hidden-history field not represented: "+k,originHash);
  }
  if(!["",null].includes(f.opponent_status.value)&&known(obs,"opponent_status"))
@@ -90,17 +103,45 @@ function condition(obs, ctx = context()) {
    return deny("Mega state requires separate current-form/history reconstruction",originHash);
  if(known(obs,"pending_choice")||known(obs,"unresolved_queue"))
    return deny("queued actions cannot be overwritten",originHash);
+ // A confirmed consumed item and a confirmed current empty item jointly
+ // constrain a *hypothetical* source held item. This is not proof that the
+ // Showdown item-use event, HP restoration, or lastItem history occurred.
+ const consumedKnown=known(obs,"opponent_consumed_item");
+ const currentItemKnown=known(obs,"opponent_item");
+ // An empty currently held item without verified consumption/removal history
+ // must not return a Battle that still holds its original registered item.
+ if(currentItemKnown&&f.opponent_item.value===""&&!consumedKnown)
+   return deny("observed empty current item lacks supported consumption history",originHash);
+ if(consumedKnown&&(!currentItemKnown||f.opponent_item.value!==""))
+   return deny("consumed item requires observed empty current item",originHash);
+ const consumedId=consumedKnown ?
+   ctx.dex.items.get(f.opponent_consumed_item.value).id : null;
+ if(consumedKnown&&(!consumedId||!ctx.allowed.availableItems.has(consumedId)))
+   return deny("consumed item is absent from Champions held-item master",originHash);
+ if(consumedKnown&&!observedConsumableBerry(ctx,consumedId))
+   return deny("only consumed one-use Berries supported; not item loss/removal",originHash);
 
  // Build four legal, fixed hypothetical opponent sets WITHOUT silently treating
  // the current HP/boosts/screens as the starting-turn full snapshot.
  const hypotheticalObs=structuredClone(obs);
  for(const k of CONDITIONAL_FIELDS) hypotheticalObs.facts[k]={source:"UNKNOWN"};
+ // The same observed "now empty" item would otherwise exclude every
+ // candidate whose ORIGINAL held item was later consumed.
+ if(consumedKnown){
+   hypotheticalObs.facts.opponent_item={source:"UNKNOWN"};
+   hypotheticalObs.facts.opponent_consumed_item={source:"UNKNOWN"};
+ }
  const generated=makeCandidates(hypotheticalObs,ctx);
  const candidates=[],rejected=[...generated.rejected];
  for(const c of generated.candidates){
   // makeCandidates' base state and the original observation are never mutated.
   const baseHash=fingerprint(state(c.battle));
   const battle=copy(c.battle),active=battle.p2.active[0];
+  const originalItem=active.item;
+  if(consumedKnown&&originalItem!==consumedId){
+   rejected.push({id:c.id,reason:"hypothetical original held item differs from observed consumed item"});
+   continue;
+  }
   if(hp>active.maxhp){
    rejected.push({id:c.id,reason:"observed HP exceeds hypothetical max HP"});
    continue;
@@ -109,6 +150,18 @@ function condition(obs, ctx = context()) {
   // distinct hypotheses and cannot be promoted into observations.
   active.hp=hp;
   for(const k of BOOSTS)active.boosts[k]=boosts[k];
+  if(consumedKnown){
+    // Only the CURRENT item absence is observed. Do NOT fake eatItem/useItem,
+    // the consumption effect, lastItem, or original item-use event.
+    if(!active.setItem("")||active.item!==""||active.itemState?.id)
+      throw Error("could not remove hypothetical held item without simulated use");
+  }
+  // candidate().model can copy an observed item fact without changing the
+  // Battle itself. Verify the actual active item, not only model compatibility.
+  if(currentItemKnown&&active.item!==f.opponent_item.value){
+    rejected.push({id:c.id,reason:"actual conditioned Battle item conflicts with observed current item"});
+    continue;
+  }
   let supported=true;
   for(const name of screens){
    if(!battle.p2.addSideCondition(name,active)){
@@ -125,6 +178,8 @@ function condition(obs, ctx = context()) {
   }
   const digest=fingerprint(state(battle));
   const restored=restoreChecked(serialize(battle),digest);
+  if(currentItemKnown&&restored.p2.active[0].item!==f.opponent_item.value)
+    throw Error("restored Battle item conflicts with observed current item");
   if(fingerprint(state(restored))!==digest)
     throw Error("conditioned synthetic Battle failed serialized round trip");
   const post=copy(restored);
@@ -136,6 +191,11 @@ function condition(obs, ctx = context()) {
    continuation_sha256:continuationHash,
    conditioned_hp:active.hp,conditioned_boosts:{...active.boosts},
    conditioned_screen_ids:Object.keys(battle.p2.sideConditions).sort(),
+   conditioned_item:active.item,original_hypothesis_item:originalItem,
+   consumed_item_observation:consumedKnown?consumedId:null,
+   item_history_scope:consumedKnown?
+     "CONDITIONED_EMPTY_ITEM_ONLY_NO_CONSUMPTION_EFFECT_OR_LOG_REPLAY":
+     "NO_CONSUMPTION_EVENT_RECONSTRUCTED",
    hidden_set_origin:"FIXED_LEGAL_HYPOTHESIS_NOT_GAME_OBSERVED",
    conditional_result_scope:"ONE_ASSUMED_MOVE_BOUNDARY_AND_SEEDED_SIMULATOR_RNG"});
  }
@@ -153,12 +213,14 @@ function condition(obs, ctx = context()) {
   live_recommendation_permitted:false,
   admitted_evidence_fields:["opponent_hp_exact","opponent_boosts","screens",
     ...(screens.length?["screen_remaining_turns"]:[]),
-    "opponent_current_type","terrain","hazards"],
+    "opponent_current_type","terrain","hazards",
+    ...(consumedKnown?["opponent_item","opponent_consumed_item"]:[])],
   unrecovered_hidden_fields:["opponent_revealed_moves","opponent_remaining_pp",
-    "opponent_item","opponent_ability","opponent_ap","opponent_mega_history",
+    ...(consumedKnown?[]:["opponent_item"]),
+    "opponent_ability","opponent_ap","opponent_mega_history",
     "unresolved_queue","internal_rng","action_history",
     "effect_remaining_turns","own_side_unknown_history"],
-  assumption:"fixed registered teams, other hidden facts and move boundary are hypotheses",
+  assumption:"fixed registered teams, other hidden facts, past consumption effects and move boundary are hypotheses",
   candidate_count:candidates.length,unevaluated_candidate_count:generated.unevaluated_candidate_count,
   candidates,rejected,not_a_unique_true_state:true};
 }

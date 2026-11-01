@@ -90,6 +90,107 @@ test("unknown current HP or incomplete boosts cannot silently use initialized fu
  r=condition(onlyAttack,ctx);
  assert.match(r.reason,/all seven/);
 });
+test("observed Sitrus Berry consumption conditions only its original legal holder",()=>{
+ const obs=withHPAndBoosts({hp:70,atk:1});
+ obs.facts.opponent_item=known("");
+ obs.facts.opponent_consumed_item=known("sitrusberry");
+ const hash=fingerprint(obs),r=condition(obs,ctx);
+ assert.equal(fingerprint(obs),hash,"observed item history must be immutable");
+ assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+ assert.equal(r.candidate_count,1);
+ assert.deepEqual(r.candidates.map(c=>c.id),["B"]);
+ assert.equal(r.candidates[0].original_hypothesis_item,"sitrusberry");
+ assert.equal(r.candidates[0].conditioned_item,"");
+ assert.equal(r.candidates[0].consumed_item_observation,"sitrusberry");
+ assert.equal(r.candidates[0].item_history_scope,
+  "CONDITIONED_EMPTY_ITEM_ONLY_NO_CONSUMPTION_EFFECT_OR_LOG_REPLAY");
+ assert.equal(r.candidates[0].conditioned_hp,70,"no Berry heal effect may be invented");
+ assert.ok(r.admitted_evidence_fields.includes("opponent_consumed_item"));
+ assert.ok(r.admitted_evidence_fields.includes("opponent_item"));
+ assert.ok(!r.unrecovered_hidden_fields.includes("opponent_item"));
+ assert.ok(r.unrecovered_hidden_fields.includes("internal_rng"));
+ assert.equal(r.not_a_unique_true_state,true,
+  "one matching fixed fixture does not prove the true hidden opponent set");
+ assert.equal(r.game_compatibility_verified,false);
+ assert.equal(r.real_game_partial_state_restored,false);
+ assert.equal(r.live_recommendation_permitted,false);
+ const repeated=condition(obs,ctx);
+ assert.deepEqual(r.candidates.map(x=>x.conditioned_sha256),
+  repeated.candidates.map(x=>x.conditioned_sha256));
+ assert.deepEqual(r.candidates.map(x=>x.continuation_sha256),
+  repeated.candidates.map(x=>x.continuation_sha256));
+});
+test("observed empty current item with unknown consumed history fails closed",()=>{
+ const obs=withHPAndBoosts({hp:70});
+ obs.facts.opponent_item=known("");
+ obs.facts.opponent_consumed_item={source:"UNKNOWN"};
+ const hash=fingerprint(obs),result=condition(obs,ctx);
+ assert.equal(fingerprint(obs),hash,"rejected evidence must remain immutable");
+ assert.equal(result.status,"UNSUPPORTED");
+ assert.match(result.reason,/empty current item lacks supported consumption history/);
+ assert.equal(result.gate_B,"UNSUPPORTED");
+ assert.equal(result.game_compatibility_verified,false);
+ assert.equal(result.live_recommendation_permitted,false);
+ assert.equal(result.candidates?.length||0,0,"no stale equipped Battle may be returned");
+});
+test("every accepted hypothesis has the actual observed current held item",()=>{
+ for(const [item,consumed,expected] of [
+  ["sitrusberry",false,["B"]],
+  ["choicescarf",false,["C"]],
+  ["",true,["B"]]
+ ]){
+  const obs=withHPAndBoosts({hp:70});
+  obs.facts.opponent_item=known(item);
+  obs.facts.opponent_consumed_item=consumed?known("sitrusberry"):{source:"UNKNOWN"};
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",item||"consumed");
+  assert.deepEqual(r.candidates.map(c=>c.id),expected);
+  assert.ok(r.candidates.every(c=>c.conditioned_item===item),
+   "active.item must match the current observation for every accepted candidate");
+ }
+});
+test("consumed-item evidence cannot override unknown or nonempty current item",()=>{
+ for(const value of [{source:"UNKNOWN"},known("sitrusberry")]){
+  const obs=withHPAndBoosts();
+  obs.facts.opponent_consumed_item=known("sitrusberry");
+  obs.facts.opponent_item=value;
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED");
+  assert.match(r.reason,/requires observed empty current item/);
+ }
+});
+test("only Champions one-use Berries are accepted as consumed; nonconsumable and absent holders fail",()=>{
+ for(const item of ["choicescarf","leftovers"]){
+  const obs=withHPAndBoosts({hp:70});
+  obs.facts.opponent_item=known("");
+  obs.facts.opponent_consumed_item=known(item);
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED",item);
+  assert.match(r.reason,/only consumed one-use Berries supported/);
+ }
+ // Oran Berry is consumable in the Champions master, but none of the four
+ // legal registered hypotheses originally held it. Do not fabricate a holder.
+ const missing=withHPAndBoosts({hp:70});
+ missing.facts.opponent_item=known("");
+ missing.facts.opponent_consumed_item=known("oranberry");
+ const denied=condition(missing,ctx);
+ assert.equal(denied.status,"UNSUPPORTED");
+ assert.equal(denied.rejected.length,4);
+ assert.match(denied.reason,/no supported legal hypothesis/);
+ const invalid=withHPAndBoosts();
+ invalid.facts.opponent_item=known("");
+ invalid.facts.opponent_consumed_item=known("imaginary_item");
+ assert.throws(()=>condition(invalid,ctx),/consumed item absent from Champions master/);
+});
+test("a known consumed item plus an unrepresented effect history remains unsupported",()=>{
+ const obs=withHPAndBoosts();
+ obs.facts.opponent_item=known("");
+ obs.facts.opponent_consumed_item=known("sitrusberry");
+ obs.facts.effect_remaining_turns=known({encore:2});
+ const r=condition(obs,ctx);
+ assert.equal(r.status,"UNSUPPORTED");
+ assert.match(r.reason,/known hidden-history field/);
+});
 test("known terrain, hazards and changed types fail closed rather than contradict the Battle",()=>{
  const obs=withHPAndBoosts();
  for(const [field,value,pattern] of [
@@ -116,11 +217,11 @@ test("unknown terrain/hazards/type must not become default absence or base type"
    assert.deepEqual(r.missing_observed_fields,[field]);
  }
 });
+// Consumed Berries are handled only with a separately observed current empty item.
 test("known but unmodeled effect history is not silently ignored",()=>{
  for(const [field,value] of [
   ["effect_remaining_turns",{leechseed:2}],
   ["opponent_mega_history",{previous_form:"garchomp"}],
-  ["opponent_consumed_item","sitrusberry"],
   ["choice_lock","earthquake"],
   ["action_history",["switch"]]
  ]){
