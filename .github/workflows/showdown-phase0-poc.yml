@@ -33,7 +33,7 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs test_phase0_final_adoption_report.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_observation_conditioned_branch_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs test_phase0_final_adoption_report.cjs
       - name: Audit 16 actual executed synthetic Earthquake HP deltas and independent source descriptions
         shell: bash
         run: |
@@ -852,7 +852,7 @@ jobs:
         shell: pwsh
         working-directory: poc/showdown_phase0
         run: |
-          node --test test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_cross_process_synthetic_probe.cjs
+          node --test test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_cross_process_synthetic_probe.cjs test_observation_conditioned_branch_probe.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Windows native Showdown Node tests failed' }
       - name: Diagnose three native Windows Node process replays
         shell: pwsh
