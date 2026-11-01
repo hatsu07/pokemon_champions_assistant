@@ -62,6 +62,27 @@ function setupCase(c,referenceRow,ctx,seed){
      c.id+" "+JSON.stringify({actualSpeeds,referenceRow}));
  return {b,p1,p2,actualSpeeds};
 }
+// Validate that every |cant| belongs to a paralyzed preturn actor, not another cause.
+function paralysisInterruptions(events,c,p1,p2,seed){
+ const actors={p1:{pokemon:p1,status_expected:c.g_par},
+   p2:{pokemon:p2,status_expected:c.m_par}};
+ const cant=events.filter(line=>line.startsWith("|cant|"));
+ if(cant.length>2)throw Error("unexpected number of interruption events");
+ const seen=new Set(),result=[];
+ for(const event of cant){
+   const m=/^\|cant\|(p[12])a: ([^|]+)\|par$/.exec(event);
+   if(!m)throw Error("non-paralysis or malformed blocked turn: "+event);
+   const [,side,name]=m,actor=actors[side];
+   if(!actor?.status_expected||actor.pokemon.status!=="par"||
+      actor.pokemon.name!==name||seen.has(side))
+     throw Error("blocked actor lacks paralyzed preturn identity: "+event);
+   if(events.some(x=>x.startsWith("|move|"+side+"a: ")))
+     throw Error("paralysis-blocked actor also logged an executed move");
+   seen.add(side);
+   result.push({seed,side,pokemon:name,status_before:"par",event});
+ }
+ return result;
+}
 function execute(c,ref,ctx,seed){
  const {b,p1,p2,actualSpeeds}=setupCase(c,ref,ctx,seed);
  try{
@@ -71,12 +92,12 @@ function execute(c,ref,ctx,seed){
    const at=b.log.length;
    b.makeChoices(choice1,choice2);
    const events=b.log.slice(at);
-   const prevented=events.filter(x=>/^\|cant\|p[12]a:/.test(x)&&x.includes("|par"));
+   const prevented=paralysisInterruptions(events,c,p1,p2,seed);
    if(prevented.length){
-     // Full paralysis can prevent a move without invalidating its planned priority.
-     if(prevented.length>2)throw Error("unexpected number of paralysis interruptions");
-     return {seed,kind:"FULL_PARALYSIS_INTERRUPTED",events:events.filter(x=>
-       x.startsWith("|move|")||x.startsWith("|cant|")),actualSpeeds};
+     // Full paralysis prevents order comparison; retain a verifiable witness.
+     return {seed,kind:"FULL_PARALYSIS_INTERRUPTED",interruptions:prevented,
+       events:events.filter(x=>x.startsWith("|move|")||x.startsWith("|cant|")),
+       actualSpeeds};
    }
    const observed=observeMoves(events,moves,ctx.dex);
    return {seed,kind:"BOTH_MOVES_EXECUTED",observed,actualSpeeds};
@@ -121,12 +142,20 @@ function run(){
  }
  // This witnesses the engine's paralyzed/move-failed path; no empirical rate inference.
  const sampleCase=LEDGER.cases[0],sampleRef=reference(sampleCase);
- let interrupted=0,uninterrupted=0;
+ let interrupted=0,uninterrupted=0,witness=null;
  for(let seed=1;seed<=NUM_SEEDS;seed++){
    const result=execute(sampleCase,sampleRef,ctx,seed);
-   if(result.kind==="FULL_PARALYSIS_INTERRUPTED")interrupted++;
-   else uninterrupted++;
+   if(result.kind==="FULL_PARALYSIS_INTERRUPTED"){
+     interrupted++;
+     witness ||=result.interruptions.find(x=>x.side==="p2"&&
+       x.pokemon==="Metagross"&&x.status_before==="par");
+     if(result.interruptions.some(x=>x.side!=="p2"))
+       throw Error("unreviewed actor interrupted in paralysis sample");
+   }else uninterrupted++;
  }
+ if(!witness||!Number.isInteger(witness.seed)||witness.seed<1||
+    witness.seed>NUM_SEEDS||interrupted<1||uninterrupted<1)
+   throw Error("no real engine paralysis interruption AND executed-turn witnesses in fixed seed sample");
  const counts={SOURCE_SPEC_MATCH:results.filter(x=>x.status==="SOURCE_SPEC_MATCH").length,
    SOURCE_SPEC_MISMATCH:results.filter(x=>x.status==="SOURCE_SPEC_MISMATCH").length,
    SOURCE_UNKNOWN_MODIFIER_ORDER:results.filter(x=>x.status==="SOURCE_UNKNOWN_MODIFIER_ORDER").length};
@@ -134,7 +163,9 @@ function run(){
    format:FORMAT,regulation:"M-C",evidence:LEDGER.evidence,
    checked_move_priorities:checkedPriority,source_full_paralysis_rate:"1/8",
    pinned_implementation:source,full_paralysis_sample:
-     {synthetic_turns:NUM_SEEDS,interrupted,uninterrupted,
+     {synthetic_turns:NUM_SEEDS,interrupted,uninterrupted,witness,
+      interruption_path_observed:true,non_interrupted_path_observed:true,
+      sample_case_id:sampleCase.id,
       empirical_probability_verified:false,scope:"PINNED_SEEDS_NOT_DEVICE_OR_PROBABILITY_PROOF"},
    registered_six_selected_three:true,case_count:results.length,counts,results,
    game_verified_turn_count:0,private_golden_read:false,live_use_approved:false,
@@ -145,4 +176,4 @@ if(require.main===module){
    if(r.counts.SOURCE_SPEC_MISMATCH)process.exitCode=1;
  }catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
-module.exports={run,checkPinnedRateSource,setupCase,execute,NUM_SEEDS};
+module.exports={run,checkPinnedRateSource,setupCase,execute,paralysisInterruptions,NUM_SEEDS};
