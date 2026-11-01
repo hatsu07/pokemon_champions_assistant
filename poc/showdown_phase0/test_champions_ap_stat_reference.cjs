@@ -75,7 +75,7 @@ test("actual pinned Champions battle stats compare on legal registered six and s
  assert.equal(report.selected_form_scope,"TWO_BASE_SPECIES_ONLY");
  assert.equal(report.published_speed_reference_checks,14);
  assert.equal(report.counts.SOURCE_SPEC_MISMATCH,0);
- assert.equal(report.counts.SOURCE_SPEC_MATCH,192);
+ assert.equal(report.counts.SOURCE_SPEC_MATCH,384);
  assert.equal(report.registered_six_member_teams,true);
  assert.equal(report.selected_three_member_teams,true);
  assert.ok(report.unverified.length>0);
