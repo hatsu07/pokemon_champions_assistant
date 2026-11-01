@@ -354,5 +354,5 @@ if (require.main === module) {
   try {process.stdout.write(JSON.stringify(run()) + "\n");}
   catch (e) {process.stdout.write(JSON.stringify({status: "NOT_RUN", reason: e.message}) + "\n"); process.exitCode = 2;}
 }
-module.exports = {run, assertManifest, summarize, runB1, runB2, restoreChecked,
+module.exports = {run, assertManifest, assertPinnedMasterSets, summarize, runB1, runB2, restoreChecked,
   state, same, diff, resolveFrom, actionsFor, actionId, masterHashes, GAP_FIELDS};
