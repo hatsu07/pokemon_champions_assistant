@@ -128,17 +128,20 @@ test("consumed-item evidence cannot override unknown or nonempty current item",(
   assert.match(r.reason,/requires observed empty current item/);
  }
 });
-test("contradictory or unsupported consumed-item histories never yield a positive branch",()=>{
- const obs=withHPAndBoosts({hp:70});
- obs.facts.opponent_item=known("");
- obs.facts.opponent_consumed_item=known("choicescarf");
- const r=condition(obs,ctx);
- assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
- assert.deepEqual(r.candidates.map(c=>c.id),["C"]);
- assert.equal(r.candidates[0].conditioned_item,"");
+test("only Champions one-use Berries are accepted as consumed; nonconsumable and absent holders fail",()=>{
+ for(const item of ["choicescarf","leftovers"]){
+  const obs=withHPAndBoosts({hp:70});
+  obs.facts.opponent_item=known("");
+  obs.facts.opponent_consumed_item=known(item);
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED",item);
+  assert.match(r.reason,/only consumed one-use Berries supported/);
+ }
+ // Oran Berry is consumable in the Champions master, but none of the four
+ // legal registered hypotheses originally held it. Do not fabricate a holder.
  const missing=withHPAndBoosts({hp:70});
  missing.facts.opponent_item=known("");
- missing.facts.opponent_consumed_item=known("leftovers");
+ missing.facts.opponent_consumed_item=known("oranberry");
  const denied=condition(missing,ctx);
  assert.equal(denied.status,"UNSUPPORTED");
  assert.equal(denied.rejected.length,4);
