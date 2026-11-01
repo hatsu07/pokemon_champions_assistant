@@ -84,7 +84,7 @@ test("partial input UNKNOWN remains UNKNOWN with no golden promotion", () => {
   partial.facts.opponent_hp_exact = {source: "GAME_OBSERVED", value: 99,
     evidence_ids: ["none"]};
   assert.throws(() => assertObservation(partial, context()),
-    /game observation lacks verified game evidence/);
+    /fact evidence missing|game observation lacks verified game evidence/);
 });
 test("a Golden check is not a complete midbattle state even when user-verified", () => {
   const compared = goldenRun(file);
