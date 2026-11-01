@@ -1,0 +1,114 @@
+{
+  "schema": "phase0-gate-a-evidence-map-v1",
+  "regulation": "M-C",
+  "scope": "SYNTHETIC_SOURCE_ONLY",
+  "feature_map": [
+    {
+      "feature": "AP and nature",
+      "static_groups": [
+        "species_base_stats"
+      ],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "STAT_ROUNDING_SPEED_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for AP and nature"
+    },
+    {
+      "feature": "move power and PP",
+      "static_groups": [
+        "move_coverage",
+        "move_power",
+        "move_pp"
+      ],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "POWER_AND_PP_CAP_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for move power and PP"
+    },
+    {
+      "feature": "priority",
+      "static_groups": [
+        "move_priority"
+      ],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "MOVE_ORDER_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for priority"
+    },
+    {
+      "feature": "damage RNG and critical",
+      "static_groups": [],
+      "rule_ids": [],
+      "wiki_damage": true,
+      "risk": "DAMAGE_ROLL_AND_CRITICAL_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for damage RNG and critical"
+    },
+    {
+      "feature": "move accuracy",
+      "static_groups": [
+        "move_accuracy"
+      ],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "ACCURACY_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for move accuracy"
+    },
+    {
+      "feature": "ability and item",
+      "static_groups": [
+        "item_coverage"
+      ],
+      "rule_ids": [
+        "PROTEAN_FIRST_MOVE_TYPE",
+        "KNOCK_OFF_HELD_ITEM",
+        "WHITE_HERB_ON_LOWERED_STATS",
+        "CHOICE_SCARF_MOVE_LOCK"
+      ],
+      "wiki_damage": false,
+      "risk": "EFFECT_TIMING_AND_COMBINATIONS_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for ability and item"
+    },
+    {
+      "feature": "mega and form",
+      "static_groups": [
+        "species_base_stats",
+        "species_types"
+      ],
+      "rule_ids": [
+        "PROTEAN_MEGA_GRENINJA_RESET"
+      ],
+      "wiki_damage": false,
+      "risk": "MEGA_TYPE_SPEED_ABILITY_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for mega and form"
+    },
+    {
+      "feature": "weather screens hazards",
+      "static_groups": [],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "FIELD_DURATION_AND_HAZARDS_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for weather screens hazards"
+    },
+    {
+      "feature": "status and boosts",
+      "static_groups": [],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "STATUS_AND_STAGE_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for status and boosts"
+    },
+    {
+      "feature": "regulation learnsets",
+      "static_groups": [
+        "species_coverage",
+        "pokemon_link",
+        "learnset_membership",
+        "move_coverage"
+      ],
+      "rule_ids": [],
+      "wiki_damage": false,
+      "risk": "LIVE_REGULATION_UNVERIFIED",
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for regulation learnsets"
+    }
+  ]
+}

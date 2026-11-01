@@ -1,5 +1,16 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## Gate A・Champions仕様別の根拠と未検証範囲（Issue #139）
+
+`gate_a_evidence_inventory.cjs` は `golden_gate_requirements.csv` のGate A 10項目を正本として、固定ChampionsマスターとShowdownの静的差分、出典から**独立**に計算したWiki単発ダメージ例、Bulbapedia Champions記述由来の5契約・18イベントを機能別に照合する。ゲームの実測や未公開対戦ログをこのコマンドに読み込まない。
+
+`gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。静的比較が一致しても `SOURCE_CHECKED_ONLY`、Wiki数式が一致しても `WIKI_SPEC_MATCH` に過ぎず、実ゲームに一致したことではない。差分は `SOURCE_CONFLICT` として残し、固定マスターとShowdownのどちらを正とするかは追加根拠なく判定しない。イベントで `INCONCLUSIVE` だった条件も解消扱いにしない。
+
+非公開ローカルの実ゲームGolden 6ケース/11チェックは **当該runでは読まない**ため、`game_verified_cases_this_run=0` は過去の実ゲーム観測を否定する意味ではない。ユーザー本人による既存Goldenの独立照合・証拠紐付けは別途必要。
+
+既存のテスト対象が減少した、検証ケースの状態が変わった、出典契約が未レビューで追加された場合はfail-closed。各機能の `feature_compatibility=UNKNOWN`、Gate A=UNKNOWN、B=UNSUPPORTED、総合NO_GOを維持する。**本番LIVEの確定KO・安全受け出し・行動順保証への転用は不可**。Phase 0のGate B・運用・採否レポートも別作業として残る。
+
+
 ## 固定ShowdownをLinux・Windows Nodeで3プロセス再実行（Issue #139）
 
 PR #157レビューP2対応：プロセス間の署名照合に先立ち、固定4マスターのファイル名・SHA256形式、127ケースそれぞれの完全状態・粗視化状態・登録チーム・両分岐・再実行のSHA256の存在と64桁小文字16進形式を個別検証する。いずれか欠落・不正長なら、同じ壊れた値が3プロセスで一致しても失敗する。`.gitattributes`のみの変更もPhase 0 CI自動実行の対象とした。

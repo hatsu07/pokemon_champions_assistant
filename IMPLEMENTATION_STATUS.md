@@ -1,5 +1,10 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 Gate A仕様別証拠台帳（2026-11-01）
+
+- 受け入れ要件のGate A 10項目ごとに固定マスター静的照合、Wiki独立数式の単発例、5契約18合成イベント、未観測の高リスク範囲を分類する。実機Goldenは非公開でCI未読込（このrunの実機検証件数0）。出典一致・Wiki一致・合成イベントの成功をゲーム一致に昇格しない。すべてfeature UNKNOWN、Gate A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。
+
+
 ## Issue #139 PR #157の再レビューP2対応（2026-11-01）
 
 - 3プロセスのハッシュ一致だけでは必須フィールドの欠落を見落とすため、固定4マスター名と全SHA、127ケースごとの完全状態・粗視化状態・登録チーム・3分岐/再実行SHAの存在・形式を個別確認。欠落/不正長の負例テストを追加。`.gitattributes`単独変更でもLinux/Windows Phase 0 CIを起動する。Gate A=UNKNOWN、Gate B=UNSUPPORTED、NO_GOを維持。
