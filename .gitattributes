@@ -1,0 +1,3 @@
+# Champions fixed-master CSVs are byte-identity inputs to Phase 0.
+# Git autocrlf on Windows must never rewrite LF/CRLF or change their SHA256.
+masters/Pokemon_Champions_MC_*.csv -text

@@ -543,16 +543,21 @@ jobs:
           if ((git rev-parse HEAD).Trim() -ne $env:EXPECTED_HEAD) {
             throw 'Phase 0 checkout does not match expected HEAD'
           }
-          foreach ($file in @(
-            'Pokemon_Champions_MC_move_master.csv',
-            'Pokemon_Champions_MC_usable_pokemon.csv',
-            'Pokemon_Champions_MC_pokemon_learnsets_linked.csv',
-            'Pokemon_Champions_MC_usable_held_items.csv'
-          )) {
-            if (-not (Test-Path (Join-Path 'masters' $file))) {
-              throw 'Champions master missing'
+          $expected = @{
+            'Pokemon_Champions_MC_move_master.csv' = '39497369e1f47891da453894f256bef6c44085abea4c5c94b8288c05b31f06a5'
+            'Pokemon_Champions_MC_usable_pokemon.csv' = '5a2aac25586a2d45797bec18b9a81958e2eee5544beb32d39ea6cf93d720e3ee'
+            'Pokemon_Champions_MC_pokemon_learnsets_linked.csv' = '30305983e5ac676be27fc2f148e2326963830f2ab201845e812c93c008ebabe6'
+            'Pokemon_Champions_MC_usable_held_items.csv' = 'fbf36aeff9906cbdf4e82bae575340d1df640187ce469ae9d31194a92faa16c8'
+          }
+          foreach ($file in $expected.Keys) {
+            $source = Join-Path 'masters' $file
+            if (-not (Test-Path $source)) { throw 'Champions master missing' }
+            $actual = (Get-FileHash -Path $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected[$file]) {
+              throw "Pinned Champions master bytes differ on Windows: $file ($actual)"
             }
           }
+          Write-Host 'Pinned Champions masters verified byte-for-byte on Windows'
       - uses: actions/setup-node@v4
         with:
           node-version: '22.18.0'

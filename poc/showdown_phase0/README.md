@@ -2,6 +2,9 @@
 
 ## 固定ShowdownをLinux・Windows Nodeで3プロセス再実行（Issue #139）
 
+固定Champions技・種族・習得技・道具CSVのGitチェックアウト時の改行変換を、ルート`.gitattributes`の`-text`で禁止。Windowsジョブはテスト前に4ファイルのSHA256を固定期待値と直接照合し、異なる場合は本体のバリデーション失敗と混同せず即停止する。これはマスター内容の変更でも期待値の修正でもない。
+
+
 `cross_process_synthetic_probe.cjs`は登録6→選出3から作成した固定127合成状態を、新しいNode子プロセス3個でそれぞれ検証し、ケースごとの完全スナップショットSHA・粗視化状態SHA・両分岐と再実行SHA・固定マスターSHAを比較する。**127種類×3回=381合成実行**であり、381件の独立した対戦例ではない。
 
 Windowsでは固定Showdown commit `ccfaa20f32af363569cd21a9d501b2bc1ded26b1` をチェックアウトして`npm ci && npm run build`したNode上で実行する（デスクトップGUIのCIとは別）。Linuxでは既存固定Dockerイメージ内で実行。プロセス単位の所要時間は子プロセス起動・moduleロード・127局面の検証を含むが、Docker/Windowsアプリの起動・UIやIPCは含まない。P50/P95/P99は3プロセスのみの探索的測定。3プロセスの同一結果は独立したCI run間の再現性、異OS間の同一ハッシュ、Champions実ゲーム計算仕様の一致を証明しない。
