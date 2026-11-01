@@ -4,6 +4,8 @@ const fs=require("node:fs"),path=require("node:path");
 const {compare}=require("./audit.cjs");
 const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
+const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
+const {LEDGER:TURN_LEDGER,referenceCase}=require("./champions_turn_order_reference.cjs");
 const {main:modifier,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,
   REVIEWED_PINNED_DIVERGENCE,WITNESS_ID}=require("./champions_damage_modifier_probe.cjs");
 const MAP=require("./gate_a_evidence_map.json");
@@ -142,9 +144,68 @@ function checkModifierEvidence(m){
    throw Error("modifier source discrepancy count changed");
  return {conflicts,rollDifferences};
 }
-function summarize(a,w,e,map=MAP,m=modifier()){
+// A source-only synthetic observation, NOT Champions device/Golden validation.
+function checkTurnOrderEvidence(t){
+ if(t?.schema!=="phase0-champions-turn-order-diagnostic-v1"||
+    t.pinned_sha!==PIN||t.format!==FORMAT||t.regulation!=="M-C"||
+    t.evidence!=="CHAMPIONS_SPECIFIC_SECONDARY_SOURCE_AND_FIXED_MASTER_NOT_DEVICE"||
+    t.gate_A!=="UNKNOWN"||t.gate_B!=="UNSUPPORTED"||t.adoption!=="NO_GO"||
+    t.game_verified_turn_count!==0||t.private_golden_read!==false||
+    t.official_or_device_confirmed!==false||t.live_use_approved!==false||
+    t.registered_six_member_teams!==true||t.selected_three_member_teams!==true||
+    t.checked_move_priority_count!==5||
+    t.scenarios!==TURN_LEDGER.cases.length||
+    t.pinned_executed_turn_count!==TURN_LEDGER.cases.length||
+    t.results?.length!==TURN_LEDGER.cases.length||
+    JSON.stringify(t.source_ids)!==JSON.stringify(TURN_LEDGER.sources.map(x=>x.id)))
+   throw Error("turn-order synthetic source evidence contract changed");
+ let matches=0,ties=0,mismatches=0;
+ for(let i=0;i<TURN_LEDGER.cases.length;i++){
+   const c=TURN_LEDGER.cases[i],row=t.results[i],ref=referenceCase(c);
+   const isTie=ref.expected_first==="UNRESOLVED_TIE";
+   const status=isTie?"INCONCLUSIVE_SPEED_TIE":"SOURCE_SPEC_MATCH";
+   const observedMoves={
+     p1:{id:TURN_LEDGER.reviewed_moves.find(x=>x.species==="Garchomp"&&x.name===c.p1)?.name,
+       name:c.p1,priority:ref.p1_priority},
+     p2:{id:TURN_LEDGER.reviewed_moves.find(x=>x.species==="Metagross"&&x.name===c.p2)?.name,
+       name:c.p2,priority:ref.p2_priority}
+   };
+   // Validate names AND Champions MoveKeys, no simulator implementation imported here.
+   const {moveKey}=require("./champions_move_key.cjs");
+   observedMoves.p1.id=moveKey(c.p1);
+   observedMoves.p2.id=moveKey(c.p2);
+   if(!row||row.id!==c.id||row.expected_first!==ref.expected_first||
+      row.status!==status||!["p1","p2"].includes(row.observed_first)||
+      (!isTie&&row.observed_first!==ref.expected_first)||
+      row.comparison_scope!==(isTie?"TIE_OUTCOME_NOT_A_SINGLE_VALUE_ASSERTION":
+          "EXECUTED_PINNED_TURN_VS_SECONDARY_SOURCE")||
+      row.observed_sequence?.length!==2||
+      row.observed_sequence[0]!==row.observed_first||
+      row.observed_sequence[1]===(row.observed_first)||
+      JSON.stringify(row.executed_moves)!==JSON.stringify(observedMoves)||
+      row.p1_base_speed!==ref.p1_base_speed||row.p2_base_speed!==ref.p2_base_speed||
+      row.p1_effective_speed!==ref.p1_effective_speed||
+      row.p2_effective_speed!==ref.p2_effective_speed||
+      row.p1_priority!==ref.p1_priority||row.p2_priority!==ref.p2_priority||
+      JSON.stringify(row.source_only_preconditions)!==
+        JSON.stringify({synthetic_speed_boost:c.m_stage,
+          synthetic_trick_room:c.trick_room,scarf_held:c.m_scarf}))
+     throw Error("turn-order reviewed source case drift: "+c.id);
+   matches+=Number(row.status==="SOURCE_SPEC_MATCH");
+   ties+=Number(row.status==="INCONCLUSIVE_SPEED_TIE");
+   mismatches+=Number(row.status==="SOURCE_SPEC_MISMATCH");
+ }
+ if(matches!==9||ties!==1||mismatches!==0||
+    t.counts?.SOURCE_SPEC_MATCH!==matches||
+    t.counts?.SOURCE_SPEC_MISMATCH!==mismatches||
+    t.counts?.INCONCLUSIVE_SPEED_TIE!==ties)
+   throw Error("turn-order source status counts changed");
+ return {matches,ties};
+}
+function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder()){
  checkMap(map);checkEvidence(a,w,e,map);
  const modifierCounts=checkModifierEvidence(m);
+ const turnCounts=checkTurnOrderEvidence(t);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
@@ -163,6 +224,12 @@ function summarize(a,w,e,map=MAP,m=modifier()){
        modifier_comparison_scope:"SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE",
        modifier_diagnostic:"champions_damage_modifier_probe.cjs"
      }:{}),
+     ...(f.feature==="priority"?{
+       turn_order_source_matches:turnCounts.matches,
+       turn_order_inconclusive_ties:turnCounts.ties,
+       turn_order_scope:"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE",
+       turn_order_diagnostic:"champions_turn_order_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
@@ -177,6 +244,10 @@ function summarize(a,w,e,map=MAP,m=modifier()){
    known_modifier_roll_discrepancies:modifierCounts.rollDifferences,
    modifier_comparison_scope:"SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE",
    modifier_diagnostic:"champions_damage_modifier_probe.cjs",
+   turn_order_source_matches:turnCounts.matches,
+   turn_order_inconclusive_ties:turnCounts.ties,
+   turn_order_scope:"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE",
+   turn_order_diagnostic:"champions_turn_order_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -187,4 +258,5 @@ if(require.main===module){
  try{process.stdout.write(JSON.stringify(run())+"\n");}
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
-module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,
+ checkTurnOrderEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
