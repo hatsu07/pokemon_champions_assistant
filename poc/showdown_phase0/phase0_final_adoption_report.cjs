@@ -165,7 +165,9 @@ function load(files){
 if(require.main===module){
  try{
   const args=process.argv.slice(2);requireValue(args.length===INPUTS.length,"five positional JSON files");
-  process.stdout.write(JSON.stringify(load(Object.fromEntries(INPUTS.map(([k],i)=>[k,args[i]])))+"\n");
+  const filenames=Object.fromEntries(INPUTS.map(([key],i)=>[key,args[i]]));
+  const report=load(filenames);
+  process.stdout.write(JSON.stringify(report)+"\n");
  }catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2}
 }
 module.exports={evaluate,load,PIN,FORMAT,INPUTS};
