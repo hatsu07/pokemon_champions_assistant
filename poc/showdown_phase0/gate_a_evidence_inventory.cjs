@@ -249,7 +249,8 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),we
      ...(["weather screens hazards","priority","ability and item"].includes(f.feature)?{
        weather_source_order_matches:weatherCounts.matches,
        weather_unknown_compound_rounding:weatherCounts.rounding_unknown,
-       weather_duration_source_conflicts:weatherCounts.source_conflicts,
+       weather_item_extension_source_agreement_unexecuted:weatherCounts.source_agreed_unexecuted,
+       weather_same_kind_reapply_unexecuted:weatherCounts.same_weather_reapply_unexecuted,
        weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
        weather_scope:weatherCounts.scope,
        weather_diagnostic:"champions_weather_speed_probe.cjs"
@@ -279,7 +280,8 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),we
    paralysis_diagnostic:"champions_paralysis_probe.cjs",
    weather_source_order_matches:weatherCounts.matches,
    weather_unknown_compound_rounding:weatherCounts.rounding_unknown,
-   weather_duration_source_conflicts:weatherCounts.source_conflicts,
+   weather_item_extension_source_agreement_unexecuted:weatherCounts.source_agreed_unexecuted,
+       weather_same_kind_reapply_unexecuted:weatherCounts.same_weather_reapply_unexecuted,
    weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
    weather_scope:weatherCounts.scope,
    weather_diagnostic:"champions_weather_speed_probe.cjs",
