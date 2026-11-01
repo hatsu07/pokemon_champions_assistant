@@ -234,6 +234,13 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
        turn_order_scope:"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE",
        turn_order_diagnostic:"champions_turn_order_probe.cjs"
      }:{}),
+     ...(["priority","status and boosts"].includes(f.feature)?{
+       paralysis_source_order_matches:paralysisCounts.matches,
+       paralysis_unknown_compound_rounding:paralysisCounts.rounding_unknown,
+       paralysis_scope:paralysisCounts.scope,
+       paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
+       paralysis_diagnostic:"champions_paralysis_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
