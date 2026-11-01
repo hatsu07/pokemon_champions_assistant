@@ -31,7 +31,48 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs
+      - name: Diagnose representative synthetic conditions, duplicate guards and stage performance
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 representative_states_probe.cjs > phase0-representative-states.json
+          python3 - <<'PY'
+          import json
+          with open('phase0-representative-states.json', encoding='utf-8') as stream:
+              report = json.load(stream)
+          with open('poc/showdown_phase0/representative_states_cases.json', encoding='utf-8') as stream:
+              manifest = json.load(stream)
+          assert report['schema'] == 'phase0-representative-synthetic-states-v1'
+          assert report['pinned_showdown_sha'] == 'ccfaa20f32af363569cd21a9d501b2bc1ded26b1'
+          assert report['format'] == 'gen9championsbssregmc'
+          assert (report['gate_A'], report['gate_B'], report['adoption']) == ('UNKNOWN', 'UNSUPPORTED', 'NO_GO')
+          assert report['evidence_class'] == 'SYNTHETIC_ONLY'
+          assert report['case_count'] == len(manifest['cases']) == 127
+          assert report['distinct_complete_states'] == 127
+          assert report['distinct_tactical_states'] == 127
+          assert report['distinct_matchups'] == 18
+          assert report['distinct_mechanisms'] == 8
+          assert report['counts'] == {'PASS_SYNTHETIC':127, 'UNSUPPORTED':0}
+          assert report['representative_100_synthetic_states_met'] is True
+          assert report['native_game_verification'] is False
+          assert report['windows_e2e_verified'] is False
+          assert report['repetitions'] == 0
+          assert [(r['case_id'],r['mechanism'],r['status']) for r in report['results']] == [
+              (c['id'],c['mechanism'],c['expected_status']) for c in manifest['cases']]
+          for entry in report['results']:
+              assert entry['branch']['source_unchanged']
+              assert entry['branch']['repeated_action_identical']
+              assert entry['branch']['distinct_outcome']
+              print('REPRESENTATIVE_CASE_JSON=' + json.dumps({k:entry.get(k) for k in (
+                  'case_id','mechanism','pair_id','evidence_class','status','current_species',
+                  'state_sha256','tactical_sha256','setup_provenance','reason')}, sort_keys=True))
+          print('Representative synthetic coverage:', report['counts'])
+          print('Full state / tactical / matchups / mechanisms:',
+              report['distinct_complete_states'], report['distinct_tactical_states'],
+              report['distinct_matchups'], report['distinct_mechanisms'])
+          print('Representative synthetic stage latency:', report['timing_ms'])
+          print('Representative synthetic process memory:', report['memory_bytes'])
+          PY
       - name: Diagnose registered six, selected three and restored branches
         shell: bash
         run: |
