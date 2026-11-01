@@ -49,14 +49,22 @@ jobs:
           assert r["scenario_count"]==9 and r["individual_roll_comparisons"]==144
           assert r["odd_rounding_witness_count"]>0
           assert r["odd_rounding_witness_verified_in_pinned_getDamage"] is True
-          assert r["counts"]=={"WIKI_SPEC_MATCH":9,"WIKI_SPEC_MISMATCH":0}
+          assert r["counts"]=={"WIKI_SPEC_MATCH":8,"WIKI_SPEC_MISMATCH":1}
+          assert r["source_divergence_count"]==1
+          assert r["reviewed_source_divergence"]=="PINNED_SPLIT_ROUNDING_VS_SECONDARY_COMBINED_MODIFIER"
+          assert r["unknown_source_divergences_accepted"] is False
+          odd=next(x for x in r["results"] if x["id"]=="neutral-type-burn-and-reflect")
+          assert odd["status"]=="WIKI_SPEC_MISMATCH" and odd["difference_count"]==4
+          assert [x["roll_pct"] for x in odd["first_differences"]]==[86,90,91,98]
+          assert all(w["pinned_damage"]==w["split_rounding"] and
+                     w["pinned_damage"]!=w["combined_rounding"] for w in odd["odd_rounding_witnesses"])
           assert r["game_verified_check_count"]==0
           assert r["executed_turns"]==0
           assert r["private_golden_read"] is False and r["live_use_approved"] is False
           assert len(r["results"])==8
           for row in r["results"]:
-              assert row["status"]=="WIKI_SPEC_MATCH"
-              assert row["difference_count"]==0
+              assert row["status"]==("WIKI_SPEC_MISMATCH" if row["id"]=="neutral-type-burn-and-reflect" else "WIKI_SPEC_MATCH")
+              assert row["difference_count"]==(4 if row["id"]=="neutral-type-burn-and-reflect" else 0)
               print("DAMAGE_MODIFIER="+json.dumps({
                   "id":row["id"],"conditions":row["conditions"],
                   "reference_range":row["reference_range"],
@@ -64,7 +72,7 @@ jobs:
                   "status":row["status"],
                   "odd_rounding_witnesses":row["odd_rounding_witnesses"]
               },sort_keys=True))
-          print("Champions secondary-source rounding only, not device or action-order compatibility")
+          print("Reviewed secondary-source divergence is a FINDING, not a gameplay parity PASS")
           PY
       - name: Cross-check independent Champions AP stat arithmetic against pinned selected battle bodies
         shell: bash

@@ -194,9 +194,23 @@
     "Other Pokémon/forms/moves, including weather-specific fire and water moves",
     "Probabilities for critical, move accuracy, random seed distribution, real-game KO threshold",
     "Burn and Reflect application timing in an executed live turn",
-    "Additional neutral-effectiveness Blastoise fixture is derived from sourced formula and fixed Champions master; not a published damage numeric example or game observation"
+    "Additional neutral-effectiveness Blastoise fixture is derived from sourced formula and fixed Champions master; not a published damage numeric example or game observation",
+    "Pinned simulator separately rounds burn and Reflect at four odd pre-final-damage rolls, unlike combined rounding in secondary Champions source. Device behavior is unknown."
   ],
   "private_golden_read": false,
   "game_verified_check_count": 0,
-  "live_use_approved": false
+  "live_use_approved": false,
+  "known_pinned_discrepancy": {
+    "id": "neutral-type-burn-and-reflect",
+    "classification": "SECONDARY_SOURCE_MISMATCH_NOT_DEVICE_PARITY",
+    "witness_roll_pct": [
+      86,
+      90,
+      91,
+      98
+    ],
+    "pinned_behavior": "SEPARATELY_ROUNDED_HALF_DAMAGE_FACTORS",
+    "reference_behavior": "COMBINED_QUARTER_FINAL_MODIFIER",
+    "preserved_unresolved_reason": "Champions secondary wiki and pinned Showdown disagree; neither is confirmed as actual game truth"
+  }
 }

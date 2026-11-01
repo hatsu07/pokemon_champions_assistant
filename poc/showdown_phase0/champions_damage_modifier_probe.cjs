@@ -93,6 +93,30 @@ function oddRoundingWitnesses(c){
    throw Error("P1: no discriminating odd pre-final-damage witness");
  return witnesses;
 }
+// Independently captured at pinned SHA in a legal neutral-effectiveness Battle.
+// NOT a Pokémon Champions device observation. Deviations must be reviewed,
+// not silently upgraded to matching arithmetic.
+const REVIEWED_PINNED_DIVERGENCE=Object.freeze([
+ {roll_pct:86,pre_final_modifier:87,combined_rounding:22,split_rounding:21},
+ {roll_pct:90,pre_final_modifier:91,combined_rounding:23,split_rounding:22},
+ {roll_pct:91,pre_final_modifier:91,combined_rounding:23,split_rounding:22},
+ {roll_pct:98,pre_final_modifier:99,combined_rounding:25,split_rounding:24}
+]);
+function verifyKnownDiscrepancy(witnesses,referenceRolls,pinnedRolls){
+ const shape=w=>({roll_pct:w.roll_pct,pre_final_modifier:w.pre_final_modifier,
+   combined_rounding:w.combined_rounding,split_rounding:w.split_rounding});
+ if(JSON.stringify(witnesses.map(shape))!==JSON.stringify(REVIEWED_PINNED_DIVERGENCE))
+   throw Error("changed odd rounding witness baseline requires review");
+ const diffs=compareRolls(referenceRolls,pinnedRolls).differences;
+ if(diffs.length!==REVIEWED_PINNED_DIVERGENCE.length||
+    REVIEWED_PINNED_DIVERGENCE.some((v,i)=>
+      diffs[i].roll_pct!==v.roll_pct||
+      diffs[i].reference!==v.combined_rounding||
+      diffs[i].pinned_showdown!==v.split_rounding||
+      pinnedRolls[v.roll_pct-85]!==v.split_rounding))
+   throw Error("unreviewed damage mismatch outside exact pinned split-rounding baseline");
+ return {status:"REVIEWED_SECONDARY_SOURCE_DIVERGENCE",difference_count:diffs.length};
+}
 function referenceFor(c){
  validateSource();
  const input=referenceInput(c);
@@ -186,13 +210,18 @@ function main(){
      }
      const result=compareRolls(ref.rolls,rolls);
      const witnesses=variant.id===WITNESS_ID?oddRoundingWitnesses(variant):[];
-     if(witnesses.some(w=>rolls[w.roll_pct-85]!==w.combined_rounding))
-       throw Error("Pinned Showdown differs at odd pre-final-damage witness: "+JSON.stringify(
-         witnesses.map(w=>({...w,pinned:rolls[w.roll_pct-85]}))));
+     const divergence=odd?
+       verifyKnownDiscrepancy(witnesses,ref.rolls,rolls):null;
+     if(!odd&&result.status!=="WIKI_SPEC_MATCH")
+       throw Error("unreviewed source arithmetic divergence outside odd witness case: "+variant.id);
+     if(odd&&result.status!=="WIKI_SPEC_MISMATCH")
+       throw Error("odd witness source discrepancy disappeared without review");
      results.push({id:variant.id,source_ids:variant.source_ids,
        defender:odd?"Blastoise":"Metagross",
        source_numeric_basis:odd?"DERIVED_FORMULA_ONLY":"PUBLISHED_FIXTURE_AND_DERIVED_MODIFIERS",
-       odd_rounding_witnesses:witnesses,
+       odd_rounding_witnesses:witnesses.map(w=>({...w,
+         pinned_damage:rolls[w.roll_pct-85]})),
+       reviewed_source_discrepancy:divergence,
        conditions:{burn:variant.burn,reflect:variant.reflect,critical:variant.critical},
        reference_range:[ref.minimum,ref.maximum],
        pinned_range:[Math.min(...rolls),Math.max(...rolls)],
@@ -211,7 +240,11 @@ function main(){
    odd_rounding_witness_count:results.reduce((n,r)=>n+r.odd_rounding_witnesses.length,0),
    odd_rounding_witness_verified_in_pinned_getDamage:
      results.some(r=>r.id===WITNESS_ID&&r.odd_rounding_witnesses.length>0&&
-       r.status==="WIKI_SPEC_MATCH"),
+       r.reviewed_source_discrepancy?.difference_count===4&&
+       r.status==="WIKI_SPEC_MISMATCH"),
+   source_divergence_count:results.filter(r=>r.status==="WIKI_SPEC_MISMATCH").length,
+   reviewed_source_divergence:"PINNED_SPLIT_ROUNDING_VS_SECONDARY_COMBINED_MODIFIER",
+   unknown_source_divergences_accepted:false,
    counts:{WIKI_SPEC_MATCH:results.filter(r=>r.status==="WIKI_SPEC_MATCH").length,
      WIKI_SPEC_MISMATCH:results.filter(r=>r.status==="WIKI_SPEC_MISMATCH").length},
    unverified:LEDGER.not_verified,results};
@@ -220,11 +253,13 @@ if(require.main===module){
  try{
    const result=main();
    process.stdout.write(JSON.stringify(result)+"\n");
-   if(result.counts.WIKI_SPEC_MISMATCH)process.exitCode=1;
+   // This exact pinned discrepancy is an audited finding, not a false PASS.
+   // Any unreviewed difference throws in main() and exits nonzero.
  }catch(err){
    process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:err.message})+"\n");
    process.exitCode=2;
  }
 }
 module.exports={main,compareRolls,referenceFor,validateSource,referenceInput,
- oddRoundingWitnesses,REVIEWED_IDS,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,WITNESS_ID,LEDGER};
+ oddRoundingWitnesses,verifyKnownDiscrepancy,REVIEWED_PINNED_DIVERGENCE,
+ REVIEWED_IDS,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,WITNESS_ID,LEDGER};

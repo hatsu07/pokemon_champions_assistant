@@ -1,5 +1,9 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 PR #160差異の検出結果（2026-11-01）
+
+- P1に対応するカメックス等倍条件で4件の**二次資料とPinned Showdownの端数差異**を発見。86%:22 vs 21、90%:23 vs 22、91%:23 vs 22、98%:25 vs 24。Showdownは1/2を2度丸めた値、Champions二次資料は最終1/4一括丸め。元8条件はWIKI_SPEC_MATCH、追加条件のみWIKI_SPEC_MISMATCH。実機では未確認。既知4差分を固定し、追加差分・差分消失でもfail-closed。本番判定A=UNKNOWN/B=UNSUPPORTED/NO_GOは変更しない。
+
 ## Issue #139 PR #160レビューP1/P2改善（2026-11-01）
 
 - P1：相性2倍のメタグロスでは最終補正前整数が常に偶数で1/4一括と1/2二回丸めを識別不能。固定登録6匹内のカメックス（じしん等倍）を選出し、奇数の最終補正前値を使い、**両計算法に差が出る乱数**を明示してPinned Showdownの`getDamage`に照合。9条件×16=144比較に拡張。P2：各ケースIDとburn/Reflect/critical/倍率/出典URLを固定レビュー契約化し、壁フラグのみの改変・出典URL差し替えを負例で検出。実機Golden未使用・LIVE不変・A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。
