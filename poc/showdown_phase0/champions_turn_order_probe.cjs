@@ -97,7 +97,7 @@ function run(){
      }
      if(c.trick_room){
        // Synthetic active-field precondition, NOT an executed Trick Room setup.
-       if(!b.field.addPseudoWeather("trickroom")||!b.field.pseudoWeather.trickroom)
+       if(!b.field.addPseudoWeather("trickroom",p2)||!b.field.pseudoWeather.trickroom)
          throw Error("pinned Trick Room precondition unavailable");
      }
      if(p2.boosts.spe!==c.m_stage||
