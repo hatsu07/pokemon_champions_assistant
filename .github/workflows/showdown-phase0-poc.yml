@@ -120,7 +120,18 @@ jobs:
           assert (r["gate_A"],r["gate_B"],r["adoption"])==("UNKNOWN","UNSUPPORTED","NO_GO")
           assert r["feature_count"]==10
           assert r["event_rule_count"]==5 and r["event_case_count"]==18
-          assert r["wiki_comparable_count"]==1
+          assert r["wiki_comparable_count"]==1 and r["wiki_mismatch_count"]==0
+          assert r["modifier_source_status"]=="REVIEWED_SECONDARY_SOURCE_DIVERGENCE"
+          assert r["known_modifier_source_conflicts"]==1
+          assert r["known_modifier_roll_discrepancies"]==4
+          assert r["modifier_comparison_scope"]=="SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE"
+          assert r["modifier_diagnostic"]=="champions_damage_modifier_probe.cjs"
+          damage=next(f for f in r["features"] if f["feature"]=="damage RNG and critical")
+          assert damage["wiki_arithmetic_status"]=="WIKI_SPEC_MATCH"
+          assert damage["modifier_source_status"]==r["modifier_source_status"]
+          assert damage["known_modifier_source_conflicts"]==1
+          assert damage["known_modifier_roll_discrepancies"]==4
+          assert damage["modifier_comparison_scope"]==r["modifier_comparison_scope"]
           assert r["game_verified_cases_this_run"]==0 and r["game_verified_checks_this_run"]==0
           assert r["private_golden_read"] is False and r["safe_to_integrate_with_live"] is False
           for f in r["features"]:
@@ -130,9 +141,13 @@ jobs:
                   "feature":f["feature"],"static_status":f["static_status"],
                   "static_disagreement_count":f["static_disagreement_count"],
                   "wiki_arithmetic_status":f["wiki_arithmetic_status"],
+                  "modifier_source_status":f.get("modifier_source_status"),
+                  "known_modifier_source_conflicts":f.get("known_modifier_source_conflicts"),
+                  "known_modifier_roll_discrepancies":f.get("known_modifier_roll_discrepancies"),
                   "event_evidence_counts":f["event_evidence_counts"],
                   "next_evidence":f["next_evidence"],
               },ensure_ascii=False,sort_keys=True))
+          print("Known secondary-source/pinned modifier conflict: 1 condition, 4 rolls; device parity UNKNOWN")
           print("Gate A evidence inventory: source-only; no private Golden uploaded")
           PY
       - name: Diagnose three independent Linux Node process replays
