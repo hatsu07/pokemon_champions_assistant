@@ -27,6 +27,7 @@ function condition(obs, ctx = context()) {
  const preconditions = [
   ["opponent_hp_exact", known(obs,"opponent_hp_exact")],
   ["opponent_boosts", known(obs,"opponent_boosts")],
+  ["opponent_status", known(obs,"opponent_status")],
   ["screens", known(obs,"screens")],
   ["weather", known(obs,"weather")],
   ["request_state", known(obs,"request_state")],
@@ -131,7 +132,8 @@ function condition(obs, ctx = context()) {
     ...(screens.length?["screen_remaining_turns"]:[])],
   unrecovered_hidden_fields:["opponent_revealed_moves","opponent_remaining_pp",
     "opponent_item","opponent_ability","opponent_ap","opponent_mega_history",
-    "unresolved_queue","internal_rng","action_history"],
+    "unresolved_queue","internal_rng","action_history",
+    "terrain","hazards","effect_remaining_turns","own_side_unknown_history"],
   assumption:"fixed registered teams, other hidden facts and move boundary are hypotheses",
   candidate_count:candidates.length,unevaluated_candidate_count:generated.unevaluated_candidate_count,
   candidates,rejected,not_a_unique_true_state:true};
