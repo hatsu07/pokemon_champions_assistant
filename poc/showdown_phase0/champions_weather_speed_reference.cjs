@@ -55,7 +55,11 @@ function checkLedger(l=LEDGER){
    throw Error("weather source evidence contract drift");
  return true;
 }
-function independentSpeeds({base,weatherBoost,par,scarf,stage}){
+function independentSpeeds(state){
+ if(!state||typeof state!=="object"||Array.isArray(state)||
+    Object.keys(state).sort().join(",")!=="base,par,scarf,stage,weatherBoost")
+   throw Error("UNSUPPORTED_WEATHER_SPEED_INPUT");
+ const {base,weatherBoost,par,scarf,stage}=state;
  if(!Number.isInteger(base)||base<=0||typeof weatherBoost!=="boolean"||
     typeof par!=="boolean"||typeof scarf!=="boolean"||![0,1].includes(stage))
    throw Error("UNSUPPORTED_WEATHER_SPEED_INPUT");
