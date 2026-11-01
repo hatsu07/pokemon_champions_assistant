@@ -52,15 +52,19 @@ function projection(b){
 }
 function checkMega(b,master=masterMega()){
  const p=projection(b);
- if(p.species!==master.species||
-    stableStringify(p.types)!==stableStringify(master.types)||
-    p.ability!==master.ability||
-    stableStringify(p.base_stats)!==stableStringify(master.baseStats)||
-    p.item!=="lucarionite"||
-    !Number.isInteger(p.speed)||p.speed<=0||
-    !Number.isInteger(p.hp)||p.hp<=0||p.hp>p.maxhp||
-    p.selected.length!==3||p.selected[2]!==master.species)
-   throw Error("pinned Mega form/type/ability/stats/speed/item/HP or selected position disagrees with Champions master");
+ const invalid=[];
+ if(p.species!==master.species)invalid.push("form");
+ if(stableStringify(p.types)!==stableStringify(master.types))invalid.push("types");
+ if(p.ability!==master.ability)invalid.push("ability");
+ if(stableStringify(p.base_stats)!==stableStringify(master.baseStats))invalid.push("base_stats");
+ if(p.item!=="lucarionite")invalid.push("mega_stone");
+ if(!Number.isInteger(p.speed)||p.speed<=0)invalid.push("speed");
+ if(!Number.isInteger(p.hp)||p.hp<=0||p.hp>p.maxhp)invalid.push("hp");
+ if(p.selected.length!==3||p.selected[2]!==master.species)invalid.push("selected");
+ if(invalid.length)throw Error("pinned Mega form/type/ability/stats/speed/item/HP or selected position disagrees with Champions master: "+JSON.stringify({
+   invalid,actual:{species:p.species,types:p.types,ability:p.ability,
+     base_stats:p.base_stats,item:p.item,speed:p.speed,hp:p.hp,maxhp:p.maxhp,selected:p.selected},
+   expected:master}));
  return p;
 }
 function partialStatus(facts){
