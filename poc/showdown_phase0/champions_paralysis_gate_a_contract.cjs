@@ -1,6 +1,7 @@
 "use strict";
 // Separate Phase 0 Gate A evidence contract. No game parity inference.
 const {LEDGER,reference}=require("./champions_paralysis_reference.cjs");
+const {moveKey}=require("./champions_move_key.cjs");
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 function checkParalysisEvidence(r){
  if(r?.schema!=="phase0-champions-paralysis-order-diagnostic-v1"||
@@ -15,6 +16,7 @@ function checkParalysisEvidence(r){
     r.pinned_implementation?.pinned_speed_half_floor!==true||
     r.full_paralysis_sample?.synthetic_turns!==48||
     r.full_paralysis_sample?.empirical_probability_verified!==false||
+    r.full_paralysis_sample?.scope!=="PINNED_SEEDS_NOT_DEVICE_OR_PROBABILITY_PROOF"||
     r.full_paralysis_sample.interrupted+r.full_paralysis_sample.uninterrupted!==48)
     throw Error("paralysis Gate A source contract changed");
  for(const [i,c] of LEDGER.cases.entries()){
@@ -35,6 +37,8 @@ function checkParalysisEvidence(r){
       JSON.stringify(row.p1_possible_speeds)!==JSON.stringify(ref.p1_possible_speeds)||
       JSON.stringify(row.p2_possible_speeds)!==JSON.stringify(ref.p2_possible_speeds)||
       row.p1_priority!==ref.p1_priority||row.p2_priority!==ref.p2_priority||
+      row.executed_moves?.p1?.id!==moveKey(c.p1)||
+      row.executed_moves?.p2?.id!==moveKey(c.p2)||
       row.executed_moves?.p1?.name!==c.p1||
       row.executed_moves?.p2?.name!==c.p2||
       row.executed_moves?.p1?.priority!==ref.p1_priority||
