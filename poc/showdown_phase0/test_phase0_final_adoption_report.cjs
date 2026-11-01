@@ -2,15 +2,41 @@
 const {test}=require("node:test");
 const assert=require("node:assert/strict");
 const {evaluate,load,INPUTS}=require("./phase0_final_adoption_report.cjs");
+const featureMap=require("./gate_a_evidence_map.json");
+const gateBManifest=require("./gate_b_cases.json");
+const partialManifest=require("./partial_observation_cases.json");
+const representativeManifest=require("./representative_states_cases.json");
+const STAGES=["prepare_ms","serialize_ms","restore_ms","branch_ms","alternative_ms","replay_ms"];
+const TIMINGS=Object.fromEntries(STAGES.map((k,i)=>[k,0.1+i/10]));
+const TIMING_STATS=Object.fromEntries(STAGES.map(k=>[k,{
+ samples:127,p50:TIMINGS[k],p95:TIMINGS[k],p99:TIMINGS[k],max:TIMINGS[k]
+}]));
+
 const pinned="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const format="gen9championsbssregmc";
 const base=(schema,shaKey)=>({schema,[shaKey]:pinned,format,gate_A:"UNKNOWN",
  gate_B:"UNSUPPORTED",adoption:"NO_GO"});
 function fixture(){
- const features=Array.from({length:10},(_,i)=>({
-   feature:"feature_"+i,feature_compatibility:"UNKNOWN",
+ const features=featureMap.feature_map.map((entry,i)=>({
+   feature:entry.feature,regulation:"M-C",feature_compatibility:"UNKNOWN",
    actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
    allowed_as_certain_ko_or_safe_switch_proof:false,static_disagreement_count:i===0?1:0
+ }));
+ const gateBResults=gateBManifest.cases.map((entry,i)=>({
+   case_id:entry.id,mechanism:entry.mechanism,phase:entry.phase,
+   status:entry.expected_status,pinned_showdown_sha:pinned,
+   evidence_class:entry.phase==="B1"?"SYNTHETIC":"SYNTHETIC_PARTIAL_OBSERVATION",
+   input_state_sha256:"fake_unique_"+(i%11)
+ }));
+ const partialResults=partialManifest.cases.map(entry=>({
+   case_id:entry.id,mechanism:entry.mechanism,status:entry.expected_status,
+   evidence_class:"SYNTHETIC_ONLY",pinned_showdown_sha:pinned,format,
+   unique_truth_restoration:false,complete_snapshot_restorable_from_observation:false
+ }));
+ const representativeResults=representativeManifest.cases.map(entry=>({
+   case_id:entry.id,mechanism:entry.mechanism,status:entry.expected_status,
+   evidence_class:"SYNTHETIC_ONLY",timings_ms:{...TIMINGS},
+   branch:{source_unchanged:true,repeated_action_identical:true,distinct_outcome:true}
  }));
  return {
   gate_a:{...base("phase0-gate-a-evidence-inventory-v1","pinned_sha"),
@@ -23,19 +49,26 @@ function fixture(){
    game_verified_cases_this_run:0,game_verified_checks_this_run:0},
   gate_b:{...base("phase0-gate-b-diagnostics-v1","pinned_showdown_sha"),
    case_count:14,mechanism_count:14,unique_input_state_count:11,
-   counts:{B1:{PASS_SYNTHETIC:12},B2:{INCONCLUSIVE:2,PASS_SYNTHETIC:0}},
+   counts:{B1:{PASS_SYNTHETIC:12,STATE_OR_QUEUE_MISMATCH:0,
+    LOG_ONLY_MISMATCH:0,INCONCLUSIVE:0,UNSUPPORTED:0},
+    B2:{PASS_SYNTHETIC:0,STATE_OR_QUEUE_MISMATCH:0,LOG_ONLY_MISMATCH:0,
+     INCONCLUSIVE:2,UNSUPPORTED:0}},results:gateBResults,
    representative_100_cases_met:false},
   partial:{...base("phase0-partial-observation-diagnostics-v1","pinned_showdown_sha"),
    case_count:26,mechanism_count:26,representative_100_cases_met:false,
-   results:Array.from({length:26},()=>({
-    unique_truth_restoration:false,complete_snapshot_restorable_from_observation:false
-   }))},
+   results:partialResults,
+   counts:Object.fromEntries(["CONSISTENT_HYPOTHESES","CONTRADICTORY_OBSERVATION",
+    "INCONCLUSIVE","UNSUPPORTED","SYNTHETIC_TEST_PASS"].map(k=>
+    [k,partialResults.filter(x=>x.status===k).length])),
+   synthetic_condition_pass_count:partialResults.filter(x=>
+    ["CONSISTENT_HYPOTHESES","SYNTHETIC_TEST_PASS"].includes(x.status)).length},
   representative:{...base("phase0-representative-synthetic-states-v1","pinned_showdown_sha"),
    case_count:127,counts:{PASS_SYNTHETIC:127},representative_100_synthetic_states_met:true,
    tactical_hash_scope:"ACTIVE_PAIR_COARSE_PROJECTION_ONLY",
    timing_scope:"SINGLE_LINUX_CONTAINER_WARM_NODE_INTERNAL_STAGES_ONLY",
    native_game_verification:false,windows_e2e_verified:false,
-   timing_ms:{clone:{samples:127,p50:0.1,p95:0.4,p99:0.8}},
+   timing_ms:structuredClone(TIMING_STATS),results:representativeResults,
+   distinct_mechanisms:8,counts:{PASS_SYNTHETIC:127,UNSUPPORTED:0},
    memory_bytes:{peak_rss_measured:false,long_running_leak_tested:false}},
   cross_process:{...base("phase0-cross-process-synthetic-validation-v1","pinned_showdown_sha"),
    independent_os_process_count:3,cases_per_process:127,total_case_invocations:381,
@@ -44,7 +77,10 @@ function fixture(){
    independent_ci_runs_verified:false,
    process_memory:{peak_rss_measured:false,long_term_leak_tested:false},
    process_wall_ms:{scope:"CHILD_STARTUP_AND_127_CASES_NOT_CONTAINER_STARTUP",
-    samples:3,p50:210,p95:250,p99:250}}
+    samples:3,p50:210,p95:250,p99:250,observations:[250,210,249]},
+   node_stage_ms:{scope:"THREE_SEPARATE_PROCESSES_SAME_FIXED_CASES",
+    values:Object.fromEntries(STAGES.map(k=>[k,
+     {samples:381,p50:TIMINGS[k],p95:TIMINGS[k],p99:TIMINGS[k]}]))}}
  };
 }
 test("five source-only diagnostics produce NO_GO with explicit boundaries",()=>{
@@ -76,6 +112,23 @@ test("missing evidence, wrong SHA, fabricated device truth, E2E or replay parity
  const changes=[
   r=>{delete r.cross_process},
   r=>{r.gate_a.features.pop()},
+  r=>{r.gate_a.features[0].feature="unreviewed_feature"},
+  r=>{r.gate_a.features[0].regulation="UNKNOWN"},
+  r=>{r.gate_b.results[0].status="STATE_OR_QUEUE_MISMATCH"},
+  r=>{r.gate_b.results[0].mechanism="unreviewed_mechanism"},
+  r=>{r.gate_b.results[13].case_id="B2-13"},
+  r=>{r.gate_b.results[0].phase="B2"},
+  r=>{r.partial.results[0].status="UNSUPPORTED"},
+  r=>{r.partial.results[1].case_id="PO-01"},
+  r=>{r.representative.results[0].status="UNSUPPORTED"},
+  r=>{r.representative.results[0].mechanism="unreviewed_mechanism"},
+  r=>{r.representative.results[0].timings_ms.prepare_ms=1000},
+  r=>{r.representative.timing_ms.prepare_ms.p95=-1},
+  r=>{r.representative.timing_ms.prepare_ms.p50=10},
+  r=>{r.cross_process.process_wall_ms.observations[0]=1},
+  r=>{r.cross_process.process_wall_ms.p95=0},
+  r=>{r.cross_process.node_stage_ms.values.prepare_ms.samples=380},
+  r=>{r.cross_process.node_stage_ms.values.prepare_ms.p95=-1},
   r=>{r.gate_a.features[0].feature_compatibility="CONFIRMED"},
   r=>{r.gate_a.features[0].actual_game_status="GAME_OBSERVED_MATCH"},
   r=>{r.gate_a.features[0].allowed_as_certain_ko_or_safe_switch_proof=true},
@@ -92,7 +145,7 @@ test("missing evidence, wrong SHA, fabricated device truth, E2E or replay parity
   r=>{r.representative.counts.PASS_SYNTHETIC=126},
   r=>{r.representative.windows_e2e_verified=true},
   r=>{r.representative.memory_bytes.peak_rss_measured=true},
-  r=>{r.representative.timing_ms.clone.samples=0},
+  r=>{r.representative.timing_ms.prepare_ms.samples=0},
   r=>{r.cross_process.independent_ci_runs_verified=true},
   r=>{r.cross_process.total_case_invocations=1000},
   r=>{r.cross_process.cross_process_signatures_equal=false},
