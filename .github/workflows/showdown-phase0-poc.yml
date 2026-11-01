@@ -33,7 +33,39 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs
+      - name: Cross-check independent Champions AP stat arithmetic against pinned selected battle bodies
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 champions_ap_stat_probe.cjs > phase0-ap-stat-source.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-ap-stat-source.json", encoding="utf-8") as f:
+              r=json.load(f)
+          assert r['schema']=='phase0-champions-ap-stat-source-comparison-v1'
+          assert r['pinned_sha']=='ccfaa20f32af363569cd21a9d501b2bc1ded26b1'
+          assert r['format']=='gen9championsbssregmc'
+          assert (r['gate_A'],r['gate_B'],r['adoption'])==('UNKNOWN','UNSUPPORTED','NO_GO')
+          assert r['case_count']==384
+          assert r['individual_stat_comparisons']==2304
+          assert r['varied_ap_stat_count']==6
+          assert r['ap_targets']==['hp','atk','def','spa','spd','spe']
+          assert r['varied_ap_case_counts']=={
+              'hp':64,'atk':64,'def':64,'spa':64,'spd':64,'spe':64
+          }
+          assert r['registration_ap_zero_fallback_cases']==48
+          assert r['selected_form_scope']=='TWO_BASE_SPECIES_ONLY'
+          assert r['published_speed_reference_checks']==14
+          assert r['counts']=={'SOURCE_SPEC_MATCH':384,'SOURCE_SPEC_MISMATCH':0}
+          assert r['private_golden_read'] is False
+          assert r['game_case_count']==0
+          assert r['official_or_game_confirmed'] is False
+          assert r['live_use_approved'] is False
+          assert r['registered_six_member_teams'] is True
+          assert r['selected_three_member_teams'] is True
+          print('Champions community-source stat reference: 384 synthetic cases/2304 comparisons, AP varied in all 6 stats')
+          print('This does NOT establish in-game speed order or damage equivalence.')
+          PY
       - name: Audit Gate A source evidence, conflicts and unverified LIVE risks
         shell: bash
         run: |

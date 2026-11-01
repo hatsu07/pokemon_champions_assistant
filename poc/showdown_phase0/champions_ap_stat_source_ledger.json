@@ -1,0 +1,100 @@
+{
+  "schema": "phase0-champions-ap-stat-source-ledger-v1",
+  "regulation": "M-C",
+  "checked_at": "2026-11-01",
+  "evidence": "CHAMPIONS_SPECIFIC_COMMUNITY_DOCUMENTATION_NOT_ACTUAL_GAME_CERTIFICATION",
+  "source_priority": "OFFICIAL_OR_NEW_USER_GAME_EVIDENCE_OVERRIDES_COMMUNITY",
+  "sources": [
+    {
+      "id": "stat_points",
+      "url": "https://pkmn-cp-dataportal.com/battle/rule/stat-points/",
+      "scope": "Champions Lv50/AP 0..32; total 66; base+75 HP, base+20 other; nature floor; Garchomp speed example",
+      "provenance": "SECONDARY_CHAMPIONS_SPECIFIC"
+    },
+    {
+      "id": "stats_gamewith",
+      "url": "https://gamewith.jp/pokemon-champions/546449",
+      "scope": "Champions stat formulas; nature floor",
+      "provenance": "SECONDARY_CHAMPIONS_SPECIFIC"
+    }
+  ],
+  "supported_natures": {
+    "Serious": {
+      "plus": null,
+      "minus": null
+    },
+    "Jolly": {
+      "plus": "spe",
+      "minus": "spa"
+    },
+    "Adamant": {
+      "plus": "atk",
+      "minus": "spa"
+    },
+    "Brave": {
+      "plus": "atk",
+      "minus": "spe"
+    }
+  },
+  "independent_published_garchomp_speed": [
+    {
+      "ap": 0,
+      "neutral": 122,
+      "jolly": 134
+    },
+    {
+      "ap": 1,
+      "neutral": 123,
+      "jolly": 135
+    },
+    {
+      "ap": 7,
+      "neutral": 129,
+      "jolly": 141
+    },
+    {
+      "ap": 8,
+      "neutral": 130,
+      "jolly": 143
+    },
+    {
+      "ap": 18,
+      "neutral": 140,
+      "jolly": 154
+    },
+    {
+      "ap": 28,
+      "neutral": 150,
+      "jolly": 165
+    },
+    {
+      "ap": 32,
+      "neutral": 154,
+      "jolly": 169
+    }
+  ],
+  "not_verified": [
+    "Official game stat rounding for every species/form",
+    "Multiple modifiers, stat-stage speed, paralysis, weather and item order",
+    "Species with special HP behavior including Shedinja",
+    "Mega evolution timing and post-Mega action order",
+    "All possible natures, all registration legality corner cases",
+    "Real-game Garchomp or Metagross observations from this test",
+    "Unscoped species/form parameters are rejected; non-base and special-HP species are not computed by this reference."
+  ],
+  "game_observed_match_count": 0,
+  "live_use_approved": false,
+  "supported_scopes": [
+    {
+      "species": "Garchomp",
+      "form": "base",
+      "source_identity": "ガブリアス 通常 フォーム/姿なし"
+    },
+    {
+      "species": "Metagross",
+      "form": "base",
+      "source_identity": "メタグロス 通常 フォーム/姿なし"
+    }
+  ],
+  "scope_boundary": "Explicit species+form required. Source-only stat arithmetic approved for two ordinary base species; not all legal or alternate forms. Scope does not independently authenticate arbitrary supplied baseStats."
+}

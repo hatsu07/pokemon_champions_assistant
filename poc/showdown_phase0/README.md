@@ -1,5 +1,19 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## Gate A：AP・性格の実数値をChampions資料から独立計算（Issue #139）
+
+**PR #159 レビューP2反映（2026-11-01）**：APを実際に振り替える対象をHP/攻撃/防御/特攻/特防/素早さの6能力へ拡大。2種族×4性格×6対象×8AP値で**384合成局面・2,304能力値比較**（各対象能力は64ケース）。各ケースで6能力を照合するため、対象APを変化させた384例と総数2,304比較は別の指標とする。AP対象0の合法登録回避は対象外能力に2APを割り当て、特防自体が対象の場合は防御に割り当てる（48ケース）。これは固定Showdownの登録条件で、Champions実ゲームにおける全AP0の不適法性を示さない。
+
+参照器は `{species,form,baseStats,ap,nature}` を必須入力とし、固定2種族の通常基本フォーム（`Garchomp/base`、`Metagross/base`）だけを許可。特殊HP・メガ・フォーム・未確認種族の入力は `UNSUPPORTED_CHAMPIONS_SPECIES_FORM_SCOPE` として計算せず拒否。提供された種族値の真偽やゲーム内互換性まで認証するものではない。新旧とも `SOURCE_SPEC_MATCH` はChampions二次資料の算術一致であり、`GAME_OBSERVED_MATCH`ではない。
+
+
+`champions_ap_stat_reference.cjs` は **Showdownをimportしない**Champions専用の能力実数値参照式（HP=種族値+75+AP、他5値=(種族値+20+AP)×性格補正の切り捨て）。`champions_ap_stat_source_ledger.json` に2026-11-01時点で確認できたChampions専用の二次資料、ガブリアス素早さの公開表7行×2性格=14チェック、対象の性格4種（無補正／ようき／いじっぱり／ゆうかん）、例外と未確認条件を明記。**公式・ユーザーゲーム内の新しい実測を優先**し、他作品の式を無検証で補完しない。
+
+`champions_ap_stat_probe.cjs` はガブリアス・メタグロスを固定M-Cマスターから取得し、登録6匹をChampionsマスターおよび固定ShowdownのTeamValidatorで合法性確認→3匹選出した**実際のShowdown BattleのbaseStoredStats**と独立計算を比較する。AP値0/1/7/8/18/28/31/32、対象HP/攻撃/防御/特攻/特防/素早さ、性格4種、2種族の **384合成局面・2304能力値比較**。各不一致は `SOURCE_SPEC_MISMATCH` として差分表示し、CLIは不一致時exit 1/不正入力時exit 2とする。 AP対象0の場合、固定ShowdownのM-C登録バリデータはAP合計0を登録エラーとするため、対象能力以外に2APだけ配分する（特防が対象のときは防御、それ以外は特防）。独立参照側とBattle側で**同一の配分**を使う。比較で使うマスターの種族値は実ゲーム観測でなく固定ソースの値である。
+
+一致が出ても出典は **CHAMPIONS_COMMUNITY_SOURCE_ARITHMETIC_ONLY / SOURCE_SPEC_MATCH** であり、実ゲーム`GAME_OBSERVED_MATCH`ではない。選定以外の性格、他の種族・メガ、能力変化後/まひ/スカーフ/天候の速度、実行順・同速ランダム、実機での数値/端数を**検証しない**。Gate A=UNKNOWN、Gate B=UNSUPPORTED、採用NO_GO。本番LIVEのS確定・確定KO/安全受け保証に利用禁止。
+
+
 ## Gate A・Champions仕様別の根拠と未検証範囲（Issue #139）
 
 `gate_a_evidence_inventory.cjs` は `golden_gate_requirements.csv` のGate A 10項目を正本として、固定ChampionsマスターとShowdownの静的差分、出典から**独立**に計算したWiki単発ダメージ例、Bulbapedia Champions記述由来の5契約・18イベントを機能別に照合する。ゲームの実測や未公開対戦ログをこのコマンドに読み込まない。
