@@ -1,5 +1,23 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## 部分観測・UNKNOWN・複数仮説の独立診断
+
+`partial_observation_schema.json` はPhase 0専用の部分観測モデル。34フィールドを `{source,value,evidence_ids,reason}` で保持し、`GAME_OBSERVED`／`SYNTHETIC`／`INFERRED`／`UNKNOWN` を分ける。UNKNOWNには値を持たせない。空文字の道具・状態異常、ランク0、最大PP、メガ未実行、効果なしはそれぞれ**確認された値**であり、UNKNOWNの代用ではない。合成fixtureの根拠IDを持つ値は常にSYNTHETICで、ゲーム観測へ昇格できない。GAME_OBSERVEDには別の実ゲーム根拠と本人確認が必要。このPoCに実ゲーム入力は含まない。
+
+`partial_observation_probe.cjs` は固定Showdown M-Cで合法な登録6匹から実Team Previewを通して完全合成Battleを作る。`worker.cjs::observed` から種族・対面・天候等の**限定した合成盤面情報だけ**を投影し、同関数に含まれる相手HP整数は破棄する。相手選出全体、技・道具・特性、性格/AP、残PP、内部乱数、履歴、キュー等はUNKNOWNのまま。画面からその各値を読めるという主張ではない。既存B2の`GAP_FIELDS`を新モデルへ対応付け、不足情報を列挙する。
+
+候補は真値Battleの隠し値から作らず、固定した4種類の合法なガブリアス型（技・道具・特性・性格/AP違い）から生成する。各登録6匹をChampions固定マスターとM-C TeamValidatorの両方で検査する。候補ごとのShowdown完全状態は**合成仮説**としてのみ直列化・復元・行動分岐できる。新しい技・道具・特性・メガ・消費・交代・能力変化・行動順の合成事実で候補を更新する。交代後は前のポケモンの道具・技等を新しい対面へ引き継がない。行動順から能力配分を確定しない。候補の絞り込み後は旧Battleを現在状態として実行せず、`NOT_RUN_CURRENT_STATE`とする。更新後の候補SHAは`BASE_HYPOTHESIS_ONLY`であり、現在の完全状態のハッシュではない。候補0件は保留、入力事実の矛盾は別区分、探索上限超過は未評価候補数で示す。
+
+```
+docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_partial_observation_probe.cjs
+docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 partial_observation_probe.cjs > /tmp/partial-observation-local.json
+```
+
+`partial_observation_cases.json` の固定26機構は、`CONSISTENT_HYPOTHESES` 10、`SYNTHETIC_TEST_PASS` 7、`INCONCLUSIVE` 6、`UNSUPPORTED` 2、`CONTRADICTORY_OBSERVATION` 1。独立した完全合成真値9、根拠IDを除いた異なる部分観測12、異なる候補ID集合6、候補状態ハッシュ4、候補評価96、同一局面反復0。ケースIDや根拠IDだけを変えて局面数を増やさない。負例はUNKNOWNの値付け、推測の観測昇格、非合法な技・道具・特性/AP、単一候補への勝手な確定、候補0件、矛盾観測、候補間の干渉、部分状態の`restoreChecked`誤用を実コードで検出する。既存B1 12／B2 2と登録選出25ケースは独立集計であり、100代表局面は未達。合成候補が真値ハッシュと一致しても、観測だけから真の完全状態を一意に復元できたとは判定しない。
+
+実ゲームの観測可能範囲、相手の正確なHP・残PP、未観測効果の残ターン、メガ前履歴、未解決選択/キュー、乱数、全合法型の網羅、複数runの再現性は未検証。次はユーザーが確認した実画面の各フィールドに根拠IDを付け、観測可能な値とUNKNOWNを分けてオフライン照合し、代表局面と効果機構を増やす。Gate A=`UNKNOWN`、Gate B=`UNSUPPORTED`、総合=`NO_GO`を維持し、LIVE判断へ接続しない。
+
 ## 登録6匹→選出3匹→途中局面復元（独立した合成診断）
 
 `six_team_selection_probe.cjs` は固定Showdown `ccfaa20f32af363569cd21a9d501b2bc1ded26b1` の M-C (`gen9championsbssregmc`) を使う。両側の登録6匹を、Champions固定マスターに基づく登録検証とShowdown `TeamValidator` で**独立に**検証し、双方が合法の場合だけBattleへ渡す。固定マスター検証は全国No.（リージョン違いを含む）、種族・直接登録可能フォーム、技マスター・習得表・固定Dex、特性枠、持ち物とメガストーン所有者、重複道具、性格、AP、技スロットを検査する。日本語技名・英語名・MoveKeyは既存の正規化を使う。`level:50`はShowdownを動かす内部値で、ゲーム内レベルの観測ではない。

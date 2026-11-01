@@ -31,7 +31,7 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs
       - name: Diagnose registered six, selected three and restored branches
         shell: bash
         run: |
@@ -91,6 +91,62 @@ jobs:
           print('Distinct registered pairs / selections / input states:',
                 report['registered_team_pair_count'], report['selection_pattern_count'],
                 report['distinct_input_state_count'])
+          PY
+      - name: Diagnose partial observations and unknown-state hypotheses
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 partial_observation_probe.cjs > phase0-partial-observation.json
+          python3 - <<'PY'
+          import hashlib
+          import json
+          with open('phase0-partial-observation.json', encoding='utf-8') as stream:
+              report = json.load(stream)
+          with open('poc/showdown_phase0/partial_observation_cases.json', encoding='utf-8') as stream:
+              manifest = json.load(stream)
+          assert report['schema'] == 'phase0-partial-observation-diagnostics-v1'
+          assert report['pinned_showdown_sha'] == 'ccfaa20f32af363569cd21a9d501b2bc1ded26b1'
+          assert report['format'] == 'gen9championsbssregmc'
+          assert (report['gate_A'], report['gate_B'], report['adoption']) == ('UNKNOWN', 'UNSUPPORTED', 'NO_GO')
+          assert len(report['champions_master_sha256']) == 4
+          for name, digest in report['champions_master_sha256'].items():
+              with open('masters/' + name, 'rb') as stream:
+                  assert hashlib.sha256(stream.read()).hexdigest() == digest
+          assert manifest['schema'] == 'phase0-partial-observation-cases-v1'
+          assert report['case_count'] == report['mechanism_count'] == len(manifest['cases']) == 26
+          assert report['counts'] == {
+              'CONSISTENT_HYPOTHESES': 10, 'CONTRADICTORY_OBSERVATION': 1,
+              'INCONCLUSIVE': 6, 'UNSUPPORTED': 2, 'SYNTHETIC_TEST_PASS': 7}
+          assert report['distinct_complete_truth_state_count'] == 9
+          assert report['distinct_partial_observation_count'] == 12
+          assert report['distinct_hypothesis_set_count'] == 6
+          assert report['distinct_candidate_state_hash_count'] == 4
+          assert report['candidate_evaluations'] == 96
+          assert report['repetitions'] == 0 and report['representative_100_cases_met'] is False
+          actual = [(r['case_id'], r['mechanism'], r['status']) for r in report['results']]
+          expected = [(c['id'], c['mechanism'], c['expected_status']) for c in manifest['cases']]
+          if actual != expected or len(set(r['case_id'] for r in report['results'])) != 26:
+              print('::error title=Partial observation regression::Case identity or status changed')
+              print('EXPECTED=' + json.dumps(expected))
+              print('ACTUAL=' + json.dumps(actual))
+              raise SystemExit(1)
+          for result in report['results']:
+              assert result['evidence_class'] == 'SYNTHETIC_ONLY'
+              assert not result['complete_snapshot_restorable_from_observation']
+              assert not result['unique_truth_restoration']
+              assert result['missing_internal_state'] and result['candidate_independence']
+              assert all(fact['source'] != 'GAME_OBSERVED' for fact in result['observation']['facts'].values())
+              print('PARTIAL_CASE_JSON=' + json.dumps({
+                  key: result.get(key) for key in ('case_id', 'mechanism', 'status',
+                      'partial_state_sha256', 'legal_hypothesis_count',
+                      'unevaluated_candidate_count', 'candidate_independence',
+                      'missing_internal_state', 'contradiction', 'reason')},
+                  ensure_ascii=False, sort_keys=True))
+          print('Partial observation counts:', report['counts'])
+          print('Independent truth / partial / hypothesis / candidate states:',
+                report['distinct_complete_truth_state_count'],
+                report['distinct_partial_observation_count'],
+                report['distinct_hypothesis_set_count'],
+                report['distinct_candidate_state_hash_count'])
           PY
       - name: Diagnose Gate B full snapshots and partial observations
         shell: bash

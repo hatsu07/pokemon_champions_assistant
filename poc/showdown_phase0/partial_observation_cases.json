@@ -1,0 +1,31 @@
+{
+  "schema": "phase0-partial-observation-cases-v1",
+  "cases": [
+    {"id":"PO-01","mechanism":"unknown_opponent_move","truth":"A","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-02","mechanism":"unknown_opponent_item","truth":"B","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-03","mechanism":"unknown_opponent_ability","truth":"B","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-04","mechanism":"unknown_opponent_nature_ap","truth":"C","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-05","mechanism":"unknown_remaining_pp","truth":"A","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-06","mechanism":"unknown_exact_opponent_hp","truth":"A","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-07","mechanism":"known_mega_unknown_history","truth":"D","setup":"mega","expected_status":"INCONCLUSIVE"},
+    {"id":"PO-08","mechanism":"unknown_choice_lock","truth":"C","setup":"choice","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-09","mechanism":"known_wall_unknown_duration","truth":"A","setup":"wall","expected_status":"INCONCLUSIVE"},
+    {"id":"PO-10","mechanism":"consumed_item_unknown_history","truth":"B","setup":"consumed","expected_status":"INCONCLUSIVE"},
+    {"id":"PO-11","mechanism":"uncertain_forced_switch_request","truth":"A","setup":"forced","expected_status":"UNSUPPORTED"},
+    {"id":"PO-12","mechanism":"unknown_pending_choice","truth":"A","setup":"pending","expected_status":"UNSUPPORTED"},
+    {"id":"PO-13","mechanism":"unknown_internal_rng","truth":"A","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-14","mechanism":"multiple_legal_sets_same_observation","truth":"B","expected_status":"CONSISTENT_HYPOTHESES"},
+    {"id":"PO-15","mechanism":"revealed_move_excludes_only_candidate","truth":"B","candidate_ids":["A"],"events":[{"type":"move_used","value":"dragonclaw"}],"expected_status":"INCONCLUSIVE"},
+    {"id":"PO-16","mechanism":"revealed_item_excludes_only_candidate","truth":"B","candidate_ids":["A"],"events":[{"type":"item_revealed","value":"sitrusberry"}],"expected_status":"INCONCLUSIVE"},
+    {"id":"PO-17","mechanism":"ability_revelation_updates_candidates","truth":"B","events":[{"type":"ability_revealed","value":"sandveil"}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-18","mechanism":"mega_revelation_updates_candidates","truth":"D","events":[{"type":"mega_seen","value":true}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-19","mechanism":"switch_clears_choice_lock","truth":"C","events":[{"type":"choice_lock_revealed","value":"earthquake"},{"type":"switch_seen","value":"metagross"}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-20","mechanism":"contradictory_observed_items","truth":"B","events":[{"type":"item_revealed","value":"sitrusberry"},{"type":"item_revealed","value":"choicescarf"}],"expected_status":"CONTRADICTORY_OBSERVATION"},
+    {"id":"PO-21","mechanism":"move_revelation_updates_candidates","truth":"B","events":[{"type":"move_used","value":"dragonclaw"}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-22","mechanism":"item_revelation_updates_candidates","truth":"B","events":[{"type":"item_revealed","value":"sitrusberry"}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-23","mechanism":"consumed_item_updates_candidates","truth":"B","events":[{"type":"item_consumed","value":"sitrusberry"}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-24","mechanism":"boost_revelation_preserves_unknowns","truth":"A","events":[{"type":"boost_seen","value":{"atk":1}}],"expected_status":"SYNTHETIC_TEST_PASS"},
+    {"id":"PO-25","mechanism":"action_order_only_constrains_speed","truth":"C","events":[{"type":"action_order_seen","value":"p2_before_p1"}],"expected_status":"INCONCLUSIVE"},
+    {"id":"PO-26","mechanism":"candidate_cap_reports_unsearched","truth":"A","candidate_cap":2,"expected_status":"CONSISTENT_HYPOTHESES"}
+  ]
+}
