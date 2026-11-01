@@ -33,7 +33,36 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs
+      - name: Independently compare 8 Champions burn/Reflect/critical conditions across 16 damage rolls
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 champions_damage_modifier_probe.cjs > phase0-damage-modifier.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-damage-modifier.json",encoding="utf-8") as f:
+              r=json.load(f)
+          assert r["schema"]=="phase0-champions-damage-modifier-diagnostic-v1"
+          assert r["pinned_sha"]=="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
+          assert r["format"]=="gen9championsbssregmc"
+          assert (r["gate_A"],r["gate_B"],r["adoption"])==("UNKNOWN","UNSUPPORTED","NO_GO")
+          assert r["scenario_count"]==8 and r["individual_roll_comparisons"]==128
+          assert r["counts"]=={"WIKI_SPEC_MATCH":8,"WIKI_SPEC_MISMATCH":0}
+          assert r["game_verified_check_count"]==0
+          assert r["executed_turns"]==0
+          assert r["private_golden_read"] is False and r["live_use_approved"] is False
+          assert len(r["results"])==8
+          for row in r["results"]:
+              assert row["status"]=="WIKI_SPEC_MATCH"
+              assert row["difference_count"]==0
+              print("DAMAGE_MODIFIER="+json.dumps({
+                  "id":row["id"],"conditions":row["conditions"],
+                  "reference_range":row["reference_range"],
+                  "pinned_range":row["pinned_range"],
+                  "status":row["status"]
+              },sort_keys=True))
+          print("Champions secondary-source rounding only, not device or action-order compatibility")
+          PY
       - name: Cross-check independent Champions AP stat arithmetic against pinned selected battle bodies
         shell: bash
         run: |

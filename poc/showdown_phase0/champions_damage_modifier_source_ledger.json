@@ -1,0 +1,184 @@
+{
+  "schema": "phase0-champions-damage-modifier-source-v1",
+  "checked_at": "2026-11-01",
+  "regulation": "M-C",
+  "source_priority": "OFFICIAL_AND_USER_CONFIRMED_GAME_DATA_PREVAIL",
+  "evidence": "CHAMPIONS_SPECIFIC_SECONDARY_SOURCES_NOT_DEVICE_VERIFIED",
+  "sources": [
+    {
+      "id": "damage_order",
+      "url": "https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
+      "claims": [
+        "Damage modifier order: weather, critical, 16 rolls, STAB, type, others",
+        "Burn and Reflect combined at other-multiplier step",
+        "Garchomp Earthquake vs Metagross range 138..164; reflect 69..82; critical 206..246"
+      ],
+      "checked_at": "2026-11-01",
+      "source_type": "SECONDARY_COMMUNITY"
+    },
+    {
+      "id": "critical",
+      "url": "https://pkmn-cp-dataportal.com/battle/damage/critical-hit/",
+      "claims": [
+        "Critical bypasses Reflect but burn physical reduction remains"
+      ],
+      "checked_at": "2026-11-01",
+      "source_type": "SECONDARY_COMMUNITY"
+    },
+    {
+      "id": "burn",
+      "url": "https://pkmn-cp-dataportal.com/status/burn/",
+      "claims": [
+        "Physical damage reduced by burn, except for specified overrides not used in this fixture"
+      ],
+      "checked_at": "2026-11-01",
+      "source_type": "SECONDARY_COMMUNITY"
+    }
+  ],
+  "fixture": {
+    "attacker": "Garchomp",
+    "defender": "Metagross",
+    "move": "Earthquake",
+    "atk": 182,
+    "def": 150,
+    "basePower": 100,
+    "stab": [
+      3,
+      2
+    ],
+    "effectiveness": [
+      2,
+      1
+    ],
+    "ability_interactions": "Rough Skin and Clear Body not triggered by this calculated move"
+  },
+  "scenarios": [
+    {
+      "id": "neutral",
+      "burn": false,
+      "reflect": false,
+      "critical": false,
+      "other": [
+        1,
+        1
+      ],
+      "source_ids": [
+        "damage_order"
+      ],
+      "published_min": 138,
+      "published_max": 164
+    },
+    {
+      "id": "critical",
+      "burn": false,
+      "reflect": false,
+      "critical": true,
+      "other": [
+        1,
+        1
+      ],
+      "source_ids": [
+        "damage_order",
+        "critical"
+      ],
+      "published_min": 206,
+      "published_max": 246
+    },
+    {
+      "id": "burn",
+      "burn": true,
+      "reflect": false,
+      "critical": false,
+      "other": [
+        1,
+        2
+      ],
+      "source_ids": [
+        "damage_order",
+        "burn"
+      ]
+    },
+    {
+      "id": "reflect",
+      "burn": false,
+      "reflect": true,
+      "critical": false,
+      "other": [
+        1,
+        2
+      ],
+      "source_ids": [
+        "damage_order"
+      ],
+      "published_min": 69,
+      "published_max": 82
+    },
+    {
+      "id": "burn-and-reflect",
+      "burn": true,
+      "reflect": true,
+      "critical": false,
+      "other": [
+        1,
+        4
+      ],
+      "source_ids": [
+        "damage_order",
+        "burn"
+      ]
+    },
+    {
+      "id": "critical-ignores-reflect",
+      "burn": false,
+      "reflect": true,
+      "critical": true,
+      "other": [
+        1,
+        1
+      ],
+      "source_ids": [
+        "critical"
+      ]
+    },
+    {
+      "id": "critical-preserves-burn",
+      "burn": true,
+      "reflect": false,
+      "critical": true,
+      "other": [
+        1,
+        2
+      ],
+      "source_ids": [
+        "critical",
+        "burn"
+      ]
+    },
+    {
+      "id": "critical-ignores-reflect-preserves-burn",
+      "burn": true,
+      "reflect": true,
+      "critical": true,
+      "other": [
+        1,
+        2
+      ],
+      "source_ids": [
+        "critical",
+        "burn"
+      ]
+    }
+  ],
+  "scope": "PINNED_M_C_REGISTERED_SIX_SELECTED_THREE_GETDAMAGE_16_ROLLS_ONLY",
+  "not_verified": [
+    "Real Champions device calculation and official damage algorithm",
+    "Turn-based order or action priority; getDamage called directly, not 8 actual executed turns",
+    "Weather, field, item modifiers, dynamic attack/defense stages and critical stage bypass",
+    "Other Pokémon/forms/moves, including weather-specific fire and water moves",
+    "Probabilities for critical, move accuracy, random seed distribution, real-game KO threshold",
+    "Burn and Reflect application timing in an executed live turn"
+  ],
+  "private_golden_read": false,
+  "game_verified_check_count": 0,
+  "live_use_approved": false
+}
