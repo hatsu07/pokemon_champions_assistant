@@ -1,7 +1,7 @@
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const {LEDGER,checkLedger,speeds,reference}=require("./champions_paralysis_reference.cjs");
-const {run,NUM_SEEDS}=require("./champions_paralysis_probe.cjs");
+const {run,paralysisInterruptions,NUM_SEEDS}=require("./champions_paralysis_probe.cjs");
 test("Champions secondary-source rate, URL, cases and device-evidence boundary are fixed",()=>{
  assert.equal(checkLedger(),true);
  assert.equal(LEDGER.cases.length,10);
@@ -25,6 +25,26 @@ test("Champions secondary-source rate, URL, cases and device-evidence boundary a
    const modified=structuredClone(LEDGER);mutate(modified);
    assert.throws(()=>checkLedger(modified),/source contract drift/);
  }
+});
+test("full paralysis witness must be an exact preturn-paralyzed actor's blocked move",()=>{
+ const c={g_par:false,m_par:true};
+ const p1={name:"Garchomp",status:""},p2={name:"Metagross",status:"par"};
+ const event="|cant|p2a: Metagross|par";
+ assert.deepEqual(paralysisInterruptions([event],c,p1,p2,12),[
+   {seed:12,side:"p2",pokemon:"Metagross",status_before:"par",event}
+ ]);
+ for(const [events,a,b] of [
+   [[event],p1,{name:"Metagross",status:""}],
+   [["|cant|p1a: Garchomp|par"],p1,p2],
+   [["|cant|p2a: Other|par"],p1,p2],
+   [["|cant|p2a: Metagross|slp"],p1,p2],
+   [[event,"|move|p2a: Metagross|Iron Defense|p2a: Metagross"],p1,p2],
+   [[event,event],p1,p2]
+ ]){
+   assert.throws(()=>paralysisInterruptions(events,c,a,b,12),
+     /blocked actor|non-paralysis|also logged|unexpected number/);
+ }
+ assert.deepEqual(paralysisInterruptions([],c,p1,p2,12),[]);
 });
 test("independent paralysis half floors and combined invariance vs unresolved rounding",()=>{
  const s=(base,par=false,scarf=false,stage=0)=>speeds({base,par,scarf,stage});
@@ -73,6 +93,18 @@ test("actual pinned executed turns check status Speed without inventing full par
  assert.equal(r.full_paralysis_sample.synthetic_turns,NUM_SEEDS);
  assert.equal(r.full_paralysis_sample.interrupted+r.full_paralysis_sample.uninterrupted,NUM_SEEDS);
  assert.equal(r.full_paralysis_sample.empirical_probability_verified,false);
+ assert.ok(r.full_paralysis_sample.interrupted>0);
+ assert.ok(r.full_paralysis_sample.interrupted<NUM_SEEDS);
+ assert.ok(r.full_paralysis_sample.uninterrupted>0);
+ assert.equal(r.full_paralysis_sample.interruption_path_observed,true);
+ assert.equal(r.full_paralysis_sample.non_interrupted_path_observed,true);
+ assert.equal(r.full_paralysis_sample.sample_case_id,"metagross-par");
+ const witness=r.full_paralysis_sample.witness;
+ assert.ok(Number.isInteger(witness.seed)&&witness.seed>=1&&witness.seed<=NUM_SEEDS);
+ assert.deepEqual([witness.side,witness.pokemon,witness.status_before,witness.event],
+   ["p2","Metagross","par","|cant|p2a: Metagross|par"]);
+ assert.equal(r.pinned_implementation.evidence,
+   "PINNED_SOURCE_IMPLEMENTATION_NOT_GAME_OR_STATISTICAL_VALIDATION");
  assert.equal(r.case_count,10);
  assert.deepEqual(r.counts,{SOURCE_SPEC_MATCH:9,SOURCE_SPEC_MISMATCH:0,SOURCE_UNKNOWN_MODIFIER_ORDER:1});
  assert.equal(r.results.length,10);
