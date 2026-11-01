@@ -1,5 +1,16 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## Phase 0：Championsまひ・S補正・行動順の独立監査（PR #163）
+
+`champions_paralysis_order_ledger.json`は、Champions専用資料の[まひ](https://gamewith.jp/pokemon-champions/559883)・[状態異常](https://www.serebii.net/pokemonchampions/statusconditions.shtml)・[Sライン](https://pkmn-cp-dataportal.com/battle/priority/speed-stats/)・[トリックルーム](https://pkmn-cp-dataportal.com/battle/priority/trick-room/)を出典として固定する。まひによるS半減・端数切り捨て、行動不能確率 **1/8（12.5%）** は**資料仕様**として扱い、実機確認済みとはしない。固定ShowdownのChampions専用`conditions.ts`の抽選`randomChance(1,8)`と、継承元のS半減・切り捨て処理も独立して点検するが、これはソース実装の確認であって確率の実測証明ではない。
+
+`champions_paralysis_reference.cjs`はShowdownの戦闘コードを呼ばず、固定マスター由来のガブリアス・メタグロス実数値と資料のS倍率から期待順を生成する。複合S補正は**演算順を入れ替えても結果が同じ場合**に限り速度値を検証し、奇数S93にまひ＋スカーフ＋S+1が重なり103/104に分かれる条件では `SOURCE_UNKNOWN_MODIFIER_ORDER` を保留する。保留条件でShowdownが出した一つの数値をChampionsの期待値と見なさない。
+
+`champions_paralysis_probe.cjs`は両側のChampions合法登録6匹→選出3匹の固定Battleに、まひ・能力上昇・トリックルームを**合成ターン開始前状態として設定**して実際の1ターンの技ログを検査する。麻痺で技が不発になった試行は順序一致に含めず、別の固定seedで両者が技を使用した試行のみ比較する。別途固定seed試行で実装の行動不能イベントを観測するが、**その頻度から1/8の実機分布を推定・合格判定しない**。技名・ID・優先度・実測Sと元の固定入力の一致が必要。
+
+今回の対象は通常フォーム2種の限定10条件のみ。同一ターン内の状態付与・能力変化の再順序付け、特性による補正、メガ後S、速度同速、実機での状態異常抽選、全レギュレーションは未検証。**Gate A=UNKNOWN／Gate B=UNSUPPORTED／採用NO_GO。LIVE・固定マスター不変、実ゲーム証拠0件**。
+
+
 ## Gate B：メガシンカ後の完全合成状態と部分観測の境界（PR #162案）
 
 `post_mega_restoration_probe.cjs` は既存の Gate B ケース **B1-10** を再利用し、実際の固定Showdownの合成ターンでルカリオがメガシンカした**完全なエンジン由来スナップショット**を検査する。出典は固定Champions使用可能マスター（`メガルカリオ`）、固定M-C Showdown SHA、合成スナップショットであり、Champions実機を観測したものではない。
