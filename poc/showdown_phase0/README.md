@@ -1,5 +1,14 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## 固定ShowdownをLinux・Windows Nodeで3プロセス再実行（Issue #139）
+
+`cross_process_synthetic_probe.cjs`は登録6→選出3から作成した固定127合成状態を、新しいNode子プロセス3個でそれぞれ検証し、ケースごとの完全スナップショットSHA・粗視化状態SHA・両分岐と再実行SHA・固定マスターSHAを比較する。**127種類×3回=381合成実行**であり、381件の独立した対戦例ではない。
+
+Windowsでは固定Showdown commit `ccfaa20f32af363569cd21a9d501b2bc1ded26b1` をチェックアウトして`npm ci && npm run build`したNode上で実行する（デスクトップGUIのCIとは別）。Linuxでは既存固定Dockerイメージ内で実行。プロセス単位の所要時間は子プロセス起動・moduleロード・127局面の検証を含むが、Docker/Windowsアプリの起動・UIやIPCは含まない。P50/P95/P99は3プロセスのみの探索的測定。3プロセスの同一結果は独立したCI run間の再現性、異OS間の同一ハッシュ、Champions実ゲーム計算仕様の一致を証明しない。
+
+**Gate A=UNKNOWN、Gate B=UNSUPPORTED、総合NO_GO**を維持。実ゲームの非公開Golden/対戦ログ/画像をCIに含めず、LIVEには接続しない。
+
+
 ## 実ゲームGoldenと部分観測のオフライン証拠境界（Issue #139）
 
 `game_evidence_bridge.cjs` は既存の `golden_compare.cjs`（Gate Aの能力値・PP・単発ダメージ照合）と
