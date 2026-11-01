@@ -1,5 +1,11 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #163 レビューP2対応：出典強度・まひ行動不能の実行証人
+
+- 出典台帳のURLだけでなく、`sources[].basis`の説明全文と`not_verified`の6項目内容を独立定数と照合。出典を実機検証済みに偽装した変更や、未知範囲を削除した変更は fail-closed。Gate A の`unverified`と固定Showdownソース検査の`evidence`も実機根拠に昇格させない。
+- `|cant|p2a: Metagross|par`を、行動直前から`par`が付いたメタグロスの実行失敗イベントとして、固定seed／側／ポケモン名／前状態付きで記録する。行動不能0件、動けた試行0件、別原因の失敗、別側の失敗、行動不能なのに同じ側の実行技ログがあるケースは失敗。固定48seedの成功と失敗を両方確認するが、**12.5%の実機確率分布を推定しない**。
+- 記録するイベントは固定Showdownの合成ターンのみ。非公開Golden・実際のChampionsバトル・本番LIVEには変更なし。Gate A=`UNKNOWN`、Gate B=`UNSUPPORTED`、採用`NO_GO`。
+
 ## Phase 0：Championsまひ・S補正・行動順の独立監査（PR #163）
 
 `champions_paralysis_order_ledger.json`は、Champions専用資料の[まひ](https://gamewith.jp/pokemon-champions/559883)・[状態異常](https://www.serebii.net/pokemonchampions/statusconditions.shtml)・[Sライン](https://pkmn-cp-dataportal.com/battle/priority/speed-stats/)・[トリックルーム](https://pkmn-cp-dataportal.com/battle/priority/trick-room/)を出典として固定する。まひによるS半減・端数切り捨て、行動不能確率 **1/8（12.5%）** は**資料仕様**として扱い、実機確認済みとはしない。固定ShowdownのChampions専用`conditions.ts`の抽選`randomChance(1,8)`と、継承元のS半減・切り捨て処理も独立して点検するが、これはソース実装の確認であって確率の実測証明ではない。
