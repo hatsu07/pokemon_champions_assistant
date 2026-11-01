@@ -2,6 +2,48 @@
 // Phase 0 acceptance evidence classification. Never imports game LIVE modules.
 // This is a CONDITIONAL report, not an approval engine for production.
 const fs=require("node:fs");
+const GATE_A_MAP=require("./gate_a_evidence_map.json");
+const GATE_B_MANIFEST=require("./gate_b_cases.json");
+const PARTIAL_MANIFEST=require("./partial_observation_cases.json");
+const REPRESENTATIVE_MANIFEST=require("./representative_states_cases.json");
+const STAGES=["prepare_ms","serialize_ms","restore_ms","branch_ms","alternative_ms","replay_ms"];
+const B_STATUSES=["PASS_SYNTHETIC","STATE_OR_QUEUE_MISMATCH","LOG_ONLY_MISMATCH","INCONCLUSIVE","UNSUPPORTED"];
+const PARTIAL_STATUSES=["CONSISTENT_HYPOTHESES","INCONCLUSIVE","UNSUPPORTED","SYNTHETIC_TEST_PASS","CONTRADICTORY_OBSERVATION"];
+function percentile(values,q){
+ const sorted=[...values].sort((a,b)=>a-b);
+ return sorted[Math.ceil(q*sorted.length)-1];
+}
+function validTiming(n){return Number.isFinite(n)&&n>=0;}
+function checkDistribution(stats,values,label,withMax=false){
+ requireValue(Array.isArray(values)&&values.length>0&&values.every(validTiming),
+   label+" raw timing observations");
+ requireValue(stats&&stats.samples===values.length&&
+   ["p50","p95","p99"].every((k,i)=>stats[k]===percentile(values,[.5,.95,.99][i]))&&
+   stats.p50<=stats.p95&&stats.p95<=stats.p99&&
+   (!withMax||stats.max===Math.max(...values)),
+   label+" percentile, ordering or sample count mismatch");
+}
+function exactManifestResults(report,manifest,label,check){
+ const rows=report.results,expected=manifest.cases;
+ requireValue(Array.isArray(rows)&&rows.length===expected.length,
+   label+" individual case count");
+ for(let i=0;i<expected.length;i++){
+  const row=rows[i],spec=expected[i];
+  requireValue(row&&row.case_id===spec.id&&row.mechanism===spec.mechanism&&
+    row.status===spec.expected_status&&check(row,spec),
+    label+" individual case ID/mechanism/status drift: "+spec.id);
+ }
+ requireValue(new Set(rows.map(x=>x.case_id)).size===expected.length&&
+   new Set(rows.map(x=>x.mechanism)).size===report.mechanism_count,
+   label+" duplicate case or mechanism count");
+}
+function checkCounts(counts,rows,statuses,phase){
+ requireValue(counts&&Object.keys(counts).sort().join(",")===statuses.slice().sort().join(",")&&
+   statuses.every(status=>counts[status]===rows.filter(x=>
+     (!phase||x.phase===phase)&&x.status===status).length),
+   "individual results disagree with "+(phase||"all")+" summary counts");
+}
+
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const FORMAT="gen9championsbssregmc";
 const REGULATION="M-C";
@@ -33,6 +75,11 @@ function evaluate(e){
    a.scope==="OFFLINE_SOURCE_DIAGNOSTIC_ONLY"&&a.regulation===REGULATION&&
    a.feature_count===10&&Array.isArray(a.features)&&a.features.length===10&&
    new Set(a.features.map(x=>x.feature)).size===10&&
+   GATE_A_MAP.schema==="phase0-gate-a-evidence-map-v1"&&
+   GATE_A_MAP.feature_map.length===10&&
+   JSON.stringify(a.features.map(x=>x.feature))===
+    JSON.stringify(GATE_A_MAP.feature_map.map(x=>x.feature))&&
+   a.features.every(x=>x.regulation===REGULATION)&&
    a.features.every(x=>x.feature_compatibility==="UNKNOWN"&&
      x.actual_game_status==="NOT_EVALUATED_PRIVATE_GOLDEN"&&
      x.allowed_as_certain_ko_or_safe_switch_proof===false)&&
@@ -49,6 +96,16 @@ function evaluate(e){
    b.counts?.B2?.INCONCLUSIVE===2&&b.counts?.B2?.PASS_SYNTHETIC===0&&
    b.representative_100_cases_met===false,
    "gate_b synthetic complete vs incomplete observation boundary");
+ exactManifestResults(b,GATE_B_MANIFEST,"gate_b",
+  (row,spec)=>row.phase===spec.phase&&row.evidence_class===
+   (spec.phase==="B1"?"SYNTHETIC":"SYNTHETIC_PARTIAL_OBSERVATION")&&
+   row.pinned_showdown_sha===PIN);
+ requireValue(b.counts&&Object.keys(b.counts).sort().join(",")==="B1,B2",
+   "gate_b phase aggregate names");
+ checkCounts(b.counts.B1,b.results,B_STATUSES,"B1");
+ checkCounts(b.counts.B2,b.results,B_STATUSES,"B2");
+ requireValue(new Set(b.results.map(x=>x.input_state_sha256)).size===
+  b.unique_input_state_count,"gate_b unique input state hashes");
  requireValue(partial.schema==="phase0-partial-observation-diagnostics-v1"&&
    partial.case_count===26&&partial.mechanism_count===26&&
    partial.representative_100_cases_met===false&&
@@ -56,6 +113,13 @@ function evaluate(e){
    partial.results.every(x=>x.unique_truth_restoration===false&&
     x.complete_snapshot_restorable_from_observation===false),
    "partial observation cannot reconstruct a unique actual truth");
+ exactManifestResults(partial,PARTIAL_MANIFEST,"partial_observation",
+  row=>row.evidence_class==="SYNTHETIC_ONLY"&&
+   row.pinned_showdown_sha===PIN&&row.format===FORMAT);
+ checkCounts(partial.counts,partial.results,PARTIAL_STATUSES);
+ requireValue(partial.synthetic_condition_pass_count===partial.results.filter(x=>
+   ["CONSISTENT_HYPOTHESES","SYNTHETIC_TEST_PASS"].includes(x.status)).length,
+   "partial synthetic condition summary disagrees with individual rows");
  requireValue(rep.schema==="phase0-representative-synthetic-states-v1",
    "representative synthetic schema");
  requireValue(rep.case_count===127&&rep.counts?.PASS_SYNTHETIC===127&&
@@ -66,6 +130,16 @@ function evaluate(e){
    rep.memory_bytes?.peak_rss_measured===false&&
    rep.memory_bytes?.long_running_leak_tested===false,
    "representative 127 cases are synthetic Linux-only warm measures");
+ exactManifestResults(rep,REPRESENTATIVE_MANIFEST,"representative",
+  row=>row.evidence_class==="SYNTHETIC_ONLY"&&
+   row.branch?.source_unchanged===true&&
+   row.branch?.repeated_action_identical===true&&
+   row.branch?.distinct_outcome===true);
+ checkCounts(rep.counts,rep.results,["PASS_SYNTHETIC","UNSUPPORTED"]);
+ requireValue(rep.distinct_mechanisms===REPRESENTATIVE_MANIFEST.mechanisms.length&&
+   JSON.stringify([...new Set(rep.results.map(x=>x.mechanism))])===
+     JSON.stringify(REPRESENTATIVE_MANIFEST.mechanisms),
+   "representative mechanism coverage drift");
  requireValue(cross.schema==="phase0-cross-process-synthetic-validation-v1"&&
    cross.independent_os_process_count===3&&cross.cases_per_process===127&&
    cross.total_case_invocations===381&&cross.cross_process_signatures_equal===true&&
@@ -76,16 +150,28 @@ function evaluate(e){
    cross.process_memory?.long_term_leak_tested===false,
    "three same-OS processes do not prove independent CI runs or E2E");
  const latency=cross.process_wall_ms;
- requireValue(latency?.samples===3&&latency?.scope===
-   "CHILD_STARTUP_AND_127_CASES_NOT_CONTAINER_STARTUP"&&
-   ["p50","p95","p99"].every(k=>Number.isFinite(latency[k])&&latency[k]>=0),
-   "measured synthetic process latency provenance");
+ requireValue(latency?.scope==="CHILD_STARTUP_AND_127_CASES_NOT_CONTAINER_STARTUP",
+   "synthetic process timing scope");
+ checkDistribution(latency,latency.observations,"three Node child-process wall times");
  const stages=rep.timing_ms;
- requireValue(stages&&typeof stages==="object"&&
-   Object.keys(stages).length>0&&
-   Object.values(stages).every(x=>x&&Number.isInteger(x.samples)&&x.samples>0&&
-     ["p50","p95","p99"].every(k=>Number.isFinite(x[k])&&x[k]>=0)),
-   "synthetic stage latency with sample sizes");
+ requireValue(stages&&Object.keys(stages).sort().join(",")===
+   STAGES.slice().sort().join(","),"representative six timing stages");
+ for(const key of STAGES){
+   const values=rep.results.map(x=>x.timings_ms?.[key]);
+   checkDistribution(stages[key],values,"representative "+key,true);
+   requireValue(stages[key].samples===rep.case_count,
+     "representative stage needs all 127 case observations: "+key);
+ }
+ requireValue(cross.node_stage_ms?.scope==="THREE_SEPARATE_PROCESSES_SAME_FIXED_CASES"&&
+   cross.node_stage_ms.values&&
+   Object.keys(cross.node_stage_ms.values).sort().join(",")===
+    STAGES.slice().sort().join(",")&&
+   STAGES.every(k=>{
+    const x=cross.node_stage_ms.values[k];
+    return x?.samples===381&&
+      ["p50","p95","p99"].every(y=>validTiming(x[y]))&&
+      x.p50<=x.p95&&x.p95<=x.p99;
+   }),"cross-process stage quantiles and 381 sample counts");
  const aFeatures=a.features.map(x=>({
    feature:x.feature,source_validation:x.actual_game_status,
    feature_compatibility:x.feature_compatibility,
