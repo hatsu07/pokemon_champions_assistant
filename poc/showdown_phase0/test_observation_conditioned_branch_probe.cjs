@@ -186,11 +186,11 @@ test("unknown terrain/hazards/type must not become default absence or base type"
    assert.deepEqual(r.missing_observed_fields,[field]);
  }
 });
+// Consumed Berries are handled only with a separately observed current empty item.
 test("known but unmodeled effect history is not silently ignored",()=>{
  for(const [field,value] of [
   ["effect_remaining_turns",{leechseed:2}],
   ["opponent_mega_history",{previous_form:"garchomp"}],
-  ["opponent_consumed_item","sitrusberry"],
   ["choice_lock","earthquake"],
   ["action_history",["switch"]]
  ]){
