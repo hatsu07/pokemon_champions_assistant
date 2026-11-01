@@ -108,6 +108,10 @@ function condition(obs, ctx = context()) {
  // Showdown item-use event, HP restoration, or lastItem history occurred.
  const consumedKnown=known(obs,"opponent_consumed_item");
  const currentItemKnown=known(obs,"opponent_item");
+ // An empty currently held item without verified consumption/removal history
+ // must not return a Battle that still holds its original registered item.
+ if(currentItemKnown&&f.opponent_item.value===""&&!consumedKnown)
+   return deny("observed empty current item lacks supported consumption history",originHash);
  if(consumedKnown&&(!currentItemKnown||f.opponent_item.value!==""))
    return deny("consumed item requires observed empty current item",originHash);
  const consumedId=consumedKnown ?
@@ -152,6 +156,12 @@ function condition(obs, ctx = context()) {
     if(!active.setItem("")||active.item!==""||active.itemState?.id)
       throw Error("could not remove hypothetical held item without simulated use");
   }
+  // candidate().model can copy an observed item fact without changing the
+  // Battle itself. Verify the actual active item, not only model compatibility.
+  if(currentItemKnown&&active.item!==f.opponent_item.value){
+    rejected.push({id:c.id,reason:"actual conditioned Battle item conflicts with observed current item"});
+    continue;
+  }
   let supported=true;
   for(const name of screens){
    if(!battle.p2.addSideCondition(name,active)){
@@ -168,6 +178,8 @@ function condition(obs, ctx = context()) {
   }
   const digest=fingerprint(state(battle));
   const restored=restoreChecked(serialize(battle),digest);
+  if(currentItemKnown&&restored.p2.active[0].item!==f.opponent_item.value)
+    throw Error("restored Battle item conflicts with observed current item");
   if(fingerprint(state(restored))!==digest)
     throw Error("conditioned synthetic Battle failed serialized round trip");
   const post=copy(restored);
