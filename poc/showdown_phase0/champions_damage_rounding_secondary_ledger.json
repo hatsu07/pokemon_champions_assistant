@@ -1,0 +1,67 @@
+{
+  "schema": "phase0-champions-damage-rounding-secondary-ledger-v1",
+  "checked_at": "2026-11-02",
+  "regulation": "M-C",
+  "evidence": "TWO_CHAMPIONS_SECONDARY_DESCRIPTIONS_NOT_DEVICE",
+  "device_observations": 0,
+  "private_golden_read": false,
+  "live_use_approved": false,
+  "source_claims": [
+    {
+      "id": "combined_final",
+      "url": "https://pkmn-cp-dataportal.com/battle/damage/damage-order/",
+      "rule_scope": "BURN_AND_REFLECT_SAME_FINAL_MODIFIER_STEP",
+      "claim": "Combine burn and Reflect before one half-down round at final modifier stage",
+      "confidence": "SECONDARY_DESCRIPTION_ONLY"
+    },
+    {
+      "id": "separate_steps",
+      "url": "https://damekei.com/formula",
+      "rule_scope": "BURN_THEN_WALL_SEPARATE_STEPS",
+      "claim": "Burn and Reflect are listed as successive stages with floor applied at each step",
+      "confidence": "SECONDARY_DESCRIPTION_ONLY_NOT_FULL_FORMULA_NUMERIC_MATCH"
+    }
+  ],
+  "specific_scope": {
+    "attacker": "Garchomp",
+    "defender": "Blastoise",
+    "attack_move": "Earthquake",
+    "burn": true,
+    "reflect": true,
+    "critical": false,
+    "weather": "",
+    "item": "",
+    "rolls": [
+      85,
+      100
+    ],
+    "pre_final_basis": "EXISTING_CHAMPIONS_PORTAL_ARITHMETIC_NOT_DEVICE",
+    "witness_rolls": [
+      86,
+      90,
+      91,
+      98
+    ],
+    "combined_expected": [
+      22,
+      23,
+      23,
+      25
+    ],
+    "sequential_expected": [
+      21,
+      22,
+      22,
+      24
+    ]
+  },
+  "classification": "SECONDARY_METHODS_DISAGREE_ON_THIS_INTERMEDIATE_STEP;PINNED_GETDAMAGE_MATCHES_SEQUENTIAL_FOR_FOUR_WITNESSES;GAME_BEHAVIOR_UNKNOWN",
+  "source_dependency_warning": "Different guides may share older game arithmetic or implementation assumptions; independence of original game evidence not established",
+  "unverified": [
+    "Actual Champions real-game rounding order or observed HP loss",
+    "Full damekei damage formula equivalence for this fixture, including other rounding stages",
+    "Crits, alternate abilities, screens expiring, accuracy and other turn effects outside reviewed synthetic fixture",
+    "Turn-level damage random seed distribution and probability",
+    "Any safety/KO guarantee based on 1-point discrepancy"
+  ]
+}
