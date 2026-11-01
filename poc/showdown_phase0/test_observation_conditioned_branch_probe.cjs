@@ -120,6 +120,35 @@ test("observed Sitrus Berry consumption conditions only its original legal holde
  assert.deepEqual(r.candidates.map(x=>x.continuation_sha256),
   repeated.candidates.map(x=>x.continuation_sha256));
 });
+test("observed empty current item with unknown consumed history fails closed",()=>{
+ const obs=withHPAndBoosts({hp:70});
+ obs.facts.opponent_item=known("");
+ obs.facts.opponent_consumed_item={source:"UNKNOWN"};
+ const hash=fingerprint(obs),result=condition(obs,ctx);
+ assert.equal(fingerprint(obs),hash,"rejected evidence must remain immutable");
+ assert.equal(result.status,"UNSUPPORTED");
+ assert.match(result.reason,/empty current item lacks supported consumption history/);
+ assert.equal(result.gate_B,"UNSUPPORTED");
+ assert.equal(result.game_compatibility_verified,false);
+ assert.equal(result.live_recommendation_permitted,false);
+ assert.equal(result.candidates?.length||0,0,"no stale equipped Battle may be returned");
+});
+test("every accepted hypothesis has the actual observed current held item",()=>{
+ for(const [item,consumed,expected] of [
+  ["sitrusberry",false,["B"]],
+  ["choicescarf",false,["C"]],
+  ["",true,["B"]]
+ ]){
+  const obs=withHPAndBoosts({hp:70});
+  obs.facts.opponent_item=known(item);
+  obs.facts.opponent_consumed_item=consumed?known("sitrusberry"):{source:"UNKNOWN"};
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",item||"consumed");
+  assert.deepEqual(r.candidates.map(c=>c.id),expected);
+  assert.ok(r.candidates.every(c=>c.conditioned_item===item),
+   "active.item must match the current observation for every accepted candidate");
+ }
+});
 test("consumed-item evidence cannot override unknown or nonempty current item",()=>{
  for(const value of [{source:"UNKNOWN"},known("sitrusberry")]){
   const obs=withHPAndBoosts();
