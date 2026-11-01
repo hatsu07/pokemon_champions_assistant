@@ -2,7 +2,7 @@
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const {LEDGER,validateLedger,baseSpeed,effectiveSpeed,compareOrder,referenceCase}=
   require("./champions_turn_order_reference.cjs");
-const {run,observeMoves,makeFixture}=require("./champions_turn_order_probe.cjs");
+const {run,observeMoves,validateSelectedMove,makeFixture}=require("./champions_turn_order_probe.cjs");
 test("Champions-specific source contracts bind IDs, case flags, priorities and URLs",()=>{
  assert.equal(validateLedger(),true);
  assert.equal(LEDGER.cases.length,10);
@@ -50,9 +50,31 @@ test("all source conditions have independently calculated expected orders",()=>{
    LEDGER.cases.map(x=>x.expected));
  assert.equal(makeFixture(LEDGER.cases[1]).defender.item,"Choice Scarf");
  assert.equal(makeFixture(LEDGER.cases[6]).defender.evs.spe,32);
- assert.equal(observeMoves(["|move|p2a: Metagross|Iron Defense|p2a: Metagross",
-   "|move|p1a: Garchomp|Swords Dance|p1a: Garchomp"]).first,"p2");
- assert.throws(()=>observeMoves(["|move|p1a: Garchomp|Swords Dance"]),/unambiguously/);
+ const known={
+   "Iron Defense":{exists:true,id:"irondefense",name:"Iron Defense",priority:0},
+   "Swords Dance":{exists:true,id:"swordsdance",name:"Swords Dance",priority:0},
+   "Protect":{exists:true,id:"protect",name:"Protect",priority:4}
+ };
+ const dex={moves:{get:name=>known[name]||{exists:false}}};
+ const expected={p1:{id:"swordsdance",name:"Swords Dance",priority:0},
+   p2:{id:"irondefense",name:"Iron Defense",priority:0}};
+ const events=["|move|p2a: Metagross|Iron Defense|p2a: Metagross",
+   "|move|p1a: Garchomp|Swords Dance|p1a: Garchomp"];
+ assert.equal(observeMoves(events,expected,dex).first,"p2");
+ assert.deepEqual(observeMoves(events,expected,dex).executed_moves,expected);
+ assert.throws(()=>observeMoves(events.slice(0,1),expected,dex),/unambiguously/);
+ // In the previous implementation, merely changing the executed move could
+ // still report SOURCE_SPEC_MATCH if the same side moved first.
+ const wrongName=[events[0],events[1].replace("Swords Dance","Protect")];
+ assert.throws(()=>observeMoves(wrongName,expected,dex),/executed move name/);
+ const wrongId={...expected,p1:{...expected.p1,id:"protect"}};
+ assert.throws(()=>observeMoves(events,wrongId,dex),/executed move name/);
+ const mon={moveSlots:[{id:"swordsdance",move:"Swords Dance",pp:20}]};
+ assert.deepEqual(validateSelectedMove(mon,"move 1","Swords Dance",0,dex),expected.p1);
+ assert.throws(()=>validateSelectedMove(mon,"move 1","Protect",4,dex),/selected move slot/);
+ assert.throws(()=>validateSelectedMove(mon,"move 2","Swords Dance",0,dex),/selected move slot/);
+ assert.throws(()=>validateSelectedMove({moveSlots:[{...mon.moveSlots[0],pp:0}]},
+   "move 1","Swords Dance",0,dex),/selected move slot/);
 });
 test("pinned M-C registered six / selected three executes order with source-only classifications",()=>{
  const r=run();
@@ -75,6 +97,10 @@ test("pinned M-C registered six / selected three executes order with source-only
    assert.equal(caseRow.expected_first,c.expected);
    assert.ok(["p1","p2"].includes(caseRow.observed_first));
    assert.equal(caseRow.observed_sequence.length,2);
+   assert.equal(caseRow.executed_moves.p1.name,c.p1);
+   assert.equal(caseRow.executed_moves.p2.name,c.p2);
+   assert.equal(caseRow.executed_moves.p1.priority,caseRow.p1_priority);
+   assert.equal(caseRow.executed_moves.p2.priority,caseRow.p2_priority);
    assert.equal(caseRow.status,c.expected==="UNRESOLVED_TIE"?
      "INCONCLUSIVE_SPEED_TIE":"SOURCE_SPEC_MATCH");
  }
