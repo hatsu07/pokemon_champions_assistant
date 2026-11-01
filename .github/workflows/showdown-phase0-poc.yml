@@ -6,6 +6,7 @@ on:
       - 'poc/showdown_phase0/**'
       - '.github/workflows/showdown-phase0-poc.yml'
       - '.gitattributes'
+      - 'masters/Pokemon_Champions_MC_*.csv'
   workflow_dispatch:
 
 permissions:

@@ -17,13 +17,16 @@
       "feature": "move power and PP",
       "static_groups": [
         "move_coverage",
+        "move_type",
+        "move_category",
         "move_power",
         "move_pp"
       ],
       "rule_ids": [],
       "wiki_damage": false,
       "risk": "POWER_AND_PP_CAP_UNVERIFIED",
-      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for move power and PP"
+      "next_evidence": "Independent Champions-specific source or user-verified game observation needed for move power and PP",
+      "static_scope_note": "move_type/move_category are fixed move-specification constraints grouped here for coverage; they do not verify dynamic Champions effects, damage, or PP in game"
     },
     {
       "feature": "priority",

@@ -4,11 +4,13 @@
 
 `gate_a_evidence_inventory.cjs` は `golden_gate_requirements.csv` のGate A 10項目を正本として、固定ChampionsマスターとShowdownの静的差分、出典から**独立**に計算したWiki単発ダメージ例、Bulbapedia Champions記述由来の5契約・18イベントを機能別に照合する。ゲームの実測や未公開対戦ログをこのコマンドに読み込まない。
 
-`gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。なお `audit.cjs` の `pokemon_link` グループは学習技リンクが欠落したときだけ出力されるため、グループ不在は0件として明示し、`move_pp`等の常時照合グループ不在とは区別する。
+`gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。 `move_type`・`move_category`は技の固定仕様として「move power and PP」に明示的に分類するが、動的な技効果やゲーム内ダメージの確認を意味しない。静的監査で実行する全13グループを少なくとも1機能に対応づけ、未マッピングの既存グループ・新規監査グループは `UNMAPPED_AUDIT_GROUP` として失敗させる。機能別の差異件数は同一グループが複数機能に使われるため単純合算できない。なお `audit.cjs` の `pokemon_link` グループは学習技リンクが欠落したときだけ出力されるため、グループ不在は0件として明示し、`move_pp`等の常時照合グループ不在とは区別する。
 
 静的比較が一致しても `SOURCE_CHECKED_ONLY`、Wiki数式が一致しても `WIKI_SPEC_MATCH` に過ぎず、実ゲームに一致したことではない。差分は `SOURCE_CONFLICT` として残し、固定マスターとShowdownのどちらを正とするかは追加根拠なく判定しない。イベントで `INCONCLUSIVE` だった条件も解消扱いにしない。
 
 非公開ローカルの実ゲームGolden 6ケース/11チェックは **当該runでは読まない**ため、`game_verified_cases_this_run=0` は過去の実ゲーム観測を否定する意味ではない。ユーザー本人による既存Goldenの独立照合・証拠紐付けは別途必要。
+
+固定マスターCSVだけを変更するPRでもPhase 0のCIが自動起動するようワークフローのpathsに `masters/Pokemon_Champions_MC_*.csv` を追加した。監査差分注入テストは合成の負例であり実ゲームの不一致を示さない。
 
 既存のテスト対象が減少した、検証ケースの状態が変わった、出典契約が未レビューで追加された場合はfail-closed。各機能の `feature_compatibility=UNKNOWN`、Gate A=UNKNOWN、B=UNSUPPORTED、総合NO_GOを維持する。**本番LIVEの確定KO・安全受け出し・行動順保証への転用は不可**。Phase 0のGate B・運用・採否レポートも別作業として残る。
 

@@ -1,5 +1,9 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 PR #158レビューP2対応（2026-11-01）
+
+- `move_type` / `move_category` を「move power and PP」内の静的仕様比較に追加。audit.cjsが生成する13種類のgroupすべてに機能別対応を要求し、未知・未割当グループは`UNMAPPED_AUDIT_GROUP`で監査失敗。タイプ・分類に合成差分を注入した場合に`SOURCE_CONFLICT`となり、機能別UNKNOWNを維持する負例テスト追加。固定4マスターCSV単独変更でPhase 0 workflowを起動するpaths追加。固定データ・Showdown本体・LIVE経路は変更なし。
+
 ## Issue #139 Gate A仕様別証拠台帳（2026-11-01）
 
 - 受け入れ要件のGate A 10項目ごとに固定マスター静的照合、Wiki独立数式の単発例、5契約18合成イベント、未観測の高リスク範囲を分類する。実機Goldenは非公開でCI未読込（このrunの実機検証件数0）。出典一致・Wiki一致・合成イベントの成功をゲーム一致に昇格しない。すべてfeature UNKNOWN、Gate A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。

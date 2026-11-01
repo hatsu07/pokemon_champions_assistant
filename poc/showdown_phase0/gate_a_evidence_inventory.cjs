@@ -8,6 +8,14 @@ const MAP=require("./gate_a_evidence_map.json");
 const CONTRACTS=require("./champions_rule_contracts.json");
 const EVENT_BASELINE=require("./champions_event_baseline.json");
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1",FORMAT="gen9championsbssregmc";
+// Reviewed list of ALL comparison groups emitted by audit.cjs::compare/check.
+// pokemon_link is discrepancy-only, so it may be absent when there is no missing link.
+// A new audit group must be consciously added here AND assigned to a Gate A feature.
+const KNOWN_AUDIT_GROUPS=new Set([
+ "move_coverage","move_type","move_category","move_power","move_priority",
+ "move_pp","move_accuracy","pokemon_link","species_coverage",
+ "species_base_stats","species_types","learnset_membership","item_coverage"
+]);
 function requirements(){
  return fs.readFileSync(path.join(__dirname,"golden_gate_requirements.csv"),"utf8")
   .trim().split(/\r?\n/).slice(1).map(s=>s.split(","))
@@ -21,13 +29,23 @@ function checkMap(map=MAP,rows=requirements()){
     CONTRACTS.schema!=="champions-source-rule-contracts-v1"||
     CONTRACTS.regulation!=="M-C"||CONTRACTS.rules.length!==5||ids.size!==5)
     throw Error("Gate A source requirements or source contract map changed");
- for(const row of map.feature_map)
+ const mapped=new Set();
+ for(const row of map.feature_map){
    if(!Array.isArray(row.static_groups)||!Array.isArray(row.rule_ids)||
       typeof row.wiki_damage!=="boolean"||!row.risk||!row.next_evidence||
       new Set(row.static_groups).size!==row.static_groups.length||
       new Set(row.rule_ids).size!==row.rule_ids.length||
       row.rule_ids.some(id=>!ids.has(id)))
      throw Error("Gate A mapping has unknown source or incomplete gap");
+   for(const group of row.static_groups){
+     if(!KNOWN_AUDIT_GROUPS.has(group))
+       throw Error("Gate A map contains unreviewed static audit group: "+group);
+     mapped.add(group);
+   }
+ }
+ const unmapped=[...KNOWN_AUDIT_GROUPS].filter(group=>!mapped.has(group));
+ if(unmapped.length)
+   throw Error("UNMAPPED_AUDIT_GROUP: "+unmapped.join(","));
  return true;
 }
 function checkEvidence(a,w,e,map=MAP){
@@ -42,6 +60,11 @@ function checkEvidence(a,w,e,map=MAP){
     w.mismatch_count!==w.results.filter(x=>x.status==="WIKI_SPEC_MISMATCH").length||
     w.results.some(x=>!["WIKI_SPEC_MATCH","WIKI_SPEC_MISMATCH"].includes(x.status)))
     throw Error("Wiki arithmetic evidence contract changed");
+ // Detect newly introduced groups even when their counts are all matching.
+ // Without this guard a future source disagreement could silently disappear.
+ const groups=Object.keys(a.totals);
+ const unmapped=groups.filter(group=>!map.feature_map.some(row=>row.static_groups.includes(group)));
+ if(unmapped.length)throw Error("UNMAPPED_AUDIT_GROUP: "+unmapped.join(","));
  if(e?.schema!=="champions-showdown-event-diagnostics-v1"||e.pinned_sha!==PIN||
     e.format!==FORMAT||e.gate_A!=="UNKNOWN"||e.gate_B!=="UNSUPPORTED"||
     e.adoption!=="NO_GO"||e.results?.length!==EVENT_BASELINE.cases.length||
@@ -93,4 +116,4 @@ if(require.main===module){
  try{process.stdout.write(JSON.stringify(run())+"\n");}
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
-module.exports={run,summarize,checkMap,checkEvidence,requirements,MAP};
+module.exports={run,summarize,checkMap,checkEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
