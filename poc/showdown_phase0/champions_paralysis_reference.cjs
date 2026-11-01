@@ -10,6 +10,29 @@ const SOURCE_URLS=Object.freeze([
  ["trickroom","https://pkmn-cp-dataportal.com/battle/priority/trick-room/"],
  ["paralysis","https://pkmn-cp-dataportal.com/status/paralysis/"]
 ]);
+// Reviewed provenance is independent of the editable JSON ledger.
+const SOURCE_ROWS=Object.freeze([
+ ["gamewith","https://gamewith.jp/pokemon-champions/559883",
+  "Champions paralysis: 12.5% immobility, Speed 0.5 floor, examples 191 to 95"],
+ ["serebii","https://www.serebii.net/pokemonchampions/statusconditions.shtml",
+  "Champions distinct 12.5% immobility; Speed remains 50%"],
+ ["speed","https://pkmn-cp-dataportal.com/battle/priority/speed-stats/",
+  "Champions +1 stage and Choice Scarf each 1.5x floor"],
+ ["scarf","https://pkmn-cp-dataportal.com/item/choice-items/",
+  "Champions scarf 1.5x, lock, within-priority Speed ordering"],
+ ["trickroom","https://pkmn-cp-dataportal.com/battle/priority/trick-room/",
+  "Champions reverse Speed within equal priority"],
+ ["paralysis","https://pkmn-cp-dataportal.com/status/paralysis/",
+  "Champions paralysis 1/8 and Speed half"]
+]);
+const REVIEWED_UNVERIFIED=Object.freeze([
+ "Live game turn ordering and RNG rate",
+ "Exact Speed rounding with three simultaneous modifiers on an odd stat",
+ "Same-turn paralysis infliction and order recalculation",
+ "Paralysis immunity and status-curing abilities",
+ "Trick Room setup/expiry and ability-dependent priority",
+ "Full paralysis distribution from one fixed-seed simulation"
+]);
 const REVIEWED_CASES=Object.freeze([
  ["metagross-par",false,true,false,false,0,false,"Swords Dance","Iron Defense",2,"p1"],
  ["garchomp-par",true,false,false,false,0,false,"Swords Dance","Iron Defense",2,"p2"],
@@ -32,12 +55,14 @@ function checkLedger(l=LEDGER){
     l.scope!=="TWO_BASE_SPECIES_SYNTHETIC_PRETURN_PARALYSIS"||
     l.game_verified_turn_count!==0||l.private_golden_read!==false||
     l.live_use_approved!==false||
-    JSON.stringify(l.sources?.map(s=>[s.id,s.url]))!==JSON.stringify(SOURCE_URLS)||
+    JSON.stringify(l.sources?.map(row=>[row.id,row.url,row.basis]))!==
+      JSON.stringify(SOURCE_ROWS)||
+    l.sources.some(row=>Object.keys(row).sort().join(",")!=="basis,id,url")||
     JSON.stringify(l.full_paralysis_rate)!==JSON.stringify({
       numerator:1,denominator:8,
       verification:"PUBLISHED_CHAMPIONS_SPEC_AND_PINNED_SOURCE_ONLY_NOT_EMPIRICAL"})||
     JSON.stringify(l.cases?.map(c=>COLUMNS.map(k=>c[k])))!==JSON.stringify(REVIEWED_CASES)||
-    !Array.isArray(l.not_verified)||l.not_verified.length!==6)
+    JSON.stringify(l.not_verified)!==JSON.stringify(REVIEWED_UNVERIFIED))
    throw Error("Champions paralysis source contract drift");
  for(const c of l.cases)if(Object.keys(c).length!==12||c.g_ap!==2)
    throw Error("Champions paralysis case unexpected fields");
@@ -86,4 +111,4 @@ function reference(c){
    p2_effective_speed:m.effective_speed,p1_possible_speeds:g.possible_speeds,
    p2_possible_speeds:m.possible_speeds,p1_priority:p1Priority,p2_priority:p2Priority};
 }
-module.exports={LEDGER,SOURCE_URLS,REVIEWED_CASES,checkLedger,speeds,reference};
+module.exports={LEDGER,SOURCE_URLS,SOURCE_ROWS,REVIEWED_UNVERIFIED,REVIEWED_CASES,checkLedger,speeds,reference};
