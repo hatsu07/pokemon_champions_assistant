@@ -852,7 +852,7 @@ jobs:
         shell: pwsh
         working-directory: poc/showdown_phase0
         run: |
-          node --test test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_cross_process_synthetic_probe.cjs
+          node --test test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_cross_process_synthetic_probe.cjs test_observation_conditioned_branch_probe.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Windows native Showdown Node tests failed' }
       - name: Diagnose three native Windows Node process replays
         shell: pwsh
