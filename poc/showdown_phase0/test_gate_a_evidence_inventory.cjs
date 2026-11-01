@@ -1,7 +1,7 @@
 "use strict";
 const {test}=require("node:test");
 const assert=require("node:assert/strict");
-const {run,summarize,checkMap,checkModifierEvidence,checkTurnOrderEvidence,
+const {run,summarize,checkMap,checkModifierEvidence,checkTurnOrderEvidence,checkParalysisEvidence,
  requirements,KNOWN_AUDIT_GROUPS,MAP}=require("./gate_a_evidence_inventory.cjs");
 let report;
 test("all 10 Gate A feature gaps remain unverified, no private data is counted",()=>{
@@ -18,6 +18,17 @@ test("all 10 Gate A feature gaps remain unverified, no private data is counted",
  assert.equal(links.checked,0);
  assert.equal(links.mismatched,0);
  assert.equal(links.missing,0);
+ assert.equal(report.paralysis_source_order_matches,9);
+ assert.equal(report.paralysis_unknown_compound_rounding,1);
+ assert.equal(report.paralysis_pinned_rate,"1/8_SOURCE_ONLY_NOT_DEVICE");
+ const parPriority=report.features.find(x=>x.feature==="priority");
+ const parStatus=report.features.find(x=>x.feature==="status and boosts");
+ for(const f of [parPriority,parStatus]){
+   assert.equal(f.paralysis_source_order_matches,9);
+   assert.equal(f.paralysis_unknown_compound_rounding,1);
+   assert.equal(f.paralysis_scope,"SYNTHETIC_PINNED_TURNS_NOT_DEVICE");
+   assert.equal(f.feature_compatibility,"UNKNOWN");
+ }
  assert.equal(report.wiki_comparable_count,1);
  assert.equal(report.turn_order_source_matches,9);
  assert.equal(report.turn_order_inconclusive_ties,1);

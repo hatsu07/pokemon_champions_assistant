@@ -1,0 +1,197 @@
+{
+  "schema": "phase0-champions-paralysis-order-ledger-v1",
+  "regulation": "M-C",
+  "checked_at": "2026-11-01",
+  "evidence": "CHAMPIONS_SECONDARY_SOURCE_PLUS_FIXED_MASTERS_NOT_DEVICE",
+  "scope": "TWO_BASE_SPECIES_SYNTHETIC_PRETURN_PARALYSIS",
+  "game_verified_turn_count": 0,
+  "private_golden_read": false,
+  "live_use_approved": false,
+  "full_paralysis_rate": {
+    "numerator": 1,
+    "denominator": 8,
+    "verification": "PUBLISHED_CHAMPIONS_SPEC_AND_PINNED_SOURCE_ONLY_NOT_EMPIRICAL"
+  },
+  "sources": [
+    {
+      "id": "gamewith",
+      "url": "https://gamewith.jp/pokemon-champions/559883",
+      "basis": "Champions paralysis: 12.5% immobility, Speed 0.5 floor, examples 191 to 95"
+    },
+    {
+      "id": "serebii",
+      "url": "https://www.serebii.net/pokemonchampions/statusconditions.shtml",
+      "basis": "Champions distinct 12.5% immobility; Speed remains 50%"
+    },
+    {
+      "id": "speed",
+      "url": "https://pkmn-cp-dataportal.com/battle/priority/speed-stats/",
+      "basis": "Champions +1 stage and Choice Scarf each 1.5x floor"
+    },
+    {
+      "id": "scarf",
+      "url": "https://pkmn-cp-dataportal.com/item/choice-items/",
+      "basis": "Champions scarf 1.5x, lock, within-priority Speed ordering"
+    },
+    {
+      "id": "trickroom",
+      "url": "https://pkmn-cp-dataportal.com/battle/priority/trick-room/",
+      "basis": "Champions reverse Speed within equal priority"
+    },
+    {
+      "id": "paralysis",
+      "url": "https://pkmn-cp-dataportal.com/status/paralysis/",
+      "basis": "Champions paralysis 1/8 and Speed half"
+    }
+  ],
+  "cases": [
+    {
+      "id": "metagross-par",
+      "g_par": false,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p1"
+    },
+    {
+      "id": "garchomp-par",
+      "g_par": true,
+      "m_par": false,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p2"
+    },
+    {
+      "id": "both-par",
+      "g_par": true,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p1"
+    },
+    {
+      "id": "metagross-par-trick-room",
+      "g_par": false,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": true,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p2"
+    },
+    {
+      "id": "metagross-par-priority",
+      "g_par": false,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Bullet Punch",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p2"
+    },
+    {
+      "id": "garchomp-par-protect",
+      "g_par": true,
+      "m_par": false,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Protect",
+      "p2": "Bullet Punch",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p1"
+    },
+    {
+      "id": "garchomp-par-scarf",
+      "g_par": true,
+      "m_par": false,
+      "g_scarf": true,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p1"
+    },
+    {
+      "id": "metagross-par-plus-one",
+      "g_par": false,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": false,
+      "m_stage": 1,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p1"
+    },
+    {
+      "id": "metagross-par-scarf",
+      "g_par": false,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": true,
+      "m_stage": 0,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "expected": "p1"
+    },
+    {
+      "id": "triple-modifier-odd-unreviewed",
+      "g_par": false,
+      "m_par": true,
+      "g_scarf": false,
+      "m_scarf": true,
+      "m_stage": 1,
+      "trick_room": false,
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 3,
+      "expected": "UNREVIEWED_ROUNDING"
+    }
+  ],
+  "not_verified": [
+    "Live game turn ordering and RNG rate",
+    "Exact Speed rounding with three simultaneous modifiers on an odd stat",
+    "Same-turn paralysis infliction and order recalculation",
+    "Paralysis immunity and status-curing abilities",
+    "Trick Room setup/expiry and ability-dependent priority",
+    "Full paralysis distribution from one fixed-seed simulation"
+  ]
+}

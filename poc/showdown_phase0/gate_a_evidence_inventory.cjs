@@ -5,6 +5,10 @@ const {compare}=require("./audit.cjs");
 const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
 const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
+const {run:paralysisOrder}=require("./champions_paralysis_probe.cjs");
+const {checkParalysisEvidence}=require("./champions_paralysis_gate_a_contract.cjs");
+let cachedParalysis=null;
+function paralysisOnce(){return cachedParalysis||(cachedParalysis=paralysisOrder());}
 const {LEDGER:TURN_LEDGER,referenceCase}=require("./champions_turn_order_reference.cjs");
 const {moveKey}=require("./champions_move_key.cjs");
 const {main:modifier,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,
@@ -201,10 +205,11 @@ function checkTurnOrderEvidence(t){
    throw Error("turn-order source status counts changed");
  return {matches,ties};
 }
-function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder()){
+function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
  checkMap(map);checkEvidence(a,w,e,map);
  const modifierCounts=checkModifierEvidence(m);
  const turnCounts=checkTurnOrderEvidence(t);
+ const paralysisCounts=checkParalysisEvidence(p);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
@@ -229,6 +234,13 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder()){
        turn_order_scope:"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE",
        turn_order_diagnostic:"champions_turn_order_probe.cjs"
      }:{}),
+     ...(["priority","status and boosts"].includes(f.feature)?{
+       paralysis_source_order_matches:paralysisCounts.matches,
+       paralysis_unknown_compound_rounding:paralysisCounts.rounding_unknown,
+       paralysis_scope:paralysisCounts.scope,
+       paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
+       paralysis_diagnostic:"champions_paralysis_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
@@ -247,6 +259,11 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder()){
    turn_order_inconclusive_ties:turnCounts.ties,
    turn_order_scope:"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE",
    turn_order_diagnostic:"champions_turn_order_probe.cjs",
+   paralysis_source_order_matches:paralysisCounts.matches,
+   paralysis_unknown_compound_rounding:paralysisCounts.rounding_unknown,
+   paralysis_scope:paralysisCounts.scope,
+   paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
+   paralysis_diagnostic:"champions_paralysis_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -258,4 +275,4 @@ if(require.main===module){
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
 module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,
- checkTurnOrderEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+ checkTurnOrderEvidence,checkParalysisEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
