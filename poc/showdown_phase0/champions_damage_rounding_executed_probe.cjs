@@ -63,11 +63,21 @@ function executePct(ctx,row){
        throw Error("source fixture p1 must attack before p2 for direct HP attribution");
      const dmgEvents=log.filter(line=>line.startsWith("|-damage|p2a: Blastoise|"));
      const earthquakeAt=log.indexOf(observed.move_events[0]);
-     const damageAt=log.indexOf(dmgEvents[0]);
+     const splitAt=log.indexOf("|split|p2",earthquakeAt+1);
+     const damageAt=log.indexOf(dmgEvents[0],splitAt+1);
+     const percentageAt=log.indexOf(dmgEvents[1],damageAt+1);
      const surfAt=log.indexOf(observed.move_events[1]);
-     if(dmgEvents.length!==1||earthquakeAt<0||damageAt<=earthquakeAt||
-        surfAt<=damageAt)
-       throw Error("executed damage event not attributable to Earthquake: "+JSON.stringify({pct:row.roll_pct,dmgEvents,earthquakeAt,damageAt,surfAt,log}));
+     // Showdown's |split|p2 publishes one exact HP and one percent view.
+     // These two lines are ONE damage event, not two executed hits.
+     const exact=dmgEvents[0]?.match(/^\|-damage\|p2a: Blastoise\|(\d+)\/(\d+)$/);
+     const percent=dmgEvents[1]?.match(/^\|-damage\|p2a: Blastoise\|(\d+)\/100$/);
+     if(dmgEvents.length!==2||!exact||!percent||
+        Number(exact[2])!==d.maxhp||Number(exact[1])!==d.hp||
+        Number(percent[1])!==Math.ceil(100*d.hp/d.maxhp)||
+        !(earthquakeAt>=0&&earthquakeAt<splitAt&&splitAt<damageAt&&
+          damageAt<percentageAt&&percentageAt<surfAt))
+       throw Error("executed split HP event not attributable to Earthquake: "+
+         JSON.stringify({pct:row.roll_pct,dmgEvents,earthquakeAt,splitAt,damageAt,percentageAt,surfAt,log}));
      const actual=initial-d.hp;
      if(actual!==pinnedDirect||
        actual!==row.sequential||actual<1||
@@ -79,7 +89,7 @@ function executePct(ctx,row){
        secondary_sequential:row.sequential,
        observed_moves:observed.executed_moves,
        observed_move_order:observed.sequence,
-       event_trace:[observed.move_events[0],dmgEvents[0],observed.move_events[1]],
+       event_trace:[observed.move_events[0],"|split|p2",...dmgEvents,observed.move_events[1]],
        status:row.discriminating?"EXECUTED_MATCHES_SEQUENTIAL_DIFFERS_COMBINED":
         "EXECUTED_MATCHES_BOTH_SECONDARY_FINAL_STEPS",
        provenance:"PINNED_SYNTHETIC_EXECUTED_TURN_BURN_REFLECT_NOT_DEVICE"};
