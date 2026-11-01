@@ -5,6 +5,7 @@
 const {context} = require("./six_team_selection_probe.cjs");
 const fs=require("node:fs"),path=require("node:path");
 const {rows}=require("./audit.cjs");
+const {moveKey}=require("./champions_move_key.cjs");
 const {assertObservation, makeCandidates} = require("./partial_observation_probe.cjs");
 const {copy, serialize, pinned} = require("./worker.cjs");
 const {restoreChecked, state} = require("./gate_b_probe.cjs");
@@ -103,6 +104,17 @@ function condition(obs, ctx = context()) {
    return deny("Mega state requires separate current-form/history reconstruction",originHash);
  if(known(obs,"pending_choice")||known(obs,"unresolved_queue"))
    return deny("queued actions cannot be overwritten",originHash);
+ // The schema's PP is a scalar, not a per-move map. It can condition a
+ // branch only if exactly one observed move identifies its target slot.
+ const ppKnown=known(obs,"opponent_remaining_pp");
+ const revealedMovesKnown=known(obs,"opponent_revealed_moves");
+ const revealedMoves= revealedMovesKnown ? f.opponent_revealed_moves.value : null;
+ if(ppKnown&&(!Array.isArray(revealedMoves)||revealedMoves.length!==1||
+   !moveKey(revealedMoves[0])))
+   return deny("observed PP requires exactly one independently revealed move",originHash);
+ if(ppKnown&&f.opponent_remaining_pp.value===0)
+   return deny("zero PP continuation requires unmodeled move availability",originHash);
+ const ppMove=ppKnown?moveKey(revealedMoves[0]):null;
  // A confirmed consumed item and a confirmed current empty item jointly
  // constrain a *hypothetical* source held item. This is not proof that the
  // Showdown item-use event, HP restoration, or lastItem history occurred.
@@ -125,6 +137,9 @@ function condition(obs, ctx = context()) {
  // the current HP/boosts/screens as the starting-turn full snapshot.
  const hypotheticalObs=structuredClone(obs);
  for(const k of CONDITIONAL_FIELDS) hypotheticalObs.facts[k]={source:"UNKNOWN"};
+ // Filter by the independently revealed move, but do not compare current
+ // remaining PP to the fresh, full-PP registered-set hypothesis.
+ if(ppKnown)hypotheticalObs.facts.opponent_remaining_pp={source:"UNKNOWN"};
  // The same observed "now empty" item would otherwise exclude every
  // candidate whose ORIGINAL held item was later consumed.
  if(consumedKnown){
@@ -138,6 +153,20 @@ function condition(obs, ctx = context()) {
   const baseHash=fingerprint(state(c.battle));
   const battle=copy(c.battle),active=battle.p2.active[0];
   const originalItem=active.item;
+  if(ppKnown){
+    const slots=active.moveSlots,baseSlots=active.baseMoveSlots;
+    if(slots?.length!==1||baseSlots?.length!==1||
+       slots[0].id!==ppMove||baseSlots[0].id!==ppMove||
+       slots[0].maxpp!==baseSlots[0].maxpp){
+      rejected.push({id:c.id,reason:"observed PP does not identify a unique actual move slot"});
+      continue;
+    }
+    const observedPP=f.opponent_remaining_pp.value;
+    if(observedPP>slots[0].maxpp){
+      rejected.push({id:c.id,reason:"observed PP exceeds Champions candidate move maximum"});
+      continue;
+    }
+  }
   if(consumedKnown&&originalItem!==consumedId){
    rejected.push({id:c.id,reason:"hypothetical original held item differs from observed consumed item"});
    continue;
@@ -150,6 +179,12 @@ function condition(obs, ctx = context()) {
   // distinct hypotheses and cannot be promoted into observations.
   active.hp=hp;
   for(const k of BOOSTS)active.boosts[k]=boosts[k];
+  if(ppKnown){
+    // Set only the already identified move's current PP. Historical move
+    // events, ability-driven PP changes and previous turns are NOT replayed.
+    active.moveSlots[0].pp=f.opponent_remaining_pp.value;
+    active.baseMoveSlots[0].pp=f.opponent_remaining_pp.value;
+  }
   if(consumedKnown){
     // Only the CURRENT item absence is observed. Do NOT fake eatItem/useItem,
     // the consumption effect, lastItem, or original item-use event.
@@ -178,6 +213,11 @@ function condition(obs, ctx = context()) {
   }
   const digest=fingerprint(state(battle));
   const restored=restoreChecked(serialize(battle),digest);
+  if(ppKnown&&(
+    restored.p2.active[0].moveSlots[0]?.id!==ppMove||
+    restored.p2.active[0].moveSlots[0]?.pp!==f.opponent_remaining_pp.value||
+    restored.p2.active[0].baseMoveSlots[0]?.pp!==f.opponent_remaining_pp.value))
+    throw Error("restored Battle PP conflicts with observed move and current PP");
   if(currentItemKnown&&restored.p2.active[0].item!==f.opponent_item.value)
     throw Error("restored Battle item conflicts with observed current item");
   if(fingerprint(state(restored))!==digest)
@@ -191,6 +231,10 @@ function condition(obs, ctx = context()) {
    continuation_sha256:continuationHash,
    conditioned_hp:active.hp,conditioned_boosts:{...active.boosts},
    conditioned_screen_ids:Object.keys(battle.p2.sideConditions).sort(),
+   conditioned_pp:ppKnown?active.moveSlots[0].pp:null,
+   conditioned_pp_move:ppMove,conditioned_pp_max:ppKnown?active.moveSlots[0].maxpp:null,
+   pp_history_scope:ppKnown?"OBSERVED_CURRENT_PP_ONLY_NO_MOVE_EVENT_REPLAY":
+     "NO_PP_HISTORY_RECONSTRUCTED",
    conditioned_item:active.item,original_hypothesis_item:originalItem,
    consumed_item_observation:consumedKnown?consumedId:null,
    item_history_scope:consumedKnown?
@@ -214,13 +258,15 @@ function condition(obs, ctx = context()) {
   admitted_evidence_fields:["opponent_hp_exact","opponent_boosts","screens",
     ...(screens.length?["screen_remaining_turns"]:[]),
     "opponent_current_type","terrain","hazards",
-    ...(consumedKnown?["opponent_item","opponent_consumed_item"]:[])],
-  unrecovered_hidden_fields:["opponent_revealed_moves","opponent_remaining_pp",
+    ...(consumedKnown?["opponent_item","opponent_consumed_item"]:[]),
+    ...(ppKnown?["opponent_revealed_moves","opponent_remaining_pp"]:[])],
+  unrecovered_hidden_fields:[
+    ...(ppKnown?[]:["opponent_revealed_moves","opponent_remaining_pp"]),
     ...(consumedKnown?[]:["opponent_item"]),
     "opponent_ability","opponent_ap","opponent_mega_history",
     "unresolved_queue","internal_rng","action_history",
     "effect_remaining_turns","own_side_unknown_history"],
-  assumption:"fixed registered teams, other hidden facts, past consumption effects and move boundary are hypotheses",
+  assumption:"fixed registered teams, other hidden facts, previous move/PP events, consumption effects and move boundary are hypotheses",
   candidate_count:candidates.length,unevaluated_candidate_count:generated.unevaluated_candidate_count,
   candidates,rejected,not_a_unique_true_state:true};
 }
