@@ -3,6 +3,8 @@
 // Showdown midbattle branches. NOT real-game reconstruction or LIVE advice.
 // The current-turn request boundary and unknown RNG/history remain assumptions.
 const {context} = require("./six_team_selection_probe.cjs");
+const fs=require("node:fs"),path=require("node:path");
+const {rows}=require("./audit.cjs");
 const {assertObservation, makeCandidates} = require("./partial_observation_probe.cjs");
 const {copy, serialize, pinned} = require("./worker.cjs");
 const {restoreChecked, state} = require("./gate_b_probe.cjs");
@@ -13,6 +15,17 @@ const BOOSTS = ["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"];
 const SCREENS = ["reflect", "lightscreen"];
 const observedSource = f => ["SYNTHETIC", "GAME_OBSERVED"].includes(f.source);
 const known = (obs,k) => observedSource(obs.facts[k]);
+// Only one-use berries in the current Champions fixed item master are
+// accepted as a "consumed" source item in this narrow experiment.
+// Choice Scarf/Leftovers or a Knock Off removal is NOT an item consumption.
+function observedConsumableBerry(ctx,itemId){
+ const dir=path.resolve(process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,"masters"));
+ const entries=rows(fs.readFileSync(path.join(dir,
+   "Pokemon_Champions_MC_usable_held_items.csv"),"utf8"));
+ const matches=entries.filter(row=>ctx.dex.items.get(row["英語名"]).id===itemId);
+ if(matches.length!==1)throw Error("fixed Champions held item master ambiguous: "+itemId);
+ return matches[0]["区分"]==="きのみ"&&matches[0]["発動/消費"]==="対戦中1回";
+}
 function deny(reason, obsHash, info = {}) {
  return {status:"UNSUPPORTED",reason,observation_sha256:obsHash,
    gate_B:"UNSUPPORTED",game_compatibility_verified:false,
@@ -101,6 +114,8 @@ function condition(obs, ctx = context()) {
    ctx.dex.items.get(f.opponent_consumed_item.value).id : null;
  if(consumedKnown&&(!consumedId||!ctx.allowed.availableItems.has(consumedId)))
    return deny("consumed item is absent from Champions held-item master",originHash);
+ if(consumedKnown&&!observedConsumableBerry(ctx,consumedId))
+   return deny("only consumed one-use Berries supported; not item loss/removal",originHash);
 
  // Build four legal, fixed hypothetical opponent sets WITHOUT silently treating
  // the current HP/boosts/screens as the starting-turn full snapshot.
