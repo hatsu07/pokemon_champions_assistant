@@ -1,5 +1,10 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #169：観測済みHP・能力段階・壁からの条件付きGate B分岐
+
+[OBSERVED_CONDITIONAL_BRANCHES.md](./OBSERVED_CONDITIONAL_BRANCHES.md) と`observation_conditioned_branch_probe.cjs`。既存26件の部分観測仮説テストとは別に、固定の合法候補Battleへ**独立に確認された整数HP・全7能力変化・壁と残ターン**を反映し、コピー・シリアライズ往復・合成継続の独立性を検証する。HP/能力/壁ターンの未知値や天候・メガ・未解決キューはフェイルクローズし、初手フルHPなどで空欄を埋めない。これはあくまで`PROVISIONAL_CONDITIONAL_SYNTHETIC`であり、実ゲームの部分観測から唯一の真の状態へ復元したわけではない。**Gate B=UNSUPPORTED、Gate A=UNKNOWN、採用NO_GO、LIVE不変**。
+
+
 ## PR #166：Phase 0採否レポート（現時点NO_GO）
 
 [PHASE0_ADOPTION_ASSESSMENT.md](./PHASE0_ADOPTION_ASSESSMENT.md) に、計算互換性Gate A、部分観測中途復元Gate B、127合成代表状態の性能、Windows同梱/IPC、依存ライセンス/SBOM、研究用代替案を証拠階層別に整理した。Linux CIで既存5診断JSONを消費する `phase0_final_adoption_report.cjs` を実行し、`test_phase0_final_adoption_report.cjs` が実ゲーム未検証を合格扱いする改変を拒否する。これは実ゲームGoldenの再実行ではなく、過去Issue #139の6ケース/11チェックは履歴要約として別記する。
