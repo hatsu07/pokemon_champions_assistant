@@ -128,7 +128,7 @@ function lifecycle(ctx){
    if(changes.length!==2||!changes[0].includes("RainDance")||
       !changes[1].includes("SunnyDay")||
       b.field.weather!=="sunnyday"||b.field.weatherState.duration!==4)
-     throw Error("pinned weather move setting/overwrite or default duration disagrees with secondary source");
+     throw Error("pinned weather move setting/overwrite or default duration disagrees with secondary source: "+JSON.stringify({changes,weather:b.field.weather,duration:b.field.weatherState.duration,events:log.filter(x=>x.startsWith("|move|")||x.startsWith("|-weather|"))}));
    const remaining=[b.field.weatherState.duration];
    for(let i=0;i<4;i++){
      if(b.requestState!=="move")throw Error("weather lifecycle ended early");
