@@ -67,7 +67,7 @@ function run(){
      if(set.evs[stat]!==points ||
        (points===0&&set.evs[fallbackStat]!==2))
        throw Error("AP target/fallback invariant violated");
-     const ref=calculate({species:selected.name,form:"base",baseStats,ap:set.evs});
+     const ref=calculate({species:selected.name,form:"base",baseStats,ap:set.evs,nature});
      if(ref.status!==STATUS)throw Error("independent ref status changed");
      for(const team of registered){
        validateChampionsRegisteredTeam(team,dex,allowed);
