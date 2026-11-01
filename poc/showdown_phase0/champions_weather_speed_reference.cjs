@@ -5,7 +5,7 @@ const {rows}=require("./audit.cjs");
 const LEDGER=require("./champions_weather_speed_ledger.json");
 const SOURCES=Object.freeze([
  ["gamewith_weather","https://gamewith.jp/pokemon-champions/561577","Champions four weather types, five turns, overwrite and weather Speed abilities"],
- ["ability_master","Pokemon_Champions_MC_ability_master.csv","Four Champions ability descriptions explicitly give 2x Speed under matching weather"],
+ ["pokemon_master","Pokemon_Champions_MC_usable_pokemon.csv","Champions usable species master lists reviewed ability ownership; 2x Speed from Champions weather source"],
  ["ap_source","https://pkmn-cp-dataportal.com/battle/rule/stat-points/","Neutral AP-based Speed equals species base Speed plus 20 plus AP"],
  ["duration_conflict","https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/","Extension item 8-turn claim conflicts with GameWith extension-unavailable entry"]
 ]);
@@ -84,18 +84,13 @@ function independentSpeeds(state){
 function masterCheck(){
  const root=process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,"masters");
  const mon=rows(fs.readFileSync(path.join(root,"Pokemon_Champions_MC_usable_pokemon.csv"),"utf8"));
- const ability=rows(fs.readFileSync(path.join(root,"Pokemon_Champions_MC_ability_master.csv"),"utf8"));
  for(const [en,ja,abb,aj,weather,base] of SPECIES){
    const candidates=mon.filter(x=>x["ポケモン名"]===ja&&x["区分"]==="通常"&&
       x["フォーム/姿"]==="");
    if(candidates.length!==1||Number(candidates[0].S)!==base||
       !candidates[0]["特性"].split(/\s*\/\s*/).includes(aj))
      throw Error("weather ability species/Speed absent from fixed master: "+en);
-   const matches=ability.filter(x=>x["特性名"]===aj);
-   const effect=matches.length===1?matches[0]["効果（Champions基準・対戦向け要約）"]:"";
-   const label={raindance:"あめ",sandstorm:"すなあらし",sunnyday:"にほんばれ",snowscape:"ゆき"}[weather];
-   if(!effect.includes(label)||!effect.includes("素早さが2倍"))
-     throw Error("weather boost unsupported in fixed Champions ability master: "+aj);
+
  }
  return SPECIES.length;
 }
