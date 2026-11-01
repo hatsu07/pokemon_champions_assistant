@@ -1,0 +1,215 @@
+{
+  "schema": "phase0-champions-weather-speed-source-v1",
+  "checked_at": "2026-11-01",
+  "regulation": "M-C",
+  "evidence": "CHAMPIONS_FIXED_MASTER_AND_SECONDARY_SOURCE_NOT_GAME",
+  "device_turns": 0,
+  "private_golden_read": false,
+  "live_use_approved": false,
+  "weather_default_turns": 5,
+  "source": [
+    [
+      "gamewith_weather",
+      "https://gamewith.jp/pokemon-champions/561577",
+      "Champions four weather types, five turns, overwrite and weather Speed abilities"
+    ],
+    [
+      "ability_master",
+      "Pokemon_Champions_MC_ability_master.csv",
+      "Four Champions ability descriptions explicitly give 2x Speed under matching weather"
+    ],
+    [
+      "ap_source",
+      "https://pkmn-cp-dataportal.com/battle/rule/stat-points/",
+      "Neutral AP-based Speed equals species base Speed plus 20 plus AP"
+    ],
+    [
+      "duration_conflict",
+      "https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/",
+      "Extension item 8-turn claim conflicts with GameWith extension-unavailable entry"
+    ]
+  ],
+  "reviewed_species": [
+    [
+      "Qwilfish",
+      "ハリーセン",
+      "Swift Swim",
+      "すいすい",
+      "raindance",
+      85
+    ],
+    [
+      "Excadrill",
+      "ドリュウズ",
+      "Sand Rush",
+      "すなかき",
+      "sandstorm",
+      88
+    ],
+    [
+      "Venusaur",
+      "フシギバナ",
+      "Chlorophyll",
+      "ようりょくそ",
+      "sunnyday",
+      80
+    ],
+    [
+      "Beartic",
+      "ツンベアー",
+      "Slush Rush",
+      "ゆきかき",
+      "snowscape",
+      50
+    ]
+  ],
+  "scenarios": [
+    [
+      "rain-swift",
+      0,
+      "raindance",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "sun-swift-off",
+      0,
+      "sunnyday",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "no-weather-swift-off",
+      0,
+      "",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "sand-rush",
+      1,
+      "sandstorm",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "rain-rush-off",
+      1,
+      "raindance",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "sun-chlorophyll",
+      2,
+      "sunnyday",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "sand-chlorophyll-off",
+      2,
+      "sandstorm",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "snow-slush",
+      3,
+      "snowscape",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "sun-slush-off",
+      3,
+      "sunnyday",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "snow-slush-par",
+      3,
+      "snowscape",
+      true,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "sand-rush-trick",
+      1,
+      "sandstorm",
+      false,
+      false,
+      0,
+      true,
+      "p2"
+    ],
+    [
+      "sand-rush-plusone",
+      1,
+      "sandstorm",
+      false,
+      false,
+      1,
+      false,
+      "p1"
+    ],
+    [
+      "rain-swift-scarf-unknown",
+      0,
+      "raindance",
+      false,
+      true,
+      0,
+      false,
+      "UNKNOWN_ROUNDING"
+    ]
+  ],
+  "source_conflicts": [
+    {
+      "id": "WEATHER_EXTENSION",
+      "status": "SOURCE_CONFLICT",
+      "gamewith_url": "https://gamewith.jp/pokemon-champions/561577",
+      "portal_url": "https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/",
+      "impact": "Do not claim extended weather duration is independently confirmed"
+    }
+  ],
+  "unverified": [
+    "Actual game weather duration and midturn overwrite",
+    "Weather extender items and 8-turn conflict",
+    "Modifier order when weather and Choice Scarf produce different rounded Speed",
+    "Same-turn weather-setting ability ordering and entry hazards",
+    "Ability suppression and simultaneous speed changes",
+    "Weather power boosts and weather-related damage rounding"
+  ]
+}
