@@ -31,7 +31,67 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs
+      - name: Diagnose registered six, selected three and restored branches
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 six_team_selection_probe.cjs > phase0-six-team-selection.json
+          python3 - <<'PY'
+          import hashlib
+          import json
+          with open('phase0-six-team-selection.json', encoding='utf-8') as stream:
+              report = json.load(stream)
+          with open('poc/showdown_phase0/six_team_selection_cases.json', encoding='utf-8') as stream:
+              manifest = json.load(stream)
+          assert report['schema'] == 'phase0-six-team-selection-diagnostics-v1'
+          assert report['pinned_showdown_sha'] == 'ccfaa20f32af363569cd21a9d501b2bc1ded26b1'
+          assert report['format'] == 'gen9championsbssregmc'
+          assert report['regulation'] == 'M-C'
+          assert (report['gate_A'], report['gate_B'], report['adoption']) == ('UNKNOWN', 'UNSUPPORTED', 'NO_GO')
+          assert len(report['champions_master_sha256']) == 4
+          assert all(len(value) == 64 for value in report['champions_master_sha256'].values())
+          for name, digest in report['champions_master_sha256'].items():
+              with open('masters/' + name, 'rb') as stream:
+                  assert hashlib.sha256(stream.read()).hexdigest() == digest
+          assert manifest['schema'] == 'phase0-six-team-selection-cases-v1'
+          assert report['positive_case_count'] == 4
+          assert report['negative_case_count'] == 21
+          assert report['registered_team_pair_count'] == 1
+          assert report['selection_pattern_count'] == 3
+          assert report['distinct_input_state_count'] == 4
+          assert report['repetitions'] == 0
+          assert report['representative_100_cases_met'] is False
+          assert report['counts'] == {
+              'PASS_SYNTHETIC': 4, 'REJECTED_INVALID_REGISTRATION': 16,
+              'REJECTED_INVALID_SELECTION': 5, 'SELECTION_MISMATCH': 0,
+              'STATE_OR_QUEUE_MISMATCH': 0, 'INCONCLUSIVE': 0, 'UNSUPPORTED': 0}
+          actual = [(r['case_id'], r['mechanism'], r['status']) for r in report['results']]
+          expected = [(r['id'], r['mechanism'], r['expected_status']) for r in manifest['cases']]
+          if len(actual) != 25 or actual != expected:
+              print('::error title=Six-team regression::Case identity, coverage or status changed')
+              print('EXPECTED=' + json.dumps(expected))
+              print('ACTUAL=' + json.dumps(actual))
+              raise SystemExit(1)
+          for result in report['results']:
+              if result['case_id'].startswith('REG-'):
+                  assert result['registration'][0]['legal'] and result['registration'][1]['legal']
+                  assert result['selection_status'] == 'PASS'
+                  assert result['restoration_status'] == 'PASS_SYNTHETIC'
+                  assert result['battle_progressed']
+                  assert all(side['passed'] for side in result['selected'])
+                  assert all(result['restoration']['branch_independence'].values())
+              else:
+                  assert not result['battle_progressed']
+                  assert result['restoration_status'] == 'NOT_RUN'
+              print('SIX_TEAM_CASE_JSON=' + json.dumps({
+                  key: result.get(key) for key in ('case_id', 'mechanism', 'status',
+                      'rejection_stage', 'selection_status', 'restoration_status',
+                      'first_difference_field', 'reason')}, ensure_ascii=False, sort_keys=True))
+          print('Six-team synthetic counts:', report['counts'])
+          print('Distinct registered pairs / selections / input states:',
+                report['registered_team_pair_count'], report['selection_pattern_count'],
+                report['distinct_input_state_count'])
+          PY
       - name: Diagnose Gate B full snapshots and partial observations
         shell: bash
         run: |
