@@ -1,0 +1,236 @@
+{
+  "schema": "phase0-champions-weather-speed-source-v1",
+  "checked_at": "2026-11-02",
+  "regulation": "M-C",
+  "evidence": "CHAMPIONS_FIXED_MASTER_AND_SECONDARY_SOURCE_NOT_GAME",
+  "device_turns": 0,
+  "private_golden_read": false,
+  "live_use_approved": false,
+  "weather_default_turns": 5,
+  "source": [
+    [
+      "gamewith_weather",
+      "https://gamewith.jp/pokemon-champions/561577",
+      "Champions default weather lasts five turns; the same active weather cannot be renewed by repeating its move"
+    ],
+    [
+      "pokemon_master",
+      "Pokemon_Champions_MC_usable_pokemon.csv",
+      "Champions usable species master lists reviewed ability ownership; 2x Speed from Champions weather source"
+    ],
+    [
+      "ap_source",
+      "https://pkmn-cp-dataportal.com/battle/rule/stat-points/",
+      "Neutral AP-based Speed equals species base Speed plus 20 plus AP"
+    ],
+    [
+      "portal_weather",
+      "https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/",
+      "Champions weather defaults to five turns and weather extending rocks are reported to make eight turns"
+    ],
+    [
+      "gamewith_sun_rock",
+      "https://gamewith.jp/pokemon-champions/560063",
+      "Champions Heat Rock at initial sunny weather activation extends duration by three turns, five to eight"
+    ]
+  ],
+  "reviewed_species": [
+    [
+      "Qwilfish",
+      "ハリーセン",
+      "Swift Swim",
+      "すいすい",
+      "raindance",
+      85
+    ],
+    [
+      "Excadrill",
+      "ドリュウズ",
+      "Sand Rush",
+      "すなかき",
+      "sandstorm",
+      88
+    ],
+    [
+      "Venusaur",
+      "フシギバナ",
+      "Chlorophyll",
+      "ようりょくそ",
+      "sunnyday",
+      80
+    ],
+    [
+      "Beartic",
+      "ツンベアー",
+      "Slush Rush",
+      "ゆきかき",
+      "snowscape",
+      50
+    ]
+  ],
+  "scenarios": [
+    [
+      "rain-swift",
+      0,
+      "raindance",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "sun-swift-off",
+      0,
+      "sunnyday",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "no-weather-swift-off",
+      0,
+      "",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "sand-rush",
+      1,
+      "sandstorm",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "rain-rush-off",
+      1,
+      "raindance",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "sun-chlorophyll",
+      2,
+      "sunnyday",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "sand-chlorophyll-off",
+      2,
+      "sandstorm",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "snow-slush",
+      3,
+      "snowscape",
+      false,
+      false,
+      0,
+      false,
+      "p1"
+    ],
+    [
+      "sun-slush-off",
+      3,
+      "sunnyday",
+      false,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "snow-slush-par",
+      3,
+      "snowscape",
+      true,
+      false,
+      0,
+      false,
+      "p2"
+    ],
+    [
+      "sand-rush-trick",
+      1,
+      "sandstorm",
+      false,
+      false,
+      0,
+      true,
+      "p2"
+    ],
+    [
+      "sand-rush-plusone",
+      1,
+      "sandstorm",
+      false,
+      false,
+      1,
+      false,
+      "p1"
+    ],
+    [
+      "rain-swift-scarf-unknown",
+      0,
+      "raindance",
+      false,
+      true,
+      0,
+      false,
+      "UNKNOWN_ROUNDING"
+    ]
+  ],
+  "unverified": [
+    "Actual game weather duration and midturn overwrite",
+    "Weather extender items and reported 8-turn effect not executed or game verified",
+    "Modifier order when weather and Choice Scarf produce different rounded Speed",
+    "Same-turn weather-setting ability ordering and entry hazards",
+    "Ability suppression and simultaneous speed changes",
+    "Weather power boosts and weather-related damage rounding"
+  ],
+  "weather_duration_rules": [
+    {
+      "id": "SAME_WEATHER_MOVE_REAPPLY",
+      "operation": "REAPPLY_SAME_WEATHER_MOVE_WHILE_ACTIVE",
+      "status": "SECONDARY_SOURCE_DESCRIBED_NOT_EXECUTED",
+      "source_ids": [
+        "gamewith_weather"
+      ],
+      "expected_effect": "NO_RENEWAL",
+      "pinned_tested": false,
+      "game_verified": false
+    },
+    {
+      "id": "WEATHER_ROCK_INITIAL_ACTIVATION",
+      "operation": "ACTIVATE_SUNNY_WEATHER_WITH_HEAT_ROCK",
+      "status": "SECONDARY_SOURCES_AGREE_NOT_EXECUTED",
+      "source_ids": [
+        "gamewith_sun_rock",
+        "portal_weather"
+      ],
+      "expected_turns": 8,
+      "pinned_tested": false,
+      "game_verified": false
+    }
+  ]
+}

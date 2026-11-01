@@ -6,6 +6,10 @@ const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
 const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
 const {run:paralysisOrder}=require("./champions_paralysis_probe.cjs");
+const {run:weatherSpeed}=require("./champions_weather_speed_probe.cjs");
+const {checkWeatherEvidence}=require("./champions_weather_gate_a_contract.cjs");
+let cachedWeather=null;
+function weatherOnce(){return cachedWeather||(cachedWeather=weatherSpeed());}
 const {checkParalysisEvidence}=require("./champions_paralysis_gate_a_contract.cjs");
 let cachedParalysis=null;
 function paralysisOnce(){return cachedParalysis||(cachedParalysis=paralysisOrder());}
@@ -205,11 +209,12 @@ function checkTurnOrderEvidence(t){
    throw Error("turn-order source status counts changed");
  return {matches,ties};
 }
-function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
+function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),weather=weatherOnce()){
  checkMap(map);checkEvidence(a,w,e,map);
  const modifierCounts=checkModifierEvidence(m);
  const turnCounts=checkTurnOrderEvidence(t);
  const paralysisCounts=checkParalysisEvidence(p);
+ const weatherCounts=checkWeatherEvidence(weather);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
@@ -241,6 +246,15 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
        paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
        paralysis_diagnostic:"champions_paralysis_probe.cjs"
      }:{}),
+     ...(["weather screens hazards","priority","ability and item"].includes(f.feature)?{
+       weather_source_order_matches:weatherCounts.matches,
+       weather_unknown_compound_rounding:weatherCounts.rounding_unknown,
+       weather_item_extension_source_agreement_unexecuted:weatherCounts.source_agreed_unexecuted,
+       weather_same_kind_reapply_unexecuted:weatherCounts.same_weather_reapply_unexecuted,
+       weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
+       weather_scope:weatherCounts.scope,
+       weather_diagnostic:"champions_weather_speed_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
@@ -264,6 +278,13 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
    paralysis_scope:paralysisCounts.scope,
    paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
    paralysis_diagnostic:"champions_paralysis_probe.cjs",
+   weather_source_order_matches:weatherCounts.matches,
+   weather_unknown_compound_rounding:weatherCounts.rounding_unknown,
+   weather_item_extension_source_agreement_unexecuted:weatherCounts.source_agreed_unexecuted,
+       weather_same_kind_reapply_unexecuted:weatherCounts.same_weather_reapply_unexecuted,
+   weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
+   weather_scope:weatherCounts.scope,
+   weather_diagnostic:"champions_weather_speed_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -275,4 +296,4 @@ if(require.main===module){
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
 module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,
- checkTurnOrderEvidence,checkParalysisEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+ checkTurnOrderEvidence,checkParalysisEvidence,checkWeatherEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
