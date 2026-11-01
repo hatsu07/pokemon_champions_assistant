@@ -57,7 +57,12 @@ function run(){
      const set=registered[side][0];
      if(set.species!==selected.name)throw Error("scenario active species drift");
      set.nature=nature;
-     set.evs=Object.fromEntries(STATS.map(k=>[k,k===stat?points:0]));
+     // Pinned M-C TeamValidator rejects a registered Serious Pokemon with
+     // exactly zero AP. Keep selected AP target at zero but assign 2 AP to
+     // independent SpD for that single edge case; both methods see same AP.
+     set.evs=Object.fromEntries(STATS.map(k=>[
+       k,k===stat?points:(points===0&&k==="spd"?2:0)
+     ]));
      const ref=calculate({baseStats,ap:set.evs,nature});
      if(ref.status!==STATUS)throw Error("independent ref status changed");
      for(const team of registered){

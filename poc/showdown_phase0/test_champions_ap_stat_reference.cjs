@@ -73,3 +73,12 @@ test("actual pinned Champions battle stats compare on legal registered six and s
  assert.equal(report.selected_three_member_teams,true);
  assert.ok(report.unverified.length>0);
 });
+
+test("synthetic AP zero target remains legal by unrelated SpD allocation",()=>{
+ const {run}=require("./champions_ap_stat_probe.cjs");
+ // No device evidence: registration-specific edge case in the pinned simulator.
+ const report=run();
+ assert.equal(report.counts.SOURCE_SPEC_MISMATCH,0);
+ assert.equal(report.case_count,192);
+ assert.ok(report.sample_case_ids.some(s=>s.endsWith("/0")));
+});

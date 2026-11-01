@@ -4,7 +4,7 @@
 
 `champions_ap_stat_reference.cjs` は **Showdownをimportしない**Champions専用の能力実数値参照式（HP=種族値+75+AP、他5値=(種族値+20+AP)×性格補正の切り捨て）。`champions_ap_stat_source_ledger.json` に2026-11-01時点で確認できたChampions専用の二次資料、ガブリアス素早さの公開表7行×2性格=14チェック、対象の性格4種（無補正／ようき／いじっぱり／ゆうかん）、例外と未確認条件を明記。**公式・ユーザーゲーム内の新しい実測を優先**し、他作品の式を無検証で補完しない。
 
-`champions_ap_stat_probe.cjs` はガブリアス・メタグロスを固定M-Cマスターから取得し、登録6匹をChampionsマスターおよび固定ShowdownのTeamValidatorで合法性確認→3匹選出した**実際のShowdown BattleのbaseStoredStats**と独立計算を比較する。AP値0/1/7/8/18/28/31/32、対象HP/攻撃/素早さ、性格4種、2種族の **192合成局面・1152能力値比較**。各不一致は `SOURCE_SPEC_MISMATCH` として差分表示し、CLIは不一致時exit 1/不正入力時exit 2とする。比較で使うマスターの種族値は実ゲーム観測でなく固定ソースの値である。
+`champions_ap_stat_probe.cjs` はガブリアス・メタグロスを固定M-Cマスターから取得し、登録6匹をChampionsマスターおよび固定ShowdownのTeamValidatorで合法性確認→3匹選出した**実際のShowdown BattleのbaseStoredStats**と独立計算を比較する。AP値0/1/7/8/18/28/31/32、対象HP/攻撃/素早さ、性格4種、2種族の **192合成局面・1152能力値比較**。各不一致は `SOURCE_SPEC_MISMATCH` として差分表示し、CLIは不一致時exit 1/不正入力時exit 2とする。 AP対象0の場合、ShowdownのM-C登録バリデータはAP合計0を登録エラーとするため、検証対象ではない特防に2APだけ配分する（対象HP/攻撃/素早さは0のまま）。独立参照側とBattle側で**同一の配分**を使う。比較で使うマスターの種族値は実ゲーム観測でなく固定ソースの値である。
 
 一致が出ても出典は **CHAMPIONS_COMMUNITY_SOURCE_ARITHMETIC_ONLY / SOURCE_SPEC_MATCH** であり、実ゲーム`GAME_OBSERVED_MATCH`ではない。選定以外の性格、他の種族・メガ、能力変化後/まひ/スカーフ/天候の速度、実行順・同速ランダム、実機での数値/端数を**検証しない**。Gate A=UNKNOWN、Gate B=UNSUPPORTED、採用NO_GO。本番LIVEのS確定・確定KO/安全受け保証に利用禁止。
 
