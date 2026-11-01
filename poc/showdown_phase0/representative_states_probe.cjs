@@ -118,6 +118,7 @@ function syntheticSetup(entry, ctx) {
     default: throw Error("unknown representative mechanism");
   }
   return {battle: b, origins, choices, registration,
+    registered_team_pair_sha256: fingerprint(registered),
     current_species: b.sides.map(side => side.active[0]?.species.id)};
 }
 function tacticallyRelevant(b) {
@@ -154,6 +155,7 @@ function runCase(entry, ctx) {
     snapshot = prepared.battle;
     result.setup_provenance = prepared.origins;
     result.selected = prepared.choices;
+    result.registered_team_pair_sha256 = prepared.registered_team_pair_sha256;
     result.current_species = prepared.current_species;
     result.state_sha256 = fingerprint(state(snapshot));
     result.tactical_sha256 = fingerprint(tacticallyRelevant(snapshot));
@@ -246,8 +248,7 @@ function run() {
     distinct_tactical_states: tact.size, distinct_matchups: matchups.size,
     distinct_mechanisms: new Set(results.map(r => r.mechanism)).size,
     distinct_registered_team_pairs: new Set(results.map(r =>
-      r.mechanism === "post_mega" ? "MEGA" :
-      r.mechanism === "sitrus_consumption" ? "SITRUS" : "BASE")).size,
+      r.registered_team_pair_sha256).filter(Boolean)).size,
     repetitions: 0, warmup_iterations: 6,
     counts: Object.fromEntries(["PASS_SYNTHETIC", "UNSUPPORTED"].map(s =>
       [s, results.filter(r => r.status === s).length])),

@@ -15,6 +15,7 @@ test("127 separately defined M-C snapshots preserve tactical distinctions", () =
   assert.equal(output.distinct_complete_states, 127);
   assert.equal(output.distinct_tactical_states, 127);
   assert.equal(output.distinct_matchups, 18);
+  assert.equal(output.distinct_registered_team_pairs, 8);
   assert.equal(output.distinct_mechanisms, 8);
   assert.equal(output.repetitions, 0);
   assert.equal(output.representative_100_synthetic_states_met, true);
