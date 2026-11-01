@@ -6,6 +6,10 @@ const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
 const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
 const {run:paralysisOrder}=require("./champions_paralysis_probe.cjs");
+const {run:weatherSpeed}=require("./champions_weather_speed_probe.cjs");
+const {checkWeatherEvidence}=require("./champions_weather_gate_a_contract.cjs");
+let cachedWeather=null;
+function weatherOnce(){return cachedWeather||(cachedWeather=weatherSpeed());}
 const {checkParalysisEvidence}=require("./champions_paralysis_gate_a_contract.cjs");
 let cachedParalysis=null;
 function paralysisOnce(){return cachedParalysis||(cachedParalysis=paralysisOrder());}
@@ -205,11 +209,12 @@ function checkTurnOrderEvidence(t){
    throw Error("turn-order source status counts changed");
  return {matches,ties};
 }
-function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
+function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),weather=weatherOnce()){
  checkMap(map);checkEvidence(a,w,e,map);
  const modifierCounts=checkModifierEvidence(m);
  const turnCounts=checkTurnOrderEvidence(t);
  const paralysisCounts=checkParalysisEvidence(p);
+ const weatherCounts=checkWeatherEvidence(weather);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
