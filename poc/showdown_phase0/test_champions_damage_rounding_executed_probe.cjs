@@ -59,10 +59,12 @@ test("actual pinned M-C moves show HP losses matching separately rounded source 
      p1:{id:"earthquake",name:"Earthquake",priority:0},
      p2:{id:"surf",name:"Surf",priority:0}
    });
-   assert.equal(row.event_trace.length,3);
+   assert.equal(row.event_trace.length,5);
    assert.match(row.event_trace[0],/^\|move\|p1a: Garchomp\|Earthquake\|/);
-   assert.match(row.event_trace[1],/^\|-damage\|p2a: Blastoise\|/);
-   assert.match(row.event_trace[2],/^\|move\|p2a: Blastoise\|Surf\|/);
+   assert.equal(row.event_trace[1],"|split|p2");
+   assert.match(row.event_trace[2],/^\|-damage\|p2a: Blastoise\|\d+\/\d+$/);
+   assert.match(row.event_trace[3],/^\|-damage\|p2a: Blastoise\|\d+\/100$/);
+   assert.match(row.event_trace[4],/^\|move\|p2a: Blastoise\|Surf\|/);
    assert.ok(row.seed>=1&&row.seed<=48);
    assert.equal(row.provenance,"PINNED_SYNTHETIC_EXECUTED_TURN_BURN_REFLECT_NOT_DEVICE");
  }
