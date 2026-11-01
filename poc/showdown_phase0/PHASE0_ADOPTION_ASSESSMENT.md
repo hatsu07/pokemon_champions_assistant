@@ -59,6 +59,10 @@ node poc/showdown_phase0/phase0_final_adoption_report.cjs \
 | ゲーム確認済み局所計算器または代替エンジン | **比較・研究のみ** | 実機・Champions固有仕様、途中状態、Windows配布、安全なUNKNOWN処理を独立に検証。poke-engine等の互換性は現時点で保証しない |
 | 現行のLIVEマトリクス＋GPT経路 | **維持する** | 実対戦の検証・記録・改善を継続。開発版Showdownの推定で既知ゲーム情報を上書きしない |
 
+## NO_GO研究終了とGO採用審査の区別（PR #168）
+
+[PHASE0_RESEARCH_EXIT_NO_GO.md](./PHASE0_RESEARCH_EXIT_NO_GO.md) では、既存の5軸採否レポートの確定した未達根拠を使い、**研究PoCをNO_GOとして終了する手順**を独立化する。これは`phase0_ready_to_close:false`（本番採用のGO条件未達）を変更せず、`NO_GO_EXIT_EVIDENCE_READY_FOR_MANUAL_REVIEW`を別出力する。最新HEADのCI・レビュー・ユーザーの手動判断が必要であり、IssueをCIで自動的に閉じたりPhase 1へ進めたりしない。
+
 ## 最小の残課題・次の判断ポイント
 
 1. **実ゲームとの高情報量な照合**：新規個体を大量に準備せず、既存ログまたは自然な対戦で、攻防双方の条件と直前直後整数HPが確認できる例を少数追加。既存ローカルGoldenの対象・独立試合数も分けて記録する。
