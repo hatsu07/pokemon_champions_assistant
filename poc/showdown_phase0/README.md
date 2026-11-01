@@ -2,8 +2,8 @@
 
 ## Phase 0：独立した合成代表局面127件（Issue #139）
 
-\`representative_states_cases.json\` と \`representative_states_probe.cjs\` は、固定Showdown
-\`ccfaa20f32af363569cd21a9d501b2bc1ded26b1\` の \`gen9championsbssregmc\`
+`representative_states_cases.json` と `representative_states_probe.cjs` は、固定Showdown
+`ccfaa20f32af363569cd21a9d501b2bc1ded26b1` の `gen9championsbssregmc`
 だけで実行する **合成状態ベンチマーク**。既存の登録6匹検証と実Team Previewから選出3匹を経て、
 双方の交代ターンを実行する。18種類の異なる対面に7条件（通常・双方HP低下・PP消費・まひ・能力変化・雨＋リフレクター・オボン消費）を組み合わせた126局面と、実際のメガシンカ行動を実行した1局面を独立定義する。
 
@@ -14,11 +14,11 @@
 各ケースの成功・失敗を機械可読JSONで記録し、失敗や重複で100件の
 synthetic coverageを満たせない場合はNode/CIをfail closedにする。
 
-\`\`\`sh
+```sh
 docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
 docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_representative_states_probe.cjs
 docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 representative_states_probe.cjs > /tmp/phase0-representative-local.json
-\`\`\`
+```
 
 一部のHP/PP/状態異常/能力変化は**明示的な合成注入**。雨と壁は
 Showdownの効果API、オボンはHPを合成設定してからエンジンの
@@ -30,11 +30,16 @@ Showdownの効果API、オボンはHPを合成設定してからエンジンの
 
 結果には直列化、復元、分岐、再現、チーム組成・局面準備の
 Nodeステージ別P50/P95/P99と標本数、RSS/ヒープを記録。
+`tactical_sha256` はアクティブな2匹の種族・現在タイプ・メガ状態・HP帯・PP消費・状態異常・能力ランク・持ち物・こだわり固定と、天候・リフレクターの有無のみを粗視化したハッシュ。
+控え2匹のHP・PP、天候/壁の残ターン、未公開技・持ち物候補、未解決キュー、ステルスロック等の他設置物は**含まない**。
+127件の粗視化ハッシュが異なることは、全戦術状態の網羅性、受け出しやターン判断の網羅性を意味しない。
+メモリはNodeプロセスの実行前後のRSS/heap snapshotであり、**peak RSSと長期常駐リークは未測定**。
+一部段階の例外は`failure_stage`を記録し、実際に状態比較で差分が取れた場合だけ`first_difference_field`を記録する。
 同一Docker環境の単回実行値であり、Linux上でのNode/コンテナ起動時間、
 Windows常駐・IPC・表示E2E、実機性能を証明しない。
 100 **合成**局面を満たしても、実ゲームの部分観測から完全復元できる
 こともChampionsの計算互換性も証明しない。
-**Gate A=\`UNKNOWN\`、Gate B=\`UNSUPPORTED\`、採用=\`NO_GO\`を維持。**
+**Gate A=`UNKNOWN`、Gate B=`UNSUPPORTED`、採用=`NO_GO`を維持。**
 次のゲートは実機で観測可能な状態情報とのオフライン照合、
 ルール互換性、独立した複数回性能測定とWindows Node検証。
 

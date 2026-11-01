@@ -136,6 +136,11 @@ function tacticallyRelevant(b) {
     p1_reflect: Boolean(b.p1.sideConditions.reflect),
     p2_reflect: Boolean(b.p2.sideConditions.reflect)};
 }
+// For a complete synthetic Showdown Battle pair only. Never apply this to
+// partial game observations: absence of a mismatch is not proof of reconstruction.
+function restoredStateDifference(original, restored) {
+  return same(original, restored) ? null : diff(original, restored);
+}
 function timingStats(values) {
   const numbers = values.filter(Number.isFinite).sort((a, b) => a - b);
   const at = q => numbers[Math.ceil(q * numbers.length) - 1] ?? null;
@@ -148,6 +153,9 @@ function runCase(entry, ctx) {
     status: "UNSUPPORTED", reason: null};
   const clock = {};
   let snapshot = null;
+  let failureStage = "prepare";
+  result.first_difference_field = null;
+  result.failure_stage = null;
   try {
     let t = performance.now();
     const prepared = syntheticSetup(entry, ctx);
@@ -160,14 +168,22 @@ function runCase(entry, ctx) {
     result.state_sha256 = fingerprint(state(snapshot));
     result.tactical_sha256 = fingerprint(tacticallyRelevant(snapshot));
     result.tactical_state = tacticallyRelevant(snapshot);
+    failureStage = "serialize";
     t = performance.now();
     const wire = serialize(snapshot);
     clock.serialize_ms = performance.now() - t;
+    failureStage = "restore";
     t = performance.now();
     const restored = restoreChecked(wire, result.state_sha256);
     clock.restore_ms = performance.now() - t;
-    if (!same(snapshot, restored))
+    failureStage = "compare_restored_state";
+    const mismatch = restoredStateDifference(snapshot, restored);
+    if (mismatch) {
+      result.first_difference_field = mismatch.first_difference_field;
+      result.difference_classification = mismatch.comparison;
       throw Error("serialized complete state changed after restore");
+    }
+    failureStage = "validate_branch_actions";
     const before = fingerprint(state(snapshot));
     const restoredBefore = fingerprint(state(restored));
     // Showdown reorders active Pokémon to position 1 on switches; slot 1 is active.
@@ -175,18 +191,27 @@ function runCase(entry, ctx) {
     const ids = [actionId(restored, aAction), actionId(restored, bAction)];
     if (!ids[0] || !ids[1] || ids[0] === ids[1])
       throw Error("branch actions do not identify different legal actions");
+    failureStage = "branch_a";
     t = performance.now();
     const a = resolveFrom(restored, aAction);
     clock.branch_ms = performance.now() - t;
+    failureStage = "branch_b";
     t = performance.now();
     const b = resolveFrom(restored, bAction);
     clock.alternative_ms = performance.now() - t;
+    failureStage = "repeat_branch_a";
     t = performance.now();
     const replay = resolveFrom(restored, aAction);
     clock.replay_ms = performance.now() - t;
+    failureStage = "compare_branches";
     const retained = fingerprint(state(snapshot)) === before &&
       fingerprint(state(restored)) === restoredBefore;
     const replayed = same(a, replay), branched = !same(a, b);
+    if (!replayed) {
+      const replayMismatch = restoredStateDifference(a, replay);
+      result.first_difference_field = replayMismatch?.first_difference_field || null;
+      result.difference_classification = replayMismatch?.comparison || null;
+    }
     if (!retained || !replayed || !branched)
       throw Error("restored branch independence, replay or alternate result mismatch");
     result.branch = {actions: [aAction, bAction], action_ids: ids,
@@ -197,7 +222,9 @@ function runCase(entry, ctx) {
     result.reason = "complete synthetic M-C selected state restored and branched";
   } catch (error) {
     result.reason = error.message;
-    result.first_difference_field = snapshot ? "UNRESOLVED_CHECK" : "PREPARATION";
+    result.failure_stage = failureStage;
+    // No invented field path when an exception occurs before state comparison.
+    // first_difference_field remains null unless a real diff was computed.
   }
   result.timings_ms = clock;
   return result;
@@ -244,6 +271,15 @@ function run() {
     pinned_showdown_sha: pinned, champions_master_sha256: masterHashes(),
     format: FORMAT, regulation: "M-C", evidence_class: "SYNTHETIC_ONLY",
     gate_A: "UNKNOWN", gate_B: "UNSUPPORTED", adoption: "NO_GO",
+    case_count: results.length,
+    tactical_hash_scope: "ACTIVE_PAIR_COARSE_PROJECTION_ONLY",
+    tactical_hash_includes: ["active_species", "current_types", "mega", "hp_band",
+      "move_pp_spent", "status", "boosts", "held_item", "last_item",
+      "choice_lock", "weather", "reflect_presence"],
+    tactical_hash_excludes: ["bench_hp_and_pp", "weather_and_wall_remaining_turns",
+      "hidden_opponent_move_and_item_candidates", "unresolved_queue",
+      "entry_hazards_and_other_side_conditions", "battle_rng", "battle_log",
+      "registered_and_selected_order"],
     case_count: results.length, distinct_complete_states: full.size,
     distinct_tactical_states: tact.size, distinct_matchups: matchups.size,
     distinct_mechanisms: new Set(results.map(r => r.mechanism)).size,
@@ -252,9 +288,12 @@ function run() {
     repetitions: 0, warmup_iterations: 6,
     counts: Object.fromEntries(["PASS_SYNTHETIC", "UNSUPPORTED"].map(s =>
       [s, results.filter(r => r.status === s).length])),
+    timing_scope: "SINGLE_LINUX_CONTAINER_WARM_NODE_INTERNAL_STAGES_ONLY",
     timing_ms: Object.fromEntries(timeKeys.map(key =>
       [key, timingStats(results.map(r => r.timings_ms[key]))])),
-    memory_bytes: {initial_rss: initialMemory.rss, final_rss: afterMemory.rss,
+    memory_bytes: {measurement_scope: "PROCESS_SNAPSHOTS_BEFORE_AND_AFTER_CASES_ONLY",
+      peak_rss_measured: false, long_running_leak_tested: false,
+      initial_rss: initialMemory.rss, final_rss: afterMemory.rss,
       initial_heap_used: initialMemory.heapUsed, final_heap_used: afterMemory.heapUsed,
       final_heap_total: afterMemory.heapTotal},
     node_process_uptime_before_case_ms: uptimeBeforeCases,
@@ -273,4 +312,5 @@ if (require.main === module) {
   catch (error) {process.stdout.write(JSON.stringify({status: "NOT_RUN", reason: error.message}) + "\n"); process.exitCode = 2;}
 }
 module.exports = {run, runCase, assertManifest, validateReport, caseContract,
-  selectionFor, syntheticSetup, tacticallyRelevant, timingStats};
+  selectionFor, syntheticSetup, tacticallyRelevant, timingStats,
+  restoredStateDifference};

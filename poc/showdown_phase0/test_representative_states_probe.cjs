@@ -1,9 +1,12 @@
 "use strict";
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
-const {run, validateReport, assertManifest, selectionFor, timingStats} =
+const {run, validateReport, assertManifest, selectionFor, timingStats,
+  restoredStateDifference, syntheticSetup} =
   require("./representative_states_probe.cjs");
 const manifest = require("./representative_states_cases.json");
+const {context} = require("./six_team_selection_probe.cjs");
+const {copy} = require("./worker.cjs");
 
 let output;
 test("127 separately defined M-C snapshots preserve tactical distinctions", () => {
@@ -16,6 +19,12 @@ test("127 separately defined M-C snapshots preserve tactical distinctions", () =
   assert.equal(output.distinct_tactical_states, 127);
   assert.equal(output.distinct_matchups, 18);
   assert.equal(output.distinct_registered_team_pairs, 8);
+  assert.equal(output.tactical_hash_scope, "ACTIVE_PAIR_COARSE_PROJECTION_ONLY");
+  assert.ok(output.tactical_hash_excludes.includes("weather_and_wall_remaining_turns"));
+  assert.ok(output.tactical_hash_excludes.includes("unresolved_queue"));
+  assert.equal(output.memory_bytes.peak_rss_measured, false);
+  assert.equal(output.memory_bytes.long_running_leak_tested, false);
+  assert.equal(output.timing_scope, "SINGLE_LINUX_CONTAINER_WARM_NODE_INTERNAL_STAGES_ONLY");
   assert.equal(output.distinct_mechanisms, 8);
   assert.equal(output.repetitions, 0);
   assert.equal(output.representative_100_synthetic_states_met, true);
@@ -25,6 +34,8 @@ test("127 separately defined M-C snapshots preserve tactical distinctions", () =
   assert.ok(output.results.some(r => r.setup_provenance.includes("SYNTHETIC_HP_SETUP_THEN_ENGINE_ITEM_EVENT")));
   for (const r of output.results) {
     assert.equal(r.status, "PASS_SYNTHETIC", r.case_id + ": " + r.reason);
+    assert.equal(r.first_difference_field, null);
+    assert.equal(r.failure_stage, null);
     assert.ok(r.branch?.distinct_outcome && r.branch?.source_unchanged &&
       r.branch?.repeated_action_identical);
     assert.notEqual(r.branch.action_ids[0], r.branch.action_ids[1]);
@@ -58,4 +69,15 @@ test("selection guards reject repeated slots and duration metrics are finite", (
     assert.equal(stage.samples, 127);
     assert.ok(stage.p50 <= stage.p95 && stage.p95 <= stage.p99 && stage.p99 <= stage.max);
   }
+});
+
+test("actual Showdown-state corruption identifies the first differing field", () => {
+  const {battle} = syntheticSetup(manifest.cases[0], context());
+  const altered = copy(battle);
+  assert.equal(restoredStateDifference(battle, altered), null);
+  altered.p1.active[0].moveSlots[0].pp--;
+  const mismatch = restoredStateDifference(battle, altered);
+  assert.ok(mismatch, "PP damage must be detected");
+  assert.match(mismatch.first_difference_field, /moveSlots\\.0\\.pp|moveSlots.*pp/);
+  assert.equal(mismatch.comparison.kind, "STATE_OR_QUEUE");
 });
