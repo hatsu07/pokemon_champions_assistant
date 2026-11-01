@@ -1,7 +1,7 @@
 "use strict";
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
-const {run, context, validateRegistration, makeSelectedBattle, checkSelection,
+const {run, context, validateRegistration, mutate, makeSelectedBattle, checkSelection,
   assertManifest} = require("./six_team_selection_probe.cjs");
 const {moveKey} = require("./champions_move_key.cjs");
 
@@ -80,10 +80,30 @@ test("all registration negatives stop before Battle and keep validator disagreem
   const regional = report.results.find(r => r.case_id === "NEG-004");
   assert.match(regional.reason, /#0026/);
   assert.deepEqual(regional.registered_species_ids[0].slice(0, 2), ["raichu", "raichualola"]);
+  for (const id of ["NEG-001", "NEG-002"]) {
+    const result = report.results.find(r => r.case_id === id);
+    assert.match(result.reason, /exactly six/, id);
+    assert.equal(result.registered_species_ids[0].length, id === "NEG-001" ? 5 : 7);
+  }
   const wrongStone = report.results.find(r => r.case_id === "NEG-013");
   assert.match(wrongStone.reason, /mega stone wrong species/);
   assert.equal(wrongStone.registration[0].team_validator.status, "LEGAL");
   assert.equal(wrongStone.registration[0].agree, false);
+});
+
+test("the seventh registrant violates only team size", () => {
+  const ctx = context();
+  const seven = mutate(ctx.registered[0], "seven", ctx);
+  assert.equal(seven.length, 7);
+  assert.equal(ctx.dex.species.get(seven[6].species).id, "raichu");
+  const nationalNumbers = seven.map(mon =>
+    ctx.allowed.species.get(ctx.dex.species.get(mon.species).id).nationalNo);
+  assert.equal(new Set(nationalNumbers).size, 7);
+  assert.equal(seven[6].item, "");
+  const substitute = structuredClone(seven.slice(0, 6));
+  substitute[5] = structuredClone(seven[6]);
+  assert.equal(validateRegistration(substitute, ctx).legal, true);
+  assert.match(validateRegistration(seven, ctx).champions_master.reason, /exactly six/);
 });
 
 test("matching mega stone is accepted while wrong-owner stone records the validator split", () => {

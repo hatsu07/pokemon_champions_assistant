@@ -83,7 +83,7 @@ function mutate(team, kind, ctx) {
       evs: {hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 2}, moves: [move]});
   switch (kind) {
     case "five": t.pop(); break;
-    case "seven": t.push(structuredClone(t[0])); break;
+    case "seven": t.push(set("Raichu", "Static")); break;
     case "duplicate_species": t[1] = structuredClone(t[0]); break;
     case "regional_duplicate":
       if (ctx.allowed.species.get("raichu")?.nationalNo !==
@@ -309,5 +309,5 @@ if (require.main === module) {
   try {process.stdout.write(JSON.stringify(run()) + "\n");}
   catch (error) {process.stdout.write(JSON.stringify({status: "NOT_RUN", reason: error.message}) + "\n"); process.exitCode = 2;}
 }
-module.exports = {run, runCase, context, validateRegistration, checkSelection,
+module.exports = {run, runCase, context, validateRegistration, mutate, checkSelection,
   makeSelectedBattle, restoration, assertManifest};
