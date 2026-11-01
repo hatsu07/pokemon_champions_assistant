@@ -1,6 +1,6 @@
 "use strict";
 // Phase 0 evidence contract: only source-backed synthetic weather cases, not game compatibility.
-const {LEDGER,CASES,reference}=require("./champions_weather_speed_reference.cjs");
+const {LEDGER,CASES,WEATHER_DURATION_RULES,reference}=require("./champions_weather_speed_reference.cjs");
 const {moveKey}=require("./champions_move_key.cjs");
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 function checkWeatherEvidence(r){
@@ -12,13 +12,27 @@ function checkWeatherEvidence(r){
     r.private_golden_read!==false||r.game_verified_turns!==0||
     r.live_use_approved!==false||r.source_only_not_game!==true||
     JSON.stringify(r.unverified)!==JSON.stringify(LEDGER.unverified)||
-    JSON.stringify(r.duration_conflict)!==JSON.stringify(LEDGER.source_conflicts[0])||
+    Object.hasOwn(r,"duration_conflict")||
+    JSON.stringify(r.weather_duration_rules)!==JSON.stringify(WEATHER_DURATION_RULES)||
+    JSON.stringify(r.weather_duration_rules)!==JSON.stringify(LEDGER.weather_duration_rules)||
     r.lifecycle?.status!=="SOURCE_SPEC_MATCH"||
     r.lifecycle?.basis!=="TWO_EXECUTED_WEATHER_MOVES_AND_FOUR_FOLLOWUP_TURNS"||
     r.lifecycle?.extended_item_evaluated!==false||
     r.lifecycle?.actual_game_proven!==false||
     !r.lifecycle?.first_weather_event?.includes("RainDance")||
     !r.lifecycle?.override_weather_event?.includes("SunnyDay")||
+    JSON.stringify(r.lifecycle?.executed_move_order)!==JSON.stringify(["p1","p2"])||
+    JSON.stringify(r.lifecycle?.executed_moves)!==JSON.stringify({
+      p1:{id:moveKey("Rain Dance"),name:"Rain Dance",priority:0},
+      p2:{id:moveKey("Sunny Day"),name:"Sunny Day",priority:0}
+    })||
+    JSON.stringify(r.lifecycle?.executed_move_events)!==JSON.stringify([
+      "|move|p1a: Garchomp|Rain Dance|p1a: Garchomp",
+      "|move|p2a: Metagross|Sunny Day|p2a: Metagross"
+    ])||
+    JSON.stringify(r.lifecycle?.weather_change_events)!==JSON.stringify([
+      "|-weather|RainDance","|-weather|SunnyDay"
+    ])||
     JSON.stringify(r.lifecycle?.after_turn_remaining)!==JSON.stringify([4,3,2,1,0]))
     throw Error("weather Gate A evidence origin or duration changed");
  for(const [i,c] of CASES.entries()){
@@ -48,7 +62,7 @@ function checkWeatherEvidence(r){
     r.counts?.SOURCE_SPEC_MISMATCH!==0||
     r.counts?.SOURCE_UNKNOWN_MODIFIER_ORDER!==1)
    throw Error("weather Gate A source count drift");
- return {matches:12,rounding_unknown:1,source_conflicts:1,
+ return {matches:12,rounding_unknown:1,source_agreed_unexecuted:1,same_weather_reapply_unexecuted:1,
    executed_lifecycle_cases:1,scope:"PINNED_SYNTHETIC_WEATHER_NOT_GAME"};
 }
 module.exports={checkWeatherEvidence};
