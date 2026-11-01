@@ -1,5 +1,11 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 Gate A：APと性格の独立実数値比較（2026-11-01）
+
+- Champions専用二次資料と固定マスターから、Showdown非依存のAP/性格実数値参照器を追加。公開ガブリアスS 7行×2性格の14算術値を確認。固定M-C登録6→選出3のShowdown Battleと、2種族×4性格×3能力AP振り×8値=192合成局面（各6値=1152比較）を独立照合する。実行結果はCIで検証するまで一致を断定しない。
+- 不一致はSOURCE_SPEC_MISMATCH、二次資料との一致はSOURCE_SPEC_MATCHであり、Champions実機一致ではない。非公開Goldenは未使用、採用A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。
+
+
 ## Issue #139 PR #158レビューP2対応（2026-11-01）
 
 - `move_type` / `move_category` を「move power and PP」内の静的仕様比較に追加。audit.cjsが生成する13種類のgroupすべてに機能別対応を要求し、未知・未割当グループは`UNMAPPED_AUDIT_GROUP`で監査失敗。タイプ・分類に合成差分を注入した場合に`SOURCE_CONFLICT`となり、機能別UNKNOWNを維持する負例テスト追加。固定4マスターCSV単独変更でPhase 0 workflowを起動するpaths追加。固定データ・Showdown本体・LIVE経路は変更なし。
