@@ -67,7 +67,7 @@ function executePct(ctx,row){
      const surfAt=log.indexOf(observed.move_events[1]);
      if(dmgEvents.length!==1||earthquakeAt<0||damageAt<=earthquakeAt||
         surfAt<=damageAt)
-       throw Error("executed damage event not attributable to Earthquake");
+       throw Error("executed damage event not attributable to Earthquake: "+JSON.stringify({pct:row.roll_pct,dmgEvents,earthquakeAt,damageAt,surfAt,log}));
      const actual=initial-d.hp;
      if(actual!==pinnedDirect||
        actual!==row.sequential||actual<1||
