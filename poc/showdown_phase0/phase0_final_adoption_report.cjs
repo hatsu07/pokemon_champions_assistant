@@ -56,8 +56,7 @@ function evaluate(e){
    partial.results.every(x=>x.unique_truth_restoration===false&&
     x.complete_snapshot_restorable_from_observation===false),
    "partial observation cannot reconstruct a unique actual truth");
- requireValue(rep.schema==="phase0-representative-states-diagnostic-v1"||
-   rep.schema==="phase0-representative-states-validation-v1",
+ requireValue(rep.schema==="phase0-representative-synthetic-states-v1",
    "representative synthetic schema");
  requireValue(rep.case_count===127&&rep.counts?.PASS_SYNTHETIC===127&&
    rep.representative_100_synthetic_states_met===true&&
