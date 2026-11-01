@@ -1,5 +1,12 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #168：Phase 0をNO_GOの結論で終了する手続き
+
+[PHASE0_RESEARCH_EXIT_NO_GO.md](./PHASE0_RESEARCH_EXIT_NO_GO.md) は**Phase 0の研究終了**と**Phase 1への採用合格**を分離する。前者は検証済みの現状が`NO_GO`であり、研究結果と未達条件が明確なら手動レビュー後に提案可能。一方、Gate A=`UNKNOWN`／Gate B=`UNSUPPORTED`のままで、Showdownを実戦推奨へ接続することは許可されない。
+
+`phase0_no_go_research_exit.cjs` は既存の5診断JSONから生成した`phase0-final-adoption-report.json`だけを受け、証拠が維持されていれば`NO_GO_EXIT_EVIDENCE_READY_FOR_MANUAL_REVIEW`を出力。自動クローズをせず、元の`phase0_ready_to_close:false`を改変しない。
+
+
 ## PR #166：Phase 0採否レポート（現時点NO_GO）
 
 [PHASE0_ADOPTION_ASSESSMENT.md](./PHASE0_ADOPTION_ASSESSMENT.md) に、計算互換性Gate A、部分観測中途復元Gate B、127合成代表状態の性能、Windows同梱/IPC、依存ライセンス/SBOM、研究用代替案を証拠階層別に整理した。Linux CIで既存5診断JSONを消費する `phase0_final_adoption_report.cjs` を実行し、`test_phase0_final_adoption_report.cjs` が実ゲーム未検証を合格扱いする改変を拒否する。これは実ゲームGoldenの再実行ではなく、過去Issue #139の6ケース/11チェックは履歴要約として別記する。
