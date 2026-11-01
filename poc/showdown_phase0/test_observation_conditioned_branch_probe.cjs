@@ -106,6 +106,8 @@ test("observed Sitrus Berry consumption conditions only its original legal holde
   "CONDITIONED_EMPTY_ITEM_ONLY_NO_CONSUMPTION_EFFECT_OR_LOG_REPLAY");
  assert.equal(r.candidates[0].conditioned_hp,70,"no Berry heal effect may be invented");
  assert.ok(r.admitted_evidence_fields.includes("opponent_consumed_item"));
+ assert.ok(r.admitted_evidence_fields.includes("opponent_item"));
+ assert.ok(!r.unrecovered_hidden_fields.includes("opponent_item"));
  assert.ok(r.unrecovered_hidden_fields.includes("internal_rng"));
  assert.equal(r.not_a_unique_true_state,true,
   "one matching fixed fixture does not prove the true hidden opponent set");
