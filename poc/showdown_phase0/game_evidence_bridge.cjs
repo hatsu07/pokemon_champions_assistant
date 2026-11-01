@@ -73,10 +73,15 @@ function assertEvidenceProvenance(doc) {
 }
 function summarizeGolden(doc, comparison, bytes) {
   const validated = assertEvidenceProvenance(doc);
+  if (JSON.stringify(JSON.parse(bytes.toString("utf8"))) !== JSON.stringify(doc))
+    throw Error("source document differs from independently retained input bytes");
   if (!comparison || comparison.schema !== "champions-golden-comparison-v2" ||
       comparison.gate_A_calculation !== "UNKNOWN" ||
       comparison.cases?.length !== doc.cases.length ||
-      !comparison.counts || !comparison.input_sha256)
+      !comparison.counts || !comparison.input_sha256 ||
+      comparison.cases.some((c, i) => c.case_id !== doc.cases[i].case_id ||
+        c.origin !== doc.cases[i].evidence.origin ||
+        c.verification !== doc.cases[i].evidence.verification))
     throw Error("golden comparator contract disagrees with evidence");
   const statuses = comparison.cases.flatMap(c => c.checks.map(x => x.status));
   if (statuses.some(s => !["MATCH", "MISMATCH", "INCONCLUSIVE",
@@ -87,7 +92,16 @@ function summarizeGolden(doc, comparison, bytes) {
   const matches = comparison.counts.verified_game_match_check_count;
   const discordant = comparison.cases.flatMap(c =>
     c.checks.filter(x => x.status === "MISMATCH"));
-  if (matches > verified || verified > statuses.length)
+  const matchStatuses = statuses.filter(s => s.startsWith("MATCH")).length;
+  const mismatchStatuses = statuses.filter(s => s.startsWith("MISMATCH")).length;
+  const verifiedRows = comparison.cases
+    .filter(c => c.origin === "REAL_GAME" && c.verification === "USER_VERIFIED")
+    .flatMap(c => c.checks.filter(x => x.status === "MATCH" || x.status === "MISMATCH"));
+  if (matches > verified || verified > statuses.length ||
+      verified !== verifiedRows.length ||
+      matches !== verifiedRows.filter(x => x.status === "MATCH").length ||
+      comparison.counts.match !== matchStatuses ||
+      comparison.counts.mismatch !== mismatchStatuses)
     throw Error("verified comparison accounting is inconsistent");
   const rawDigest = HASH(bytes);
   if (comparison.input_sha256 !== rawDigest)
@@ -108,7 +122,9 @@ function summarizeGolden(doc, comparison, bytes) {
     b_reconstruction_from_golden: false};
 }
 function summarizePartial(doc, assessment, bytes) {
-  if (!doc || doc.schema !== "phase0-partial-observation-v1" ||
+  if (!doc || JSON.stringify(JSON.parse(bytes.toString("utf8"))) !== JSON.stringify(doc))
+    throw Error("partial document differs from input bytes");
+  if (doc.schema !== "phase0-partial-observation-v1" ||
       !ORIGINS.has(doc.origin) ||
       !["USER_VERIFIED", "UNVERIFIED"].includes(doc.verification) ||
       !assessment?.consistent ||

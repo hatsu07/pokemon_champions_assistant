@@ -103,8 +103,24 @@ test("a Golden check is not a complete midbattle state even when user-verified",
   notRealComparison.counts.verified_game_check_count = 1;
   notRealComparison.counts.verified_game_match_check_count = 1;
   notRealComparison.counts.verified_game_matching_case_count = 1;
-  const result = summarizeGolden(real, notRealComparison, input);
+  const stubBytes = Buffer.from(JSON.stringify(real));
+  notRealComparison.input_sha256 =
+    crypto.createHash("sha256").update(stubBytes).digest("hex");
+  notRealComparison.counts.synthetic = 0;
+  const result = summarizeGolden(real, notRealComparison, stubBytes);
   assert.equal(result.comparison_status, "USER_DECLARED_EVIDENCE_MATCHED_SCALAR");
   assert.equal(result.b_midbattle_fields_transferred, 0);
   assert.equal(createReport(result).B_full_snapshot_created, false);
+});
+
+test("an externally swapped document or comparator metadata is rejected", () => {
+  const comparison = goldenRun(file);
+  const changed = structuredClone(doc);
+  changed.cases[0].case_id = "changed";
+  assert.throws(() => summarizeGolden(changed, comparison, input),
+    /document differs from independently retained input bytes/);
+  const tampered = structuredClone(comparison);
+  tampered.cases[0].origin = "REAL_GAME";
+  assert.throws(() => summarizeGolden(doc, tampered, input),
+    /comparator contract disagrees/);
 });
