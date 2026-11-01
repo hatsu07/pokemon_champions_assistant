@@ -134,6 +134,30 @@ class Phase2TestCase(unittest.TestCase):
         self.assertEqual(session.enforce_deadlines(now_ms=90_999), ())
         self.assertEqual(session.enforce_deadlines(now_ms=91_000), ("PREP",))
 
+    def test_selection_and_prep_share_full_ninety_seconds_without_eighty_seven_cutoff(self) -> None:
+        for selection_elapsed_ms, remaining_ms in ((10_000, 80_000),
+                                                  (35_000, 55_000),
+                                                  (70_000, 20_000)):
+            with self.subTest(selection_elapsed_ms=selection_elapsed_ms):
+                session = self.controller.start_match(
+                    f"shared-90-{selection_elapsed_ms}", now_ms=0)
+                session.receive_opponent_preview(OPPONENTS, now_ms=1_000)
+                prep = session.record_actual_selection(
+                    TEAM[:3], TEAM[0],
+                    now_ms=1_000 + selection_elapsed_ms)
+                self.assertEqual(session.prep_deadline.budget_ms, remaining_ms)
+                self.assertEqual(session.prep_deadline.expires_at_ms, 91_000)
+                # Passing 87s from the *original* preview is not a cutoff.
+                self.assertEqual(session.enforce_deadlines(now_ms=88_500), ())
+                self.assertIsNone(session.prep_validation)
+                result = mocked_complete_prep(prep)
+                validation = session.record_prep_result(result, now_ms=88_500)
+                self.assertTrue(validation.complete)
+                self.assertEqual(session.phase, MatchPhase.S04_PREP_40S)
+                self.assertEqual(session.enforce_deadlines(now_ms=91_000), ("PREP",))
+                # Even a soft clock warning must not silently reset completion.
+                self.assertTrue(session.prep_validation.complete)
+
     def test_deadline_management_expires_model_work_without_tactical_fallback(self) -> None:
         session = self.controller.start_match("match-1", now_ms=0)
         session.receive_opponent_preview(OPPONENTS, now_ms=1, actual_ui_remaining_ms=100)
