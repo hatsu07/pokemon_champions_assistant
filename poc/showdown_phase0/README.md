@@ -1,5 +1,38 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## 実ゲームGoldenと部分観測のオフライン証拠境界（Issue #139）
+
+`game_evidence_bridge.cjs` は既存の `golden_compare.cjs`（Gate Aの能力値・PP・単発ダメージ照合）と
+`partial_observation_probe.cjs::assertObservation`（Gate Bの34フィールド・情報源検査）を**読み取り専用**で使用する。
+**新たな実機検証データは作らない**。既存の本人確認済みGoldenはユーザー端末にのみ残し、実ゲーム画像・JSON・参照ID・個別ポケモン名をGitHub/CIへ送らない。
+ユーザーの `USER_VERIFIED` 宣言および根拠IDの形式・参照先対応を確認するが、CLIは元のスクリーンショットの真偽を独立に認証できない。
+
+使用方法（ローカルDocker／秘密データを渡す場合はネットワークを遮断し、ファイルをread-onlyでマウント）：
+
+```bash
+docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+docker run --rm --network none --read-only --tmpfs /tmp \
+  --mount type=bind,source=/ABSOLUTE/PRIVATE/CASES.json,target=/tmp/private-golden.json,readonly \
+  --entrypoint node champions-phase0 game_evidence_bridge.cjs --golden /tmp/private-golden.json > /ABSOLUTE/PRIVATE/evidence-report.json
+```
+
+部分観測が別ファイルで存在し、本人が根拠を確認した場合に限り、
+同じコマンドへ `--mount type=bind,source=/ABSOLUTE/PRIVATE/PARTIAL.json,target=/tmp/private-partial.json,readonly` と
+`--partial /tmp/private-partial.json` を追加可能。ただし **Goldenと部分観測は自動的には同じ試合・局面へ結合されない**。
+Gate AのGolden内の相手・技・HP・場をGate Bの相手選出・HP・履歴・キューへ自動転記しない。
+正確な相手HPが画面にないならUNKNOWN。相手の能力配分・未公開技・道具、実際の内部乱数、残PP、メガ前履歴、壁の残ターン、未処理行動も情報がなければUNKNOWN。
+
+結果JSONは*集計数・抽象的なフィールド名・入力SHA*のみを含む。個々の観測値・根拠ID・ファイルパス・対戦ログを出力しない。
+ただし入力SHAも私人のファイルの識別子なので共有時には注意する。CIでは
+`synthetic_golden_example.json` だけを扱い、実ゲームで一致したケース数を0として検証する。
+エラー時もファイルパスや観測値を出さない。`MATCH`は1項目の局所一致で、
+`MISMATCH`はレビューが必要だが、いずれも実ゲームの全ルール互換性ではない。
+
+**Gate A=UNKNOWN、Gate B=UNSUPPORTED、総合NO_GO。**
+Bの完全スナップショット、実ゲーム内部乱数の復元、Phase 1/LIVE接続は行わない。
+次は通常対戦で自然に得られる根拠付き局面を、ユーザー本人がローカルに記録した範囲で部分観測スキーマへ入力し、UNKNOWNを維持できるか個別に確認する。
+
+
 ## Phase 0：独立した合成代表局面127件（Issue #139）
 
 `representative_states_cases.json` と `representative_states_probe.cjs` は、固定Showdown
