@@ -54,7 +54,7 @@ function executePct(ctx,row){
      const initial=d.hp,at=b.log.length;
      b.makeChoices("move 1","move 1");
      const log=b.log.slice(at);
-     if(log.some(line=>line.includes("|crit|")||line.startsWith("|-miss|"))){
+     if(log.some(line=>line.startsWith("|-crit|")||line.startsWith("|-miss|"))){
        // A natural critical is an unreviewed branch. Retry a fixed, different seed.
        continue;
      }
