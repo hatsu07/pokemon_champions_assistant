@@ -5,7 +5,7 @@ const {checkWeatherEvidence}=require("./champions_weather_gate_a_contract.cjs");
 test("weather source evidence rejects forged game parity, modified lifecycle and unknown rounding",()=>{
  const observed=run();
  assert.deepEqual(checkWeatherEvidence(observed),{
-   matches:12,rounding_unknown:1,source_conflicts:1,
+   matches:12,rounding_unknown:1,source_agreed_unexecuted:1,same_weather_reapply_unexecuted:1,
    executed_lifecycle_cases:1,scope:"PINNED_SYNTHETIC_WEATHER_NOT_GAME"
  });
  for(const change of [
@@ -26,7 +26,17 @@ test("weather source evidence rejects forged game parity, modified lifecycle and
    x=>{x.lifecycle.after_turn_remaining=[7,6,5,4,3];},
    x=>{x.lifecycle.override_weather_event="";},
    x=>{x.lifecycle.actual_game_proven=true;},
-   x=>{x.duration_conflict.status="RESOLVED";},
+   x=>{x.weather_duration_rules[1].status="GAME_VERIFIED";},
+   x=>{x.weather_duration_rules[1].pinned_tested=true;},
+   x=>{x.weather_duration_rules[0].operation="USE_HEAT_ROCK";},
+   x=>{x.duration_conflict={status:"SOURCE_CONFLICT"};},
+   x=>{x.lifecycle.executed_move_order=["p2","p1"];},
+   x=>{x.lifecycle.executed_moves.p1.id="sunnyday";},
+   x=>{x.lifecycle.executed_moves.p2.name="Rain Dance";},
+   x=>{x.lifecycle.executed_moves.p1.priority=1;},
+   x=>{x.lifecycle.executed_move_events[0]="|move|p2a: Metagross|Rain Dance|p2a: Metagross";},
+   x=>{x.lifecycle.executed_move_events.pop();},
+   x=>{x.lifecycle.weather_change_events.reverse();},,
    x=>{x.unverified[1]="Weather extenders game-confirmed";},
    x=>{x.results.pop();}
  ]){
