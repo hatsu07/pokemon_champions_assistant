@@ -232,6 +232,9 @@ class MatchSession:
         self.prep_input: PrepInput | None = None
         self.prep_result: PrepResult | None = None
         self.prep_validation: PrepValidation | None = None
+        self.prep_completed_at_ms: int | None = None
+        self.prep_completed_within_preview: bool | None = None
+        self._prep_soft_window_notice_recorded = False
         self._request_keys: set[tuple[str, str, int, str]] = set()
         self._request_seq = 0
         if store is not None:
@@ -357,6 +360,9 @@ class MatchSession:
         self.actual_selected_three = selected_three
         self.actual_lead = lead
         self.prep_input = build_prep_input(selected_three, lead, self.opponent_preview_six, self.matrix_rows_six)
+        self.prep_completed_at_ms = None
+        self.prep_completed_within_preview = None
+        self._prep_soft_window_notice_recorded = False
         # Historical enum name is retained for wire compatibility; the
         # advisory PREP clock shares the original full 90-second preview.
         selection_started_ms = (
@@ -400,6 +406,9 @@ class MatchSession:
         self.prep_input = build_prep_input(selected_three, lead, self.opponent_preview_six, self.matrix_rows_six)
         self.prep_result = None
         self.prep_validation = PrepValidation(False, "ACTUAL_SELECTION_CORRECTED_REPREP_REQUIRED")
+        self.prep_completed_at_ms = None
+        self.prep_completed_within_preview = None
+        self._prep_soft_window_notice_recorded = False
         self.update_observed_state(
             observation_id,
             {"actual_selected_three": list(selected_three), "actual_lead": lead},
@@ -415,13 +424,25 @@ class MatchSession:
         if self.phase is MatchPhase.S03_TEAM_SELECTION and self.selection_deadline and self.selection_deadline.expired(now_ms):
             self.selection_model_expired = True
             expired.append("SELECTION")
-        if self.phase is MatchPhase.S04_PREP_40S and self.prep_deadline and self.prep_deadline.expired(now_ms):
+        if (self.phase is MatchPhase.S04_PREP_40S
+                and self.prep_deadline and self.prep_deadline.expired(now_ms)
+                and not (self.prep_validation and self.prep_validation.complete)
+                and not self._prep_soft_window_notice_recorded):
+            # The 90-second window is a usability KPI, not a kill switch.
+            # Report once; repeated polls must not become extra failures.
+            self._prep_soft_window_notice_recorded = True
             expired.append("PREP")
+            self._audit("PREP_SOFT_WINDOW_EXCEEDED",
+                        now_ms=now_ms, prep_complete=False,
+                        cancels_pending_work=False)
         if self.current_window and self.current_window.status in {WindowStatus.OPEN, WindowStatus.REQUESTED, WindowStatus.RECOMMENDED}:
             if self.current_window.deadline.expired(now_ms):
                 expired.append("DECISION_WINDOW")
-        if expired:
-            self._audit("DEADLINE_EXPIRED", kinds=expired, now_ms=now_ms)
+        # Keep previous caller-facing "PREP" notification once, but do not
+        # misclassify a soft PREP timing warning as a hard expired job.
+        other_expired = [kind for kind in expired if kind != "PREP"]
+        if other_expired:
+            self._audit("DEADLINE_EXPIRED", kinds=other_expired, now_ms=now_ms)
         return tuple(expired)
 
     def record_prep_result(self, result: PrepResult, *, now_ms: int) -> PrepValidation:
@@ -430,7 +451,18 @@ class MatchSession:
             raise RuntimeError("PREP is not active")
         self.prep_result = result
         self.prep_validation = validate_prep_result(self.prep_input, result)
-        self._audit("PREP_RECORDED", complete=self.prep_validation.complete, reason=self.prep_validation.reason)
+        timing_met = False
+        if self.prep_validation.complete:
+            self.prep_completed_at_ms = now_ms
+            cutoff = self.prep_deadline.expires_at_ms
+            timing_met = cutoff is not None and now_ms <= cutoff
+            self.prep_completed_within_preview = timing_met
+        self._audit("PREP_RECORDED", complete=self.prep_validation.complete,
+                    reason=self.prep_validation.reason, now_ms=now_ms,
+                    timing_met=timing_met,
+                    completed_after_shared_window=(
+                        self.prep_validation.complete and not timing_met),
+                    cancels_pending_work=False)
         return self.prep_validation
 
     def observe_event(self, event_id: str, event: ObservationEvent, *, now_ms: int) -> None:
@@ -755,6 +787,9 @@ class MatchSession:
         self.selection_deadline = None
         self.selection_model_expired = False
         self.prep_deadline = None
+        self.prep_completed_at_ms = None
+        self.prep_completed_within_preview = None
+        self._prep_soft_window_notice_recorded = False
         self._pending_party_kind = None
         self._pending_party_event_id = None
         self._active = False
