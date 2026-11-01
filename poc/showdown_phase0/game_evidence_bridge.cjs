@@ -206,7 +206,8 @@ function run({goldenPath = null, partialPath = null} = {}) {
   if (partialPath) {
     const bytes = fs.readFileSync(partialPath);
     const doc = JSON.parse(bytes.toString("utf8"));
-    const {assertObservation, context} = require("./partial_observation_probe.cjs");
+    const {assertObservation} = require("./partial_observation_probe.cjs");
+    const {context} = require("./six_team_selection_probe.cjs");
     const assessed = assertObservation(doc, context());
     partial = summarizePartial(doc, assessed, bytes);
   }
