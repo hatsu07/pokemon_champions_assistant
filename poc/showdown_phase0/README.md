@@ -35,6 +35,8 @@
 
 `gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。 `move_type`・`move_category`は技の固定仕様として「move power and PP」に明示的に分類するが、動的な技効果やゲーム内ダメージの確認を意味しない。静的監査で実行する全13グループを少なくとも1機能に対応づけ、未マッピングの既存グループ・新規監査グループは `UNMAPPED_AUDIT_GROUP` として失敗させる。機能別の差異件数は同一グループが複数機能に使われるため単純合算できない。なお `audit.cjs` の `pokemon_link` グループは学習技リンクが欠落したときだけ出力されるため、グループ不在は0件として明示し、`move_pp`等の常時照合グループ不在とは区別する。
 
+**PR #160の再レビューP2対応（2026-11-01）**：Gate A横断インベントリは `champions_damage_modifier_probe.cjs` の同一固定SHA・M-C条件別診断を再実行し、その機械可読結果を検証してから、`damage RNG and critical` 機能行とトップレベルの両方へ `modifier_source_status=REVIEWED_SECONDARY_SOURCE_DIVERGENCE`、`known_modifier_source_conflicts=1`、`known_modifier_roll_discrepancies=4` を表示する。従来の単発Wiki例だけに適用される `wiki_arithmetic_status=WIKI_SPEC_MATCH` は変更せず、併記して適用範囲を明示する。9条件のID・フラグ・出典、固定Showdown側での既知4差異の値・位置・件数を検査し、差異が消えた／増えた、資料競合を実機証拠へ昇格したなどの改変は fail-closed とする。比較対象はあくまで**Champions専門の二次資料と固定Showdown**であり、実機との一致・不一致ではない。本番LIVEへの採用可否、Gate A/BおよびゲームGolden読み込み0の境界は不変。なお総合レポートの件数は`champions_damage_modifier_probe.cjs`自体の直接診断に依存するため、独立した2回の実機観測としては数えない。
+
 静的比較が一致しても `SOURCE_CHECKED_ONLY`、Wiki数式が一致しても `WIKI_SPEC_MATCH` に過ぎず、実ゲームに一致したことではない。差分は `SOURCE_CONFLICT` として残し、固定マスターとShowdownのどちらを正とするかは追加根拠なく判定しない。イベントで `INCONCLUSIVE` だった条件も解消扱いにしない。
 
 非公開ローカルの実ゲームGolden 6ケース/11チェックは **当該runでは読まない**ため、`game_verified_cases_this_run=0` は過去の実ゲーム観測を否定する意味ではない。ユーザー本人による既存Goldenの独立照合・証拠紐付けは別途必要。
