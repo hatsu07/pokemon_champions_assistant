@@ -246,6 +246,14 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),we
        paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
        paralysis_diagnostic:"champions_paralysis_probe.cjs"
      }:{}),
+     ...(["weather screens hazards","priority","ability and item"].includes(f.feature)?{
+       weather_source_order_matches:weatherCounts.matches,
+       weather_unknown_compound_rounding:weatherCounts.rounding_unknown,
+       weather_duration_source_conflicts:weatherCounts.source_conflicts,
+       weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
+       weather_scope:weatherCounts.scope,
+       weather_diagnostic:"champions_weather_speed_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
@@ -269,6 +277,12 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),we
    paralysis_scope:paralysisCounts.scope,
    paralysis_pinned_rate:"1/8_SOURCE_ONLY_NOT_DEVICE",
    paralysis_diagnostic:"champions_paralysis_probe.cjs",
+   weather_source_order_matches:weatherCounts.matches,
+   weather_unknown_compound_rounding:weatherCounts.rounding_unknown,
+   weather_duration_source_conflicts:weatherCounts.source_conflicts,
+   weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
+   weather_scope:weatherCounts.scope,
+   weather_diagnostic:"champions_weather_speed_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -280,4 +294,4 @@ if(require.main===module){
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
 module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,
- checkTurnOrderEvidence,checkParalysisEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+ checkTurnOrderEvidence,checkParalysisEvidence,checkWeatherEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
