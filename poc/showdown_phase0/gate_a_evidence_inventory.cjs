@@ -205,10 +205,11 @@ function checkTurnOrderEvidence(t){
    throw Error("turn-order source status counts changed");
  return {matches,ties};
 }
-function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder()){
+function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce()){
  checkMap(map);checkEvidence(a,w,e,map);
  const modifierCounts=checkModifierEvidence(m);
  const turnCounts=checkTurnOrderEvidence(t);
+ const paralysisCounts=checkParalysisEvidence(p);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
