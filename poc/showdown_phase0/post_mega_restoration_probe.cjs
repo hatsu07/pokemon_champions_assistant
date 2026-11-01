@@ -60,7 +60,7 @@ function checkMega(b,master=masterMega()){
  if(p.item!=="lucarionite")invalid.push("mega_stone");
  if(!Number.isInteger(p.speed)||p.speed<=0)invalid.push("speed");
  if(!Number.isInteger(p.hp)||p.hp<=0||p.hp>p.maxhp)invalid.push("hp");
- if(p.selected.length!==3||p.selected[2]!==master.species)invalid.push("selected");
+ if(p.selected.length!==3||new Set(p.selected).size!==3||p.selected[0]!==master.species)invalid.push("selected");
  if(invalid.length)throw Error("pinned Mega form/type/ability/stats/speed/item/HP or selected position disagrees with Champions master: "+JSON.stringify({
    invalid,actual:{species:p.species,types:p.types,ability:p.ability,
      base_stats:p.base_stats,item:p.item,speed:p.speed,hp:p.hp,maxhp:p.maxhp,selected:p.selected},
