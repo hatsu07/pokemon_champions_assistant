@@ -6,6 +6,7 @@ on:
       - 'poc/showdown_phase0/**'
       - '.github/workflows/showdown-phase0-poc.yml'
       - '.gitattributes'
+      - 'masters/Pokemon_Champions_MC_*.csv'
   workflow_dispatch:
 
 permissions:
@@ -32,7 +33,36 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs
+      - name: Audit Gate A source evidence, conflicts and unverified LIVE risks
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 gate_a_evidence_inventory.cjs > phase0-gate-a-evidence.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-gate-a-evidence.json", encoding="utf-8") as f:
+              r=json.load(f)
+          assert r["schema"]=="phase0-gate-a-evidence-inventory-v1"
+          assert r["pinned_sha"]=="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
+          assert r["format"]=="gen9championsbssregmc"
+          assert (r["gate_A"],r["gate_B"],r["adoption"])==("UNKNOWN","UNSUPPORTED","NO_GO")
+          assert r["feature_count"]==10
+          assert r["event_rule_count"]==5 and r["event_case_count"]==18
+          assert r["wiki_comparable_count"]==1
+          assert r["game_verified_cases_this_run"]==0 and r["game_verified_checks_this_run"]==0
+          assert r["private_golden_read"] is False and r["safe_to_integrate_with_live"] is False
+          for f in r["features"]:
+              assert f["feature_compatibility"]=="UNKNOWN"
+              assert f["allowed_as_certain_ko_or_safe_switch_proof"] is False
+              print("GATE_A_FEATURE="+json.dumps({
+                  "feature":f["feature"],"static_status":f["static_status"],
+                  "static_disagreement_count":f["static_disagreement_count"],
+                  "wiki_arithmetic_status":f["wiki_arithmetic_status"],
+                  "event_evidence_counts":f["event_evidence_counts"],
+                  "next_evidence":f["next_evidence"],
+              },ensure_ascii=False,sort_keys=True))
+          print("Gate A evidence inventory: source-only; no private Golden uploaded")
+          PY
       - name: Diagnose three independent Linux Node process replays
         shell: bash
         run: |
