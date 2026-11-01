@@ -33,7 +33,7 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs
       - name: Audit 16 actual executed synthetic Earthquake HP deltas and independent source descriptions
         shell: bash
         run: |
@@ -170,6 +170,10 @@ jobs:
           assert r["wiki_comparable_count"]==1 and r["wiki_mismatch_count"]==0
           assert r["modifier_source_status"]=="REVIEWED_SECONDARY_SOURCE_DIVERGENCE"
           assert r["known_modifier_source_conflicts"]==1
+          assert r["damage_rounding_executed_synthetic_turns"]==16
+          assert r["damage_rounding_source_discriminating_rolls"]==4
+          assert r["damage_rounding_game_verified_turns"]==0
+          assert r["damage_rounding_scope"]=="TWO_SECONDARY_LOCAL_FINAL_STEPS_VS_PINNED_EXECUTED_TURNS_NOT_DEVICE"
           assert r["known_modifier_roll_discrepancies"]==4
           assert r["modifier_comparison_scope"]=="SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE"
           assert r["modifier_diagnostic"]=="champions_damage_modifier_probe.cjs"
