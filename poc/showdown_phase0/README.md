@@ -4,7 +4,9 @@
 
 `gate_a_evidence_inventory.cjs` は `golden_gate_requirements.csv` のGate A 10項目を正本として、固定ChampionsマスターとShowdownの静的差分、出典から**独立**に計算したWiki単発ダメージ例、Bulbapedia Champions記述由来の5契約・18イベントを機能別に照合する。ゲームの実測や未公開対戦ログをこのコマンドに読み込まない。
 
-`gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。静的比較が一致しても `SOURCE_CHECKED_ONLY`、Wiki数式が一致しても `WIKI_SPEC_MATCH` に過ぎず、実ゲームに一致したことではない。差分は `SOURCE_CONFLICT` として残し、固定マスターとShowdownのどちらを正とするかは追加根拠なく判定しない。イベントで `INCONCLUSIVE` だった条件も解消扱いにしない。
+`gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。なお `audit.cjs` の `pokemon_link` グループは学習技リンクが欠落したときだけ出力されるため、グループ不在は0件として明示し、`move_pp`等の常時照合グループ不在とは区別する。
+
+静的比較が一致しても `SOURCE_CHECKED_ONLY`、Wiki数式が一致しても `WIKI_SPEC_MATCH` に過ぎず、実ゲームに一致したことではない。差分は `SOURCE_CONFLICT` として残し、固定マスターとShowdownのどちらを正とするかは追加根拠なく判定しない。イベントで `INCONCLUSIVE` だった条件も解消扱いにしない。
 
 非公開ローカルの実ゲームGolden 6ケース/11チェックは **当該runでは読まない**ため、`game_verified_cases_this_run=0` は過去の実ゲーム観測を否定する意味ではない。ユーザー本人による既存Goldenの独立照合・証拠紐付けは別途必要。
 

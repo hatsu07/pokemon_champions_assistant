@@ -11,6 +11,12 @@ test("all 10 Gate A feature gaps remain unverified, no private data is counted",
  assert.equal(report.feature_count,10);
  assert.equal(report.event_rule_count,5);
  assert.equal(report.event_case_count,18);
+ const links=report.features.find(x=>x.feature==="regulation learnsets").static_groups
+   .find(x=>x.group==="pokemon_link");
+ assert.ok(links);
+ assert.equal(links.checked,0);
+ assert.equal(links.mismatched,0);
+ assert.equal(links.missing,0);
  assert.equal(report.wiki_comparable_count,1);
  assert.equal(report.game_verified_cases_this_run,0);
  assert.equal(report.game_verified_checks_this_run,0);

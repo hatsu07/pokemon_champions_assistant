@@ -52,6 +52,9 @@ function checkEvidence(a,w,e,map=MAP){
     throw Error("Champions source event evidence changed from reviewed baseline");
  for(const f of map.feature_map)for(const group of f.static_groups){
    const x=a.totals[group];
+   // audit.cjs only creates pokemon_link when a missing learnset key is found.
+   // Absence is exactly zero detected link failures, not a lost check.
+   if(group==="pokemon_link"&&!x)continue;
    if(!x||!Number.isInteger(x.checked)||x.checked<=0||
       x.checked!==x.matching+x.mismatched+x.missing)
      throw Error("missing static comparison group: "+group);
@@ -61,7 +64,7 @@ function checkEvidence(a,w,e,map=MAP){
 function summarize(a,w,e,map=MAP){
  checkMap(map);checkEvidence(a,w,e,map);
  const features=map.feature_map.map(f=>{
-   const groups=f.static_groups.map(group=>({group,...a.totals[group]}));
+   const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
    const matchedEvents=e.results.filter(x=>f.rule_ids.includes(x.rule_id));
    const counts=Object.fromEntries(["WIKI_SPEC_MATCH","WIKI_SPEC_MISMATCH","INCONCLUSIVE"]
