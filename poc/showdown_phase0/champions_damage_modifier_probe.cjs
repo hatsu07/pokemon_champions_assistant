@@ -187,7 +187,8 @@ function main(){
      const result=compareRolls(ref.rolls,rolls);
      const witnesses=variant.id===WITNESS_ID?oddRoundingWitnesses(variant):[];
      if(witnesses.some(w=>rolls[w.roll_pct-85]!==w.combined_rounding))
-       throw Error("Pinned Showdown differs at odd pre-final-damage witness");
+       throw Error("Pinned Showdown differs at odd pre-final-damage witness: "+JSON.stringify(
+         witnesses.map(w=>({...w,pinned:rolls[w.roll_pct-85]}))));
      results.push({id:variant.id,source_ids:variant.source_ids,
        defender:odd?"Blastoise":"Metagross",
        source_numeric_basis:odd?"DERIVED_FORMULA_ONLY":"PUBLISHED_FIXTURE_AND_DERIVED_MODIFIERS",
