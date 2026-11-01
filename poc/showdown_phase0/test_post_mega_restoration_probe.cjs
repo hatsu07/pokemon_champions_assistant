@@ -35,7 +35,7 @@ test("executed Mega turn is preserved in a complete trusted snapshot and both br
  assert.deepEqual(report.before.types,["Fighting","Steel"]);
  assert.equal(report.before.base_stats.spe,112);
  assert.equal(report.before.mega_events.length,1);
- assert.equal(report.before.selected[2],"lucariomega");
+ assert.equal(report.before.selected[0],"lucariomega");
  assert.ok(report.before.hp>0&&report.before.hp<=report.before.maxhp);
  assert.ok(report.before.speed>0&&Number.isInteger(report.before.speed));
  assert.ok(report.before.moves.some(x=>x.pp<x.maxpp));
