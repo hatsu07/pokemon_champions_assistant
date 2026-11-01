@@ -1,6 +1,6 @@
 {
   "schema": "phase0-champions-weather-speed-source-v1",
-  "checked_at": "2026-11-01",
+  "checked_at": "2026-11-02",
   "regulation": "M-C",
   "evidence": "CHAMPIONS_FIXED_MASTER_AND_SECONDARY_SOURCE_NOT_GAME",
   "device_turns": 0,
@@ -11,7 +11,7 @@
     [
       "gamewith_weather",
       "https://gamewith.jp/pokemon-champions/561577",
-      "Champions four weather types, five turns, overwrite and weather Speed abilities"
+      "Champions default weather lasts five turns; the same active weather cannot be renewed by repeating its move"
     ],
     [
       "pokemon_master",
@@ -24,9 +24,14 @@
       "Neutral AP-based Speed equals species base Speed plus 20 plus AP"
     ],
     [
-      "duration_conflict",
+      "portal_weather",
       "https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/",
-      "Extension item 8-turn claim conflicts with GameWith extension-unavailable entry"
+      "Champions weather defaults to five turns and weather extending rocks are reported to make eight turns"
+    ],
+    [
+      "gamewith_sun_rock",
+      "https://gamewith.jp/pokemon-champions/560063",
+      "Champions Heat Rock at initial sunny weather activation extends duration by three turns, five to eight"
     ]
   ],
   "reviewed_species": [
@@ -195,21 +200,37 @@
       "UNKNOWN_ROUNDING"
     ]
   ],
-  "source_conflicts": [
-    {
-      "id": "WEATHER_EXTENSION",
-      "status": "SOURCE_CONFLICT",
-      "gamewith_url": "https://gamewith.jp/pokemon-champions/561577",
-      "portal_url": "https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/",
-      "impact": "Do not claim extended weather duration is independently confirmed"
-    }
-  ],
   "unverified": [
     "Actual game weather duration and midturn overwrite",
-    "Weather extender items and 8-turn conflict",
+    "Weather extender items and reported 8-turn effect not executed or game verified",
     "Modifier order when weather and Choice Scarf produce different rounded Speed",
     "Same-turn weather-setting ability ordering and entry hazards",
     "Ability suppression and simultaneous speed changes",
     "Weather power boosts and weather-related damage rounding"
+  ],
+  "weather_duration_rules": [
+    {
+      "id": "SAME_WEATHER_MOVE_REAPPLY",
+      "operation": "REAPPLY_SAME_WEATHER_MOVE_WHILE_ACTIVE",
+      "status": "SECONDARY_SOURCE_DESCRIBED_NOT_EXECUTED",
+      "source_ids": [
+        "gamewith_weather"
+      ],
+      "expected_effect": "NO_RENEWAL",
+      "pinned_tested": false,
+      "game_verified": false
+    },
+    {
+      "id": "WEATHER_ROCK_INITIAL_ACTIVATION",
+      "operation": "ACTIVATE_SUNNY_WEATHER_WITH_HEAT_ROCK",
+      "status": "SECONDARY_SOURCES_AGREE_NOT_EXECUTED",
+      "source_ids": [
+        "gamewith_sun_rock",
+        "portal_weather"
+      ],
+      "expected_turns": 8,
+      "pinned_tested": false,
+      "game_verified": false
+    }
   ]
 }
