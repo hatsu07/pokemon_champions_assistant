@@ -5,6 +5,9 @@ const {observed, copy, serialize, pinned} = require("./worker.cjs");
 const {state, restoreChecked, masterHashes, GAP_FIELDS} = require("./gate_b_probe.cjs");
 const {fingerprint, stableStringify} = require("./state_compare.cjs");
 const {moveKey} = require("./champions_move_key.cjs");
+const {rows} = require("./audit.cjs");
+const fs = require("node:fs");
+const path = require("node:path");
 const schema = require("./partial_observation_schema.json");
 const manifest = require("./partial_observation_cases.json");
 
@@ -16,6 +19,27 @@ const TEMPLATES = Object.freeze({
   C: {move: "Earthquake", item: "Choice Scarf", ability: "Rough Skin", nature: "Jolly", spe: 32},
   D: {move: "Earthquake", item: "Garchompite", ability: "Rough Skin", nature: "Serious", spe: 2},
 });
+// Only this non-Z Mega form has an explicitly checked Champions/Japanese mapping.
+const MEGA_GARCHOMP_ABILITY = Object.freeze({sandforce: "すなのちから"});
+function currentFormAbilityIsAllowed(ctx, form, entry, abilityId) {
+  if (!form.isMega) {
+    const ja = {roughskin: "さめはだ", sandveil: "すながくれ"}[abilityId];
+    return Boolean(ja && entry.abilities.has(ja) &&
+      Object.values(form.abilities).some(x => ctx.dex.abilities.get(x).id === abilityId));
+  }
+  if (form.id !== "garchompmega")
+    throw Error("unsupported current Mega form ability mapping: " + form.id);
+  const masterDir = path.resolve(process.env.CHAMPIONS_MASTERS_DIR || path.join(__dirname, "masters"));
+  const megaRows = rows(fs.readFileSync(path.join(masterDir,
+    "Pokemon_Champions_MC_usable_pokemon.csv"), "utf8"))
+    .filter(row => row["ポケモン名"] === "メガガブリアス" &&
+      row["区分"] === "メガシンカ" && row["全国No."] === entry.nationalNo);
+  if (megaRows.length !== 1 || megaRows[0]["特性"].trim() !== "すなのちから")
+    throw Error("Mega Garchomp ability mapping disagrees with Champions master");
+  const ja = MEGA_GARCHOMP_ABILITY[abilityId];
+  return Boolean(ja && megaRows[0]["特性"].split("/").map(x => x.trim()).includes(ja) &&
+    Object.values(form.abilities).some(x => ctx.dex.abilities.get(x).id === abilityId));
+}
 const SELECTION = [{slots: [1, 2, 3], lead_slot: 1}, {slots: [2, 1, 3], lead_slot: 2}];
 const SPECIAL = new Set(["mega", "wall", "consumed", "forced", "pending", "choice"]);
 const EVENT_TYPES = new Set(["move_used", "item_revealed", "item_consumed",
@@ -219,10 +243,12 @@ function assertObservation(obs, ctx) {
       !ctx.allowed.availableItems.has(ctx.dex.items.get(f.opponent_consumed_item.value).id))
     throw Error("consumed item absent from Champions master");
   if (present("opponent_ability") && entry) {
+    if (f.opponent_mega_state.value === true && !present("opponent_form"))
+      throw Error("observed Mega ability requires a confirmed current form");
     const id = ctx.dex.abilities.get(f.opponent_ability.value).id;
-    const ja = {roughskin: "さめはだ", sandveil: "すながくれ"}[id];
-    if (!ja || !entry.abilities.has(ja) ||
-        !Object.values(species.abilities).some(x => ctx.dex.abilities.get(x).id === id))
+    const form = present("opponent_form") ?
+      ctx.dex.species.get(f.opponent_form.value) : species;
+    if (!currentFormAbilityIsAllowed(ctx, form, entry, id))
       throw Error("observed ability absent from Champions species slots");
   }
   if (present("opponent_boosts") &&
@@ -283,6 +309,11 @@ function candidate(ctx, id, obs) {
     model.opponent_form = structuredClone(obs.facts.opponent_form);
   if (obs.facts.opponent_mega_state.value === true && active.item === "garchompite")
     model.active_opponent = structuredClone(obs.facts.active_opponent);
+  if (obs.facts.opponent_mega_state.value === true && active.item === "garchompite") {
+    model.previous_form_ability = structuredClone(model.opponent_ability);
+    model.opponent_ability = obs.facts.opponent_ability.source === "UNKNOWN" ?
+      unknown() : structuredClone(obs.facts.opponent_ability);
+  }
   const digest = fingerprint(state(battle));
   const restored = restoreChecked(serialize(battle), digest);
   if (fingerprint(state(restored)) !== digest) throw Error("candidate complete synthetic round-trip failed");
@@ -368,15 +399,25 @@ function applyEvent(obs, candidates, event, ctx, index) {
       break;
     case "ability_revealed":
       update("opponent_ability", event.value);
-      kept = kept.filter(c => c.model.opponent_ability.value === event.value);
+      kept = kept.filter(c => c.model.opponent_ability.source === "UNKNOWN" ?
+        c.model.opponent_form.value === "garchompmega" &&
+          currentFormAbilityIsAllowed(ctx, ctx.dex.species.get("garchompmega"),
+            ctx.allowed.species.get("garchomp"), ctx.dex.abilities.get(event.value).id) :
+        c.model.opponent_ability.value === event.value);
+      for (const c of kept) c.model.opponent_ability = structuredClone(obs.facts.opponent_ability);
       break;
     case "mega_seen":
       if (event.value !== true) throw Error("mega_seen requires true");
       update("opponent_mega_state", event.value);
       update("opponent_form", "garchompmega", true);
       update("active_opponent", "garchompmega", true);
+      if (["SYNTHETIC", "GAME_OBSERVED"].includes(obs.facts.opponent_ability.source))
+        update("opponent_mega_history", {pre_mega_ability: obs.facts.opponent_ability.value});
+      obs.facts.opponent_ability = unknown();
       kept = kept.filter(c => c.model.initial_item.value === "garchompite");
       for (const c of kept) {
+        c.model.previous_form_ability = structuredClone(c.model.opponent_ability);
+        c.model.opponent_ability = unknown();
         c.model.opponent_mega_state = structuredClone(obs.facts.opponent_mega_state);
         c.model.opponent_form = structuredClone(obs.facts.opponent_form);
         c.model.active_opponent = structuredClone(obs.facts.active_opponent);
@@ -470,6 +511,7 @@ function runCase(entry, ctx) {
   if (!contradiction) assessment = assertObservation(observation, ctx);
   const current = !entry.setup && !(entry.events || []).length &&
     candidates.every(c => c.battle_applicable);
+  const switched = entry.events?.some(e => e.type === "switch_seen") || false;
   const simulation = simulateCandidates(candidates, current);
   const snapshotGaps = assessment.missing_internal_state;
   let status = contradiction ? "CONTRADICTORY_OBSERVATION" :
@@ -491,10 +533,15 @@ function runCase(entry, ctx) {
     observation_consistent: !contradiction, contradiction,
     candidate_cap: entry.candidate_cap || 4,
     unevaluated_candidate_count: generated.unevaluated_candidate_count,
-    legal_hypothesis_count: candidates.length, rejected_candidates: rejected,
+    legal_hypothesis_count: switched ? null : candidates.length,
+    previous_active_hypothesis_count: switched ? candidates.length : null,
+    current_active_hypothesis_count: switched ? null : candidates.length,
+    rejected_candidates: rejected,
+    hypothesis_set_scope: switched ? "PREVIOUS_ACTIVE_ONLY" : "CURRENT_ACTIVE",
     hypothesis_set_sha256: fingerprint(candidates.map(c => c.id)),
     candidates: candidates.map(c => ({id: c.id, state_sha256: c.state_sha256,
-      state_sha256_scope: current ? "CURRENT_SYNTHETIC_HYPOTHESIS" : "BASE_HYPOTHESIS_ONLY",
+      state_sha256_scope: switched ? "BASE_PREVIOUS_ACTIVE_HYPOTHESIS_ONLY" :
+        current ? "CURRENT_SYNTHETIC_HYPOTHESIS" : "BASE_HYPOTHESIS_ONLY",
       synthetic_roundtrip: c.synthetic_roundtrip,
       base_battle_matches_extracted_observation: c.battle_applicable,
       current_state_simulatable: current && c.battle_applicable, model: c.model})),

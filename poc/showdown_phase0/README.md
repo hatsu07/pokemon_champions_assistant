@@ -6,7 +6,7 @@
 
 `partial_observation_probe.cjs` は固定Showdown M-Cで合法な登録6匹から実Team Previewを通して完全合成Battleを作る。`worker.cjs::observed` から種族・対面・天候等の**限定した合成盤面情報だけ**を投影し、同関数に含まれる相手HP整数は破棄する。相手選出全体、技・道具・特性、性格/AP、残PP、内部乱数、履歴、キュー等はUNKNOWNのまま。画面からその各値を読めるという主張ではない。既存B2の`GAP_FIELDS`を新モデルへ対応付け、不足情報を列挙する。
 
-候補は真値Battleの隠し値から作らず、固定した4種類の合法なガブリアス型（技・道具・特性・性格/AP違い）から生成する。各登録6匹をChampions固定マスターとM-C TeamValidatorの両方で検査する。候補ごとのShowdown完全状態は**合成仮説**としてのみ直列化・復元・行動分岐できる。新しい技・道具・特性・メガ・消費・交代・能力変化・行動順の合成事実で候補を更新する。交代後は前のポケモンの道具・技等を新しい対面へ引き継がない。行動順から能力配分を確定しない。候補の絞り込み後は旧Battleを現在状態として実行せず、`NOT_RUN_CURRENT_STATE`とする。更新後の候補SHAは`BASE_HYPOTHESIS_ONLY`であり、現在の完全状態のハッシュではない。候補0件は保留、入力事実の矛盾は別区分、探索上限超過は未評価候補数で示す。
+候補は真値Battleの隠し値から作らず、固定した4種類の合法なガブリアス型（技・道具・特性・性格/AP違い）から生成する。各登録6匹をChampions固定マスターとM-C TeamValidatorの両方で検査する。候補ごとのShowdown完全状態は**合成仮説**としてのみ直列化・復元・行動分岐できる。新しい技・道具・特性・メガ・消費・交代・能力変化・行動順の合成事実で候補を更新する。メガガブリアス（非Z）の現在特性は固定マスターの「すなのちから」と固定Showdownの`Sand Force`を照合する。メガ化時は通常形の現在特性をUNKNOWNに戻し、旧特性は別スコープに保持する。交代後は前のポケモンの道具・技等を新しい対面へ引き継がず、現在対面の候補数を未評価（`null`）、前の対面の候補数を`previous_active_hypothesis_count`で示す。行動順から能力配分を確定しない。候補の絞り込み後は旧Battleを現在状態として実行せず、`NOT_RUN_CURRENT_STATE`とする。更新後の候補SHAは`BASE_HYPOTHESIS_ONLY`、交代後は`BASE_PREVIOUS_ACTIVE_HYPOTHESIS_ONLY`であり、現在の完全状態のハッシュではない。候補0件は保留、入力事実の矛盾は別区分、探索上限超過は未評価候補数で示す。
 
 ```
 docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .

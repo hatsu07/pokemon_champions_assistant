@@ -93,6 +93,11 @@ test("observed move, item, ability, consumption and Mega filter candidates witho
 test("switch removes old active assumptions and known Choice lock", () => {
   const r = result("PO-19"), model = r.candidates[0].model;
   assert.deepEqual(r.candidates.map(c => c.id), ["C"]);
+  assert.equal(r.legal_hypothesis_count, null);
+  assert.equal(r.current_active_hypothesis_count, null);
+  assert.equal(r.previous_active_hypothesis_count, 1);
+  assert.equal(r.hypothesis_set_scope, "PREVIOUS_ACTIVE_ONLY");
+  assert.equal(r.candidates[0].state_sha256_scope, "BASE_PREVIOUS_ACTIVE_HYPOTHESIS_ONLY");
   assert.equal(r.observation.facts.active_opponent.value, "metagross");
   assert.equal(r.observation.facts.choice_lock.value, "");
   assert.deepEqual(r.observation.facts.opponent_item, {source: "UNKNOWN"});
@@ -100,6 +105,46 @@ test("switch removes old active assumptions and known Choice lock", () => {
   assert.deepEqual(model.opponent_moves, {source: "UNKNOWN"});
   assert.equal(model.previous_opponent_set.opponent_item.value, "choicescarf");
   assert.equal(model.previous_opponent_set.choice_lock.value, "earthquake");
+});
+
+test("Mega Garchomp uses the current form's Champions ability slot", () => {
+  const ctx = context(), entry = {id: "MEGA-ABILITY", truth: "D"};
+  const obs = projectObservation(syntheticTruth(ctx, entry), ctx, entry);
+  const fact = value => ({source: "SYNTHETIC", value, evidence_ids: ["fixture-MEGA-ABILITY"]});
+  obs.facts.opponent_ability = fact("sandforce");
+  assert.throws(() => assertObservation(obs, ctx), /ability absent/,
+    "base Garchomp cannot have Sand Force");
+  obs.facts.opponent_ability = fact("roughskin");
+  assert.equal(assertObservation(obs, ctx).consistent, true);
+  let candidates = makeCandidates(obs, ctx).candidates;
+  assert.deepEqual(candidates.map(c => c.id), ["A", "C", "D"]);
+  ({candidates} = applyEvent(obs, candidates, {type: "mega_seen", value: true}, ctx, 1));
+  assert.deepEqual(candidates.map(c => c.id), ["D"]);
+  assert.deepEqual(obs.facts.opponent_ability, {source: "UNKNOWN"});
+  assert.deepEqual(candidates[0].model.opponent_ability, {source: "UNKNOWN"});
+  assert.equal(candidates[0].model.previous_form_ability.value, "roughskin");
+  assert.equal(obs.facts.opponent_mega_history.value.pre_mega_ability, "roughskin");
+  assert.equal(assertObservation(obs, ctx).consistent, true);
+  assert.deepEqual(makeCandidates(obs, ctx).candidates.map(c => c.id), ["D"],
+    "a projected Mega form with undisclosed ability stays a legal unknown");
+  obs.facts.opponent_ability = fact("roughskin");
+  assert.throws(() => assertObservation(obs, ctx), /ability absent/,
+    "Mega Garchomp cannot retain the base form's current ability");
+  obs.facts.opponent_ability = {source: "UNKNOWN"};
+  ({candidates} = applyEvent(obs, candidates, {type: "ability_revealed", value: "sandforce"}, ctx, 2));
+  assert.equal(obs.facts.opponent_ability.value, "sandforce");
+  assert.equal(candidates[0].model.opponent_ability.value, "sandforce");
+  assert.equal(candidates[0].model.opponent_ability.source, "SYNTHETIC");
+  assert.equal(candidates[0].model.previous_form_ability.value, "roughskin");
+  assert.equal(assertObservation(obs, ctx).consistent, true);
+  const direct = makeCandidates(obs, ctx).candidates;
+  assert.deepEqual(direct.map(c => c.id), ["D"],
+    "a direct current-form observation must accept Sand Force");
+  assert.equal(direct[0].model.opponent_ability.value, "sandforce");
+  const unsupported = structuredClone(obs);
+  unsupported.facts.opponent_form = fact("Garchomp-Mega-Z");
+  unsupported.facts.active_opponent = fact("Garchomp-Mega-Z");
+  assert.throws(() => assertObservation(unsupported, ctx), /unsupported current Mega form ability mapping/);
 });
 
 test("empty candidate set and contradictory facts never become a successful restoration", () => {
