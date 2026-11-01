@@ -261,6 +261,8 @@ function condition(obs, ctx = context()) {
     ...(consumedKnown?["opponent_item","opponent_consumed_item"]:[]),
     ...(ppKnown?["opponent_revealed_moves","opponent_remaining_pp"]:[])],
   unrecovered_hidden_fields:[
+    // A single revealed move never proves the opponent has no other moves.
+    "opponent_unrevealed_moves",
     ...(ppKnown?[]:["opponent_revealed_moves","opponent_remaining_pp"]),
     ...(consumedKnown?[]:["opponent_item"]),
     "opponent_ability","opponent_ap","opponent_mega_history",
