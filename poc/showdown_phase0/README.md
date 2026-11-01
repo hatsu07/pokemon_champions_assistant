@@ -8,6 +8,8 @@
 
 `champions_paralysis_probe.cjs`は両側のChampions合法登録6匹→選出3匹の固定Battleに、まひ・能力上昇・トリックルームを**合成ターン開始前状態として設定**して実際の1ターンの技ログを検査する。麻痺で技が不発になった試行は順序一致に含めず、別の固定seedで両者が技を使用した試行のみ比較する。別途固定seed試行で実装の行動不能イベントを観測するが、**その頻度から1/8の実機分布を推定・合格判定しない**。技名・ID・優先度・実測Sと元の固定入力の一致が必要。
 
+既存 `gate_a_evidence_inventory.cjs` は、この診断を再検証して Gate A の「priority」と「status and boosts」に `paralysis_source_order_matches=9`、`paralysis_unknown_compound_rounding=1`、`paralysis_pinned_rate=1/8_SOURCE_ONLY_NOT_DEVICE` を公開する。資料と固定Showdown合成結果を示す別欄であり、既存の静的検査・実機検証数・全機能の `UNKNOWN` は変更しない。診断件数・実行技・S値・出典種別・まひ確率を改変した負例はGate A契約で拒否する。
+
 今回の対象は通常フォーム2種の限定10条件のみ。同一ターン内の状態付与・能力変化の再順序付け、特性による補正、メガ後S、速度同速、実機での状態異常抽選、全レギュレーションは未検証。**Gate A=UNKNOWN／Gate B=UNSUPPORTED／採用NO_GO。LIVE・固定マスター不変、実ゲーム証拠0件**。
 
 
