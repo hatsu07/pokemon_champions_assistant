@@ -4,10 +4,11 @@ const fs=require("node:fs"),path=require("node:path");
 const {rows}=require("./audit.cjs");
 const LEDGER=require("./champions_weather_speed_ledger.json");
 const SOURCES=Object.freeze([
- ["gamewith_weather","https://gamewith.jp/pokemon-champions/561577","Champions four weather types, five turns, overwrite and weather Speed abilities"],
+ ["gamewith_weather","https://gamewith.jp/pokemon-champions/561577","Champions default weather lasts five turns; the same active weather cannot be renewed by repeating its move"],
  ["pokemon_master","Pokemon_Champions_MC_usable_pokemon.csv","Champions usable species master lists reviewed ability ownership; 2x Speed from Champions weather source"],
  ["ap_source","https://pkmn-cp-dataportal.com/battle/rule/stat-points/","Neutral AP-based Speed equals species base Speed plus 20 plus AP"],
- ["duration_conflict","https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/","Extension item 8-turn claim conflicts with GameWith extension-unavailable entry"]
+ ["portal_weather","https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/","Champions weather defaults to five turns and weather extending rocks are reported to make eight turns"],
+ ["gamewith_sun_rock","https://gamewith.jp/pokemon-champions/560063","Champions Heat Rock at initial sunny weather activation extends duration by three turns, five to eight"]
 ]);
 const SPECIES=Object.freeze([
  ["Qwilfish","ハリーセン","Swift Swim","すいすい","raindance",85],
@@ -32,15 +33,24 @@ const CASES=Object.freeze([
 ]);
 const UNKNOWN=[
  "Actual game weather duration and midturn overwrite",
- "Weather extender items and 8-turn conflict",
+ "Weather extender items and reported 8-turn effect not executed or game verified",
  "Modifier order when weather and Choice Scarf produce different rounded Speed",
  "Same-turn weather-setting ability ordering and entry hazards",
  "Ability suppression and simultaneous speed changes",
  "Weather power boosts and weather-related damage rounding"
 ];
+const WEATHER_DURATION_RULES=Object.freeze([
+ {id:"SAME_WEATHER_MOVE_REAPPLY",operation:"REAPPLY_SAME_WEATHER_MOVE_WHILE_ACTIVE",
+  status:"SECONDARY_SOURCE_DESCRIBED_NOT_EXECUTED",source_ids:["gamewith_weather"],
+  expected_effect:"NO_RENEWAL",pinned_tested:false,game_verified:false},
+ {id:"WEATHER_ROCK_INITIAL_ACTIVATION",operation:"ACTIVATE_SUNNY_WEATHER_WITH_HEAT_ROCK",
+  status:"SECONDARY_SOURCES_AGREE_NOT_EXECUTED",
+  source_ids:["gamewith_sun_rock","portal_weather"],expected_turns:8,
+  pinned_tested:false,game_verified:false}
+]);
 function checkLedger(l=LEDGER){
  if(!l||l.schema!=="phase0-champions-weather-speed-source-v1"||
-    l.checked_at!=="2026-11-01"||l.regulation!=="M-C"||
+    l.checked_at!=="2026-11-02"||l.regulation!=="M-C"||
     l.evidence!=="CHAMPIONS_FIXED_MASTER_AND_SECONDARY_SOURCE_NOT_GAME"||
     l.device_turns!==0||l.private_golden_read!==false||l.live_use_approved!==false||
     l.weather_default_turns!==5||
@@ -48,10 +58,8 @@ function checkLedger(l=LEDGER){
     JSON.stringify(l.reviewed_species)!==JSON.stringify(SPECIES)||
     JSON.stringify(l.scenarios)!==JSON.stringify(CASES)||
     JSON.stringify(l.unverified)!==JSON.stringify(UNKNOWN)||
-    JSON.stringify(l.source_conflicts)!==JSON.stringify([{
-      id:"WEATHER_EXTENSION",status:"SOURCE_CONFLICT",
-      gamewith_url:SOURCES[0][1],portal_url:SOURCES[3][1],
-      impact:"Do not claim extended weather duration is independently confirmed"}]))
+    Object.hasOwn(l,"source_conflicts")||
+    JSON.stringify(l.weather_duration_rules)!==JSON.stringify(WEATHER_DURATION_RULES))
    throw Error("weather source evidence contract drift");
  return true;
 }
@@ -109,4 +117,4 @@ function reference(c){
    expected_speed:p1.effective,expected_first:first,
    status:p1.effective===null?"UNKNOWN_ROUNDING":"SOURCE_ARITHMETIC_ONLY"};
 }
-module.exports={LEDGER,SOURCES,SPECIES,CASES,UNKNOWN,checkLedger,independentSpeeds,masterCheck,reference};
+module.exports={LEDGER,SOURCES,SPECIES,CASES,UNKNOWN,WEATHER_DURATION_RULES,checkLedger,independentSpeeds,masterCheck,reference};
