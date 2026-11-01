@@ -1,5 +1,11 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #161 再レビューP2対応：技同一性とGate A横断連携（2026-11-01）
+
+- **P2-1（実行技・優先度）**：各合成ターンで選出後の`moveSlots`と入力する技スロットを突き合わせ、期待するChampions技ID/表示名・固定Showdown優先度・残PPを確認する。ターン実行後の`|move|`ログも技ID/名前と優先度で照合し、想定外の技が同じ側の先手として扱われる回帰を拒否する。ログ中の行動順で技が異なっても正解とすることはない。
+- **P2-2（横断インベントリ）**：`gate_a_evidence_inventory.cjs`は同じ固定Showdownの10条件診断を実行して検証後、「priority」機能と総合の双方に `turn_order_source_matches=9`、`turn_order_inconclusive_ties=1`、`turn_order_scope=PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE` を出力する。既存の静的マスター一致・他のWiki事例・未検証の状態を上書きしない。
+- 出典契約、同速の保留、実機検証件数0、結果件数、技名・優先度・観測順の変更を負例テストで拒否。**新しい2種類の観測はShowdownの合成実行であり、独立した実ゲーム証拠ではない。Gate A=UNKNOWN / B=UNSUPPORTED / NO_GOは維持**する。
+
 ## Gate A：素早さ・優先度・ターン行動順の独立監査（Phase 0限定）
 
 `champions_turn_order_source_ledger.json` は2026-11-01確認のChampions専門二次資料（[素早さ実数値](https://pkmn-cp-dataportal.com/battle/priority/speed-stats/)・[こだわりスカーフ](https://pkmn-cp-dataportal.com/item/choice-items/)・[バレットパンチ](https://pkmn-cp-dataportal.com/waza/%E3%83%90%E3%83%AC%E3%83%83%E3%83%88%E3%83%91%E3%83%B3%E3%83%81/)・[技一覧](https://pkmn-cp-dataportal.com/move/)・[トリックルーム](https://pkmn-cp-dataportal.com/battle/priority/trick-room/)）とChampions固定技マスターの優先度を、ID・URL・条件ごとに固定。正しい実ゲーム仕様の認定ではなく、公式/ユーザーの最新ゲーム内確認が優先する。
