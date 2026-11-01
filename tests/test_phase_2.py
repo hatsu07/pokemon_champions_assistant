@@ -154,9 +154,72 @@ class Phase2TestCase(unittest.TestCase):
                 validation = session.record_prep_result(result, now_ms=88_500)
                 self.assertTrue(validation.complete)
                 self.assertEqual(session.phase, MatchPhase.S04_PREP_40S)
-                self.assertEqual(session.enforce_deadlines(now_ms=91_000), ("PREP",))
-                # Even a soft clock warning must not silently reset completion.
+                self.assertEqual(session.enforce_deadlines(now_ms=91_000), ())
                 self.assertTrue(session.prep_validation.complete)
+                self.assertEqual(session.prep_completed_at_ms, 88_500)
+                self.assertTrue(session.prep_completed_within_preview)
+                self.assertEqual([
+                    e for e in self.store.events(session.match_id)
+                    if e["payload"].get("kind") == "PREP_SOFT_WINDOW_EXCEEDED"
+                ], [])
+
+    def test_prep_first_completes_after_ninety_seconds_without_being_discarded(self) -> None:
+        session = self.controller.start_match("late-complete", now_ms=0)
+        session.receive_opponent_preview(OPPONENTS, now_ms=1_000)
+        prep = session.record_actual_selection(TEAM[:3], TEAM[0],
+                                               now_ms=36_000)
+        self.assertEqual(session.prep_deadline.expires_at_ms, 91_000)
+        self.assertEqual(session.enforce_deadlines(now_ms=91_010), ("PREP",))
+        self.assertEqual(session.enforce_deadlines(now_ms=92_000), ())
+        self.assertIsNone(session.prep_validation)  # Soft notice never cancels work.
+        valid = session.record_prep_result(mocked_complete_prep(prep),
+                                           now_ms=93_000)
+        self.assertTrue(valid.complete)
+        self.assertEqual(session.prep_completed_at_ms, 93_000)
+        self.assertFalse(session.prep_completed_within_preview)
+        self.assertEqual(session.enforce_deadlines(now_ms=93_001), ())
+        events = [e["payload"] for e in self.store.events(session.match_id)]
+        notices = [e for e in events if e.get("kind") == "PREP_SOFT_WINDOW_EXCEEDED"]
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0]["cancels_pending_work"], False)
+        self.assertEqual([e for e in events if
+                          e.get("kind") == "DEADLINE_EXPIRED" and
+                          "PREP" in e.get("kinds", [])], [])
+        recorded = [e for e in events if e.get("kind") == "PREP_RECORDED"]
+        self.assertEqual(len(recorded), 1)
+        self.assertTrue(recorded[0]["complete"])
+        self.assertFalse(recorded[0]["timing_met"])
+        self.assertTrue(recorded[0]["completed_after_shared_window"])
+        self.assertEqual(recorded[0]["now_ms"], 93_000)
+
+    def test_prep_late_completion_without_prior_deadline_poll(self) -> None:
+        session = self.controller.start_match("late-no-poll", now_ms=0)
+        session.receive_opponent_preview(OPPONENTS, now_ms=1_000)
+        prep = session.record_actual_selection(TEAM[:3], TEAM[0],
+                                               now_ms=71_000)
+        validated = session.record_prep_result(mocked_complete_prep(prep),
+                                               now_ms=91_200)
+        self.assertTrue(validated.complete)
+        self.assertFalse(session.prep_completed_within_preview)
+        self.assertEqual(session.enforce_deadlines(now_ms=92_000), ())
+        self.assertFalse(any(e["payload"].get("kind") == "PREP_SOFT_WINDOW_EXCEEDED"
+                             for e in self.store.events(session.match_id)))
+
+    def test_opponent_lead_prevents_late_prep_adoption_even_after_soft_window(self) -> None:
+        session = self.controller.start_match("late-interrupted", now_ms=0)
+        session.receive_opponent_preview(OPPONENTS, now_ms=1_000)
+        prep = session.record_actual_selection(TEAM[:3], TEAM[0],
+                                               now_ms=36_000)
+        self.assertEqual(session.enforce_deadlines(now_ms=91_001), ("PREP",))
+        session.observe_event("lead-visible", ObservationEvent.OPPONENT_LEAD_VISIBLE,
+                              now_ms=91_002)
+        self.assertEqual(session.phase, MatchPhase.S05_IN_BATTLE)
+        self.assertFalse(session.prep_validation.complete)
+        with self.assertRaisesRegex(RuntimeError, "PREP is not active"):
+            session.record_prep_result(mocked_complete_prep(prep), now_ms=94_000)
+        self.assertIsNone(session.prep_completed_at_ms)
+        self.assertFalse(any(e["payload"].get("kind") == "PREP_RECORDED"
+                             for e in self.store.events(session.match_id)))
 
     def test_deadline_management_expires_model_work_without_tactical_fallback(self) -> None:
         session = self.controller.start_match("match-1", now_ms=0)
