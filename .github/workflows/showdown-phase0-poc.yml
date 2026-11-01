@@ -33,7 +33,7 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs test_phase0_final_adoption_report.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs test_champions_damage_rounding_executed_probe.cjs test_champions_damage_rounding_gate_a_contract.cjs test_champions_turn_order_probe.cjs test_post_mega_restoration_probe.cjs test_champions_paralysis_probe.cjs test_champions_paralysis_gate_a_contract.cjs test_champions_weather_speed_probe.cjs test_champions_weather_gate_a_contract.cjs test_phase0_final_adoption_report.cjs test_phase0_no_go_research_exit.cjs
       - name: Audit 16 actual executed synthetic Earthquake HP deltas and independent source descriptions
         shell: bash
         run: |
@@ -771,6 +771,33 @@ jobs:
           assert r["evidence_does_not_enable_phase1"] is True
           print("PHASE0_ADOPTION: NO_GO; Gate A UNKNOWN, Gate B UNSUPPORTED")
           print("Synthetic cases are not Champions game compatibility; source and historical local Golden kept separate")
+          PY
+      - name: Record manual-only NO_GO research exit disposition from validated adoption report
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp \
+            --mount type=bind,source="$PWD",target=/audit,readonly \
+            --entrypoint node champions-phase0 phase0_no_go_research_exit.cjs \
+            /audit/phase0-final-adoption-report.json > phase0-no-go-research-exit.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-no-go-research-exit.json",encoding="utf-8") as f:
+              r=json.load(f)
+          assert r["schema"]=="phase0-no-go-research-exit-v1"
+          assert r["pinned_sha"]=="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
+          assert r["research_disposition"]=="NO_GO_EXIT_EVIDENCE_READY_FOR_MANUAL_REVIEW"
+          assert [r["gates"]["A"],r["gates"]["B"],r["gates"]["phase1"]]==[
+              "UNKNOWN","UNSUPPORTED","NO_GO"]
+          assert r["issue_139_no_go_exit_can_be_proposed"] is True
+          assert r["issue_139_close_automatically"] is False
+          assert r["require_latest_head_ci_and_code_review"] is True
+          assert r["live_recommendations_permitted"] is False
+          assert r["full_engine_integration_permitted"] is False
+          assert r["private_golden_read"] is False
+          assert r["ci_game_observations"]==0
+          assert [b["id"] for b in r["blockers_to_GO"]]==["A","B","D","P","L"]
+          assert r["chosen_path"]=="KEEP_CURRENT_LIVE_AND_OPTIONAL_OFFLINE_RESEARCH"
+          print("PHASE0_RESEARCH_EXIT: proposed NO_GO; manual review/closure only, not Phase 1 authorization")
           PY
       - name: Assert audit fails closed without a required master
         run: |
