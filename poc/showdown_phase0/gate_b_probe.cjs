@@ -72,6 +72,20 @@ function assertPinnedMasterSets() {
   return sha;
 }
 function state(b) { return normalizeReplayTimestamps(b.toJSON()); }
+// B1 only: a digest from a separately retained, complete synthetic snapshot is
+// required. This is not a way to recover missing information from game footage.
+// Native Battle.fromJSON alone is not an input-integrity validator.
+function restoreChecked(serialized, trustedDigest) {
+  if (typeof trustedDigest !== "string" || !/^[a-f0-9]{64}$/.test(trustedDigest))
+    throw Error("B1 trusted snapshot digest required");
+  if (!serialized || typeof serialized !== "object" || Array.isArray(serialized) ||
+      fingerprint(normalizeReplayTimestamps(serialized)) !== trustedDigest)
+    throw Error("B1 snapshot input integrity mismatch");
+  const restored = restore(serialized);
+  if (fingerprint(state(restored)) !== trustedDigest)
+    throw Error("B1 snapshot round-trip integrity mismatch");
+  return restored;
+}
 function same(a, b) { return stableStringify(state(a)) === stableStringify(state(b)); }
 function ms(start) { return performance.now() - start; }
 function setup(kind) {
@@ -205,7 +219,7 @@ function runB1(entry) {
     const wire = serialize(snapshot);
     const serialize_ms = ms(start);
     start = performance.now();
-    const restored = restore(wire);
+    const restored = restoreChecked(wire, result.input_state_sha256);
     result.timing_ms = {serialize: serialize_ms, restore: ms(start)};
     result.restored_state = restored.toJSON();
     const restoredDiff = diff(snapshot, restored);
@@ -340,4 +354,4 @@ if (require.main === module) {
   try {process.stdout.write(JSON.stringify(run()) + "\n");}
   catch (e) {process.stdout.write(JSON.stringify({status: "NOT_RUN", reason: e.message}) + "\n"); process.exitCode = 2;}
 }
-module.exports = {run, assertManifest, summarize, runB1, runB2, GAP_FIELDS};
+module.exports = {run, assertManifest, summarize, runB1, runB2, restoreChecked, GAP_FIELDS};

@@ -1,8 +1,9 @@
 "use strict";
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
-const {run, assertManifest, GAP_FIELDS} = require("./gate_b_probe.cjs");
-const {fingerprint, classifySerializedDivergence} = require("./state_compare.cjs");
+const {run, assertManifest, restoreChecked, GAP_FIELDS} = require("./gate_b_probe.cjs");
+const {restore} = require("./worker.cjs");
+const {fingerprint, normalizeReplayTimestamps, classifySerializedDivergence} = require("./state_compare.cjs");
 
 let report;
 test("fixed Gate B coverage and separate B1/B2 diagnostic outcomes", () => {
@@ -73,4 +74,49 @@ test("real Showdown snapshots detect each dangerous field corruption", () => {
   const partial = cases["B2-13"], altered = structuredClone(partial);
   altered.unknown.opponent_unrevealed_item = "sitrusberry";
   assert.notEqual(fingerprint(partial), fingerprint(altered), "unknown must not become observed");
+});
+
+test("corrupted or incomplete snapshots reach native restore and fail B1 integrity checks", () => {
+  assert.ok(report, "the coverage test must run first");
+  const samples = Object.fromEntries(report.results.map(x => [x.case_id, x.restore_source_state]));
+  const controls = [
+    ["B1-03", s => { s.sides[0].pokemon[0].moveSlots[0].pp--; }, "PP corruption"],
+    ["B1-03", s => { delete s.sides[0].pokemon[0].moveSlots[0].pp; }, "missing PP"],
+    ["B1-03", s => { s.sides[0].pokemon[0].moveSlots[0].pp = "unknown"; }, "invalid PP type"],
+    ["B1-07", s => { s.sides[0].pokemon[0].volatiles.choicelock.move = "dragonclaw"; }, "choice lock"],
+    ["B1-09", s => { s.field.weatherState.duration--; }, "weather duration"],
+    ["B1-06", s => { s.sides[1].pokemon[0].item = "sitrusberry"; }, "consumed item"],
+    ["B1-10", s => { s.sides[1].pokemon[2].species = "lucario"; }, "Mega form"],
+    ["B1-12", s => { s.sides[0].choice.actions = []; }, "pending action"],
+    ["B1-12", s => { s.queue.push({choice: "move", moveid: "earthquake"}); }, "action queue"],
+  ];
+  for (const [id, mutate, label] of controls) {
+    const trusted = samples[id], damaged = structuredClone(trusted);
+    const digest = fingerprint(normalizeReplayTimestamps(trusted));
+    mutate(damaged);
+    assert.notEqual(fingerprint(normalizeReplayTimestamps(damaged)), digest, label);
+    // Exercise the pinned Showdown API with the actual corrupted input.
+    // It may throw; if it accepts the input, its output must be recognized as
+    // different from the independently retained trusted source.
+    let nativeRejected = false;
+    try {
+      const reconstructed = restore(damaged);
+      assert.notEqual(fingerprint(normalizeReplayTimestamps(reconstructed.toJSON())),
+        digest, label + ": native restored state masked source corruption");
+    } catch (error) {
+      if (error?.code === "ERR_ASSERTION") throw error;
+      nativeRejected = true;
+    }
+    assert.equal(typeof nativeRejected, "boolean");
+    // Our diagnostic fail-closed boundary rejects regardless of whether the
+    // upstream API throws or silently accepts a modified but plausible state.
+    assert.throws(() => restoreChecked(damaged, digest), /snapshot input integrity mismatch/,
+      label + " was accepted");
+    assert.equal(fingerprint(normalizeReplayTimestamps(trusted)), digest,
+      label + ": source snapshot was mutated");
+  }
+  assert.throws(() => restoreChecked(samples["B1-01"], "UNKNOWN"), /trusted snapshot digest/);
+  assert.throws(() => restoreChecked({observed: {}, unknown: {}},
+    fingerprint(normalizeReplayTimestamps(samples["B1-01"]))), /snapshot input integrity mismatch/,
+  "partial B2 observation cannot be treated as a complete B1 snapshot");
 });
