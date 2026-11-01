@@ -29,6 +29,19 @@ test("all 10 Gate A feature gaps remain unverified, no private data is counted",
    assert.equal(f.paralysis_scope,"SYNTHETIC_PINNED_TURNS_NOT_DEVICE");
    assert.equal(f.feature_compatibility,"UNKNOWN");
  }
+ assert.equal(report.weather_source_order_matches,12);
+ assert.equal(report.weather_unknown_compound_rounding,1);
+ assert.equal(report.weather_duration_source_conflicts,1);
+ assert.equal(report.weather_executed_lifecycle_cases,1);
+ assert.equal(report.weather_scope,"PINNED_SYNTHETIC_WEATHER_NOT_GAME");
+ for(const feature of ["weather screens hazards","priority","ability and item"]){
+   const x=report.features.find(f=>f.feature===feature);
+   assert.equal(x.weather_source_order_matches,12);
+   assert.equal(x.weather_unknown_compound_rounding,1);
+   assert.equal(x.weather_duration_source_conflicts,1);
+   assert.equal(x.weather_executed_lifecycle_cases,1);
+   assert.equal(x.feature_compatibility,"UNKNOWN");
+ }
  assert.equal(report.wiki_comparable_count,1);
  assert.equal(report.turn_order_source_matches,9);
  assert.equal(report.turn_order_inconclusive_ties,1);
