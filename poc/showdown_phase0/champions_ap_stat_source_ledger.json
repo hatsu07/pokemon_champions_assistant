@@ -79,8 +79,22 @@
     "Species with special HP behavior including Shedinja",
     "Mega evolution timing and post-Mega action order",
     "All possible natures, all registration legality corner cases",
-    "Real-game Garchomp or Metagross observations from this test"
+    "Real-game Garchomp or Metagross observations from this test",
+    "Unscoped species/form parameters are rejected; non-base and special-HP species are not computed by this reference."
   ],
   "game_observed_match_count": 0,
-  "live_use_approved": false
+  "live_use_approved": false,
+  "supported_scopes": [
+    {
+      "species": "Garchomp",
+      "form": "base",
+      "source_identity": "ガブリアス 通常 フォーム/姿なし"
+    },
+    {
+      "species": "Metagross",
+      "form": "base",
+      "source_identity": "メタグロス 通常 フォーム/姿なし"
+    }
+  ],
+  "scope_boundary": "Explicit species+form required. Source-only stat arithmetic approved for two ordinary base species; not all legal or alternate forms. Scope does not independently authenticate arbitrary supplied baseStats."
 }

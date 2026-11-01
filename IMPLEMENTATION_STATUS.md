@@ -1,8 +1,13 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 PR #159レビューP2対応（2026-11-01）
+
+- P2-1: 2種族×4性格×6能力AP対象×8AP値=384合成ケース・2,304能力値比較へ拡張。`varied_ap_stat_count=6`と能力別64ケースを出力し、検査した6能力値と変化させた能力APの数を分離。AP=0の固定Showdown登録ルール回避は対象能力以外に2AP割当（特防対象時は防御）。
+- P2-2: 参照器に`species/form`を必須化し、ガブリアス/メタグロス通常基本フォーム以外の特殊HP・メガ・未知型をfail-closed拒否。未確認種族の能力値を実機保証にしない。固定マスター・Showdown固定SHA・本番LIVE変更なし。Gate A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。
+
 ## Issue #139 Gate A：APと性格の独立実数値比較（2026-11-01）
 
-- Champions専用二次資料と固定マスターから、Showdown非依存のAP/性格実数値参照器を追加。公開ガブリアスS 7行×2性格の14算術値を確認。固定M-C登録6→選出3のShowdown Battleと、2種族×4性格×3能力AP振り×8値=192合成局面（各6値=1152比較）を独立照合する。実行結果はCIで検証するまで一致を断定しない。
+- Champions専用二次資料と固定マスターから、Showdown非依存のAP/性格実数値参照器を追加。公開ガブリアスS 7行×2性格の14算術値を確認。固定M-C登録6→選出3のShowdown Battleと、2種族×4性格×6能力AP振り×8値=384合成局面（各6値=2304比較）を独立照合する。実行結果はCIで検証するまで一致を断定しない。
 - 不一致はSOURCE_SPEC_MISMATCH、二次資料との一致はSOURCE_SPEC_MATCHであり、Champions実機一致ではない。非公開Goldenは未使用、採用A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。
 
 

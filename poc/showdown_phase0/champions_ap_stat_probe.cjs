@@ -10,7 +10,7 @@ const {allowedChampionsSets,teamsForScenario,validateChampionsRegisteredTeam,
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const FORMAT="gen9championsbssregmc";
 const AP_POINTS=[0,1,7,8,18,28,31,32];
-const AP_TARGETS=["hp","atk","spe"];
+const AP_TARGETS=[...STATS];
 const NATURES=["Serious","Jolly","Adamant","Brave"];
 const SPECIES=[
  {name:"Garchomp",japanese:"ガブリアス",side:"p1"},
@@ -57,13 +57,17 @@ function run(){
      const set=registered[side][0];
      if(set.species!==selected.name)throw Error("scenario active species drift");
      set.nature=nature;
-     // Pinned M-C TeamValidator rejects a registered Serious Pokemon with
-     // exactly zero AP. Keep selected AP target at zero but assign 2 AP to
-     // independent SpD for that single edge case; both methods see same AP.
+     // The pinned M-C TeamValidator rejects an all-zero AP registration for
+     // these fixtures. Preserve AP 0 on the selected target, using 2 AP in
+     // another stat only for that edge case. Neither path changes game facts.
+     const fallbackStat=stat==="spd"?"def":"spd";
      set.evs=Object.fromEntries(STATS.map(k=>[
-       k,k===stat?points:(points===0&&k==="spd"?2:0)
+       k,k===stat?points:(points===0&&k===fallbackStat?2:0)
      ]));
-     const ref=calculate({baseStats,ap:set.evs,nature});
+     if(set.evs[stat]!==points ||
+       (points===0&&set.evs[fallbackStat]!==2))
+       throw Error("AP target/fallback invariant violated");
+     const ref=calculate({species:selected.name,form:"base",baseStats,ap:set.evs});
      if(ref.status!==STATUS)throw Error("independent ref status changed");
      for(const team of registered){
        validateChampionsRegisteredTeam(team,dex,allowed);
@@ -95,7 +99,13 @@ function run(){
    gate_A:"UNKNOWN",gate_B:"UNSUPPORTED",adoption:"NO_GO",
    registered_six_member_teams:true,selected_three_member_teams:true,
    species_count:SPECIES.length,nature_count:NATURES.length,ap_values:AP_POINTS,
-   ap_targets:AP_TARGETS,published_speed_reference_checks:publishedChecks,
+   ap_targets:AP_TARGETS,varied_ap_stat_count:AP_TARGETS.length,
+   varied_ap_case_counts:Object.fromEntries(AP_TARGETS.map(stat=>[
+     stat,cases.filter(c=>c.ap_target===stat).length])),
+   registration_ap_zero_fallback_cases:cases.filter(c=>c.ap_points===0).length,
+   registration_ap_zero_fallback_scope:"PINNED_SHOWDOWN_VALIDATOR_ONLY_NOT_GAME_LEGALITY",
+   selected_form_scope:"TWO_BASE_SPECIES_ONLY",
+   published_speed_reference_checks:publishedChecks,
    case_count:cases.length,individual_stat_comparisons:cases.length*STATS.length,
    counts,first_mismatches:cases.filter(c=>c.status==="SOURCE_SPEC_MISMATCH").slice(0,20),
    sample_case_ids:cases.filter((_,i)=>i%24===0).map(c=>c.id),

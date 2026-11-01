@@ -3,13 +3,19 @@
 const LEDGER=require("./champions_ap_stat_source_ledger.json");
 const STATS=["hp","atk","def","spa","spd","spe"];
 const NATURES=Object.freeze(LEDGER.supported_natures);
+const SUPPORTED_SCOPES=Object.freeze(LEDGER.supported_scopes.map(x=>Object.freeze({species:x.species,form:x.form})));
 const STATUS="CHAMPIONS_COMMUNITY_SOURCE_ARITHMETIC_ONLY";
 function exactly(obj,keys,label){
  if(!obj||typeof obj!=="object"||Array.isArray(obj)||
     Object.keys(obj).length!==keys.length||keys.some(k=>!Object.hasOwn(obj,k)))
     throw Error("unknown or incomplete "+label);
 }
-function calculate({baseStats,ap,nature}){
+function calculate(input){
+ exactly(input,["species","form","baseStats","ap","nature"],"Champions AP scope and input");
+ const {species,form,baseStats,ap,nature}=input;
+ if(typeof species!=="string"||typeof form!=="string"||
+    !SUPPORTED_SCOPES.some(s=>s.species===species&&s.form===form))
+    throw Error("UNSUPPORTED_CHAMPIONS_SPECIES_FORM_SCOPE");
  exactly(baseStats,STATS,"Champions base stats");
  exactly(ap,STATS,"Champions AP points");
  if(!Object.hasOwn(NATURES,nature))throw Error("unreviewed Champions nature");
@@ -32,7 +38,8 @@ function calculate({baseStats,ap,nature}){
      mods.minus===k?Math.floor(unmodified*9/10):unmodified;
    return [k,score];
  }));
- return {status:STATUS,regulation:"M-C",game_observed_level:false,
+ return {status:STATUS,regulation:"M-C",
+   supported_scope:{species,form},game_observed_level:false,
    internal_stat_level:50,source_ids:LEDGER.sources.map(s=>s.id),stats};
 }
 function validatePublished(){
@@ -41,17 +48,20 @@ function validatePublished(){
     LEDGER.live_use_approved!==false||
     LEDGER.sources.length!==2||
     LEDGER.sources.some(x=>!x.url.startsWith("https://"))||
+    LEDGER.supported_scopes?.length!==2||
+    JSON.stringify(SUPPORTED_SCOPES)!==
+      JSON.stringify([{species:"Garchomp",form:"base"},{species:"Metagross",form:"base"}])||
     LEDGER.independent_published_garchomp_speed.length!==7)
     throw Error("independent Champions AP source ledger drift");
  const base={hp:108,atk:130,def:95,spa:80,spd:85,spe:102};
  for(const v of LEDGER.independent_published_garchomp_speed){
    if(!Number.isInteger(v.ap)||v.ap<0||v.ap>32)throw Error("bad published AP");
    const ap={hp:0,atk:0,def:0,spa:0,spd:0,spe:v.ap};
-   const neutral=calculate({baseStats:base,ap,nature:"Serious"}).stats.spe;
-   const jolly=calculate({baseStats:base,ap,nature:"Jolly"}).stats.spe;
+   const neutral=calculate({species:"Garchomp",form:"base",baseStats:base,ap,nature:"Serious"}).stats.spe;
+   const jolly=calculate({species:"Garchomp",form:"base",baseStats:base,ap,nature:"Jolly"}).stats.spe;
    if(neutral!==v.neutral||jolly!==v.jolly)
      throw Error("published Garchomp speed example changed at AP "+v.ap);
  }
  return LEDGER.independent_published_garchomp_speed.length*2;
 }
-module.exports={calculate,validatePublished,STATS,NATURES,STATUS,LEDGER};
+module.exports={calculate,validatePublished,STATS,NATURES,SUPPORTED_SCOPES,STATUS,LEDGER};

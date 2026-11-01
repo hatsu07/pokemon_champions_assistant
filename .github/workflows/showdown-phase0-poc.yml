@@ -46,8 +46,15 @@ jobs:
           assert r['pinned_sha']=='ccfaa20f32af363569cd21a9d501b2bc1ded26b1'
           assert r['format']=='gen9championsbssregmc'
           assert (r['gate_A'],r['gate_B'],r['adoption'])==('UNKNOWN','UNSUPPORTED','NO_GO')
-          assert r['case_count']==192
-          assert r['individual_stat_comparisons']==1152
+          assert r['case_count']==384
+          assert r['individual_stat_comparisons']==2304
+          assert r['varied_ap_stat_count']==6
+          assert r['ap_targets']==['hp','atk','def','spa','spd','spe']
+          assert r['varied_ap_case_counts']=={
+              'hp':64,'atk':64,'def':64,'spa':64,'spd':64,'spe':64
+          }
+          assert r['registration_ap_zero_fallback_cases']==48
+          assert r['selected_form_scope']=='TWO_BASE_SPECIES_ONLY'
           assert r['published_speed_reference_checks']==14
           assert r['counts']=={'SOURCE_SPEC_MATCH':192,'SOURCE_SPEC_MISMATCH':0}
           assert r['private_golden_read'] is False
@@ -56,7 +63,7 @@ jobs:
           assert r['live_use_approved'] is False
           assert r['registered_six_member_teams'] is True
           assert r['selected_three_member_teams'] is True
-          print('Champions community-source stat reference: 192 synthetic cases/1152 comparisons')
+          print('Champions community-source stat reference: 384 synthetic cases/2304 comparisons, AP varied in all 6 stats')
           print('This does NOT establish in-game speed order or damage equivalence.')
           PY
       - name: Audit Gate A source evidence, conflicts and unverified LIVE risks
