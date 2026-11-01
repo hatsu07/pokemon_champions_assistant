@@ -28,6 +28,12 @@ Gate AのGolden内の相手・技・HP・場をGate Bの相手選出・HP・履�
 エラー時もファイルパスや観測値を出さない。`MATCH`は1項目の局所一致で、
 `MISMATCH`はレビューが必要だが、いずれも実ゲームの全ルール互換性ではない。
 
+Golden v1の証拠メタデータについて、`UNKNOWN`は値・根拠ID・理由を持たせず、`SYNTHETIC`で根拠IDを明示する場合は同じcaseに宣言済みのIDだけを許容する（従来の根拠IDなしの合成fixtureはそのまま使用可能）。
+`INFERRED`は観測済みIDと混同せず、任意の`reason`を正本スキーマに後方互換で追加した。旧Golden v1に理由のないINFERREDがある場合は**読み込みは継続**するが、`legacy_inferred_without_reason_count`と`LEGACY_V1_UNEXPLAINED_INFERENCES_NEED_LOCAL_REVIEW`を報告し、ゲーム観測への昇格や自動変換は行わない。
+過去の非公開Golden 6ケース/11チェックはGitHubから取得・再実行しておらず、本人がローカルで新監査を動かすまで互換性の完全確認はできない。元の`golden_compare.cjs`とデータ本体は変更しない。
+
+新規テストでは`STRUCTURAL_STUB_NOT_REAL_GAME`と明示した仮想`USER_VERIFIED`宣言・`GAME_FRAME`参照を含む部分観測34項目を一時ファイルで作る。これは**実機データではない**。CLIの`--partial`単独および`--golden --partial`同時入力、証拠ID欠落時のエラー秘匿、B復元不実施・自動結合なしを回帰検証する。実ゲーム一致数には加算しない。
+
 **Gate A=UNKNOWN、Gate B=UNSUPPORTED、総合NO_GO。**
 Bの完全スナップショット、実ゲーム内部乱数の復元、Phase 1/LIVE接続は行わない。
 次は通常対戦で自然に得られる根拠付き局面を、ユーザー本人がローカルに記録した範囲で部分観測スキーマへ入力し、UNKNOWNを維持できるか個別に確認する。

@@ -29,6 +29,7 @@ function assertEvidenceProvenance(doc) {
       !Array.isArray(doc.cases) || doc.cases.length === 0)
     throw Error("missing or invalid golden cases");
   let facts = 0, real = 0, inferred = 0, unknown = 0, synthetic = 0;
+  let legacyInferredWithoutReason = 0;
   const ids = new Set();
   for (const c of doc.cases) {
     if (typeof c.case_id !== "string" || !c.case_id || ids.has(c.case_id))
@@ -50,26 +51,45 @@ function assertEvidenceProvenance(doc) {
       facts++;
       if (fact.source === "UNKNOWN") {
         if (Object.hasOwn(fact, "value")) throw Error("UNKNOWN carries a value");
+        if (Object.hasOwn(fact, "evidence_ids") || Object.hasOwn(fact, "reason"))
+          throw Error("UNKNOWN cannot carry evidence or inference metadata");
         unknown++;
       } else if (fact.source === "INFERRED") {
-        if (!Object.hasOwn(fact, "value")) throw Error("inference lacks value");
+        if (!Object.hasOwn(fact, "value") || Object.hasOwn(fact, "evidence_ids"))
+          throw Error("inference must have a value and no observed evidence IDs");
+        // Golden v1 legacy facts can omit reason. Keep them loadable but
+        // explicitly report the missing reason; never turn them into observed facts.
+        if (fact.reason === undefined) legacyInferredWithoutReason++;
+        else if (typeof fact.reason !== "string" || !fact.reason.trim())
+          throw Error("inference reason must be nonempty");
         inferred++;
       } else if (fact.source === "SYNTHETIC") {
-        if (ev.origin !== "SYNTHETIC" || !Object.hasOwn(fact, "value"))
+        if (ev.origin !== "SYNTHETIC" || !Object.hasOwn(fact, "value") ||
+            Object.hasOwn(fact, "reason"))
           throw Error("synthetic fact falsely sourced");
+        if (Object.hasOwn(fact, "evidence_ids") &&
+            (!Array.isArray(fact.evidence_ids) || !fact.evidence_ids.length ||
+             fact.evidence_ids.some(id => typeof id !== "string" || !refs.has(id))))
+          throw Error("synthetic evidence reference is missing or undeclared");
+        // Historical Golden v1 synthetic fixtures often have no evidence ID;
+        // that is legal synthetic evidence, never proof from a real game.
         synthetic++;
       } else {
         if (ev.origin !== "REAL_GAME" || ev.verification !== "USER_VERIFIED" ||
-            !Object.hasOwn(fact, "value") ||
+            !Object.hasOwn(fact, "value") || Object.hasOwn(fact, "reason") ||
             !Array.isArray(fact.evidence_ids) || !fact.evidence_ids.length ||
-            fact.evidence_ids.some(id => !refs.has(id)))
+            fact.evidence_ids.some(id => typeof id !== "string" || !refs.has(id)))
           throw Error("GAME_OBSERVED lacks declared, linked user-verified evidence");
         real++;
       }
     }
   }
   return {facts, source_counts: {GAME_OBSERVED: real, SYNTHETIC: synthetic,
-    INFERRED: inferred, UNKNOWN: unknown}};
+    INFERRED: inferred, UNKNOWN: unknown},
+    legacy_inferred_without_reason_count: legacyInferredWithoutReason,
+    golden_inference_provenance_scope: legacyInferredWithoutReason ?
+      "LEGACY_V1_UNEXPLAINED_INFERENCES_NEED_LOCAL_REVIEW" :
+      "NO_UNEXPLAINED_INFERENCES"};
 }
 function summarizeGolden(doc, comparison, bytes) {
   const validated = assertEvidenceProvenance(doc);
@@ -110,6 +130,8 @@ function summarizeGolden(doc, comparison, bytes) {
     origin_counts: {REAL_GAME: doc.cases.filter(c => c.evidence.origin === "REAL_GAME").length,
       SYNTHETIC: doc.cases.filter(c => c.evidence.origin === "SYNTHETIC").length},
     case_count: doc.cases.length, fact_source_counts: validated.source_counts,
+    legacy_inferred_without_reason_count: validated.legacy_inferred_without_reason_count,
+    golden_inference_provenance_scope: validated.golden_inference_provenance_scope,
     comparison_counts: {...comparison.counts},
     verified_game_mismatch_count: discordant.length,
     comparison_status: discordant.length ? "REVIEW_REQUIRED" :

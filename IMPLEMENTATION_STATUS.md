@@ -3,6 +3,7 @@
 ## Issue #139 実ゲームGolden・Gate B部分観測の独立照合準備（2026-11-01）
 
 - `game_evidence_bridge.cjs` をPhase 0ローカル専用で追加。既存Golden比較器と部分観測の出典・整合検査を別々に実行し、値・画像・証拠ID等を除いた集計だけを出す。根拠IDが欠落した`GAME_OBSERVED`、UNKNOWNへの値付け、情報源取り違えを拒否。GoldenのMATCHを完全な途中局面の復元証拠へ昇格させない。
+- PR #156レビューP2対応：Golden v1のUNKNOWNに根拠ID/理由を認めず、SYNTHETICの宣言済み根拠IDを照合、INFERREDに任意reasonを後方互換追加。理由がない旧INFERREDは排除・自動移行せず件数と要ローカル確認を報告。仮想実ゲーム宣言の構造stub（実機証拠ではない）を一時ファイルでCLI単独/二入力経路に通し、秘密情報の非出力・自動B昇格なし・不正入力の定数エラーを検証。
 - CIは**合成Goldenのみ**でゼロ実ゲーム確認を検証。本人確認済みのローカルGoldenを実行して新たな実測一致を得たわけではなく、実ゲーム画面の真偽はCLIで独立認証しない。Gate A=UNKNOWN/B=UNSUPPORTED/NO_GO維持。
 
 

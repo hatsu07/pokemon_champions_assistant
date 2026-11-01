@@ -12,6 +12,37 @@ const {run: goldenRun} = require("./golden_compare.cjs");
 const file = path.join(__dirname, "synthetic_golden_example.json");
 const input = fs.readFileSync(file), doc = JSON.parse(input);
 
+const os = require("node:os");
+const {execFileSync} = require("node:child_process");
+
+function withTempFiles(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "champions-private-evidence-stub-"));
+  try { return fn(dir); } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+}
+function structuralPartialStub() {
+  const facts = Object.fromEntries(PARTIAL_FIELDS.map(k => [k, {source:"UNKNOWN"}]));
+  const secretRef = "STRUCTURAL_STUB_NOT_REAL_GAME_SENSITIVE_REFERENCE_987";
+  facts.opponent_hp_exact = {
+    source:"GAME_OBSERVED", value:53, evidence_ids:[secretRef]
+  };
+  facts.weather = {source:"INFERRED", value:"raindance",
+    reason:"STRUCTURAL_STUB_NOT_REAL_GAME_PREDICTION_ONLY"};
+  return {schema:"phase0-partial-observation-v1",
+    origin:"REAL_GAME", verification:"USER_VERIFIED",
+    evidence:[{id:secretRef,kind:"GAME_FRAME"}], facts};
+}
+function runCli(args) {
+  try {
+    return {code:0, output:execFileSync(process.execPath,
+      [path.join(__dirname,"game_evidence_bridge.cjs"),...args],
+      {encoding:"utf8",stdio:["ignore","pipe","pipe"]})};
+  } catch (error) {
+    return {code:error.status,output:error.stdout?.toString("utf8") ?? "",
+      stderr:error.stderr?.toString("utf8") ?? ""};
+  }
+}
+
+
 test("existing synthetic Golden is audited without claiming game observations", () => {
   const actual = run({goldenPath: file});
   assert.equal(actual.schema, "phase0-local-evidence-boundary-v1");
@@ -123,4 +154,111 @@ test("an externally swapped document or comparator metadata is rejected", () => 
   tampered.cases[0].origin = "REAL_GAME";
   assert.throws(() => summarizeGolden(doc, tampered, input),
     /comparator contract disagrees/);
+});
+
+test("Golden v1 factual provenance is strict without breaking optional legacy inference", () => {
+  const make = () => structuredClone(doc);
+  const unknownWithIds = make();
+  unknownWithIds.cases[0].checks.pp.observed_remaining_pp.evidence_ids = ["bogus"];
+  assert.throws(() => assertEvidenceProvenance(unknownWithIds),
+    /UNKNOWN cannot carry evidence/);
+  const unknownWithReason = make();
+  unknownWithReason.cases[0].checks.pp.observed_remaining_pp.reason = "invented";
+  assert.throws(() => assertEvidenceProvenance(unknownWithReason),
+    /UNKNOWN cannot carry evidence/);
+  const syntheticUnlinked = make();
+  syntheticUnlinked.cases[0].checks.pp.move_id.evidence_ids = ["undeclared"];
+  assert.throws(() => assertEvidenceProvenance(syntheticUnlinked),
+    /synthetic evidence reference/);
+  const syntheticLinked = make();
+  syntheticLinked.cases[0].evidence.references.push({
+    id:"fixture-id",description:"synthetic, not an actual game frame"});
+  syntheticLinked.cases[0].checks.pp.move_id.evidence_ids = ["fixture-id"];
+  assert.equal(assertEvidenceProvenance(syntheticLinked).source_counts.GAME_OBSERVED,0);
+  const legacy = make();
+  legacy.cases[0].checks.pp.move_id.source = "INFERRED";
+  const accepted = assertEvidenceProvenance(legacy);
+  assert.equal(accepted.legacy_inferred_without_reason_count,1);
+  assert.equal(accepted.golden_inference_provenance_scope,
+    "LEGACY_V1_UNEXPLAINED_INFERENCES_NEED_LOCAL_REVIEW");
+  legacy.cases[0].checks.pp.move_id.reason = "test inference, not observed";
+  assert.equal(assertEvidenceProvenance(legacy).legacy_inferred_without_reason_count,0);
+  legacy.cases[0].checks.pp.move_id.reason = " ";
+  assert.throws(() => assertEvidenceProvenance(legacy), /inference reason/);
+  legacy.cases[0].checks.pp.move_id.reason = "test inference";
+  legacy.cases[0].checks.pp.move_id.evidence_ids = ["fixture-id"];
+  assert.throws(() => assertEvidenceProvenance(legacy),
+    /inference must have a value/);
+});
+test("structural REAL_GAME partial declaration runs through real file path, never authenticates", () => {
+  withTempFiles(dir => {
+    const partialPath = path.join(dir,"STRUCTURAL_STUB_NOT_REAL_GAME_PRIVATE_PARTIAL.json");
+    fs.writeFileSync(partialPath,JSON.stringify(structuralPartialStub()));
+    const standalone = run({partialPath});
+    assert.equal(standalone.golden_scalar,null);
+    assert.equal(standalone.partial_board.game_observed_field_count,1);
+    assert.equal(standalone.partial_board.inferred_field_count,1);
+    assert.equal(standalone.partial_board.unknown_field_count,PARTIAL_FIELDS.length-2);
+    assert.equal(standalone.partial_board.source_evidence_automatically_authenticated,false);
+    assert.equal(standalone.partial_board.unique_truth_restoration,false);
+    assert.equal(standalone.partial_board.complete_snapshot_restorable_from_observation,false);
+    assert.equal(standalone.observations_independently_authenticated,false);
+    assert.equal(standalone.B_full_snapshot_created,false);
+    assert.equal(standalone.game_golden_promoted_to_B,false);
+    assert.equal(standalone.evidence_files_automatically_joined_as_same_battle,false);
+    assert.deepEqual([standalone.gate_A,standalone.gate_B,standalone.adoption],
+      ["UNKNOWN","UNSUPPORTED","NO_GO"]);
+    const both=run({goldenPath:file,partialPath});
+    assert.equal(both.golden_scalar.origin_counts.REAL_GAME,0);
+    assert.equal(both.golden_scalar.comparison_counts.verified_game_check_count,0);
+    assert.equal(both.partial_board.game_observed_field_count,1);
+    assert.equal(both.evidence_files_automatically_joined_as_same_battle,false);
+    assert.equal(both.game_golden_promoted_to_B,false);
+    assert.equal(both.B_full_snapshot_created,false);
+    const serialized=JSON.stringify(both);
+    for (const secret of [
+      "STRUCTURAL_STUB_NOT_REAL_GAME_SENSITIVE_REFERENCE_987",
+      "STRUCTURAL_STUB_NOT_REAL_GAME_PREDICTION_ONLY",
+      "STRUCTURAL_STUB_NOT_REAL_GAME_PRIVATE_PARTIAL.json"
+    ]) assert.equal(serialized.includes(secret),false,"private evidence leak");
+    const cli=runCli(["--golden",file,"--partial",partialPath]);
+    assert.equal(cli.code,0,cli.output);
+    const printed=JSON.parse(cli.output);
+    assert.equal(printed.B_full_snapshot_created,false);
+    assert.equal(printed.evidence_files_automatically_joined_as_same_battle,false);
+    assert.equal(printed.golden_scalar.origin_counts.REAL_GAME,0);
+    for (const secret of [
+      "STRUCTURAL_STUB_NOT_REAL_GAME_SENSITIVE_REFERENCE_987",
+      "STRUCTURAL_STUB_NOT_REAL_GAME_PREDICTION_ONLY",
+      "STRUCTURAL_STUB_NOT_REAL_GAME_PRIVATE_PARTIAL.json"
+    ]) assert.equal(cli.output.includes(secret),false,"CLI private evidence leak");
+    // No image is supplied, verified or counted: this is structural validation only.
+  });
+});
+test("CLI sanitizes private-path/ID/value errors on invalid partial or Golden", () => {
+  withTempFiles(dir => {
+    const partialPath=path.join(dir,"SECRET_USER_FILENAME_349.json");
+    const poisoned=structuralPartialStub();
+    poisoned.facts.opponent_hp_exact.evidence_ids=["SECRET_UNLINKED_ID_871"];
+    fs.writeFileSync(partialPath,JSON.stringify(poisoned));
+    const invalidPartial=runCli(["--partial",partialPath]);
+    assert.equal(invalidPartial.code,2);
+    assert.deepEqual(JSON.parse(invalidPartial.output),{
+      status:"NOT_RUN",reason:"PRIVATE_EVIDENCE_VALIDATION_FAILED"});
+    assert.equal(invalidPartial.stderr,"");
+    for(const secret of ["SECRET_USER_FILENAME_349","SECRET_UNLINKED_ID_871"])
+      assert.equal(invalidPartial.output.includes(secret),false);
+    const goldenPath=path.join(dir,"SECRET_GOLDEN_FILENAME_951.json");
+    const invalidGolden=structuredClone(doc);
+    invalidGolden.cases[0].checks.pp.observed_remaining_pp={
+      source:"UNKNOWN",value:"SECRET_POKEMON_HP_439"};
+    fs.writeFileSync(goldenPath,JSON.stringify(invalidGolden));
+    const brokenGolden=runCli(["--golden",goldenPath]);
+    assert.equal(brokenGolden.code,2);
+    assert.deepEqual(JSON.parse(brokenGolden.output),{
+      status:"NOT_RUN",reason:"PRIVATE_EVIDENCE_VALIDATION_FAILED"});
+    assert.equal(brokenGolden.stderr,"");
+    assert.equal(brokenGolden.output.includes("SECRET_POKEMON_HP_439"),false);
+    assert.equal(brokenGolden.output.includes("SECRET_GOLDEN_FILENAME_951"),false);
+  });
 });
