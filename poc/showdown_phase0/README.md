@@ -1,5 +1,22 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #161 再レビューP2対応：技同一性とGate A横断連携（2026-11-01）
+
+- **P2-1（実行技・優先度）**：各合成ターンで選出後の`moveSlots`と入力する技スロットを突き合わせ、期待するChampions技ID/表示名・固定Showdown優先度・残PPを確認する。ターン実行後の`|move|`ログも技ID/名前と優先度で照合し、想定外の技が同じ側の先手として扱われる回帰を拒否する。ログ中の行動順で技が異なっても正解とすることはない。
+- **P2-2（横断インベントリ）**：`gate_a_evidence_inventory.cjs`は同じ固定Showdownの10条件診断を実行して検証後、「priority」機能と総合の双方に `turn_order_source_matches=9`、`turn_order_inconclusive_ties=1`、`turn_order_scope=PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE` を出力する。既存の静的マスター一致・他のWiki事例・未検証の状態を上書きしない。
+- 出典契約、同速の保留、実機検証件数0、結果件数、技名・優先度・観測順の変更を負例テストで拒否。**新しい2種類の観測はShowdownの合成実行であり、独立した実ゲーム証拠ではない。Gate A=UNKNOWN / B=UNSUPPORTED / NO_GOは維持**する。
+
+## Gate A：素早さ・優先度・ターン行動順の独立監査（Phase 0限定）
+
+`champions_turn_order_source_ledger.json` は2026-11-01確認のChampions専門二次資料（[素早さ実数値](https://pkmn-cp-dataportal.com/battle/priority/speed-stats/)・[こだわりスカーフ](https://pkmn-cp-dataportal.com/item/choice-items/)・[バレットパンチ](https://pkmn-cp-dataportal.com/waza/%E3%83%90%E3%83%AC%E3%83%83%E3%83%88%E3%83%91%E3%83%B3%E3%83%81/)・[技一覧](https://pkmn-cp-dataportal.com/move/)・[トリックルーム](https://pkmn-cp-dataportal.com/battle/priority/trick-room/)）とChampions固定技マスターの優先度を、ID・URL・条件ごとに固定。正しい実ゲーム仕様の認定ではなく、公式/ユーザーの最新ゲーム内確認が優先する。
+
+`champions_turn_order_reference.cjs` は**Showdownに依存せず**既存のChampions AP/性格独立参照式から通常フォームのガブリアスとメタグロスのSを算出する。扱う速度補正は **無補正・スカーフ1.5倍・S+1段階1.5倍（いずれか1つ）** に限定し端数を切り捨てる。技の優先度を素早さより先に比較し、既知のトリックルーム場では同優先度内のS順を反転する。**同速は `UNRESOLVED_TIE` のまま**。S−1以下、S+2以上、スカーフと段階上昇の重複、まひ/天候/おいかぜ/特性補正、メガ後のS/特性、同速乱数・発動順は未検証として扱う。
+
+`champions_turn_order_probe.cjs` は固定Showdown SHA、M-C、Champions使用可能種族/道具/習得技/優先度の固定マスター照合、`TeamValidator`、両側登録6→選出3を要求し、**10の合成条件で実際のPinned Showdown行動ログを比較**する。通常S、スカーフによる逆転、S+1による逆転、バレットパンチ優先、まもる優先、スカーフでも優先度を覆せないケース、同速、トリックルーム内逆転・優先度維持・スカーフ逆転を扱う。S+1とトリックルームは**実行した技による設置ではなく事前注入した合成状態**であり、発動手順・ターン数を検証したものではない。各ケースは独立した登録6→選出3の固定合成Battleで実行。任意の技・特性・構築に一般化しない。
+
+一致は `SOURCE_SPEC_MATCH`、差異は `SOURCE_SPEC_MISMATCH` として保持し、不一致はCI失敗。同速1条件はShowdownでどちらが先に動いても `INCONCLUSIVE_SPEED_TIE` として残し、1回の抽選結果を正しい確率や確定順と誤認しない。期待契約・出典URL・優先度・実ゲーム観測件数の改変は負例でfail-closed。**実行はPinned Showdownの合成10ターンでありChampions実機の実行ターン0、非公開Golden未読込。Gate A=UNKNOWN / Gate B=UNSUPPORTED / adoption=NO_GO、LIVE経路は無変更。**
+
+
 ## Gate A：二次資料に基づくやけど・壁・急所のダメージ補正順と端数比較（Issue #139）
 
 `champions_damage_modifier_source_ledger.json` はChampions専門の二次資料にある **じしん／ガブリアス→メタグロス** の数値と、急所・やけど・リフレクターの組み合わせを、2026-11-01確認の根拠URL付きで固定する。個々の効果を**独立に観測した実ゲーム証拠ではない**。公式やユーザー共有の新しい実ゲーム情報を上位に置く。

@@ -1,7 +1,8 @@
 "use strict";
 const {test}=require("node:test");
 const assert=require("node:assert/strict");
-const {run,summarize,checkMap,checkModifierEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP}=require("./gate_a_evidence_inventory.cjs");
+const {run,summarize,checkMap,checkModifierEvidence,checkTurnOrderEvidence,
+ requirements,KNOWN_AUDIT_GROUPS,MAP}=require("./gate_a_evidence_inventory.cjs");
 let report;
 test("all 10 Gate A feature gaps remain unverified, no private data is counted",()=>{
  report=run();
@@ -18,6 +19,15 @@ test("all 10 Gate A feature gaps remain unverified, no private data is counted",
  assert.equal(links.mismatched,0);
  assert.equal(links.missing,0);
  assert.equal(report.wiki_comparable_count,1);
+ assert.equal(report.turn_order_source_matches,9);
+ assert.equal(report.turn_order_inconclusive_ties,1);
+ assert.equal(report.turn_order_scope,"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE");
+ const priority=report.features.find(x=>x.feature==="priority");
+ assert.equal(priority.turn_order_source_matches,9);
+ assert.equal(priority.turn_order_inconclusive_ties,1);
+ assert.equal(priority.turn_order_scope,"PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE");
+ assert.equal(priority.feature_compatibility,"UNKNOWN");
+ assert.equal(priority.actual_game_status,"NOT_EVALUATED_PRIVATE_GOLDEN");
  assert.equal(report.wiki_mismatch_count,0);
  assert.equal(report.modifier_source_status,"REVIEWED_SECONDARY_SOURCE_DIVERGENCE");
  assert.equal(report.known_modifier_source_conflicts,1);
@@ -148,4 +158,47 @@ test("modifier conflict cannot disappear, grow, or become fake device evidence i
  assert.equal(valid.game_verified_checks_this_run,0);
  assert.deepEqual([valid.gate_A,valid.gate_B,valid.adoption],
    ["UNKNOWN","UNSUPPORTED","NO_GO"]);
+});
+
+test("Gate A priority shows synthetic source ordering but never promotes tie or game evidence",()=>{
+ const {run:order}=require("./champions_turn_order_probe.cjs");
+ const r=order();
+ assert.deepEqual(checkTurnOrderEvidence(r),{matches:9,ties:1});
+ const {compare}=require("./audit.cjs");
+ const {main:wiki}=require("./wiki_damage_compare.cjs");
+ const {main:events}=require("./champions_event_probe.cjs");
+ const {main:modifier}=require("./champions_damage_modifier_probe.cjs");
+ const a=compare(),w=wiki(),e=events(),m=modifier();
+ const report=summarize(a,w,e,MAP,m,r);
+ assert.deepEqual([report.gate_A,report.gate_B,report.adoption],
+   ["UNKNOWN","UNSUPPORTED","NO_GO"]);
+ assert.equal(report.turn_order_source_matches,9);
+ assert.equal(report.turn_order_inconclusive_ties,1);
+ assert.equal(report.game_verified_checks_this_run,0);
+ assert.equal(report.safe_to_integrate_with_live,false);
+ assert.throws(()=>summarize(a,w,e,MAP,m,null),/turn-order synthetic source evidence/);
+ const changes=[
+   o=>{o.counts.SOURCE_SPEC_MATCH=10;},
+   o=>{o.counts.INCONCLUSIVE_SPEED_TIE=0;},
+   o=>{o.game_verified_turn_count=1;},
+   o=>{o.official_or_device_confirmed=true;},
+   o=>{o.live_use_approved=true;},
+   o=>{o.gate_A="CONFIRMED";},
+   o=>{o.results[6].status="SOURCE_SPEC_MATCH";},
+   o=>{o.results[6].expected_first="p2";},
+   o=>{o.results[6].comparison_scope="EXECUTED_PINNED_TURN_VS_SECONDARY_SOURCE";},
+   o=>{o.results[0].executed_moves.p1.name="Protect";},
+   o=>{o.results[0].executed_moves.p1.priority=4;},
+   o=>{o.results[1].observed_first="p1";},
+   o=>{o.results[0].p1_effective_speed++;},
+   o=>{o.results.pop();}
+ ];
+ for(const mutate of changes){
+   const modified=structuredClone(r);
+   mutate(modified);
+   assert.throws(()=>checkTurnOrderEvidence(modified),
+     /turn-order (synthetic source evidence|reviewed source case|source status counts)/);
+   assert.throws(()=>summarize(a,w,e,MAP,m,modified),
+     /turn-order (synthetic source evidence|reviewed source case|source status counts)/);
+ }
 });

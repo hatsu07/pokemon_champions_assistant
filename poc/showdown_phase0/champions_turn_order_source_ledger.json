@@ -1,0 +1,186 @@
+{
+  "schema": "phase0-champions-turn-order-source-ledger-v1",
+  "regulation": "M-C",
+  "checked_at": "2026-11-01",
+  "evidence": "CHAMPIONS_SPECIFIC_SECONDARY_SOURCE_AND_FIXED_MASTER_NOT_DEVICE",
+  "scope": "TWO_BASE_SPECIES_ONLY_SYNTHETIC_SELECTED_TURNS",
+  "actual_game_order_verified": 0,
+  "private_golden_read": false,
+  "live_use_approved": false,
+  "sources": [
+    {
+      "id": "speed",
+      "url": "https://pkmn-cp-dataportal.com/battle/priority/speed-stats/",
+      "basis": "Champions speed value and +1 stage/Choice Scarf each 1.5x floor within same move priority"
+    },
+    {
+      "id": "scarf",
+      "url": "https://pkmn-cp-dataportal.com/item/choice-items/",
+      "basis": "Choice Scarf speed multiplier 1.5 and choice lock; this probe tests order only"
+    },
+    {
+      "id": "bullet",
+      "url": "https://pkmn-cp-dataportal.com/waza/%E3%83%90%E3%83%AC%E3%83%83%E3%83%88%E3%83%91%E3%83%B3%E3%83%81/",
+      "basis": "Bullet Punch priority +1"
+    },
+    {
+      "id": "moves",
+      "url": "https://pkmn-cp-dataportal.com/move/",
+      "basis": "Protect priority +4; other status moves priority 0 from fixed Champions move master"
+    },
+    {
+      "id": "trickroom",
+      "url": "https://pkmn-cp-dataportal.com/battle/priority/trick-room/",
+      "basis": "Trick Room reverses speed ordering only within the same move priority"
+    }
+  ],
+  "reviewed_moves": [
+    {
+      "species": "Garchomp",
+      "name": "Swords Dance",
+      "priority": 0
+    },
+    {
+      "species": "Garchomp",
+      "name": "Protect",
+      "priority": 4
+    },
+    {
+      "species": "Garchomp",
+      "name": "Earthquake",
+      "priority": 0
+    },
+    {
+      "species": "Metagross",
+      "name": "Iron Defense",
+      "priority": 0
+    },
+    {
+      "species": "Metagross",
+      "name": "Bullet Punch",
+      "priority": 1
+    }
+  ],
+  "cases": [
+    {
+      "id": "normal-speed",
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "expected": "p1"
+    },
+    {
+      "id": "scarf-reverses",
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": true,
+      "m_stage": 0,
+      "trick_room": false,
+      "expected": "p2"
+    },
+    {
+      "id": "plus-one-reverses",
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": false,
+      "m_stage": 1,
+      "trick_room": false,
+      "expected": "p2"
+    },
+    {
+      "id": "priority-beats-speed",
+      "p1": "Swords Dance",
+      "p2": "Bullet Punch",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "expected": "p2"
+    },
+    {
+      "id": "protect-above-bullet",
+      "p1": "Protect",
+      "p2": "Bullet Punch",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "expected": "p1"
+    },
+    {
+      "id": "scarf-cannot-beat-priority",
+      "p1": "Protect",
+      "p2": "Bullet Punch",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": true,
+      "m_stage": 0,
+      "trick_room": false,
+      "expected": "p1"
+    },
+    {
+      "id": "speed-tie-unresolved",
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 0,
+      "m_ap": 32,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": false,
+      "expected": "UNRESOLVED_TIE"
+    },
+    {
+      "id": "trickroom-reverses",
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": true,
+      "expected": "p2"
+    },
+    {
+      "id": "trickroom-keeps-priority",
+      "p1": "Protect",
+      "p2": "Bullet Punch",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": false,
+      "m_stage": 0,
+      "trick_room": true,
+      "expected": "p1"
+    },
+    {
+      "id": "scarf-under-trickroom",
+      "p1": "Swords Dance",
+      "p2": "Iron Defense",
+      "g_ap": 2,
+      "m_ap": 2,
+      "m_scarf": true,
+      "m_stage": 0,
+      "trick_room": true,
+      "expected": "p1"
+    }
+  ],
+  "not_verified": [
+    "Official device speed and action order",
+    "Speed stage below zero or above +1",
+    "Simultaneous multiple speed modifiers or their rounding order",
+    "Mega/form change timing and new abilities",
+    "Paralysis/weather/Tailwind/priority-changing abilities",
+    "Full battle phase timing or action choice prediction",
+    "Tie-breaking probability and repeatability from one executed turn",
+    "Real move-set legality outside the two reviewed registered base species"
+  ]
+}
