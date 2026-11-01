@@ -77,7 +77,7 @@ function fixture(){
    independent_ci_runs_verified:false,
    process_memory:{peak_rss_measured:false,long_term_leak_tested:false},
    process_wall_ms:{scope:"CHILD_STARTUP_AND_127_CASES_NOT_CONTAINER_STARTUP",
-    samples:3,p50:210,p95:250,p99:250,observations:[250,210,249]},
+    samples:3,p50:249,p95:250,p99:250,observations:[250,210,249]},
    node_stage_ms:{scope:"THREE_SEPARATE_PROCESSES_SAME_FIXED_CASES",
     values:Object.fromEntries(STAGES.map(k=>[k,
      {samples:381,p50:TIMINGS[k],p95:TIMINGS[k],p99:TIMINGS[k]}]))}}
