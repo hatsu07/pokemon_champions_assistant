@@ -1,5 +1,21 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## 登録6匹→選出3匹→途中局面復元（独立した合成診断）
+
+`six_team_selection_probe.cjs` は固定Showdown `ccfaa20f32af363569cd21a9d501b2bc1ded26b1` の M-C (`gen9championsbssregmc`) を使う。両側の登録6匹を、Champions固定マスターに基づく登録検証とShowdown `TeamValidator` で**独立に**検証し、双方が合法の場合だけBattleへ渡す。固定マスター検証は全国No.（リージョン違いを含む）、種族・直接登録可能フォーム、技マスター・習得表・固定Dex、特性枠、持ち物とメガストーン所有者、重複道具、性格、AP、技スロットを検査する。日本語技名・英語名・MoveKeyは既存の正規化を使う。`level:50`はShowdownを動かす内部値で、ゲーム内レベルの観測ではない。
+
+合法な双方6匹からBattleを生成し、Team Previewの登録数6、M-Cの選出数3、双方の選出要求を確認してから実際の `team 123`、`team 415`、`team 634` 等のコマンドを送る。指定スロット・3匹の重複・先発と順序は実行前にも検査する。固定Showdownは短い選出を自動補完するため、PoCの入力検査は厳格にする。Showdownでの選出結果、先発、控え、非選出3匹の不在、3対3を確認し、ターンと交代を進めた完全合成状態を直列化・復元する。元状態の独立SHA256、全状態比較、同一行動の再現、別合法行動への分岐と元状態の不変性を診断JSONに記録する。
+
+```
+docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
+docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_six_team_selection_probe.cjs
+docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 six_team_selection_probe.cjs > /tmp/six-team-local.json
+```
+
+`six_team_selection_cases.json` の固定25ケースは、合法登録・正確な選出・完全合成状態の復元分岐 **4/4 `PASS_SYNTHETIC`**、不正登録 **16/16拒否**、不正選出 **5/5拒否**。登録の合法性、選出、復元は別の診断欄を持ち、負例を合法成功数に加えない。対応しないメガストーンの負例ではChampions固定マスターが拒否し、固定Showdown TeamValidatorは受理するため、`agree:false` と両者の理由を記録する。Showdownの受理だけではChampionsの合法性を認定しない。
+
+登録チーム構成は**両側6匹の組1種**、選出パターン3種、復元対象の異なる入力状態ハッシュ4種、復元成功4件、同一局面の反復0回。既存Gate Bの14局面・11ユニーク入力状態とは別集計で、重複排除した合算はしていない。100代表局面は未達。実ゲームからの未公開情報・乱数・履歴・部分観測状態の復元、Champions実機の登録・選出・ルール一致は未確認。Gate A=`UNKNOWN`、Gate B=`UNSUPPORTED`、総合=`NO_GO`を維持する。Linux CIはこのNodeテストと25件診断を実行し、WindowsデスクトップCIの成功をWindowsでのShowdown Node実行と同一視しない。
+
 ## Gate B 独立診断（途中局面復元）
 
 `gate_b_probe.cjs` は固定Showdown `ccfaa20f32af363569cd21a9d501b2bc1ded26b1`、`gen9championsbssregmc` だけで動く。固定Championsマスターの種族・技習得・特性・持ち物を照合してから、`gate_b_cases.json` の14件を実行する。既存 `worker.cjs` の戦闘生成・直列化・復元と `state_compare.cjs` の全状態比較を再利用し、実ゲームの画像・Golden JSON・対戦ログは入力しない。
@@ -16,7 +32,7 @@ docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champi
 - **B2／部分観測:** 2件 `INCONCLUSIVE`、成功0。合成した公開盤面投影が同一でも相手の技ID `earthquake` と `yawn`、持ち物が異なる2仮説を独立に進め、結果と元状態の不干渉を確認した。投影内の相手HP整数も実画面から読めるとは保証しない。相手未公開技とPP・特性・持ち物・能力配分・内部乱数・未観測効果履歴・未解決行動キューは `UNKNOWN` として保持し、実ゲーム局面の復元済み状態は作らない。2仮説でも全整合モデルを列挙した証明にはならない。
 - **カバレッジ:** 14の局面定義、11のユニーク入力状態、14機構、反復0。100代表局面は未達。既存120回ベンチマークは6シナリオの反復であり、この件数へ加算しない。
 - **負例と復元入力の整合性:** 実ShowdownスナップショットでPP、こだわり対象、乱数、壁・天候期間、消費済み道具、メガ形・履歴、選択済み行動、キューを故意に変更し、比較器が検出することを確認。追加負例は破損・欠落・不正型のJSONを固定Showdownの `Battle.fromJSON` に実際に渡し、拒否または信頼済み元状態との差を確認する。B1の `restoreChecked` は**別途保持した完全合成スナップショットの信頼済みSHA256**と入力・復元結果を照合し、違いを拒否する。ハッシュを改変入力自身から作成した場合の正しさを保証しない。B2部分観測を完全状態に昇格させない。未知の相手道具を確定に変える変更も検出する。
-- **登録合法性の境界:** 現行B1/B2の試験チームは**双方3匹をShowdownへ直接投入**しており、個々のポケモン・技・特性・持ち物の固定マスター照合と、**登録6匹全体の合法性（同じ全国図鑑番号・重複道具）／M-C TeamValidator／6匹からの選出3匹**は別検証。これらを確認済みとは主張しない。実戦近似の別工程では登録6匹を検証してから選出経路を通す必要がある。
+- **登録合法性の境界:** 現行B1/B2の試験チームは**双方3匹をShowdownへ直接投入**している。上記の登録6匹と選出経路の診断は別ケースであり、B1/B2の実績には加算しない。
 - **計測:** 同一seed・同一チームで10回ウォームアップ後、直列化、復元、複製、最初の行動入力、残る選択によるターン解決を分けて記録する。強制交代と片側選択済みは入力と解決が同一API呼び出しなので結合計測する。P50/P95/P99は各段階の合格ケースだけから算出し、標本数を併記する。12局面の単一実行値は恒常的な性能保証でもWindows UIのE2E値でもない。
 
 Gate A=`UNKNOWN`、Gate B=`UNSUPPORTED`、総合=`NO_GO` を維持する。次は実ゲームで確認できる途中状態の証拠範囲を定め、未知値を含む再構築または対応不可判定を実観測と照合する。加えて独立した状態定義・ポケモン/技/効果を増やして100代表局面と複数runの再現性を検査する。本診断の成功をChampions互換性、確定KO、安全受け出し、Phase 1採用の根拠にしない。

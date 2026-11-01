@@ -6,6 +6,7 @@ const path=require('node:path');
 const {execFileSync}=require('node:child_process');
 const {calculate}=require('./wiki_damage_reference.cjs');
 const {rows,speciesKeyForRow,types}=require('./audit.cjs');
+const {moveKey}=require('./champions_move_key.cjs');
 const PIN='ccfaa20f32af363569cd21a9d501b2bc1ded26b1';
 const FORMAT='gen9championsbssregmc';
 const ROOT=process.env.SHOWDOWN_ROOT;
@@ -13,7 +14,7 @@ const FILLER={species:'Garchomp',level:50,nature:'Serious',ability:'Rough Skin',
   evs:{hp:0,atk:0,def:0,spa:0,spd:0,spe:0},moves:['Earthquake']};
 // These bilingual mappings are explicitly scoped to this ONE test fixture.
 // Unknown translations must be independently confirmed, never guessed from other games.
-const ABILITY_JA=Object.freeze({roughskin:'さめはだ',clearbody:'クリアボディ',overgrow:'しんりょく',torrent:'げきりゅう',blaze:'もうか',intimidate:'いかく'});
+const ABILITY_JA=Object.freeze({roughskin:'さめはだ',clearbody:'クリアボディ',overgrow:'しんりょく',torrent:'げきりゅう',blaze:'もうか',intimidate:'いかく',static:'せいでんき',surgesurfer:'サーフテール'});
 const STATS=['hp','atk','def','spa','spd','spe'];
 const COLUMNS=['H','A','B','C','D','S'];
 const MASTER_DIR=path.resolve(process.env.CHAMPIONS_MASTERS_DIR||path.join(__dirname,'masters'));
@@ -27,6 +28,8 @@ function allowedChampionsSets(dex){
   const heldItems=readMaster('Pokemon_Champions_MC_usable_held_items.csv');
   const availableMoves=new Set(moveRows.map(r=>r.MoveKey));
   const availableItems=new Set(heldItems.map(r=>dex.items.get(r['英語名']).id).filter(Boolean));
+  const megaOwners=new Map(heldItems.filter(r=>r['区分']==='メガストーン')
+    .map(r=>[dex.items.get(r['英語名']).id,r['対応ポケモン']]));
   const byName=new Map(pokemon.filter(r=>r['区分']!=='メガシンカ'&&r['姿を直接登録']==='○')
     .map(r=>[r['ポケモン名']+'|'+r['フォーム/姿']+'|'+r['区分'],r]));
   const species=new Map();
@@ -54,10 +57,10 @@ function allowedChampionsSets(dex){
       if(Number(row[COLUMNS[i]])!==mon.baseStats[STATS[i]])
         throw Error('Champions base stat mapping disagrees with pinned Dex: '+mon.id);
     const learned=new Set((link['習得MoveKey一覧']||'').split(',').map(x=>x.trim()).filter(Boolean));
-    species.set(mon.id,{learned,learnsetKey:link.LearnsetKey,nationalNo:row['全国No.'],abilities:new Set(
+    species.set(mon.id,{learned,learnsetKey:link.LearnsetKey,nationalNo:row['全国No.'],nameJa:row['ポケモン名'],abilities:new Set(
       row['特性'].split('/').map(x=>x.trim()).filter(Boolean))});
   }
-  return {species,ambiguous,availableMoves,availableItems};
+  return {species,ambiguous,availableMoves,availableItems,megaOwners};
 }
 // Identifiers are taken only from the Champions master. This catches regional
 // forms sharing a National Dex number, independent of Showdown form string.
@@ -89,9 +92,16 @@ function teamsForScenario(s){
 }
 function validateChampionsScenario(s,dex,allowed){
   const teams=teamsForScenario(s);
-  for(const team of teams)validateTeamConstraints(team,dex,allowed);
   if(!s.move||!dex.moves.get(s.move).exists)throw Error('unknown attack move: '+s.move);
-  for(const team of teams)for(const mon of team){
+  for(const team of teams)validateChampionsRegisteredTeam(team,dex,allowed);
+  const attackMoveId=dex.moves.get(s.move).id;
+  if(!teams[0][0].moves.some(m=>dex.moves.get(moveKey(m)||m).id===attackMoveId))
+    throw Error('attack move not equipped on attacker: '+s.attacker.species+'/'+s.move);
+  return teams;
+}
+function validateChampionsRegisteredTeam(team,dex,allowed){
+  validateTeamConstraints(team,dex,allowed);
+  for(const mon of team){
     const record=mon&&dex.species.get(mon.species);
     const entry=record&&allowed.species.get(record.id);
     if(!record?.exists||!entry)
@@ -117,26 +127,27 @@ function validateChampionsScenario(s,dex,allowed){
       const item=dex.items.get(mon.item);
       if(!item.exists||!allowed.availableItems.has(item.id))
         throw Error('item absent from Champions held-item master: '+mon.species+'/'+mon.item);
-      if(item.megaEvolves&&item.megaEvolves!==record.baseSpecies)
+      const owner=allowed.megaOwners.get(item.id);
+      if(owner && (owner!==entry.nameJa ||
+          !Object.hasOwn(item.megaStone||{},record.baseSpecies)))
         throw Error('mega stone wrong species: '+mon.species+'/'+mon.item);
+      if((item.megaStone||item.megaEvolves)&&!owner)
+        throw Error('mega stone owner absent from Champions held-item master: '+mon.item);
     }
     if(!Array.isArray(mon.moves)||mon.moves.length<1||mon.moves.length>4)
       throw Error('invalid move slots: '+mon.species);
     const seen=new Set();
     const showdownLearnset=dex.species.getLearnsetData(entry.learnsetKey)?.learnset||{};
     for(const name of mon.moves){
-      const move=dex.moves.get(name);
-      if(!move.exists||!allowed.availableMoves.has(move.id)||
+      const key=moveKey(name);
+      const move=key&&dex.moves.get(key);
+      if(!move?.exists||!allowed.availableMoves.has(move.id)||
          !entry.learned.has(move.id)||!Object.hasOwn(showdownLearnset,move.id))
         throw Error('set move absent from Champions master and pinned learnset: '+mon.species+'/'+name);
       if(seen.has(move.id))throw Error('duplicate move slot: '+mon.species+'/'+name);
       seen.add(move.id);
     }
   }
-  const attackMoveId=dex.moves.get(s.move).id;
-  if(!teams[0][0].moves.some(m=>dex.moves.get(m).id===attackMoveId))
-    throw Error('attack move not equipped on attacker: '+s.attacker.species+'/'+s.move);
-  return teams;
 }
 // The fixed fixture uses two separate six-member registered teams. The
 // simulator still selects exactly the first three from each after preview.
@@ -222,4 +233,5 @@ if(require.main===module){
  try{const out=main();process.stdout.write(JSON.stringify(out,null,2)+'\n');if(out.mismatch_count)process.exitCode=1;}
  catch(e){process.stdout.write(JSON.stringify({status:'NOT_RUN',reason:e.message})+'\n');process.exitCode=2;}
 }
-module.exports={main,allowedChampionsSets,validateChampionsScenario,validateTeamConstraints,teamsForScenario,SCENARIOS};
+module.exports={main,allowedChampionsSets,validateChampionsScenario,validateChampionsRegisteredTeam,
+  validateTeamConstraints,teamsForScenario,SCENARIOS};

@@ -1,0 +1,31 @@
+{
+  "schema": "phase0-six-team-selection-cases-v1",
+  "evidence_scope": "synthetic fixed Showdown and checked-in Champions masters only",
+  "cases": [
+    {"id":"REG-001","kind":"positive","mechanism":"first_three","p1":{"slots":[1,2,3],"lead_slot":1},"p2":{"slots":[1,2,3],"lead_slot":1},"opening":["switch 2","switch 2"],"expected_status":"PASS_SYNTHETIC"},
+    {"id":"REG-002","kind":"positive","mechanism":"noncontiguous_three","p1":{"slots":[4,1,5],"lead_slot":4},"p2":{"slots":[6,3,4],"lead_slot":6},"opening":["move 1","move 1"],"expected_status":"PASS_SYNTHETIC"},
+    {"id":"REG-003","kind":"positive","mechanism":"changed_lead_and_order","p1":{"slots":[2,1,3],"lead_slot":2},"p2":{"slots":[3,1,2],"lead_slot":3},"opening":["move 1","move 1"],"expected_status":"PASS_SYNTHETIC"},
+    {"id":"REG-004","kind":"positive","mechanism":"post_selection_switch","p1":{"slots":[4,1,5],"lead_slot":4},"p2":{"slots":[6,3,4],"lead_slot":6},"opening":["move 1","move 1"],"followup":["switch 2","move 1"],"expected_status":"PASS_SYNTHETIC"},
+    {"id":"NEG-001","kind":"negative_registration","mechanism":"five_registered","mutation":"five","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-002","kind":"negative_registration","mechanism":"seven_registered","mutation":"seven","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-003","kind":"negative_registration","mechanism":"duplicate_national_number","mutation":"duplicate_species","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-004","kind":"negative_registration","mechanism":"regional_same_national_number","mutation":"regional_duplicate","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-005","kind":"negative_registration","mechanism":"duplicate_held_item","mutation":"duplicate_item","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-006","kind":"negative_registration","mechanism":"unavailable_species","mutation":"unavailable_species","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-007","kind":"negative_registration","mechanism":"unregisterable_form","mutation":"mega_form","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-008","kind":"negative_registration","mechanism":"unknown_move","mutation":"unknown_move","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-009","kind":"negative_registration","mechanism":"unlearnable_move","mutation":"unlearnable_move","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-010","kind":"negative_registration","mechanism":"duplicate_move_slot","mutation":"duplicate_move","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-011","kind":"negative_registration","mechanism":"invalid_ability","mutation":"invalid_ability","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-012","kind":"negative_registration","mechanism":"invalid_held_item","mutation":"invalid_item","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-013","kind":"negative_registration","mechanism":"wrong_mega_stone","mutation":"wrong_mega","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-014","kind":"negative_registration","mechanism":"invalid_ap","mutation":"invalid_ap","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-015","kind":"negative_registration","mechanism":"invalid_nature","mutation":"invalid_nature","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-016","kind":"negative_registration","mechanism":"invalid_move_slots","mutation":"invalid_slots","expected_status":"REJECTED_INVALID_REGISTRATION"},
+    {"id":"NEG-017","kind":"negative_selection","mechanism":"unregistered_selection_slot","p1":{"slots":[1,2,7],"lead_slot":1},"expected_status":"REJECTED_INVALID_SELECTION"},
+    {"id":"NEG-018","kind":"negative_selection","mechanism":"duplicate_selected_slot","p1":{"slots":[1,1,2],"lead_slot":1},"expected_status":"REJECTED_INVALID_SELECTION"},
+    {"id":"NEG-019","kind":"negative_selection","mechanism":"only_two_selected","p1":{"slots":[1,2],"lead_slot":1},"expected_status":"REJECTED_INVALID_SELECTION"},
+    {"id":"NEG-020","kind":"negative_selection","mechanism":"four_selected","p1":{"slots":[1,2,3,4],"lead_slot":1},"expected_status":"REJECTED_INVALID_SELECTION"},
+    {"id":"NEG-021","kind":"negative_selection","mechanism":"lead_order_mismatch","p1":{"slots":[4,1,5],"lead_slot":1},"expected_status":"REJECTED_INVALID_SELECTION"}
+  ]
+}
