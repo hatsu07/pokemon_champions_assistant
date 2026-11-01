@@ -7,6 +7,12 @@ const {main:events}=require("./champions_event_probe.cjs");
 const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
 const {run:paralysisOrder}=require("./champions_paralysis_probe.cjs");
 const {run:weatherSpeed}=require("./champions_weather_speed_probe.cjs");
+const {run:executedRounding}=require("./champions_damage_rounding_executed_probe.cjs");
+const {checkExecutedRoundingEvidence}=require("./champions_damage_rounding_gate_a_contract.cjs");
+let cachedExecutedRounding=null;
+function executedRoundingOnce(){
+ return cachedExecutedRounding||(cachedExecutedRounding=executedRounding());
+}
 const {checkWeatherEvidence}=require("./champions_weather_gate_a_contract.cjs");
 let cachedWeather=null;
 function weatherOnce(){return cachedWeather||(cachedWeather=weatherSpeed());}
@@ -209,12 +215,13 @@ function checkTurnOrderEvidence(t){
    throw Error("turn-order source status counts changed");
  return {matches,ties};
 }
-function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),weather=weatherOnce()){
+function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),weather=weatherOnce(),rounding=executedRoundingOnce()){
  checkMap(map);checkEvidence(a,w,e,map);
  const modifierCounts=checkModifierEvidence(m);
  const turnCounts=checkTurnOrderEvidence(t);
  const paralysisCounts=checkParalysisEvidence(p);
  const weatherCounts=checkWeatherEvidence(weather);
+ const roundingCounts=checkExecutedRoundingEvidence(rounding);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
@@ -255,6 +262,13 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),we
        weather_scope:weatherCounts.scope,
        weather_diagnostic:"champions_weather_speed_probe.cjs"
      }:{}),
+     ...(f.feature==="damage RNG and critical"?{
+       damage_rounding_executed_synthetic_turns:roundingCounts.synthetic_executed_turns,
+       damage_rounding_source_discriminating_rolls:roundingCounts.source_discriminators,
+       damage_rounding_game_verified_turns:roundingCounts.game_verified_turns,
+       damage_rounding_scope:roundingCounts.comparison_scope,
+       damage_rounding_diagnostic:"champions_damage_rounding_executed_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
@@ -285,6 +299,11 @@ function summarize(a,w,e,map=MAP,m=modifier(),t=turnOrder(),p=paralysisOnce(),we
    weather_executed_lifecycle_cases:weatherCounts.executed_lifecycle_cases,
    weather_scope:weatherCounts.scope,
    weather_diagnostic:"champions_weather_speed_probe.cjs",
+   damage_rounding_executed_synthetic_turns:roundingCounts.synthetic_executed_turns,
+   damage_rounding_source_discriminating_rolls:roundingCounts.source_discriminators,
+   damage_rounding_game_verified_turns:roundingCounts.game_verified_turns,
+   damage_rounding_scope:roundingCounts.comparison_scope,
+   damage_rounding_diagnostic:"champions_damage_rounding_executed_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -296,4 +315,4 @@ if(require.main===module){
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
 module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,
- checkTurnOrderEvidence,checkParalysisEvidence,checkWeatherEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+ checkTurnOrderEvidence,checkParalysisEvidence,checkWeatherEvidence,checkExecutedRoundingEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};

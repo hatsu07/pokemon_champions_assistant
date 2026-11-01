@@ -46,6 +46,16 @@ test("all 10 Gate A feature gaps remain unverified, no private data is counted",
    assert.equal(x.weather_executed_lifecycle_cases,1);
    assert.equal(x.feature_compatibility,"UNKNOWN");
  }
+ assert.equal(report.damage_rounding_executed_synthetic_turns,16);
+ assert.equal(report.damage_rounding_source_discriminating_rolls,4);
+ assert.equal(report.damage_rounding_game_verified_turns,0);
+ assert.equal(report.damage_rounding_scope,
+   "TWO_SECONDARY_LOCAL_FINAL_STEPS_VS_PINNED_EXECUTED_TURNS_NOT_DEVICE");
+ const dmgFeature=report.features.find(f=>f.feature==="damage RNG and critical");
+ assert.equal(dmgFeature.damage_rounding_executed_synthetic_turns,16);
+ assert.equal(dmgFeature.damage_rounding_source_discriminating_rolls,4);
+ assert.equal(dmgFeature.damage_rounding_game_verified_turns,0);
+ assert.equal(dmgFeature.feature_compatibility,"UNKNOWN");
  assert.equal(report.wiki_comparable_count,1);
  assert.equal(report.turn_order_source_matches,9);
  assert.equal(report.turn_order_inconclusive_ties,1);
