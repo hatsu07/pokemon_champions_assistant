@@ -1,0 +1,1033 @@
+{
+  "schema": "phase0-representative-states-cases-v1",
+  "scope": "SYNTHETIC_ONLY",
+  "selection": "registered six then M-C preview pick three",
+  "mechanisms": [
+    "baseline",
+    "both_hp_damage",
+    "pp_consumption",
+    "paralysis",
+    "boosts",
+    "rain_and_reflect",
+    "sitrus_consumption",
+    "post_mega"
+  ],
+  "cases": [
+    {
+      "id": "REP-001",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-002",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-003",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-004",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-005",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-006",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-007",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-008",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-009",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-010",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-011",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-012",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-013",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-014",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-015",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-016",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-017",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-018",
+      "mechanism": "baseline",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-019",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-020",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-021",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-022",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-023",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-024",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-025",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-026",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-027",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-028",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-029",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-030",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-031",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-032",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-033",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-034",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-035",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-036",
+      "mechanism": "both_hp_damage",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-037",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-038",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-039",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-040",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-041",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-042",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-043",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-044",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-045",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-046",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-047",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-048",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-049",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-050",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-051",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-052",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-053",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-054",
+      "mechanism": "pp_consumption",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-055",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-056",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-057",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-058",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-059",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-060",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-061",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-062",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-063",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-064",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-065",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-066",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-067",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-068",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-069",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-070",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-071",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-072",
+      "mechanism": "paralysis",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-073",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-074",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-075",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-076",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-077",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-078",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-079",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-080",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-081",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-082",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-083",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-084",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-085",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-086",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-087",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-088",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-089",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-090",
+      "mechanism": "boosts",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-091",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-092",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-093",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-094",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-095",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-096",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-097",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-098",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-099",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-100",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-101",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-102",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-103",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-104",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-105",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-106",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-107",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-108",
+      "mechanism": "rain_and_reflect",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-109",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-01",
+      "p1_active_slot": 1,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-110",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-02",
+      "p1_active_slot": 2,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-111",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-03",
+      "p1_active_slot": 3,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-112",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-04",
+      "p1_active_slot": 4,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-113",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-05",
+      "p1_active_slot": 5,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-114",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-06",
+      "p1_active_slot": 6,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-115",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-07",
+      "p1_active_slot": 1,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-116",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-08",
+      "p1_active_slot": 2,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-117",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-09",
+      "p1_active_slot": 3,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-118",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-10",
+      "p1_active_slot": 4,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-119",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-11",
+      "p1_active_slot": 5,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-120",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-12",
+      "p1_active_slot": 6,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-121",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-13",
+      "p1_active_slot": 1,
+      "p2_active_slot": 5,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-122",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-14",
+      "p1_active_slot": 2,
+      "p2_active_slot": 6,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-123",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-15",
+      "p1_active_slot": 3,
+      "p2_active_slot": 1,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-124",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-16",
+      "p1_active_slot": 4,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-125",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-17",
+      "p1_active_slot": 5,
+      "p2_active_slot": 3,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-126",
+      "mechanism": "sitrus_consumption",
+      "pair_id": "PAIR-18",
+      "p1_active_slot": 6,
+      "p2_active_slot": 4,
+      "expected_status": "PASS_SYNTHETIC"
+    },
+    {
+      "id": "REP-127",
+      "mechanism": "post_mega",
+      "pair_id": "MEGA-GARCHOMP-GYARADOS",
+      "p1_active_slot": 1,
+      "p2_active_slot": 2,
+      "expected_status": "PASS_SYNTHETIC"
+    }
+  ]
+}
