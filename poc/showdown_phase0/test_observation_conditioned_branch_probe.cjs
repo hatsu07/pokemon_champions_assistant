@@ -90,6 +90,82 @@ test("unknown current HP or incomplete boosts cannot silently use initialized fu
  r=condition(onlyAttack,ctx);
  assert.match(r.reason,/all seven/);
 });
+test("observed current PP of a single revealed move conditions only matching legal sets",()=>{
+ const obs=withHPAndBoosts({hp:70,atk:1});
+ obs.facts.opponent_revealed_moves=known(["Earthquake"]);
+ obs.facts.opponent_remaining_pp=known(5);
+ obs.facts.opponent_item=known("choicescarf");
+ const original=fingerprint(obs),r=condition(obs,ctx);
+ assert.equal(fingerprint(obs),original,"PP evidence must not mutate");
+ assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+ assert.deepEqual(r.candidates.map(c=>c.id),["C"]);
+ assert.equal(r.candidates[0].conditioned_pp_move,"earthquake");
+ assert.equal(r.candidates[0].conditioned_pp,5);
+ assert.ok(r.candidates[0].conditioned_pp_max>=5);
+ assert.equal(r.candidates[0].conditioned_hp,70);
+ assert.equal(r.candidates[0].conditioned_item,"choicescarf");
+ assert.equal(r.candidates[0].pp_history_scope,"OBSERVED_CURRENT_PP_ONLY_NO_MOVE_EVENT_REPLAY");
+ assert.ok(r.admitted_evidence_fields.includes("opponent_remaining_pp"));
+ assert.ok(r.admitted_evidence_fields.includes("opponent_revealed_moves"));
+ assert.ok(!r.unrecovered_hidden_fields.includes("opponent_remaining_pp"));
+ assert.equal(r.gate_B,"UNSUPPORTED");
+ assert.equal(r.game_compatibility_verified,false);
+ assert.equal(r.live_recommendation_permitted,false);
+ const repeat=condition(obs,ctx);
+ assert.deepEqual(r.candidates.map(c=>c.conditioned_sha256),
+   repeat.candidates.map(c=>c.conditioned_sha256));
+ assert.deepEqual(r.candidates.map(c=>c.continuation_sha256),
+   repeat.candidates.map(c=>c.continuation_sha256));
+});
+test("observed Dragon Claw PP can coexist with unconsumed or consumed Sitrus hypothesis",()=>{
+ for(const consumed of [false,true]){
+  const obs=withHPAndBoosts({hp:70});
+  obs.facts.opponent_revealed_moves=known(["Dragon Claw"]);
+  obs.facts.opponent_remaining_pp=known(4);
+  obs.facts.opponent_item=known(consumed?"":"sitrusberry");
+  obs.facts.opponent_consumed_item=consumed?known("sitrusberry"):{source:"UNKNOWN"};
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+  assert.deepEqual(r.candidates.map(c=>c.id),["B"]);
+  assert.equal(r.candidates[0].conditioned_pp,4);
+  assert.equal(r.candidates[0].conditioned_item,consumed?"":"sitrusberry");
+  assert.equal(r.candidates[0].conditioned_pp_move,"dragonclaw");
+ }
+});
+test("unknown or ambiguous move identity never assigns a scalar observed PP",()=>{
+ for(const moves of [null,[],["Earthquake","Dragon Claw"]]){
+  const obs=withHPAndBoosts();
+  obs.facts.opponent_remaining_pp=known(3);
+  if(moves!==null)obs.facts.opponent_revealed_moves=known(moves);
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED");
+  assert.match(r.reason,/exactly one independently revealed move/);
+  assert.equal(r.candidates?.length||0,0);
+ }
+});
+test("impossible PP and zero-PP move request fail closed without fabricated continuation",()=>{
+ const zero=withHPAndBoosts();
+ zero.facts.opponent_revealed_moves=known(["Earthquake"]);
+ zero.facts.opponent_remaining_pp=known(0);
+ const rejected=condition(zero,ctx);
+ assert.equal(rejected.status,"UNSUPPORTED");
+ assert.match(rejected.reason,/zero PP continuation/);
+ const exceed=withHPAndBoosts();
+ exceed.facts.opponent_revealed_moves=known(["Earthquake"]);
+ exceed.facts.opponent_remaining_pp=known(999);
+ exceed.facts.opponent_item=known("choicescarf");
+ const result=condition(exceed,ctx);
+ assert.equal(result.status,"UNSUPPORTED");
+ assert.match(result.reason,/no supported legal hypothesis/);
+ assert.ok(result.rejected.some(c=>/maximum/.test(c.reason)));
+ const conflict=withHPAndBoosts();
+ conflict.facts.opponent_revealed_moves=known(["Dragon Claw"]);
+ conflict.facts.opponent_remaining_pp=known(3);
+ conflict.facts.opponent_item=known("choicescarf");
+ const noMatch=condition(conflict,ctx);
+ assert.equal(noMatch.status,"UNSUPPORTED");
+ assert.match(noMatch.reason,/no supported legal hypothesis/);
+});
 test("observed Sitrus Berry consumption conditions only its original legal holder",()=>{
  const obs=withHPAndBoosts({hp:70,atk:1});
  obs.facts.opponent_item=known("");
