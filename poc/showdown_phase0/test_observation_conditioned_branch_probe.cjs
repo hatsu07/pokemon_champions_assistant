@@ -19,6 +19,12 @@ function known(value,id="fixture-CONDITION"){
 }
 function withHPAndBoosts({hp=100,atk=1}={}){
  const obs=setup();
+ // The narrow conditional probe needs confirmed absence of unimplemented
+ // effects and the unchanged form's current type, never UNKNOWN defaults.
+ obs.facts.terrain=known("");
+ obs.facts.hazards=known([]);
+ obs.facts.opponent_current_type=known(
+   [...ctx.dex.species.get(obs.facts.opponent_form.value).types]);
  obs.facts.opponent_hp_exact=known(hp);
  obs.facts.opponent_boosts=known(Object.fromEntries(BOOSTS.map(k=>[k,k==="atk"?atk:0])));
  return obs;
@@ -66,8 +72,8 @@ test("observed explicit remaining Reflect duration yields provisional conditione
  assert.ok(r.admitted_evidence_fields.includes("screen_remaining_turns"));
 });
 test("unknown current HP or incomplete boosts cannot silently use initialized full-HP states",()=>{
- const unknown=setup();
- unknown.facts.opponent_boosts=known(Object.fromEntries(BOOSTS.map(k=>[k,0])));
+ const unknown=withHPAndBoosts();
+ unknown.facts.opponent_hp_exact={source:"UNKNOWN"};
  let r=condition(unknown,ctx);
  assert.equal(r.status,"UNSUPPORTED");
  assert.deepEqual(r.missing_observed_fields,["opponent_hp_exact"]);
@@ -83,6 +89,47 @@ test("unknown current HP or incomplete boosts cannot silently use initialized fu
  onlyAttack.facts.opponent_boosts=known({atk:1});
  r=condition(onlyAttack,ctx);
  assert.match(r.reason,/all seven/);
+});
+test("known terrain, hazards and changed types fail closed rather than contradict the Battle",()=>{
+ const obs=withHPAndBoosts();
+ for(const [field,value,pattern] of [
+   ["terrain","electricterrain",/terrain/],
+   ["hazards",["stealthrock"],/hazards/],
+   ["opponent_current_type",["Fairy"],/current type/],
+   ["opponent_current_type","Dragon",/current type/]
+ ]){
+   const altered=structuredClone(obs);
+   altered.facts[field]=known(value);
+   const before=fingerprint(altered),r=condition(altered,ctx);
+   assert.equal(r.status,"UNSUPPORTED",field);
+   assert.match(r.reason,pattern);
+   assert.equal(r.live_recommendation_permitted,false);
+   assert.equal(fingerprint(altered),before,"must not rewrite known observations");
+ }
+});
+test("unknown terrain/hazards/type must not become default absence or base type",()=>{
+ for(const field of ["terrain","hazards","opponent_current_type"]){
+   const obs=withHPAndBoosts();
+   obs.facts[field]={source:"UNKNOWN"};
+   const r=condition(obs,ctx);
+   assert.equal(r.status,"UNSUPPORTED",field);
+   assert.deepEqual(r.missing_observed_fields,[field]);
+ }
+});
+test("known but unmodeled effect history is not silently ignored",()=>{
+ for(const [field,value] of [
+  ["effect_remaining_turns",{leechseed:2}],
+  ["opponent_mega_history",{previous_form:"garchomp"}],
+  ["opponent_consumed_item","sitrusberry"],
+  ["choice_lock","earthquake"],
+  ["action_history",["switch"]]
+ ]){
+   const obs=withHPAndBoosts();
+   obs.facts[field]=known(value);
+   const r=condition(obs,ctx);
+   assert.equal(r.status,"UNSUPPORTED",field);
+   assert.match(r.reason,/known hidden-history field/);
+ }
 });
 test("HP exceeding legal maximum and fainted state fail closed",()=>{
  const impossible=condition(withHPAndBoosts({hp:9999}),ctx);
