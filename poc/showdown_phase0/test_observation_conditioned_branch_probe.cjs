@@ -75,6 +75,10 @@ test("unknown current HP or incomplete boosts cannot silently use initialized fu
  noBoosts.facts.opponent_boosts={source:"UNKNOWN"};
  r=condition(noBoosts,ctx);
  assert.deepEqual(r.missing_observed_fields,["opponent_boosts"]);
+ const noStatus=withHPAndBoosts();
+ noStatus.facts.opponent_status={source:"UNKNOWN"};
+ r=condition(noStatus,ctx);
+ assert.deepEqual(r.missing_observed_fields,["opponent_status"]);
  const onlyAttack=withHPAndBoosts();
  onlyAttack.facts.opponent_boosts=known({atk:1});
  r=condition(onlyAttack,ctx);
