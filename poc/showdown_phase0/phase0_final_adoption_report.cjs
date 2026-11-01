@@ -34,7 +34,8 @@ function exactManifestResults(report,manifest,label,check){
     label+" individual case ID/mechanism/status drift: "+spec.id);
  }
  requireValue(new Set(rows.map(x=>x.case_id)).size===expected.length&&
-   new Set(rows.map(x=>x.mechanism)).size===report.mechanism_count,
+   new Set(rows.map(x=>x.mechanism)).size===
+     (label==="representative"?report.distinct_mechanisms:report.mechanism_count),
    label+" duplicate case or mechanism count");
 }
 function checkCounts(counts,rows,statuses,phase){
