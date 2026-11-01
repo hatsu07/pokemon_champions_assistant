@@ -1,6 +1,6 @@
 "use strict";
 // Separate Phase 0 Gate A evidence contract. No game parity inference.
-const {LEDGER,reference}=require("./champions_paralysis_reference.cjs");
+const {LEDGER,REVIEWED_UNVERIFIED,reference}=require("./champions_paralysis_reference.cjs");
 const {moveKey}=require("./champions_move_key.cjs");
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 function checkParalysisEvidence(r){
@@ -14,10 +14,27 @@ function checkParalysisEvidence(r){
     r.source_full_paralysis_rate!=="1/8"||
     r.pinned_implementation?.pinned_full_paralysis_chance!=="1/8"||
     r.pinned_implementation?.pinned_speed_half_floor!==true||
+    r.pinned_implementation?.evidence!==
+      "PINNED_SOURCE_IMPLEMENTATION_NOT_GAME_OR_STATISTICAL_VALIDATION"||
+    JSON.stringify(r.unverified)!==JSON.stringify(REVIEWED_UNVERIFIED)||
     r.full_paralysis_sample?.synthetic_turns!==48||
     r.full_paralysis_sample?.empirical_probability_verified!==false||
     r.full_paralysis_sample?.scope!=="PINNED_SEEDS_NOT_DEVICE_OR_PROBABILITY_PROOF"||
-    r.full_paralysis_sample.interrupted+r.full_paralysis_sample.uninterrupted!==48)
+    r.full_paralysis_sample.interrupted+r.full_paralysis_sample.uninterrupted!==48||
+    !Number.isInteger(r.full_paralysis_sample.interrupted)||
+    !Number.isInteger(r.full_paralysis_sample.uninterrupted)||
+    r.full_paralysis_sample.interrupted<1||r.full_paralysis_sample.interrupted>=48||
+    r.full_paralysis_sample.uninterrupted<1||
+    r.full_paralysis_sample.interruption_path_observed!==true||
+    r.full_paralysis_sample.non_interrupted_path_observed!==true||
+    r.full_paralysis_sample.sample_case_id!=="metagross-par"||
+    !Number.isInteger(r.full_paralysis_sample.witness?.seed)||
+    r.full_paralysis_sample.witness.seed<1||
+    r.full_paralysis_sample.witness.seed>48||
+    r.full_paralysis_sample.witness.side!=="p2"||
+    r.full_paralysis_sample.witness.pokemon!=="Metagross"||
+    r.full_paralysis_sample.witness.status_before!=="par"||
+    r.full_paralysis_sample.witness.event!=="|cant|p2a: Metagross|par")
     throw Error("paralysis Gate A source contract changed");
  for(const [i,c] of LEDGER.cases.entries()){
    const row=r.results[i],ref=reference(c);
