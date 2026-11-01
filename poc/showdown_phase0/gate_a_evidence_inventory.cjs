@@ -6,6 +6,7 @@ const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
 const {run:turnOrder}=require("./champions_turn_order_probe.cjs");
 const {LEDGER:TURN_LEDGER,referenceCase}=require("./champions_turn_order_reference.cjs");
+const {moveKey}=require("./champions_move_key.cjs");
 const {main:modifier,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,
   REVIEWED_PINNED_DIVERGENCE,WITNESS_ID}=require("./champions_damage_modifier_probe.cjs");
 const MAP=require("./gate_a_evidence_map.json");
@@ -164,16 +165,12 @@ function checkTurnOrderEvidence(t){
    const c=TURN_LEDGER.cases[i],row=t.results[i],ref=referenceCase(c);
    const isTie=ref.expected_first==="UNRESOLVED_TIE";
    const status=isTie?"INCONCLUSIVE_SPEED_TIE":"SOURCE_SPEC_MATCH";
+   // Validate exact names, Champions MoveKeys and priorities per side;
+   // side order in the observed log varies with the first actor.
    const observedMoves={
-     p1:{id:TURN_LEDGER.reviewed_moves.find(x=>x.species==="Garchomp"&&x.name===c.p1)?.name,
-       name:c.p1,priority:ref.p1_priority},
-     p2:{id:TURN_LEDGER.reviewed_moves.find(x=>x.species==="Metagross"&&x.name===c.p2)?.name,
-       name:c.p2,priority:ref.p2_priority}
+     p1:{id:moveKey(c.p1),name:c.p1,priority:ref.p1_priority},
+     p2:{id:moveKey(c.p2),name:c.p2,priority:ref.p2_priority}
    };
-   // Validate names AND Champions MoveKeys, no simulator implementation imported here.
-   const {moveKey}=require("./champions_move_key.cjs");
-   observedMoves.p1.id=moveKey(c.p1);
-   observedMoves.p2.id=moveKey(c.p2);
    if(!row||row.id!==c.id||row.expected_first!==ref.expected_first||
       row.status!==status||!["p1","p2"].includes(row.observed_first)||
       (!isTie&&row.observed_first!==ref.expected_first)||
@@ -182,7 +179,9 @@ function checkTurnOrderEvidence(t){
       row.observed_sequence?.length!==2||
       row.observed_sequence[0]!==row.observed_first||
       row.observed_sequence[1]===(row.observed_first)||
-      JSON.stringify(row.executed_moves)!==JSON.stringify(observedMoves)||
+      !row.executed_moves||
+      JSON.stringify(row.executed_moves.p1)!==JSON.stringify(observedMoves.p1)||
+      JSON.stringify(row.executed_moves.p2)!==JSON.stringify(observedMoves.p2)||
       row.p1_base_speed!==ref.p1_base_speed||row.p2_base_speed!==ref.p2_base_speed||
       row.p1_effective_speed!==ref.p1_effective_speed||
       row.p2_effective_speed!==ref.p2_effective_speed||
