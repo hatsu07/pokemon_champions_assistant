@@ -153,6 +153,11 @@ jobs:
           assert r["known_modifier_roll_discrepancies"]==4
           assert r["modifier_comparison_scope"]=="SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE"
           assert r["modifier_diagnostic"]=="champions_damage_modifier_probe.cjs"
+          assert r["paralysis_source_order_matches"]==9
+          assert r["paralysis_unknown_compound_rounding"]==1
+          assert r["paralysis_pinned_rate"]=="1/8_SOURCE_ONLY_NOT_DEVICE"
+          assert r["paralysis_scope"]=="SYNTHETIC_PINNED_TURNS_NOT_DEVICE"
+          assert r["paralysis_diagnostic"]=="champions_paralysis_probe.cjs"
           assert r["turn_order_source_matches"]==9
           assert r["turn_order_inconclusive_ties"]==1
           assert r["turn_order_scope"]=="PINNED_SYNTHETIC_EXECUTED_TURNS_NOT_DEVICE"
