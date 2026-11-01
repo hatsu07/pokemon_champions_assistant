@@ -119,16 +119,29 @@ function lifecycle(ctx){
    if(b.p1.active[0].getStat("spe")!==124||
       b.p2.active[0].getStat("spe")!==92)
      throw Error("reviewed weather-overwrite speed precondition drift");
-   validateSelectedMove(b.p1.active[0],"move 1","Rain Dance",0,ctx.dex);
-   validateSelectedMove(b.p2.active[0],"move 1","Sunny Day",0,ctx.dex);
+   const selected={
+     p1:validateSelectedMove(b.p1.active[0],"move 1","Rain Dance",0,ctx.dex),
+     p2:validateSelectedMove(b.p2.active[0],"move 1","Sunny Day",0,ctx.dex)
+   };
    const at=b.log.length;
    b.makeChoices("move 1","move 1");
    const log=b.log.slice(at);
-   const changes=log.filter(line=>line.startsWith("|-weather|")&&!line.includes("|none")&&!line.includes("|[upkeep]"));
-   if(changes.length!==2||!changes[0].includes("RainDance")||
-      !changes[1].includes("SunnyDay")||
+   const moves=observeMoves(log,selected,ctx.dex);
+   const changes=log.filter(line=>line.startsWith("|-weather|")&&
+     !line.includes("|none")&&!line.includes("|[upkeep]"));
+   const firstMoveAt=log.indexOf(moves.move_events[0]);
+   const firstWeatherAt=log.indexOf(changes[0]);
+   const nextMoveAt=log.indexOf(moves.move_events[1]);
+   const nextWeatherAt=log.indexOf(changes[1]);
+   if(moves.first!=="p1"||
+      JSON.stringify(moves.sequence)!==JSON.stringify(["p1","p2"])||
+      changes.length!==2||changes[0]!=="|-weather|RainDance"||
+      changes[1]!=="|-weather|SunnyDay"||
+      !(firstMoveAt>=0&&firstMoveAt<firstWeatherAt&&
+        firstWeatherAt<nextMoveAt&&nextMoveAt<nextWeatherAt)||
       b.field.weather!=="sunnyday"||b.field.weatherState.duration!==4)
-     throw Error("pinned weather move setting/overwrite or default duration disagrees with secondary source: "+JSON.stringify({changes,weather:b.field.weather,duration:b.field.weatherState.duration,events:log.filter(x=>x.startsWith("|move|")||x.startsWith("|-weather|"))}));
+     throw Error("pinned executed weather move/overwrite order or duration disagrees with source: "+
+       JSON.stringify({moves,changes,weather:b.field.weather,duration:b.field.weatherState.duration}));
    const remaining=[b.field.weatherState.duration];
    for(let i=0;i<4;i++){
      if(b.requestState!=="move")throw Error("weather lifecycle ended early");
@@ -139,6 +152,9 @@ function lifecycle(ctx){
      throw Error("pinned 5-turn weather expiry after executed turns drift");
    return {status:"SOURCE_SPEC_MATCH",basis:"TWO_EXECUTED_WEATHER_MOVES_AND_FOUR_FOLLOWUP_TURNS",
      first_weather_event:changes[0],override_weather_event:changes[1],
+     executed_move_order:moves.sequence,executed_moves:moves.executed_moves,
+     executed_move_events:moves.move_events,
+     weather_change_events:changes,
      after_turn_remaining:remaining,extended_item_evaluated:false,
      actual_game_proven:false};
  }finally{b.destroy?.();}
@@ -161,7 +177,7 @@ function run(){
  return {schema:"phase0-champions-weather-speed-diagnostic-v1",
    pinned_sha:PIN,format:FORMAT,regulation:"M-C",source_evidence:LEDGER.evidence,
    tested_species_count:checked,case_count:results.length,counts,results,
-   lifecycle:lifecycle(ctx),duration_conflict:LEDGER.source_conflicts[0],
+   lifecycle:lifecycle(ctx),weather_duration_rules:LEDGER.weather_duration_rules,
    source_only_not_game:true,game_verified_turns:0,private_golden_read:false,
    gate_A:"UNKNOWN",gate_B:"UNSUPPORTED",adoption:"NO_GO",live_use_approved:false,
    unverified:LEDGER.unverified};
