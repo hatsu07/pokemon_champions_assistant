@@ -155,7 +155,9 @@ jobs:
           assert r["modifier_diagnostic"]=="champions_damage_modifier_probe.cjs"
           assert r["weather_source_order_matches"]==12
           assert r["weather_unknown_compound_rounding"]==1
-          assert r["weather_duration_source_conflicts"]==1
+          assert r["weather_item_extension_source_agreement_unexecuted"]==1
+          assert r["weather_same_kind_reapply_unexecuted"]==1
+          assert "weather_duration_source_conflicts" not in r
           assert r["weather_executed_lifecycle_cases"]==1
           assert r["weather_scope"]=="PINNED_SYNTHETIC_WEATHER_NOT_GAME"
           assert r["paralysis_source_order_matches"]==9
