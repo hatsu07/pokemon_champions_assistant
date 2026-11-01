@@ -14,9 +14,9 @@
       "Champions four weather types, five turns, overwrite and weather Speed abilities"
     ],
     [
-      "ability_master",
-      "Pokemon_Champions_MC_ability_master.csv",
-      "Four Champions ability descriptions explicitly give 2x Speed under matching weather"
+      "pokemon_master",
+      "Pokemon_Champions_MC_usable_pokemon.csv",
+      "Champions usable species master lists reviewed ability ownership; 2x Speed from Champions weather source"
     ],
     [
       "ap_source",
