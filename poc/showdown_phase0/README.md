@@ -1,5 +1,14 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #164（案）：天候・天候特性のSと行動順／5ターン・上書き監査
+
+- Champions固定マスターで「ハリーセン／すいすい」「ドリュウズ／すなかき」「フシギバナ／ようりょくそ」「ツンベアー／ゆきかき」の4種族・特性・S種族値を固定照合。Champions専用二次資料[GameWith天気](https://gamewith.jp/pokemon-champions/561577)と[AP仕様](https://pkmn-cp-dataportal.com/battle/rule/stat-points/)に基づくShowdown非依存S計算器を追加。
+- 13件の限定条件：対応天候と不一致天候、無天候、まひ・スカーフ・S+1・トリックルームの一部組合せ。**複合補正の整数端数が適用順序によって異なる**雨＋すいすい＋スカーフの奇数S条件は `SOURCE_UNKNOWN_MODIFIER_ORDER` とし、固定Showdownの実行SをChampions側期待値に昇格しない。
+- 固定M-Cにおける合法な登録6→選出3を双方に作り、実際に使用された2つの「つるぎのまい」の技ID・優先度・順序を監査。場の天候は**合成ターン前提条件**としてセット。別にガブリアスの「あまごい」とメタグロスの「にほんばれ」を**実際の同ターンの技として実行**し、上書きと5ターン経過を固定Showdown合成局面で確認。これは実機証明ではない。
+- **天候延長に資料間の相違**：[GameWith天気仕様](https://gamewith.jp/pokemon-champions/561577)は「延長できない」とし、[Championsデータポータル](https://pkmn-cp-dataportal.com/battle/field/weather-vs-terrain/)は延長道具で8ターンと記載。どちらも二次資料のため `SOURCE_CONFLICT` として保留し、道具付きの継続ターンは結論を出さない。
+- ターン中の天候変更による同ターン内Sの再判定、登場時天候特性の発動順、能力抑制・終盤残余天候、天候ダメージの端数は範囲外。過去作品の同仕様推定は禁止。実ゲーム検証0件・Golden未読込・本番LIVE不変。**Gate A=UNKNOWN / Gate B=UNSUPPORTED / 採用NO_GO** を保持。
+
+
 ## PR #163 レビューP2対応：出典強度・まひ行動不能の実行証人
 
 - 出典台帳のURLだけでなく、`sources[].basis`の説明全文と`not_verified`の6項目内容を独立定数と照合。出典を実機検証済みに偽装した変更や、未知範囲を削除した変更は fail-closed。Gate A の`unverified`と固定Showdownソース検査の`evidence`も実機根拠に昇格させない。
