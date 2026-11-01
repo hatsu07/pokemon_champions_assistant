@@ -3,16 +3,26 @@ const {test}=require("node:test"),assert=require("node:assert/strict");
 const {LEDGER,SOURCES,SPECIES,CASES,checkLedger,independentSpeeds,masterCheck,reference}=
  require("./champions_weather_speed_reference.cjs");
 const {run}=require("./champions_weather_speed_probe.cjs");
-test("weather source strength, extender conflict and unknown mechanics fail closed",()=>{
+test("weather source strength, two distinct unexecuted duration rules and unknown mechanics fail closed",()=>{
  assert.equal(checkLedger(),true);
  assert.equal(LEDGER.weather_default_turns,5);
- assert.equal(LEDGER.source_conflicts[0].status,"SOURCE_CONFLICT");
+ assert.equal(LEDGER.weather_duration_rules[0].status,"SECONDARY_SOURCE_DESCRIBED_NOT_EXECUTED");
+ assert.equal(LEDGER.weather_duration_rules[0].operation,"REAPPLY_SAME_WEATHER_MOVE_WHILE_ACTIVE");
+ assert.equal(LEDGER.weather_duration_rules[1].status,"SECONDARY_SOURCES_AGREE_NOT_EXECUTED");
+ assert.equal(LEDGER.weather_duration_rules[1].operation,"ACTIVATE_SUNNY_WEATHER_WITH_HEAT_ROCK");
+ assert.equal(LEDGER.weather_duration_rules[1].expected_turns,8);
+ assert.equal(LEDGER.weather_duration_rules[1].pinned_tested,false);
+ assert.equal(LEDGER.weather_duration_rules[1].game_verified,false);
  assert.equal(masterCheck(),4);
  for(const corrupt of [
    l=>{l.source[0][2]="game device certified";},
    l=>{l.source[0][1]="https://not-original.example";},
-   l=>{l.source_conflicts[0].status="RESOLVED";},
-   l=>{l.source_conflicts[0].impact="eight turns confirmed";},
+   l=>{l.weather_duration_rules[1].status="GAME_VERIFIED";},
+   l=>{l.weather_duration_rules[1].pinned_tested=true;},
+   l=>{l.weather_duration_rules[0].expected_effect="RESETS_TIMER";},
+   l=>{l.weather_duration_rules[1].source_ids.pop();},
+   l=>{l.weather_duration_rules[1].game_verified=true;},
+   l=>{l.source_conflicts=[{status:"SOURCE_CONFLICT"}];},
    l=>{l.unverified[0]="Real-game weather confirmed";},
    l=>{l.reviewed_species[0][5]=87;},
    l=>{l.scenarios[1][7]="p1";},
@@ -24,7 +34,7 @@ test("weather source strength, extender conflict and unknown mechanics fail clos
    const candidate=structuredClone(LEDGER);corrupt(candidate);
    assert.throws(()=>checkLedger(candidate),/weather source evidence contract drift/);
  }
- assert.equal(SOURCES.length,4);
+ assert.equal(SOURCES.length,5);
  assert.equal(SPECIES.length,4);
  assert.equal(CASES.length,13);
 });
@@ -68,10 +78,25 @@ test("pinned synthetic 6 registered/3 selected weather order and 5-turn overwrit
  assert.equal(r.game_verified_turns,0);
  assert.equal(r.private_golden_read,false);
  assert.equal(r.live_use_approved,false);
- assert.equal(r.duration_conflict.status,"SOURCE_CONFLICT");
+ assert.equal(r.weather_duration_rules[0].status,"SECONDARY_SOURCE_DESCRIBED_NOT_EXECUTED");
+ assert.equal(r.weather_duration_rules[1].status,"SECONDARY_SOURCES_AGREE_NOT_EXECUTED");
+ assert.equal(r.weather_duration_rules[1].pinned_tested,false);
+ assert.equal(Object.hasOwn(r,"duration_conflict"),false);
  assert.equal(r.lifecycle.status,"SOURCE_SPEC_MATCH");
  assert.ok(r.lifecycle.first_weather_event.includes("RainDance"));
  assert.ok(r.lifecycle.override_weather_event.includes("SunnyDay"));
+ assert.deepEqual(r.lifecycle.executed_move_order,["p1","p2"]);
+ assert.deepEqual(r.lifecycle.executed_moves,{
+   p1:{id:"raindance",name:"Rain Dance",priority:0},
+   p2:{id:"sunnyday",name:"Sunny Day",priority:0}
+ });
+ assert.deepEqual(r.lifecycle.executed_move_events,[
+   "|move|p1a: Garchomp|Rain Dance|p1a: Garchomp",
+   "|move|p2a: Metagross|Sunny Day|p2a: Metagross"
+ ]);
+ assert.deepEqual(r.lifecycle.weather_change_events,[
+   "|-weather|RainDance","|-weather|SunnyDay"
+ ]);
  assert.deepEqual(r.lifecycle.after_turn_remaining,[4,3,2,1,0]);
  assert.equal(r.lifecycle.extended_item_evaluated,false);
  assert.equal(r.lifecycle.actual_game_proven,false);
