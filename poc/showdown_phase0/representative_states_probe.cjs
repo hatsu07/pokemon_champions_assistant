@@ -214,7 +214,12 @@ function validateReport(report) {
         r.branch?.repeated_action_identical !== true ||
         r.branch?.source_unchanged !== true ||
         r.branch?.distinct_outcome !== true))
-    throw Error("representative coverage, duplicate state or restoration regression");
+    throw Error("representative coverage, duplicate state or restoration regression: " +
+      JSON.stringify({count: report.case_count, full: report.distinct_complete_states,
+        tactical: report.distinct_tactical_states, matchups: report.distinct_matchups,
+        mechanisms: report.distinct_mechanisms, counts: report.counts,
+        failed_cases: report.results.filter(r => r.status !== "PASS_SYNTHETIC")
+          .map(r => ({id: r.case_id, kind: r.mechanism, reason: r.reason})).slice(0, 20)}));
   return true;
 }
 function run() {
@@ -223,6 +228,7 @@ function run() {
   // Warmups never count toward 127 defined input states or any timing sample.
   for (let i = 0; i < 6; i++) syntheticSetup(manifest.cases[0], ctx);
   const initialMemory = process.memoryUsage();
+  const uptimeBeforeCases = process.uptime() * 1000;
   const results = manifest.cases.map(c => runCase(c, ctx));
   const full = new Set(results.map(r => r.state_sha256).filter(Boolean));
   const tact = new Set(results.map(r => r.tactical_sha256).filter(Boolean));
@@ -249,7 +255,7 @@ function run() {
     memory_bytes: {initial_rss: initialMemory.rss, final_rss: afterMemory.rss,
       initial_heap_used: initialMemory.heapUsed, final_heap_used: afterMemory.heapUsed,
       final_heap_total: afterMemory.heapTotal},
-    node_process_uptime_before_case_ms: process.uptime() * 1000,
+    node_process_uptime_before_case_ms: uptimeBeforeCases,
     // No Windows display E2E or native game measurement was performed.
     native_game_verification: false, windows_e2e_verified: false,
     synthetic_mechanism_coverage_met: MODES.every(m => results.some(r =>
