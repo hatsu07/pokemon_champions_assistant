@@ -108,6 +108,8 @@ test("observed current PP of a single revealed move conditions only matching leg
  assert.ok(r.admitted_evidence_fields.includes("opponent_remaining_pp"));
  assert.ok(r.admitted_evidence_fields.includes("opponent_revealed_moves"));
  assert.ok(!r.unrecovered_hidden_fields.includes("opponent_remaining_pp"));
+ assert.ok(r.unrecovered_hidden_fields.includes("opponent_unrevealed_moves"),
+   "revealing one move cannot prove all other opponent moves");
  assert.equal(r.gate_B,"UNSUPPORTED");
  assert.equal(r.game_compatibility_verified,false);
  assert.equal(r.live_recommendation_permitted,false);
