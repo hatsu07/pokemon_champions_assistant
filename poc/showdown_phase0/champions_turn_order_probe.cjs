@@ -47,14 +47,38 @@ function makeFixture(c){
     moves:["Iron Defense","Bullet Punch"]}
  };
 }
-function observeMoves(log){
+// Pinned selected move slots bridge expected source move priority to actual actions.
+function validateSelectedMove(pokemon,choice,expectedName,expectedPriority,dex){
+ if(!/^move [1-4]$/.test(choice))throw Error("unreviewed move choice index");
+ const i=Number(choice.slice(5))-1,slot=pokemon.moveSlots?.[i];
+ const move=dex.moves.get(expectedName);
+ if(!slot||!move.exists||slot.id!==move.id||
+    slot.move!==move.name||!Number.isInteger(slot.pp)||slot.pp<1||
+    move.priority!==expectedPriority)
+   throw Error("selected move slot/PP/priority disagrees with reviewed fixture: "+expectedName);
+ return {id:move.id,name:move.name,priority:move.priority};
+}
+function observeMoves(log,expected,dex){
+ if(!expected||!dex||!expected.p1||!expected.p2)
+   throw Error("reviewed expected executed moves and pinned dex required");
  const events=log.filter(x=>x.startsWith("|move|"));
- const side=(event)=>event.startsWith("|move|p1a:")?"p1":
-   event.startsWith("|move|p2a:")?"p2":null;
- const sides=events.map(side);
- if(sides.length!==2||sides.some(x=>x===null)||new Set(sides).size!==2)
+ const parsed=events.map(event=>{
+   const fields=event.split("|");
+   const side=fields[2]?.startsWith("p1a:")?"p1":
+     fields[2]?.startsWith("p2a:")?"p2":null;
+   if(!side||!fields[3])throw Error("unreviewed executed move log: "+event);
+   const move=dex.moves.get(fields[3]),want=expected[side];
+   if(!move.exists||fields[3]!==want.name||move.id!==want.id||
+      move.priority!==want.priority)
+     throw Error("executed move name/ID/priority changed: "+side+"/"+fields[3]);
+   return {side,id:move.id,name:fields[3],priority:move.priority};
+ });
+ const sides=parsed.map(row=>row.side);
+ if(sides.length!==2||new Set(sides).size!==2)
    throw Error("executed move order not unambiguously observable: "+JSON.stringify(events));
- return {first:sides[0],sequence:sides,move_events:events};
+ return {first:sides[0],sequence:sides,move_events:events,
+   executed_moves:Object.fromEntries(parsed.map(({side,id,name,priority})=>
+     [side,{id,name,priority}]))};
 }
 function run(){
  validateLedger();
@@ -103,14 +127,20 @@ function run(){
      if(p2.boosts.spe!==c.m_stage||
         !!b.field.pseudoWeather.trickroom!==c.trick_room)
        throw Error("synthetic boost or Trick Room precondition drift");
+     const choice1=chooseIndex(c.p1,"p1"),choice2=chooseIndex(c.p2,"p2");
+     const expectedMoves={
+       p1:validateSelectedMove(p1,choice1,c.p1,reference.p1_priority,dex),
+       p2:validateSelectedMove(p2,choice2,c.p2,reference.p2_priority,dex)
+     };
      const at=b.log.length;
-     b.makeChoices(chooseIndex(c.p1,"p1"),chooseIndex(c.p2,"p2"));
-     const observed=observeMoves(b.log.slice(at));
+     b.makeChoices(choice1,choice2);
+     const observed=observeMoves(b.log.slice(at),expectedMoves,dex);
      const expected=reference.expected_first;
      const status=expected==="UNRESOLVED_TIE"?"INCONCLUSIVE_SPEED_TIE":
        observed.first===expected?"SOURCE_SPEC_MATCH":"SOURCE_SPEC_MISMATCH";
      results.push({id:c.id,status,expected_first:expected,
        observed_first:observed.first,observed_sequence:observed.sequence,
+       executed_moves:observed.executed_moves,
        source_only_preconditions:{synthetic_speed_boost:c.m_stage,
          synthetic_trick_room:c.trick_room,scarf_held:c.m_scarf},
        comparison_scope:expected==="UNRESOLVED_TIE"?
@@ -142,4 +172,4 @@ if(require.main===module){
    if(r.counts.SOURCE_SPEC_MISMATCH)process.exitCode=1;
  }catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
-module.exports={run,checkMovePriorities,makeFixture,observeMoves,chooseIndex,PIN,FORMAT};
+module.exports={run,checkMovePriorities,makeFixture,observeMoves,validateSelectedMove,chooseIndex,PIN,FORMAT};
