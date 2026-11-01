@@ -8,6 +8,11 @@ test("Champions secondary-source rate, URL, cases and device-evidence boundary a
  for(const mutate of [
    l=>{l.full_paralysis_rate.denominator=4},
    l=>{l.sources[0].url="https://unreviewed.example"},
+   l=>{l.sources[0].basis="Champions device verified";},
+   l=>{l.sources[4].basis="Device-proven Trick Room order";},
+   l=>{l.not_verified[0]="Live game turn ordering verified";},
+   l=>{l.not_verified[5]="Full paralysis probability device-confirmed";},
+   l=>{l.sources[2].extra="official verification";},
    l=>{l.cases[1].g_par=false},
    l=>{l.cases[3].trick_room=false},
    l=>{l.cases[5].expected="p2"},
