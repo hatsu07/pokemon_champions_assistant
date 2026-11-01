@@ -36,7 +36,7 @@ test("weather source evidence rejects forged game parity, modified lifecycle and
    x=>{x.lifecycle.executed_moves.p1.priority=1;},
    x=>{x.lifecycle.executed_move_events[0]="|move|p2a: Metagross|Rain Dance|p2a: Metagross";},
    x=>{x.lifecycle.executed_move_events.pop();},
-   x=>{x.lifecycle.weather_change_events.reverse();},,
+   x=>{x.lifecycle.weather_change_events.reverse();},
    x=>{x.unverified[1]="Weather extenders game-confirmed";},
    x=>{x.results.pop();}
  ]){
