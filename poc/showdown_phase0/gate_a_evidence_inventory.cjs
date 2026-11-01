@@ -4,6 +4,8 @@ const fs=require("node:fs"),path=require("node:path");
 const {compare}=require("./audit.cjs");
 const {main:wiki}=require("./wiki_damage_compare.cjs");
 const {main:events}=require("./champions_event_probe.cjs");
+const {main:modifier,REVIEWED_CONTRACTS,REVIEWED_SOURCE_URLS,
+  REVIEWED_PINNED_DIVERGENCE,WITNESS_ID}=require("./champions_damage_modifier_probe.cjs");
 const MAP=require("./gate_a_evidence_map.json");
 const CONTRACTS=require("./champions_rule_contracts.json");
 const EVENT_BASELINE=require("./champions_event_baseline.json");
@@ -84,8 +86,65 @@ function checkEvidence(a,w,e,map=MAP){
  }
  return true;
 }
-function summarize(a,w,e,map=MAP){
+// This is a reviewed *secondary-source* disagreement, never evidence of device parity.
+// Recompute the pinned diagnostic rather than trusting counts copied into a report.
+function checkModifierEvidence(m){
+ if(m?.schema!=="phase0-champions-damage-modifier-diagnostic-v1"||
+    m.pinned_sha!==PIN||m.format!==FORMAT||m.regulation!=="M-C"||
+    m.evidence!=="CHAMPIONS_SECONDARY_SOURCE_ARITHMETIC_NOT_DEVICE_GOLDEN"||
+    m.gate_A!=="UNKNOWN"||m.gate_B!=="UNSUPPORTED"||m.adoption!=="NO_GO"||
+    m.game_verified_check_count!==0||m.executed_turns!==0||
+    m.private_golden_read!==false||m.live_use_approved!==false||
+    m.unknown_source_divergences_accepted!==false||
+    m.reviewed_source_divergence!=="PINNED_SPLIT_ROUNDING_VS_SECONDARY_COMBINED_MODIFIER"||
+    m.scenario_count!==REVIEWED_CONTRACTS.length||m.individual_roll_comparisons!==144||
+    m.odd_rounding_witness_count!==4||
+    m.odd_rounding_witness_verified_in_pinned_getDamage!==true||
+    JSON.stringify(m.source_ids)!==JSON.stringify(Object.keys(REVIEWED_SOURCE_URLS))||
+    JSON.stringify(m.results?.map(r=>r.id))!==
+      JSON.stringify(REVIEWED_CONTRACTS.map(r=>r.id)))
+   throw Error("modifier source evidence contract changed");
+ let conflicts=0,rollDifferences=0;
+ for(let i=0;i<REVIEWED_CONTRACTS.length;i++){
+   const expected=REVIEWED_CONTRACTS[i],r=m.results[i],odd=r.id===WITNESS_ID;
+   const status=odd?"WIKI_SPEC_MISMATCH":"WIKI_SPEC_MATCH";
+   if(r.status!==status||r.difference_count!==(odd?4:0)||
+      JSON.stringify(r.conditions)!==JSON.stringify({
+        burn:expected.burn,reflect:expected.reflect,critical:expected.critical})||
+      JSON.stringify(r.source_ids)!==JSON.stringify(expected.source_ids)||
+      r.source_numeric_basis!==(odd?"DERIVED_FORMULA_ONLY":"PUBLISHED_FIXTURE_AND_DERIVED_MODIFIERS")||
+      r.defender!==(odd?"Blastoise":"Metagross")||
+      !Array.isArray(r.first_differences)||
+      r.first_differences.length!==(odd?4:0))
+     throw Error("modifier source scenario drift: "+r.id);
+   if(odd){
+     const diffs=REVIEWED_PINNED_DIVERGENCE;
+     if(r.reviewed_source_discrepancy?.status!=="REVIEWED_SECONDARY_SOURCE_DIVERGENCE"||
+        r.reviewed_source_discrepancy.difference_count!==4||
+        JSON.stringify(r.first_differences)!==JSON.stringify(diffs.map(x=>({
+          roll_pct:x.roll_pct,reference:x.combined_rounding,
+          pinned_showdown:x.split_rounding})))||
+        JSON.stringify(r.odd_rounding_witnesses?.map(x=>({
+          roll_pct:x.roll_pct,pre_final_modifier:x.pre_final_modifier,
+          combined_rounding:x.combined_rounding,split_rounding:x.split_rounding,
+          pinned_damage:x.pinned_damage})))!==
+          JSON.stringify(diffs.map(x=>({...x,pinned_damage:x.split_rounding}))))
+       throw Error("modifier known source discrepancy changed");
+   }else if(r.reviewed_source_discrepancy!==null||
+            r.odd_rounding_witnesses?.length!==0)
+     throw Error("unexpected modifier source discrepancy: "+r.id);
+   conflicts+=Number(r.status==="WIKI_SPEC_MISMATCH");
+   rollDifferences+=r.difference_count;
+ }
+ if(conflicts!==1||rollDifferences!==4||
+    m.source_divergence_count!==conflicts||
+    m.counts?.WIKI_SPEC_MATCH!==8||m.counts?.WIKI_SPEC_MISMATCH!==conflicts)
+   throw Error("modifier source discrepancy count changed");
+ return {conflicts,rollDifferences};
+}
+function summarize(a,w,e,map=MAP,m=modifier()){
  checkMap(map);checkEvidence(a,w,e,map);
+ const modifierCounts=checkModifierEvidence(m);
  const features=map.feature_map.map(f=>{
    const groups=f.static_groups.map(group=>({group,...(a.totals[group]||{checked:0,matching:0,mismatched:0,missing:0})}));
    const disagreement=groups.reduce((n,g)=>n+g.mismatched+g.missing,0);
@@ -97,6 +156,13 @@ function summarize(a,w,e,map=MAP){
      static_groups:groups,static_disagreement_count:disagreement,
      source_rule_ids:f.rule_ids,event_evidence_counts:counts,
      wiki_arithmetic_status:f.wiki_damage?(w.mismatch_count?"WIKI_SPEC_MISMATCH":"WIKI_SPEC_MATCH"):"NOT_APPLICABLE",
+     ...(f.wiki_damage?{
+       modifier_source_status:"REVIEWED_SECONDARY_SOURCE_DIVERGENCE",
+       known_modifier_source_conflicts:modifierCounts.conflicts,
+       known_modifier_roll_discrepancies:modifierCounts.rollDifferences,
+       modifier_comparison_scope:"SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE",
+       modifier_diagnostic:"champions_damage_modifier_probe.cjs"
+     }:{}),
      actual_game_status:"NOT_EVALUATED_PRIVATE_GOLDEN",
      feature_compatibility:"UNKNOWN",risk:f.risk,next_evidence:f.next_evidence,
      allowed_as_certain_ko_or_safe_switch_proof:false};
@@ -106,6 +172,11 @@ function summarize(a,w,e,map=MAP){
    gate_A:"UNKNOWN",gate_B:"UNSUPPORTED",adoption:"NO_GO",
    feature_count:features.length,master_discrepancy_count:a.mismatch_count,
    wiki_comparable_count:w.result_count,wiki_mismatch_count:w.mismatch_count,
+   modifier_source_status:"REVIEWED_SECONDARY_SOURCE_DIVERGENCE",
+   known_modifier_source_conflicts:modifierCounts.conflicts,
+   known_modifier_roll_discrepancies:modifierCounts.rollDifferences,
+   modifier_comparison_scope:"SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE",
+   modifier_diagnostic:"champions_damage_modifier_probe.cjs",
    event_rule_count:CONTRACTS.rules.length,event_case_count:e.results.length,
    event_counts:e.counts,game_verified_cases_this_run:0,game_verified_checks_this_run:0,
    private_golden_read:false,safe_to_integrate_with_live:false,all_features_confirmed:false,
@@ -116,4 +187,4 @@ if(require.main===module){
  try{process.stdout.write(JSON.stringify(run())+"\n");}
  catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}
 }
-module.exports={run,summarize,checkMap,checkEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};
+module.exports={run,summarize,checkMap,checkEvidence,checkModifierEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP};

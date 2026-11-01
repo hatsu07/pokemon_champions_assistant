@@ -33,7 +33,47 @@ jobs:
       - name: Build fixed SHA in isolated container
         run: docker build -f poc/showdown_phase0/Dockerfile -t champions-phase0 .
       - name: Test fail-closed adoption assessment
-        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs
+        run: docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 --test test_decision.cjs test_state_compare.cjs test_audit.cjs test_golden_compare.cjs test_wiki_damage_reference.cjs test_champions_rule_reference.cjs test_champions_event_probe.cjs test_gate_b_probe.cjs test_six_team_selection_probe.cjs test_partial_observation_probe.cjs test_representative_states_probe.cjs test_game_evidence_bridge.cjs test_cross_process_synthetic_probe.cjs test_gate_a_evidence_inventory.cjs test_champions_ap_stat_reference.cjs test_champions_damage_modifier_probe.cjs
+      - name: Audit 9 Champions modifier conditions and exact known source rounding divergence
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node champions-phase0 champions_damage_modifier_probe.cjs > phase0-damage-modifier.json
+          python3 - <<'PY'
+          import json
+          with open("phase0-damage-modifier.json",encoding="utf-8") as f:
+              r=json.load(f)
+          assert r["schema"]=="phase0-champions-damage-modifier-diagnostic-v1"
+          assert r["pinned_sha"]=="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
+          assert r["format"]=="gen9championsbssregmc"
+          assert (r["gate_A"],r["gate_B"],r["adoption"])==("UNKNOWN","UNSUPPORTED","NO_GO")
+          assert r["scenario_count"]==9 and r["individual_roll_comparisons"]==144
+          assert r["odd_rounding_witness_count"]>0
+          assert r["odd_rounding_witness_verified_in_pinned_getDamage"] is True
+          assert r["counts"]=={"WIKI_SPEC_MATCH":8,"WIKI_SPEC_MISMATCH":1}
+          assert r["source_divergence_count"]==1
+          assert r["reviewed_source_divergence"]=="PINNED_SPLIT_ROUNDING_VS_SECONDARY_COMBINED_MODIFIER"
+          assert r["unknown_source_divergences_accepted"] is False
+          odd=next(x for x in r["results"] if x["id"]=="neutral-type-burn-and-reflect")
+          assert odd["status"]=="WIKI_SPEC_MISMATCH" and odd["difference_count"]==4
+          assert [x["roll_pct"] for x in odd["first_differences"]]==[86,90,91,98]
+          assert all(w["pinned_damage"]==w["split_rounding"] and
+                     w["pinned_damage"]!=w["combined_rounding"] for w in odd["odd_rounding_witnesses"])
+          assert r["game_verified_check_count"]==0
+          assert r["executed_turns"]==0
+          assert r["private_golden_read"] is False and r["live_use_approved"] is False
+          assert len(r["results"])==9
+          for row in r["results"]:
+              assert row["status"]==("WIKI_SPEC_MISMATCH" if row["id"]=="neutral-type-burn-and-reflect" else "WIKI_SPEC_MATCH")
+              assert row["difference_count"]==(4 if row["id"]=="neutral-type-burn-and-reflect" else 0)
+              print("DAMAGE_MODIFIER="+json.dumps({
+                  "id":row["id"],"conditions":row["conditions"],
+                  "reference_range":row["reference_range"],
+                  "pinned_range":row["pinned_range"],
+                  "status":row["status"],
+                  "odd_rounding_witnesses":row["odd_rounding_witnesses"]
+              },sort_keys=True))
+          print("Reviewed secondary-source divergence is a FINDING, not a gameplay parity PASS")
+          PY
       - name: Cross-check independent Champions AP stat arithmetic against pinned selected battle bodies
         shell: bash
         run: |
@@ -80,7 +120,18 @@ jobs:
           assert (r["gate_A"],r["gate_B"],r["adoption"])==("UNKNOWN","UNSUPPORTED","NO_GO")
           assert r["feature_count"]==10
           assert r["event_rule_count"]==5 and r["event_case_count"]==18
-          assert r["wiki_comparable_count"]==1
+          assert r["wiki_comparable_count"]==1 and r["wiki_mismatch_count"]==0
+          assert r["modifier_source_status"]=="REVIEWED_SECONDARY_SOURCE_DIVERGENCE"
+          assert r["known_modifier_source_conflicts"]==1
+          assert r["known_modifier_roll_discrepancies"]==4
+          assert r["modifier_comparison_scope"]=="SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE"
+          assert r["modifier_diagnostic"]=="champions_damage_modifier_probe.cjs"
+          damage=next(f for f in r["features"] if f["feature"]=="damage RNG and critical")
+          assert damage["wiki_arithmetic_status"]=="WIKI_SPEC_MATCH"
+          assert damage["modifier_source_status"]==r["modifier_source_status"]
+          assert damage["known_modifier_source_conflicts"]==1
+          assert damage["known_modifier_roll_discrepancies"]==4
+          assert damage["modifier_comparison_scope"]==r["modifier_comparison_scope"]
           assert r["game_verified_cases_this_run"]==0 and r["game_verified_checks_this_run"]==0
           assert r["private_golden_read"] is False and r["safe_to_integrate_with_live"] is False
           for f in r["features"]:
@@ -90,9 +141,13 @@ jobs:
                   "feature":f["feature"],"static_status":f["static_status"],
                   "static_disagreement_count":f["static_disagreement_count"],
                   "wiki_arithmetic_status":f["wiki_arithmetic_status"],
+                  "modifier_source_status":f.get("modifier_source_status"),
+                  "known_modifier_source_conflicts":f.get("known_modifier_source_conflicts"),
+                  "known_modifier_roll_discrepancies":f.get("known_modifier_roll_discrepancies"),
                   "event_evidence_counts":f["event_evidence_counts"],
                   "next_evidence":f["next_evidence"],
               },ensure_ascii=False,sort_keys=True))
+          print("Known secondary-source/pinned modifier conflict: 1 condition, 4 rolls; device parity UNKNOWN")
           print("Gate A evidence inventory: source-only; no private Golden uploaded")
           PY
       - name: Diagnose three independent Linux Node process replays

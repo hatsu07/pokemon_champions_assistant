@@ -1,5 +1,20 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## Gate A：二次資料に基づくやけど・壁・急所のダメージ補正順と端数比較（Issue #139）
+
+`champions_damage_modifier_source_ledger.json` はChampions専門の二次資料にある **じしん／ガブリアス→メタグロス** の数値と、急所・やけど・リフレクターの組み合わせを、2026-11-01確認の根拠URL付きで固定する。個々の効果を**独立に観測した実ゲーム証拠ではない**。公式やユーザー共有の新しい実ゲーム情報を上位に置く。
+
+`champions_damage_modifier_probe.cjs` は既存の`wiki_damage_reference.cjs`（Showdownに依存しないBigInt算術：基礎→急所→乱数→一致→相性→最終補正の順・五捨五超入）を期待値に使い、M-Cの両側**固定登録6→選出3**をマスターとTeamValidatorで検証後、Showdown内部の`getDamage`で16乱数を8条件について比較する（**従来8条件＋追加の奇数丸め識別条件1件＝9合成条件×16乱数=144個別ダメージ比較**）。
+
+条件は通常、急所、やけど、リフレクター、やけど＋壁、急所＋壁、急所＋やけど、急所＋壁＋やけど。急所は壁無視、やけどは残るという二次資料の記述を参照する。やけど＋壁の最終補正は`1/4`を一括で五捨五超入する。対象技の特性・他道具・天候・フィールド・ランク・技優先度などは検証対象外。
+
+**今回新たに判明した資料差異：**追加カメックス条件の16乱数のうち4件（86%=22対21、90%=23対22、91%=23対22、98%=25対24）で、Champions二次資料の1/4一括丸めと固定Showdownの半減2回丸めが不一致。Showdown側は後者と一致した。**`WIKI_SPEC_MISMATCH`を維持**し、従来8条件は一致、追加1条件は不一致と機械可読で報告。これをChampionsゲーム内の不一致・仕様の正解判定に拡大しない。これ以外の新規差分や、既知4差分の消失・変化はfail-closedとし、明示的な再審査を要求する。CI全成功は「既知差分を正確に検出・記録する監査が成立した」意味であり、9件すべてが資料に一致した意味ではない。
+
+追加の識別条件では、既存6匹登録チームのベンチにいる**カメックスを受け手として先発へ交換**し、相性等倍・防御実数値120の合法対面を作る。最終補正直前の整数が奇数かつ「1/4一括」と「1/2を2回丸め」の結果が異なる乱数を必ず要求し、Showdownの`getDamage`との相違は既知4乱数のみ監査上の確認済み差異として許容し、追加・消失・変化した差異ではfail-closedにする。元のメタグロス相性2倍条件は最終補正前が偶数となり**一括/分割丸めの検証不能**だったため、元の128数値一致と今回の識別テストを分けて扱う。カメックスの期待値は公開済み数値例ではなく、Champions二次資料の数式＋固定マスターの種族値から独立に導いたもので実機観測ではない。ケースIDとburn/Reflect/criticalの各フラグ・出典URLを別契約に固定し、片方のフラグだけ改変する負例でもfail-closedにする。
+
+**`getDamage`を直接呼ぶ計算診断であり、8回の実行ターン検証でも端末での実ゲーム互換でもない。** 結果は`WIKI_SPEC_MATCH`/`WIKI_SPEC_MISMATCH`、非公開実ゲームGoldenは未使用、`executed_turns=0`、`game_verified_check_count=0`を維持。差異があれば`SOURCE`の差異として記録し、Showdownか二次資料のいずれかが正しいと即断しない。Gate A=UNKNOWN、Gate B=UNSUPPORTED、採用NO_GO。計算結果を本番の確定KO/安全受け出し保証に使用しない。
+
+
 ## Gate A：AP・性格の実数値をChampions資料から独立計算（Issue #139）
 
 **PR #159 レビューP2反映（2026-11-01）**：APを実際に振り替える対象をHP/攻撃/防御/特攻/特防/素早さの6能力へ拡大。2種族×4性格×6対象×8AP値で**384合成局面・2,304能力値比較**（各対象能力は64ケース）。各ケースで6能力を照合するため、対象APを変化させた384例と総数2,304比較は別の指標とする。AP対象0の合法登録回避は対象外能力に2APを割り当て、特防自体が対象の場合は防御に割り当てる（48ケース）。これは固定Showdownの登録条件で、Champions実ゲームにおける全AP0の不適法性を示さない。
@@ -19,6 +34,8 @@
 `gate_a_evidence_inventory.cjs` は `golden_gate_requirements.csv` のGate A 10項目を正本として、固定ChampionsマスターとShowdownの静的差分、出典から**独立**に計算したWiki単発ダメージ例、Bulbapedia Champions記述由来の5契約・18イベントを機能別に照合する。ゲームの実測や未公開対戦ログをこのコマンドに読み込まない。
 
 `gate_a_evidence_map.json` は静的監査の対応群・イベント契約・Wiki例の適用範囲・LIVEでの危険・次の証拠を明示する。 `move_type`・`move_category`は技の固定仕様として「move power and PP」に明示的に分類するが、動的な技効果やゲーム内ダメージの確認を意味しない。静的監査で実行する全13グループを少なくとも1機能に対応づけ、未マッピングの既存グループ・新規監査グループは `UNMAPPED_AUDIT_GROUP` として失敗させる。機能別の差異件数は同一グループが複数機能に使われるため単純合算できない。なお `audit.cjs` の `pokemon_link` グループは学習技リンクが欠落したときだけ出力されるため、グループ不在は0件として明示し、`move_pp`等の常時照合グループ不在とは区別する。
+
+**PR #160の再レビューP2対応（2026-11-01）**：Gate A横断インベントリは `champions_damage_modifier_probe.cjs` の同一固定SHA・M-C条件別診断を再実行し、その機械可読結果を検証してから、`damage RNG and critical` 機能行とトップレベルの両方へ `modifier_source_status=REVIEWED_SECONDARY_SOURCE_DIVERGENCE`、`known_modifier_source_conflicts=1`、`known_modifier_roll_discrepancies=4` を表示する。従来の単発Wiki例だけに適用される `wiki_arithmetic_status=WIKI_SPEC_MATCH` は変更せず、併記して適用範囲を明示する。9条件のID・フラグ・出典、固定Showdown側での既知4差異の値・位置・件数を検査し、差異が消えた／増えた、資料競合を実機証拠へ昇格したなどの改変は fail-closed とする。比較対象はあくまで**Champions専門の二次資料と固定Showdown**であり、実機との一致・不一致ではない。本番LIVEへの採用可否、Gate A/BおよびゲームGolden読み込み0の境界は不変。なお総合レポートの件数は`champions_damage_modifier_probe.cjs`自体の直接診断に依存するため、独立した2回の実機観測としては数えない。
 
 静的比較が一致しても `SOURCE_CHECKED_ONLY`、Wiki数式が一致しても `WIKI_SPEC_MATCH` に過ぎず、実ゲームに一致したことではない。差分は `SOURCE_CONFLICT` として残し、固定マスターとShowdownのどちらを正とするかは追加根拠なく判定しない。イベントで `INCONCLUSIVE` だった条件も解消扱いにしない。
 

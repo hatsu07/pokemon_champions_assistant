@@ -1,7 +1,7 @@
 "use strict";
 const {test}=require("node:test");
 const assert=require("node:assert/strict");
-const {run,summarize,checkMap,requirements,KNOWN_AUDIT_GROUPS,MAP}=require("./gate_a_evidence_inventory.cjs");
+const {run,summarize,checkMap,checkModifierEvidence,requirements,KNOWN_AUDIT_GROUPS,MAP}=require("./gate_a_evidence_inventory.cjs");
 let report;
 test("all 10 Gate A feature gaps remain unverified, no private data is counted",()=>{
  report=run();
@@ -18,6 +18,17 @@ test("all 10 Gate A feature gaps remain unverified, no private data is counted",
  assert.equal(links.mismatched,0);
  assert.equal(links.missing,0);
  assert.equal(report.wiki_comparable_count,1);
+ assert.equal(report.wiki_mismatch_count,0);
+ assert.equal(report.modifier_source_status,"REVIEWED_SECONDARY_SOURCE_DIVERGENCE");
+ assert.equal(report.known_modifier_source_conflicts,1);
+ assert.equal(report.known_modifier_roll_discrepancies,4);
+ assert.equal(report.modifier_comparison_scope,"SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE");
+ const damage=report.features.find(x=>x.feature==="damage RNG and critical");
+ assert.equal(damage.wiki_arithmetic_status,"WIKI_SPEC_MATCH"); // old single example is still correct
+ assert.equal(damage.modifier_source_status,"REVIEWED_SECONDARY_SOURCE_DIVERGENCE");
+ assert.equal(damage.known_modifier_source_conflicts,1);
+ assert.equal(damage.known_modifier_roll_discrepancies,4);
+ assert.equal(damage.modifier_comparison_scope,"SECONDARY_SOURCE_VS_PINNED_SHOWDOWN_NOT_DEVICE");
  const mapped=new Set(report.features.flatMap(x=>x.static_groups.map(g=>g.group)));
  assert.deepEqual([...mapped].sort(),[...KNOWN_AUDIT_GROUPS].sort());
  const moves=report.features.find(x=>x.feature==="move power and PP");
@@ -100,4 +111,41 @@ test("move type/category drift is shown as SOURCE_CONFLICT instead of silently d
    field:"unreviewed",expected:"x",actual:"y"
  });
  assert.throws(()=>summarize(newGroup,w,e),/UNMAPPED_AUDIT_GROUP/);
+});
+
+test("modifier conflict cannot disappear, grow, or become fake device evidence in Gate A",()=>{
+ const {main:modifier}=require("./champions_damage_modifier_probe.cjs");
+ const original=modifier();
+ assert.deepEqual(checkModifierEvidence(original),{conflicts:1,rollDifferences:4});
+ const {compare}=require("./audit.cjs");
+ const {main:wiki}=require("./wiki_damage_compare.cjs");
+ const {main:events}=require("./champions_event_probe.cjs");
+ const a=compare(),w=wiki(),e=events();
+ assert.throws(()=>summarize(a,w,e,MAP,null),/modifier source evidence/);
+ const changes=[
+   m=>{m.game_verified_check_count=1;},
+   m=>{m.gate_A="CONFIRMED";},
+   m=>{m.source_divergence_count=0;},
+   m=>{m.counts.WIKI_SPEC_MISMATCH=0;},
+   m=>{m.results[8].difference_count=0;},
+   m=>{m.results[8].first_differences[0].pinned_showdown++;},
+   m=>{m.results[8].odd_rounding_witnesses[0].pinned_damage++;},
+   m=>{m.results[0].status="WIKI_SPEC_MISMATCH";},
+   m=>{m.results[0].difference_count=1;},
+   m=>{m.results.pop();},
+   m=>{m.results[8].reviewed_source_discrepancy=null;}
+ ];
+ for(const mutate of changes){
+   const changed=structuredClone(original);
+   mutate(changed);
+   assert.throws(()=>checkModifierEvidence(changed),
+     /modifier (source|known)|unexpected modifier/);
+   assert.throws(()=>summarize(a,w,e,MAP,changed),
+     /modifier (source|known)|unexpected modifier/);
+ }
+ const valid=summarize(a,w,e,MAP,original);
+ assert.equal(valid.known_modifier_roll_discrepancies,4);
+ assert.equal(valid.game_verified_checks_this_run,0);
+ assert.deepEqual([valid.gate_A,valid.gate_B,valid.adoption],
+   ["UNKNOWN","UNSUPPORTED","NO_GO"]);
 });
