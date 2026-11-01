@@ -7,6 +7,24 @@ const {fingerprint}=require("./state_compare.cjs");
 const {pinned}=require("./worker.cjs");
 const manifest=require("./representative_states_cases.json");
 const RUNS=3, CASES=127;
+const REQUIRED_MASTER_FILES=[
+  "Pokemon_Champions_MC_move_master.csv",
+  "Pokemon_Champions_MC_usable_pokemon.csv",
+  "Pokemon_Champions_MC_pokemon_learnsets_linked.csv",
+  "Pokemon_Champions_MC_usable_held_items.csv",
+];
+const SHA256=/^[a-f0-9]{64}$/;
+function assertDigest(value,label){
+  if(typeof value!=="string"||!SHA256.test(value))
+    throw Error("missing or malformed required SHA256: "+label);
+}
+function assertMasterDigests(digests){
+  if(!digests||typeof digests!=="object"||Array.isArray(digests)||
+    Object.keys(digests).length!==REQUIRED_MASTER_FILES.length||
+    REQUIRED_MASTER_FILES.some(f=>!Object.hasOwn(digests,f)))
+    throw Error("required four Champions master hashes missing or unexpected");
+  for(const file of REQUIRED_MASTER_FILES)assertDigest(digests[file],"master:"+file);
+}
 function percentile(values,q){
  if(!values.length||values.some(n=>!Number.isFinite(n)||n<0))throw Error("invalid timing samples");
  const sorted=[...values].sort((a,b)=>a-b);
@@ -22,13 +40,23 @@ function signature(report){
     report.distinct_mechanisms!==8||report.counts?.PASS_SYNTHETIC!==CASES||
     report.counts?.UNSUPPORTED!==0||report.representative_100_synthetic_states_met!==true)
     throw Error("synthetic result contract changed");
+ assertMasterDigests(report.champions_master_sha256);
  for(const [i,c] of manifest.cases.entries()){
    const r=report.results[i];
-   if(c.id!==r.case_id||c.mechanism!==r.mechanism||c.expected_status!==r.status||
-      !/^[a-f0-9]{64}$/.test(r.state_sha256||"")||
-      !/^[a-f0-9]{64}$/.test(r.tactical_sha256||"")||
-      !r.branch?.source_unchanged||!r.branch?.repeated_action_identical||
-      !r.branch?.distinct_outcome)throw Error("synthetic case changed: "+c.id);
+   if(!r||c.id!==r.case_id||c.mechanism!==r.mechanism||
+      c.expected_status!==r.status||
+      r.branch?.source_unchanged!==true||
+      r.branch?.repeated_action_identical!==true||
+      r.branch?.distinct_outcome!==true)
+     throw Error("synthetic case changed: "+c.id);
+   for(const [name,value] of Object.entries({
+     state_sha256:r.state_sha256,
+     tactical_sha256:r.tactical_sha256,
+     registered_team_pair_sha256:r.registered_team_pair_sha256,
+     branch_a_sha256:r.branch.a_sha256,
+     branch_b_sha256:r.branch.b_sha256,
+     replay_a_sha256:r.branch.replay_a_sha256
+   })) assertDigest(value,c.id+":"+name);
  }
  return fingerprint({masters:report.champions_master_sha256,
    cases:report.results.map(r=>[r.case_id,r.mechanism,r.state_sha256,
@@ -90,4 +118,4 @@ function run(){
 }
 if(require.main===module){try{process.stdout.write(JSON.stringify(run())+"\n");}
   catch(e){process.stdout.write(JSON.stringify({status:"NOT_RUN",reason:e.message})+"\n");process.exitCode=2;}}
-module.exports={run,validate,signature,percentile,RUNS,CASES};
+module.exports={run,validate,signature,percentile,assertDigest,assertMasterDigests,REQUIRED_MASTER_FILES,RUNS,CASES};

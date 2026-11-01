@@ -1,5 +1,9 @@
 # 実装ステータス（Codexが更新する）
 
+## Issue #139 PR #157の再レビューP2対応（2026-11-01）
+
+- 3プロセスのハッシュ一致だけでは必須フィールドの欠落を見落とすため、固定4マスター名と全SHA、127ケースごとの完全状態・粗視化状態・登録チーム・3分岐/再実行SHAの存在・形式を個別確認。欠落/不正長の負例テストを追加。`.gitattributes`単独変更でもLinux/Windows Phase 0 CIを起動する。Gate A=UNKNOWN、Gate B=UNSUPPORTED、NO_GOを維持。
+
 ## Issue #139 複数OSの固定Node実行とプロセス間の合成再現性
 
 - 固定127合成状態をNodeプロセス3つで別々に実行し、局面SHA・分岐SHAを比較する。Linux固定DockerとWindows固定Showdown Nodeの両方で個別に検証する。381回は127ケースの反復で、381独立ケースでも実ゲーム検証でもない。
