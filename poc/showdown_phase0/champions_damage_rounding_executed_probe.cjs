@@ -73,7 +73,7 @@ function executePct(ctx,row){
      const percent=dmgEvents[1]?.match(/^\|-damage\|p2a: Blastoise\|(\d+)\/100$/);
      if(dmgEvents.length!==2||!exact||!percent||
         Number(exact[2])!==d.maxhp||Number(exact[1])!==d.hp||
-        Number(percent[1])!==Math.ceil(100*d.hp/d.maxhp)||
+        Number(percent[1])!==Math.round(100*d.hp/d.maxhp)||
         !(earthquakeAt>=0&&earthquakeAt<splitAt&&splitAt<damageAt&&
           damageAt<percentageAt&&percentageAt<surfAt))
        throw Error("executed split HP event not attributable to Earthquake: "+
