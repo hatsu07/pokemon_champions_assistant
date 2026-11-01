@@ -3337,7 +3337,7 @@ class MatchReplayDialog(QDialog):
         elif self._prep_thread is not None and not self._prep_cancel_event.is_set():
             current="PREP：既存対面評価と勝ち筋を確認中"
             remaining=max(0,self._prep_timer.remainingTime()//1000)
-            clock=f"PREP処理期限まで約{remaining}秒"
+            clock=f"PREPの共有90秒目標まで約{remaining}秒（超過だけで停止しません）"
         else:
             if phase=="PREP" and state.get("prep_status") in (
                     "PENDING","CACHE_PREP_BASE_READY"):
@@ -3357,9 +3357,9 @@ class MatchReplayDialog(QDialog):
                 clock=f"AI表示最終期限まで約{remaining}秒（目標30秒／ゲーム内時計未取得）"
             else:
                 clock="次の画面の認識待ち／ゲーム内の残り時間は未取得"
-        if phase in ("MATCHMAKING","SELECTION") and self._selection_screen_started is not None:
-            reserve=max(0,87-(monotonic()-self._selection_screen_started))
-            clock+=f"／選出→PREP推定余裕 {reserve:.0f}秒"
+        if phase in ("MATCHMAKING","SELECTION","PREP") and self._selection_screen_started is not None:
+            reserve=prep_budget_before_battle(self._selection_screen_started,now=monotonic())
+            clock+=f"／選出＋PREP共有90秒の推定残り {reserve:.0f}秒"
             clock+=("（ローカル分類候補起点）" if
                     self._selection_clock_source=="LOCAL_CANDIDATE"
                     else "（AI送信画像から逆算・未検証）")

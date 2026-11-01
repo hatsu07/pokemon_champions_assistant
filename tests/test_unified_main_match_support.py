@@ -1378,6 +1378,14 @@ class UnifiedMainWindowTests(unittest.TestCase):
         self.assertEqual(prep_budget_before_battle(100.0,now=188.0),2)
         self.assertEqual(prep_budget_before_battle(100.0,now=195.0),0)
         self.assertEqual(prep_budget_before_battle(None,now=900.0),90)
+        self.assertEqual(prep_budget_before_battle(100.0,now=110.0),80)
+        self.assertEqual(prep_budget_before_battle(100.0,now=135.0),55)
+        self.assertEqual(prep_budget_before_battle(100.0,now=170.0),20)
+        # Historically reserved 3s and capped PREP at 40s; neither applies.
+        self.assertEqual(prep_budget_before_battle(100.0,now=187.0),3)
+        self.assertEqual(prep_budget_before_battle(
+            100.0,now=110.0,input_reserve=3.0,prep_cap=40.0),80)
+
 
     def test_early_prep_launches_while_actual_selection_is_not_yet_confirmed(self):
         panel=self.window._match_panel
