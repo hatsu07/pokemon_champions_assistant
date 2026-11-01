@@ -124,7 +124,7 @@ function lifecycle(ctx){
    const at=b.log.length;
    b.makeChoices("move 1","move 1");
    const log=b.log.slice(at);
-   const changes=log.filter(line=>line.startsWith("|-weather|")&&!line.includes("|none"));
+   const changes=log.filter(line=>line.startsWith("|-weather|")&&!line.includes("|none")&&!line.includes("|[upkeep]"));
    if(changes.length!==2||!changes[0].includes("RainDance")||
       !changes[1].includes("SunnyDay")||
       b.field.weather!=="sunnyday"||b.field.weatherState.duration!==4)
