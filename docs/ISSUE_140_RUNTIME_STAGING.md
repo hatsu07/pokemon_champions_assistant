@@ -7,9 +7,18 @@ build the Champions-capable simulator in an isolated Docker environment, and
 assemble the full Node binary and dependency license inventory.
 
 The opt-in staging script validates the **git HEAD** of the Showdown checkout
-against `ccfaa20f32af363569cd21a9d501b2bc1ded26b1`, checks prebuilt
-dist/node_modules, requires a Node license and third-party notices, and
-generates a manifest with input SHA256 values.
+against `ccfaa20f32af363569cd21a9d501b2bc1ded26b1`, rejects a dirty
+tracked working tree, checks prebuilt `dist` and `node_modules` against
+a **separately reviewed exact-file SHA256 inventory** provided using
+`--verified-build-manifest`, requires Node and third-party notices, and
+generates a runtime manifest containing SHA256 for **every** packaged engine
+file. That inventory must come from a separately validated pinned build;
+creating it from the same unverified staging inputs defeats the trust boundary.
+The JSON has `engine_sha` (fixed pin) and `engine_file_sha256` (relative
+path → 64-character SHA256 of each included file, including entrypoint, other
+dist modules, dependencies, package manifest, and license). The worker
+re-enumerates and hashes the entire packaged engine tree before `require()`,
+rejecting added/deleted/modified files, including after staging.
 
 Example (paths are operator supplied; not a command to run on Windows):
 
@@ -19,6 +28,7 @@ python scripts/stage_issue140_runtime.py \
   --node-exe /offline/windows-node/node.exe \
   --node-license /offline/windows-node/LICENSE \
   --third-party-notices /offline/THIRD_PARTY_NOTICES.txt \
+  --verified-build-manifest /offline/reviewed-pinned-tree.json \
   --output /temporary/phase1-node-trial
 ```
 
