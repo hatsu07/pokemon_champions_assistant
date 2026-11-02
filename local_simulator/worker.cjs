@@ -66,6 +66,10 @@ function reply(req, capability_status, reason, payload={}, ok=false) {
     protocol: VERSION, op: req && req.op, request_id: req && req.request_id,
     identity: req && req.identity,
     snapshot_sha256: req && req.snapshot_sha256,
+    branch_request_id: req && req.branch_request_id,
+    hypothesis_id: req && req.payload && req.payload.hypothesis_id,
+    branch_input_sha256: req && req.payload && req.payload.branch_input_sha256,
+    candidate_action_id: req && req.payload && req.payload.candidate_action_id,
     capability_status, reason, payload, ok
   };
   process.stdout.write(JSON.stringify(out) + "\n");
@@ -104,6 +108,15 @@ function handle(req) {
   }
   const data = req.payload || {};
   if (data.source !== "FULL_REPLAY_SYNTHETIC" ||
+      typeof req.branch_request_id !== "string" ||
+      !/^[a-f0-9]{32}$/.test(req.branch_request_id) ||
+      typeof data.hypothesis_id !== "string" ||
+      typeof data.candidate_action_id !== "string" ||
+      !/^[a-f0-9]{64}$/.test(data.candidate_action_id) ||
+      typeof data.branch_input_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(data.branch_input_sha256) ||
+      data.branch_input_sha256 !== fingerprint(Object.fromEntries(
+        Object.entries(data).filter(([key]) => key !== "branch_input_sha256"))) ||
       !data.battle || typeof data.battle !== "object" ||
       typeof data.p1_choice !== "string" || !data.p1_choice ||
       typeof data.p2_choice !== "string" || !data.p2_choice ||
