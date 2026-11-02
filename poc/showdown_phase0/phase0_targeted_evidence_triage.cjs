@@ -16,11 +16,13 @@ const isObject=x=>!!x&&typeof x==="object"&&!Array.isArray(x);
 function validRef(e){
  return isObject(e)&&typeof e.id==="string"&&!!e.id&&
    typeof e.match_id==="string"&&!!e.match_id&&
+   typeof e.active_instance_id==="string"&&!!e.active_instance_id&&
    Number.isInteger(e.turn_epoch)&&e.turn_epoch>=0&&
    Number.isInteger(e.state_revision)&&e.state_revision>=0;
 }
 const sameFrame=(a,b)=>a&&b&&a.id===b.id&&a.match_id===b.match_id&&
- a.turn_epoch===b.turn_epoch&&a.state_revision===b.state_revision;
+ a.turn_epoch===b.turn_epoch&&a.state_revision===b.state_revision&&
+ a.active_instance_id===b.active_instance_id;
 function basicFactCheck(doc){
  if(!isObject(doc)||doc.schema!=="phase0-partial-observation-v1"||
     !["REAL_GAME","SYNTHETIC"].includes(doc.origin)||
@@ -68,9 +70,10 @@ function triagePartialBoard(doc){
    const e=refs.get(f.evidence_ids[0]);
    if(!currentValid||!validRef(e))
      return [key,"UNBOUND_OR_UNDATED_GAME_EVIDENCE"];
-   if(HISTORY.includes(key)&&!sameFrame(e,current))
-     return [key,e.match_id===current.match_id?
-       "HISTORY_REQUIRES_SUBJECT_AND_EVENT_CHECK":"CROSS_MATCH_EVIDENCE"];
+   if(HISTORY.includes(key))
+     return [key,e.match_id===current.match_id&&
+       e.active_instance_id===current.active_instance_id?
+       "HISTORY_REQUIRES_EVENT_AND_STATE_TRANSITION_CHECK":"CROSS_SUBJECT_OR_MATCH_EVIDENCE"];
    return [key,sameFrame(e,current)?"LINKED_CURRENT_GAME_FACT":
      "STALE_OR_CROSS_FRAME_GAME_FACT"];
  }));
@@ -118,11 +121,14 @@ function triageRoundingDamage(input){
    !validRef(input.evidence.before)||!validRef(input.evidence.after)||
    input.evidence.before.id===input.evidence.after.id||
    input.evidence.before.match_id!==input.evidence.after.match_id||
+   input.evidence.before.active_instance_id!==input.evidence.after.active_instance_id||
    input.evidence.before.turn_epoch!==input.evidence.after.turn_epoch||
    input.evidence.after.state_revision<=input.evidence.before.state_revision||
    input.scenario!=="GARCHOMP_EARTHQUAKE_BLASTOISE_BURN_REFLECT_NONCRITICAL"||
    !exactKeys(input.conditions,["burn","reflect","noncritical",
-       "no_weather","no_items","no_boosts","exact_one_hit_hp","no_intermediate_hp_change"])||
+       "no_weather","no_items","no_boosts","exact_one_hit_hp",
+       "no_intermediate_hp_change","reviewed_fixture_stats_confirmed",
+       "reviewed_abilities_confirmed","move_hit_confirmed"])||
    Object.values(input.conditions).some(v=>v!==true)||
    !Number.isSafeInteger(input.before_hp)||input.before_hp<=0||
    !Number.isSafeInteger(input.after_hp)||input.after_hp<0||
