@@ -39,6 +39,13 @@ audit before integrating it into PyInstaller. The protocol supports explicit
 local startup using the staged `node.exe`, `worker.cjs`, and `showdown/`
 paths but does not provide live gameplay recommendations.
 
+**Separate simulator binding prerequisite:** a match-preloaded Champions
+team CSV needs explicitly verified Showdown species and move slot ID fields
+for its selected three. The current global team CSV and OCR observation path
+do not automatically supply these ID bindings, and the synthetic tests are
+not a substitute for verified mapping. If absent, the Node simulation path
+must remain unsupported rather than compare or recommend a wrong action.
+
 **Still missing in this particular scaffold**: bundled Windows runtime with
 real Node binary and complete dependency notices/SBOM, Windows installer/runtime
 smoke, actual device E2E and tactical GUI integration. Game calculation parity
