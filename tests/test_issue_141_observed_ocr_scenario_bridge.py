@@ -180,6 +180,112 @@ class ObserverToReducerTests(unittest.TestCase):
         self.assertIn("UNSTABLE_ACTOR_OCR_ON_UNCHANGED_PIXELS",reasons)
         self.assertIn("SAME_FRAME_STABLE_ACTOR_NAME_REQUIRED",reasons)
 
+    def _assert_explicit_switch_beats_stale_same_frame_hud(self, side):
+        # A switch message can become legible while the name pixels still
+        # show the outgoing actor and a different HP HUD appears. The actor
+        # MUST NOT be switched back by the old, same-frame name read.
+        own = side == "own"
+        old_actor, new_actor = ("Own1", "Own2") if own else ("Opp1", "Opp2")
+        hp_field = "own_hp_fraction" if own else "opponent_hp_percent"
+        name_field = "own_active_name" if own else "opponent_active_name"
+        old_hp = "35/100" if own else "35%"
+        pending_hp = "90/100" if own else "90%"
+        stable_hp = "80/100" if own else "80%"
+        switch_message = ("ゆけっ！Own2！" if own
+                          else "相手はOpp2をくりだした！")
+        original=synthetic_image(DetectedUI.COMMAND_MENU,
+                                 controls_code=15,log_code=0,party_code=0)
+        ambiguous=synthetic_image(DetectedUI.COMMAND_MENU,
+                                  controls_code=15,log_code=35,party_code=70)
+        new_name=synthetic_image(DetectedUI.COMMAND_MENU,
+                                 controls_code=70,log_code=48,party_code=0)
+        stable=synthetic_image(DetectedUI.COMMAND_MENU,
+                               controls_code=70,log_code=62,party_code=0)
+        config=roi_config()
+        engine=MappingOcrEngine.for_images([
+            ("ROI_UI_CONTROLS",config.crop("ROI_UI_CONTROLS",original),
+             OcrRead(old_actor,.99,"SYNTHETIC_OCR")),
+            ("ROI_UI_CONTROLS",config.crop("ROI_UI_CONTROLS",new_name),
+             OcrRead(new_actor,.99,"SYNTHETIC_OCR")),
+            ("ROI_PARTY_CARDS",config.crop("ROI_PARTY_CARDS",ambiguous),
+             OcrRead(switch_message,.99,"SYNTHETIC_OCR")),
+            ("ROI_BATTLE_LOG",config.crop("ROI_BATTLE_LOG",ambiguous),
+             OcrRead(old_hp,.99,"SYNTHETIC_OCR")),
+            ("ROI_BATTLE_LOG",config.crop("ROI_BATTLE_LOG",new_name),
+             OcrRead(pending_hp,.99,"SYNTHETIC_OCR")),
+            ("ROI_BATTLE_LOG",config.crop("ROI_BATTLE_LOG",stable),
+             OcrRead(stable_hp,.99,"SYNTHETIC_OCR")),
+        ])
+        bridge=LinkedObserverState(
+            match_id=self.session.match_id,assets=self.session.assets,
+            initial_state={
+                "match_id":self.session.match_id, "phase":"BATTLE",
+                "our_active":"Own1", "opponent_active":"Opp1",
+                "selected_three":["Own1","Own2","Own3"],
+                "opponent_six":["Opp1","Opp2","Opp3","Opp4","Opp5","Opp6"],
+                "battle_evidence":empty_battle_evidence(),
+                "observed_hp":{}, "_live_state_revision":0,
+            },
+            roi_fields={
+                "ROI_UI_CONTROLS":name_field,
+                "ROI_BATTLE_LOG":hp_field,
+                "ROI_PARTY_CARDS":"battle_message",
+            },
+        )
+        pipeline=ObserverPipeline(
+            session=self.session, store=self.store, roi_config=config,
+            ui_classifier=TemplateUiClassifier({},threshold=.99),
+            ocr_engine=engine,text_parser=TextObservationParser(()),
+            ocr_roi_names=("ROI_UI_CONTROLS","ROI_BATTLE_LOG",
+                           "ROI_PARTY_CARDS"),
+            linked_local_ocr_bridge=bridge,
+        )
+        frames=(
+            Frame("before-switch",1,100,original,source="SYNTHETIC_TEST"),
+            Frame("switch-old-hud",2,3500,ambiguous,source="SYNTHETIC_TEST"),
+            Frame("new-name-animation",3,3600,new_name,source="SYNTHETIC_TEST"),
+            Frame("new-name-stable",4,3700,stable,source="SYNTHETIC_TEST"),
+        )
+        pipeline.process_frame(frames[0])
+        self.assertEqual(bridge.state["our_active" if own else
+                                      "opponent_active"],old_actor)
+        pipeline.process_frame(frames[1])
+        actor_key="our_active" if own else "opponent_active"
+        self.assertEqual(bridge.state[actor_key],new_actor,
+                         pipeline.last_linked_ocr_result.audit)
+        hp=bridge.state["battle_evidence"]["hp_by_pokemon"][side]
+        self.assertNotIn(old_actor,hp)
+        self.assertNotIn(new_actor,hp)
+        audit=pipeline.last_linked_ocr_result.audit
+        refused=[x for x in audit
+                 if x.get("reason")=="SAME_FRAME_EXPLICIT_SWITCH_HUD_AMBIGUOUS"]
+        self.assertEqual({x["kind"] for x in refused},{"ACTIVE","HP"},audit)
+        # Ensure the relevant old-name pixels really were unchanged, freshly
+        # recognized, and could otherwise have rolled back the actor.
+        raw=self.store.export_match(self.session.match_id)["raw_observations"]
+        old_name=raw[1]["payload"]["rois"]["ROI_UI_CONTROLS"]
+        self.assertFalse(old_name["changed"])
+        self.assertTrue(old_name["actor_refresh_same_frame"])
+        self.assertEqual(old_name["text"],old_actor)
+        self.assertEqual(raw[1]["payload"]["rois"]["ROI_PARTY_CARDS"]
+                         ["text"],switch_message)
+        pipeline.process_frame(frames[2])
+        self.assertEqual(bridge.state[actor_key],new_actor)
+        self.assertNotIn(new_actor,bridge.state["battle_evidence"]
+                         ["hp_by_pokemon"][side])
+        pipeline.process_frame(frames[3])
+        self.assertEqual(bridge.state[actor_key],new_actor)
+        self.assertEqual(bridge.state["battle_evidence"]["hp_by_pokemon"]
+                         [side][new_actor],stable_hp)
+        self.assertNotIn(old_actor,bridge.state["battle_evidence"]
+                         ["hp_by_pokemon"][side])
+
+    def test_own_switch_message_cannot_roll_back_to_stale_name_and_hp(self):
+        self._assert_explicit_switch_beats_stale_same_frame_hud("own")
+
+    def test_opponent_switch_message_cannot_roll_back_to_stale_name_and_hp(self):
+        self._assert_explicit_switch_beats_stale_same_frame_hud("opponent")
+
     def test_pp_after_two_seconds_uses_same_frame_name(self):
         bridge=LinkedObserverState(
             match_id=self.session.match_id,assets=self.session.assets,
