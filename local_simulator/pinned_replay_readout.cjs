@@ -37,7 +37,9 @@ function extractPinnedReplayReadout(Battle, battleJson) {
     if(!plain(parsed))return fail("COMPLETE_SYNTHETIC_BATTLE_REQUIRED");
     // Clone the entire caller input *before* asking the real engine to
     // rehydrate. Do not use a mutable raw Battle or populate from OCR.
-    const b=Battle.fromJSON(parsed);
+    // Rehydrate a separate clone: the original parsed input remains
+    // immutable reference evidence even if an engine mutates its argument.
+    const b=Battle.fromJSON(JSON.parse(original));
     if(b.format?.mod!=="champions" || b.gameType!=="singles" ||
        b.activePerHalf!==1 || !["move","switch"].includes(b.requestState) ||
        !Array.isArray(b.sides) || b.sides.length!==2 ||
