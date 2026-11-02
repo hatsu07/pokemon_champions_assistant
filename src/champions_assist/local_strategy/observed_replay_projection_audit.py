@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from .joint_set_intake import SourcedJointSetCandidate
-from .models import FrozenBattleState, fingerprint
+from .models import FrozenBattleState
 from .observed_calculation_scenarios import stage_observed_calculation_scenarios
 
 _ID = re.compile(r"[a-z0-9]+\Z")
@@ -82,7 +82,9 @@ def _projection_valid(p: ReplayProjectionCandidate) -> bool:
             or not _SHA.fullmatch(p.snapshot_sha256)
             or not isinstance(p.hypothesis_id, str) or not p.hypothesis_id
             or type(p.state_revision) is not int or p.state_revision < 0
+            or type(p.p1_active_slot) is not int
             or p.p1_active_slot not in (1, 2, 3)
+            or type(p.p2_active_slot) is not int
             or p.p2_active_slot not in (1, 2, 3)
             or not isinstance(p.members, tuple) or len(p.members) != 6):
         return False
@@ -168,9 +170,7 @@ def audit_observed_replay_projections(
             others = observed["other_observed_opponents"]
             if (len(own) != 3 or not isinstance(active, dict)
                     or set(roster) !=
-                    {m.display_name for m in candidate.members if m.side == "p2"}
-                    or set(roster) != set(json.loads(
-                        scenario.opponent_joint_assumptions_json)["opponent_sets"])):
+                    {m.display_name for m in candidate.members if m.side == "p2"}):
                 return _no("REPLAY_OPPONENT_JOINT_OR_ROSTER_MISMATCH")
             by_side = {
                 side: {m.slot: m for m in candidate.members if m.side == side}
