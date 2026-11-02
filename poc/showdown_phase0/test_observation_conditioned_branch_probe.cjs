@@ -90,10 +90,21 @@ test("unknown current HP or incomplete boosts cannot silently use initialized fu
  r=condition(onlyAttack,ctx);
  assert.match(r.reason,/all seven/);
 });
+// Synthetic observation of one move's PP from the same explicit current
+// snapshot as the move request, active opponent, exact HP, and boosts.
+function bindCurrentPP(obs,move,remaining_pp){
+ const evidence=obs.evidence.find(e=>e.id==="fixture-CONDITION");
+ evidence.match_id="synthetic-match-CONDITION";
+ evidence.turn_epoch=4;
+ evidence.state_revision=42;
+ obs.facts.opponent_remaining_pp=known({
+   move_id:move,remaining_pp,turn_epoch:4,state_revision:42});
+ return obs;
+}
 test("observed current PP of a single revealed move conditions only matching legal sets",()=>{
  const obs=withHPAndBoosts({hp:70,atk:1});
  obs.facts.opponent_revealed_moves=known(["Earthquake"]);
- obs.facts.opponent_remaining_pp=known(5);
+ bindCurrentPP(obs,"Earthquake",5);
  obs.facts.opponent_item=known("choicescarf");
  const original=fingerprint(obs),r=condition(obs,ctx);
  assert.equal(fingerprint(obs),original,"PP evidence must not mutate");
@@ -101,10 +112,13 @@ test("observed current PP of a single revealed move conditions only matching leg
  assert.deepEqual(r.candidates.map(c=>c.id),["C"]);
  assert.equal(r.candidates[0].conditioned_pp_move,"earthquake");
  assert.equal(r.candidates[0].conditioned_pp,5);
+ assert.deepEqual(r.candidates[0].conditioned_pp_snapshot,{
+   evidence_id:"fixture-CONDITION",match_id:"synthetic-match-CONDITION",
+   turn_epoch:4,state_revision:42});
  assert.ok(r.candidates[0].conditioned_pp_max>=5);
  assert.equal(r.candidates[0].conditioned_hp,70);
  assert.equal(r.candidates[0].conditioned_item,"choicescarf");
- assert.equal(r.candidates[0].pp_history_scope,"OBSERVED_CURRENT_PP_ONLY_NO_MOVE_EVENT_REPLAY");
+ assert.equal(r.candidates[0].pp_history_scope,"ATOMIC_MOVE_PP_SAME_CURRENT_SNAPSHOT_NO_MOVE_EVENT_REPLAY");
  assert.ok(r.admitted_evidence_fields.includes("opponent_remaining_pp"));
  assert.ok(r.admitted_evidence_fields.includes("opponent_revealed_moves"));
  assert.ok(!r.unrecovered_hidden_fields.includes("opponent_remaining_pp"));
@@ -123,7 +137,7 @@ test("observed Dragon Claw PP can coexist with unconsumed or consumed Sitrus hyp
  for(const consumed of [false,true]){
   const obs=withHPAndBoosts({hp:70});
   obs.facts.opponent_revealed_moves=known(["Dragon Claw"]);
-  obs.facts.opponent_remaining_pp=known(4);
+  bindCurrentPP(obs,"Dragon Claw",4);
   obs.facts.opponent_item=known(consumed?"":"sitrusberry");
   obs.facts.opponent_consumed_item=consumed?known("sitrusberry"):{source:"UNKNOWN"};
   const r=condition(obs,ctx);
@@ -137,24 +151,24 @@ test("observed Dragon Claw PP can coexist with unconsumed or consumed Sitrus hyp
 test("unknown or ambiguous move identity never assigns a scalar observed PP",()=>{
  for(const moves of [null,[],["Earthquake","Dragon Claw"]]){
   const obs=withHPAndBoosts();
-  obs.facts.opponent_remaining_pp=known(3);
+  bindCurrentPP(obs,"Earthquake",3);
   if(moves!==null)obs.facts.opponent_revealed_moves=known(moves);
   const r=condition(obs,ctx);
   assert.equal(r.status,"UNSUPPORTED");
-  assert.match(r.reason,/exactly one independently revealed move/);
+  assert.match(r.reason,/atomic PP move conflicts with exactly one revealed move/);
   assert.equal(r.candidates?.length||0,0);
  }
 });
 test("impossible PP and zero-PP move request fail closed without fabricated continuation",()=>{
  const zero=withHPAndBoosts();
  zero.facts.opponent_revealed_moves=known(["Earthquake"]);
- zero.facts.opponent_remaining_pp=known(0);
+ bindCurrentPP(zero,"Earthquake",0);
  const rejected=condition(zero,ctx);
  assert.equal(rejected.status,"UNSUPPORTED");
  assert.match(rejected.reason,/zero PP continuation/);
  const exceed=withHPAndBoosts();
  exceed.facts.opponent_revealed_moves=known(["Earthquake"]);
- exceed.facts.opponent_remaining_pp=known(999);
+ bindCurrentPP(exceed,"Earthquake",999);
  exceed.facts.opponent_item=known("choicescarf");
  const result=condition(exceed,ctx);
  assert.equal(result.status,"UNSUPPORTED");
@@ -162,11 +176,64 @@ test("impossible PP and zero-PP move request fail closed without fabricated cont
  assert.ok(result.rejected.some(c=>/maximum/.test(c.reason)));
  const conflict=withHPAndBoosts();
  conflict.facts.opponent_revealed_moves=known(["Dragon Claw"]);
- conflict.facts.opponent_remaining_pp=known(3);
+ bindCurrentPP(conflict,"Dragon Claw",3);
  conflict.facts.opponent_item=known("choicescarf");
  const noMatch=condition(conflict,ctx);
  assert.equal(noMatch.status,"UNSUPPORTED");
  assert.match(noMatch.reason,/no supported legal hypothesis/);
+});
+test("legacy scalar PP cannot be falsely bound by a single revealed move",()=>{
+ const obs=withHPAndBoosts();
+ obs.facts.opponent_revealed_moves=known(["Earthquake"]);
+ obs.facts.opponent_remaining_pp=known(5);
+ const hash=fingerprint(obs),r=condition(obs,ctx);
+ assert.equal(r.status,"UNSUPPORTED");
+ assert.match(r.reason,/unbound scalar PP/);
+ assert.equal(fingerprint(obs),hash);
+});
+test("PP observations from old turns or other frames cannot condition current Battle",()=>{
+ const original=withHPAndBoosts();
+ original.facts.opponent_revealed_moves=known(["Earthquake"]);
+ bindCurrentPP(original,"Earthquake",5);
+ for(const mutate of [
+  obs=>{obs.facts.opponent_remaining_pp.value.turn_epoch=3;},
+  obs=>{obs.facts.opponent_remaining_pp.value.state_revision=41;},
+  obs=>{
+   obs.evidence.push({id:"old-pp-frame",kind:"SYNTHETIC_FIXTURE",
+     match_id:"synthetic-match-CONDITION",turn_epoch:3,state_revision:41});
+   obs.facts.opponent_remaining_pp.evidence_ids=["old-pp-frame"];
+   obs.facts.opponent_remaining_pp.value.turn_epoch=3;
+   obs.facts.opponent_remaining_pp.value.state_revision=41;
+  },
+  obs=>{obs.facts.request_state.evidence_ids=["different-current-frame"];obs.evidence.push({
+   id:"different-current-frame",kind:"SYNTHETIC_FIXTURE",
+   match_id:"synthetic-match-CONDITION",turn_epoch:4,state_revision:42});},
+  obs=>{obs.evidence[0].match_id="";},
+  obs=>{obs.evidence[0].state_revision=undefined;}
+ ]){
+  const obs=structuredClone(original);mutate(obs);
+  const hash=fingerprint(obs);
+  const r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED");
+  assert.match(r.reason,/PP move\/snapshot lacks evidence/);
+  assert.equal(fingerprint(obs),hash);
+ }
+});
+test("PP cannot be assigned to Earthquake when the atomic reading names another move",()=>{
+ const obs=withHPAndBoosts();
+ obs.facts.opponent_revealed_moves=known(["Earthquake"]);
+ bindCurrentPP(obs,"Dragon Claw",5);
+ const r=condition(obs,ctx);
+ assert.equal(r.status,"UNSUPPORTED");
+ assert.match(r.reason,/atomic PP move conflicts/);
+ assert.equal(r.candidates?.length||0,0);
+});
+test("malformed atomic PP fields are rejected rather than inferred",()=>{
+ const obs=withHPAndBoosts();
+ obs.facts.opponent_revealed_moves=known(["Earthquake"]);
+ bindCurrentPP(obs,"Earthquake",5);
+ delete obs.facts.opponent_remaining_pp.value.move_id;
+ assert.throws(()=>condition(obs,ctx),/invalid atomic observed PP/);
 });
 test("observed Sitrus Berry consumption conditions only its original legal holder",()=>{
  const obs=withHPAndBoosts({hp:70,atk:1});
