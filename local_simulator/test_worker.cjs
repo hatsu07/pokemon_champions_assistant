@@ -72,6 +72,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.writeFileSync(path.join(root,"dist","sim","helper.js"),"// verified-test-helper");
     fs.writeFileSync(path.join(root,"package.json"),"{}");
     fs.writeFileSync(path.join(root,"LICENSE"),"test-only");
+    fs.copyFileSync(path.join(__dirname,"p2_engine_choices.cjs"), path.join(tmp,"p2_engine_choices.cjs"));
     const engineFileSha={
       "dist/sim/index.js":sha(path.join(root,"dist","sim","index.js")),
       "dist/sim/helper.js":sha(path.join(root,"dist","sim","helper.js")),
@@ -85,7 +86,9 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       production_enabled:false,
       showdown_entry_sha256:sha(path.join(root,"dist","sim","index.js")),
       engine_file_sha256:engineFileSha,
-      worker_sha256:sha(workerPath),node_exe_sha256:sha(process.execPath),
+      worker_sha256:sha(workerPath),
+      p2_engine_choices_sha256:sha(path.join(tmp,"p2_engine_choices.cjs")),
+      node_exe_sha256:sha(process.execPath),
       node_license_sha256:sha(path.join(tmp,"NODE_LICENSE.txt")),
       third_party_notices_sha256:sha(path.join(tmp,"THIRD_PARTY_NOTICES.txt"))};
     fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
