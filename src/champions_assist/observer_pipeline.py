@@ -291,6 +291,19 @@ class ObserverPipeline:
         if self.linked_local_ocr_bridge is not None:
             self.last_linked_ocr_result = self.linked_local_ocr_bridge.ingest(
                 frame, receipt, raw_rois, self.roi_config)
+            # Any newly accepted OCR *candidate* invalidates an old
+            # in-flight decision window, but does NOT write HP/actor/type
+            # as confirmed FSM facts. It only records the evidence identity.
+            candidate = self.last_linked_ocr_result
+            if candidate.state_revision_after > candidate.state_revision_before:
+                self.session.update_observed_state(
+                    f"{receipt.raw_observation_id}:linked-ocr-candidate",
+                    {"linked_local_ocr_candidate": {
+                        "raw_observation_id": receipt.raw_observation_id,
+                        "local_ocr_revision": candidate.state_revision_after}},
+                    source_kind="UI_DIRECT", quality="CANDIDATE")
+            self.linked_local_ocr_bridge.record_authoritative_revision(
+                self.session.tactical_state_version)
 
         return FrameObservation(
             frame_id=frame.frame_id,
