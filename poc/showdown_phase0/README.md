@@ -2,7 +2,7 @@
 
 ## PR #172マージ後：Gate A/Bの実ゲーム証拠の不足を直接判定
 
-[Gate A/B観測証拠のトリアージ](./GATE_A_B_EVIDENCE_TRIAGE.md)、`phase0_targeted_evidence_triage.cjs`、`test_phase0_targeted_evidence_triage.cjs` を追加。既存/通常対戦の確定条件が揃った場合にのみ、やけど＋壁の1HP端数方式が**16乱数のダメージ集合**で識別可能か、途中状態に同一試合・個体・ターン・証拠IDの現在観測が揃うかを分類。独立した実機証拠を新たに生成せず、入力を真正と保証しない。ローカル入力の生データをGitHub/CIへ送らず、出力にも値やIDを含めない。
+[Gate A/B観測証拠のトリアージ](./GATE_A_B_EVIDENCE_TRIAGE.md)、`phase0_targeted_evidence_triage.cjs`、`test_phase0_targeted_evidence_triage.cjs` を追加。この固定カメックス条件では、**16乱数の位置別4件が不一致でも、両計算方式の整数ダメージ集合は共に `{21,22,23,24,25}` で等しい**。未知乱数の単発実測からは方式を識別できず、追加の専用対戦を要求しない (`NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE`)。Gate Bは現在の同一試合・個体・時点・証拠IDに加えて、設置技の相手側指定、天候/地形/壁の残りターンなどの**値の整合**を検査する。独立した実機証拠を新たに生成せず、入力を真正と保証しない。ローカル入力の生データをGitHub/CIへ送らず、出力にも値やIDを含めない。
 
 [Phase 0採否評価書](./PHASE0_ADOPTION_ASSESSMENT.md)にPR #169〜#172の限定合成成果・未検証軸を明記。**Gate A UNKNOWN / Gate B UNSUPPORTED / Phase 1 NO_GOを維持**。マスター・LIVE・Phase 1 Draftを変更しない。
 
