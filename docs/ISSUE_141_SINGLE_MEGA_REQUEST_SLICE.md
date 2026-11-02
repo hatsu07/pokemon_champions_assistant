@@ -18,6 +18,27 @@ An altered request, unexpectedly substituted action, rejected move or switch,
 inconsistent P2 roster/HP, unsupported form flag, or incomplete reply fails
 closed to `NO_CHOICES`.
 
+## Python / Node transport contract (PR #182 review follow-up)
+
+The existing opt-in `LocalSimulatorWorker.enumerate_p2_from_replay()` now
+accepts both explicitly named response scopes without translating them:
+
+- `PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY`: only ordinary `move N` and
+  `switch N` commands, never a Mega modifier.
+- `PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY`: each advertised ordinary
+  `move N` has a matching `move N mega` variant, and vice versa, while
+  switch commands are unchanged.
+
+The Python receiver preserves the exact returned scope and requires
+`ENGINE_CHECKED_SIMPLE_CHOICES`, `PARTIAL/ok=true`, source
+`FULL_REPLAY_SYNTHETIC`, registered hypothesis, exact nonce and
+`branch_input_sha256`, request and Battle SHA bindings, unique allowed
+command grammar, and an explicit `exhaustive_legal_choices_verified=false`.
+Unknown modifiers, inconsistent paired variants or a forged scope are rejected
+instead of being treated as completed action sets. This is an **existing
+synthetic-replay IPC path**, not the Champions live recommendation path or a
+claim of all legal actions.
+
 ## Explicit exclusions
 
 - `canMegaEvoX`, `canMegaEvoY`, Ultra Burst, Z/Max/Tera, ambiguous
@@ -41,6 +62,9 @@ closed to `NO_CHOICES`.
 
 - Isolated Node unit tests: valid normal+Mega paired choices, unsupported
   flags, forged Mega eligibility and command-to-action mismatch.
+- Python fake-worker transport tests: regular and paired-Mega response scopes,
+  nonce/hash binding, malformed/unknown command modifiers, paired-variant
+  completeness, registered joint hypothesis, and non-exhaustive guarantee.
 - Real pinned Showdown test: Garchomp with Garchompite on a complete synthetic
   3v3, an actual `p2.activeRequest` enabling Mega, fresh-clone action
   verification, unchanged Battle/RNG state and the existing non-Mega and
