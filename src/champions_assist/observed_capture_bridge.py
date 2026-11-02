@@ -121,6 +121,23 @@ class LinkedObserverState:
                 region, text, frame_id=receipt.raw_observation_id)
             if candidate is None:
                 continue
+            if (field in ("own_active_name", "opponent_active_name")
+                    and item.get("changed") is False
+                    and item.get("actor_refresh_same_frame") is True):
+                own_names, opponent_names = _names(self.assets, self.state)
+                is_own = field == "own_active_name"
+                known = own_names if is_own else opponent_names
+                active = self.state.get(
+                    "our_active" if is_own else "opponent_active")
+                if not active or known.get(_flat(text)) != active:
+                    # The exact same name pixels cannot by themselves
+                    # justify a switched actor. OCR drift is a candidate.
+                    preflight_audit.append({
+                        "kind": "ACTIVE", "status": "CANDIDATE",
+                        "reason": "UNSTABLE_ACTOR_OCR_ON_UNCHANGED_PIXELS",
+                        "frame_id": frame.frame_id,
+                    })
+                    continue
             # The local OCR reducer accepts historical name attestations for
             # 2 seconds. That is intentionally NOT sufficient for this
             # frame-bound path: a fresh HP/PP value requires a high-confidence
