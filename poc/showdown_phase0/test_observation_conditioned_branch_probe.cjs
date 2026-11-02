@@ -530,6 +530,52 @@ test("weather, terrain and one opponent-side hazard require and preserve exact c
    c.conditioned_screen_ids.includes("reflect")));
  assert.equal(fingerprint(obs),hash);
 });
+test("empty hazards require current opponent side and request revision",()=>{
+ const original=withHPAndBoosts({hp:70});bindCurrentFrame(original);
+ original.facts.hazards=known({side:"p2",effects:[],turn_epoch:4,state_revision:42});
+ const sourceHash=fingerprint(original),ok=condition(original,ctx);
+ assert.equal(ok.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",ok.reason);
+ assert.equal(fingerprint(original),sourceHash);
+ assert.ok(ok.admitted_evidence_fields.includes("hazards"));
+ assert.ok(ok.candidates.every(c=>c.hazard_observation_scope===
+   "CURRENT_OPPONENT_SIDE_AND_REVISION"&&c.conditioned_hazards.length===0));
+ for(const change of [
+  o=>{o.facts.hazards.value.turn_epoch=2;o.facts.hazards.value.state_revision=20;},
+  o=>{o.facts.hazards.value.state_revision=41;},
+  o=>{o.facts.hazards.value.side="p1";},
+  o=>{o.facts.hazards={source:"UNKNOWN"};},
+  o=>{o.evidence.push({id:"old",kind:"SYNTHETIC_FIXTURE",turn_epoch:2,
+       state_revision:20,match_id:"match-COMBINED"});
+       o.facts.hazards.evidence_ids=["old"];},
+  o=>{o.evidence.push({id:"other",kind:"SYNTHETIC_FIXTURE",turn_epoch:4,
+       state_revision:42,match_id:"match-COMBINED"});
+       o.facts.hazards.evidence_ids=["other"];}
+ ]){
+  const obs=structuredClone(original);change(obs);
+  const hash=fingerprint(obs),r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED",r.reason);
+  assert.equal(r.candidates?.length||0,0);
+  assert.equal(fingerprint(obs),hash);
+ }
+});
+test("flat [] hazards are only a synthetic fixture assumption, never a real-game proof",()=>{
+ const synthetic=withHPAndBoosts(),s=condition(synthetic,ctx);
+ assert.equal(s.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+ assert.ok(!s.admitted_evidence_fields.includes("hazards"));
+ assert.ok(s.unrecovered_hidden_fields.includes("current_hazard_absence_unverified_for_game"));
+ assert.ok(s.candidates.every(c=>c.hazard_observation_scope===
+   "SYNTHETIC_BASELINE_ONLY_NOT_CURRENT_GAME_EVIDENCE"));
+ const real=structuredClone(synthetic);
+ real.origin="REAL_GAME";real.verification="USER_VERIFIED";
+ real.evidence=[{id:"game-1",kind:"GAME_FRAME"}];
+ for(const [k,v] of Object.entries(real.facts))
+  if(v.source==="SYNTHETIC")
+   real.facts[k]={source:"GAME_OBSERVED",value:structuredClone(v.value),evidence_ids:["game-1"]};
+ const r=condition(real,ctx);
+ assert.equal(r.status,"UNSUPPORTED");
+ assert.match(r.reason,/flat hazards absence is synthetic-fixture-only/);
+});
+
 test("Mega with field and Knock Off with field compose independently",()=>{
  const mega=condition(withField(megaGarchomp()),ctx);
  assert.equal(mega.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",mega.reason);
@@ -575,13 +621,17 @@ test("synthetic evidence cannot be mislabeled as real-game proof; even verified 
  assert.throws(()=>condition(obs,ctx),/game observation lacks verified/);
  const real=withHPAndBoosts();
  real.origin="REAL_GAME";real.verification="USER_VERIFIED";
- real.evidence=[{id:"game-frame-1",kind:"GAME_FRAME"}];
+ real.evidence=[{id:"game-frame-1",kind:"GAME_FRAME",
+   match_id:"game-match-1",turn_epoch:1,state_revision:1}];
  for(const [key,fact] of Object.entries(real.facts)){
   if(fact.source==="SYNTHETIC"){
    real.facts[key]={source:"GAME_OBSERVED",value:structuredClone(fact.value),
      evidence_ids:["game-frame-1"]};
   }
  }
+ real.facts.hazards={source:"GAME_OBSERVED",
+   value:{side:"p2",effects:[],turn_epoch:1,state_revision:1},
+   evidence_ids:["game-frame-1"]};
  const r=condition(real,ctx);
  assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
  assert.equal(r.game_compatibility_verified,false);
