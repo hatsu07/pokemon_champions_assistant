@@ -107,6 +107,36 @@ test("switch removes old active assumptions and known Choice lock", () => {
   assert.equal(model.previous_opponent_set.choice_lock.value, "earthquake");
 });
 
+test("Knock Off removal evidence belongs to old active only after switch_seen",()=>{
+ const ctx=context(),entry={id:"REMOVAL-SWITCH",truth:"C"};
+ const obs=projectObservation(syntheticTruth(ctx,entry),ctx,entry);
+ const candidates=makeCandidates(obs,ctx).candidates;
+ assert.ok(candidates.length>0);
+ obs.facts.opponent_item={source:"SYNTHETIC",value:"",
+   evidence_ids:["fixture-REMOVAL-SWITCH"]};
+ obs.facts.opponent_removed_item={source:"SYNTHETIC",
+   value:{item_id:"choicescarf",cause:"knockoff",target_species:"garchomp",
+     turn_epoch:2,state_revision:20},evidence_ids:["fixture-REMOVAL-SWITCH"]};
+ assert.equal(assertObservation(obs,ctx).consistent,true);
+ for(const candidate of candidates)
+   candidate.model.opponent_removed_item=structuredClone(obs.facts.opponent_removed_item);
+ const oldHash=fingerprint(obs.facts.opponent_removed_item);
+ const next=applyEvent(obs,candidates,{type:"switch_seen",value:"metagross"},ctx,1);
+ assert.equal(next.contradiction,null);
+ assert.deepEqual(obs.facts.opponent_removed_item,{source:"UNKNOWN"});
+ assert.deepEqual(obs.facts.opponent_consumed_item,{source:"UNKNOWN"});
+ assert.deepEqual(obs.facts.opponent_item,{source:"UNKNOWN"});
+ assert.equal(obs.facts.active_opponent.value,"metagross");
+ assert.ok(next.candidates.length>0);
+ for(const candidate of next.candidates){
+   assert.deepEqual(candidate.model.opponent_removed_item,{source:"UNKNOWN"});
+   assert.equal(fingerprint(candidate.model.previous_opponent_set.opponent_removed_item),
+     oldHash,"past active history can be retained separately, not assigned to new active");
+ }
+ // A fresh direct observation for the new active must not inherit the old item's removal.
+ assert.ok(next.candidates.every(candidate=>candidate.model.opponent_item.source==="UNKNOWN"));
+});
+
 test("Mega Garchomp uses the current form's Champions ability slot", () => {
   const ctx = context(), entry = {id: "MEGA-ABILITY", truth: "D"};
   const obs = projectObservation(syntheticTruth(ctx, entry), ctx, entry);
