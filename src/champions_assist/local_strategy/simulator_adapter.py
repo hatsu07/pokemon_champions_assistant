@@ -29,6 +29,7 @@ _P2_COMMAND = re.compile(r"(?:move [1-4](?: mega)?|switch [1-3])\Z")
 _P2_NORMAL_MOVE = re.compile(r"move [1-4]\Z")
 _P2_SCOPE_SIMPLE = "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"
 _P2_SCOPE_MEGA = "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY"
+_P2_SCOPE_HARDLOCK_STRUGGLE = "PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY"
 
 @dataclass(frozen=True)
 class EngineP2CandidateSet:
@@ -400,7 +401,12 @@ class LocalSimulatorWorker:
                 or body.get("hypothesis_id") != hypothesis_id
                 or body.get("branch_input_sha256") != payload["branch_input_sha256"]
                 or body.get("status") != "ENGINE_CHECKED_SIMPLE_CHOICES"
-                or scope not in (_P2_SCOPE_SIMPLE, _P2_SCOPE_MEGA)
+                or scope not in (_P2_SCOPE_SIMPLE, _P2_SCOPE_MEGA,
+                                 _P2_SCOPE_HARDLOCK_STRUGGLE)
+                or (scope == _P2_SCOPE_HARDLOCK_STRUGGLE and
+                    (not commands or commands[0] != "move 1" or
+                     any(c.startswith("move ") and c != "move 1"
+                         for c in commands)))
                 or (scope == _P2_SCOPE_MEGA and
                     (not mega_moves or mega_moves != ordinary_moves))
                 or (scope == _P2_SCOPE_SIMPLE and bool(mega_moves))
