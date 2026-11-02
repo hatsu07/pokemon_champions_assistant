@@ -60,8 +60,27 @@ def _reject(reason: str) -> WindowEvidenceAudit:
     return WindowEvidenceAudit("NO_WINDOW_EVIDENCE_BINDING", reason)
 
 
-def _present(value: Any) -> bool:
-    return value is not None and value != "" and value != [] and value != {}
+def _valid_stored_fact(section: str, value: Any) -> bool:
+    """A present actor key is a recorded fact, NEVER an absent observation.
+
+    Only accept the actual shapes emitted by battle_evidence.py. Validate both
+    current actors and historical entries *before* making any SHA comparison.
+    HP/status/item literals remain raw; do not infer engine IDs or numeric HP.
+    """
+    if section == "boosts":
+        return (isinstance(value, dict) and bool(value)
+                and all(k in ("A", "B", "C", "D", "S", "ACC", "EVA")
+                        and type(v) is int and -6 <= v <= 6
+                        for k, v in value.items()))
+    if section == "moves_by_pokemon":
+        return (isinstance(value, list) and 1 <= len(value) <= 4
+                and all(isinstance(v, str) and 0 < len(v) <= 160
+                        and v == v.strip() and v.upper() not in
+                        ("UNKNOWN", "NONE", "?") for v in value)
+                and len(set(value)) == len(value))
+    return (isinstance(value, str) and 0 < len(value) <= 160
+            and value == value.strip()
+            and value.upper() not in ("UNKNOWN", "NONE", "?"))
 
 
 def _timestamp(value: Any) -> bool:
@@ -118,8 +137,11 @@ def audit_synthetic_window_evidence(
                 for actor, value in by_name.items():
                     if not isinstance(actor, str) or not actor.strip():
                         return _reject("MALFORMED_EVIDENCE_ACTOR")
-                    if not _present(value):
-                        continue
+                    # A missing actor key means unknown. An explicitly
+                    # present but empty/malformed value is corrupted evidence:
+                    # reject it even for a switched-out historical actor.
+                    if not _valid_stored_fact(section, value):
+                        return _reject("MALFORMED_STORED_EVIDENCE_VALUE")
                     if not active or actor != active:
                         historical.append(f"{section}:{side}:{actor}")
                     else:
