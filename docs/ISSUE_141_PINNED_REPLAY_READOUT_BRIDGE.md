@@ -29,7 +29,12 @@ Showdown state and the fragment of a Champions match actually observed**.
    separate **unverified** opponent display-name-to-engine-slot claims.
    It checks strict readout schema, six slot uniqueness, all seven
    stage values, explicit PIN, match/window/revision through the freshly
-   re-run Stage②, and then feeds PR #190's
+   re-run Stage②. Critically, each `ClaimedEngineReadoutCase` must
+   preserve the **original match/window/revision/snapshot and Battle SHA
+   from the time it was staged**: the adapter refuses stale data rather
+   than silently stamping it with a newer decision-window identity.
+   These IDs are caller claims, not cryptographic evidence of source.
+   The adapter then feeds PR #190's
    `audit_observed_replay_projections` with only source-bound and
    explicitly observed comparable facts. A missing, stale, altered or
    contradictory hypothesis makes the entire batch fail closed. The
