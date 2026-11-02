@@ -49,22 +49,60 @@ translating screen text into an assumed active participant.
   its original receipt. If the mutable numpy array was overwritten, replay
   stops without creating a new raw observation.
 
+## Optional per-field lineage for accepted local OCR updates (same PR)
+
+The separate `live_state_updates.apply_local_ocr()` reducer now accepts
+`capture_receipts={frame_id: FrameCaptureReceipt}` **opt-in**. It does not
+guess that arbitrary OCR frame IDs belong to the observer. Every record in
+this explicit binding mode must have a typed receipt with the exact
+`state.match_id`, `record.frame_id`, a syntactically valid pixel digest
+and the originating `raw_observation_id`. When one is missing, stale or
+inconsistent, that OCR record is kept as `CANDIDATE` with
+`FRAME_RECEIPT_UNAVAILABLE_OR_MISMATCH`; it cannot mutate battle state
+under this binding mode.
+
+Only **after** the existing actor attribution, timestamp ordering,
+confidence, switch-HUD checks and normal reducer validation accept an
+event does its `battle_evidence.update_provenance` entry include the
+specific actor, side, target field (`hp_by_pokemon`, `moves_by_pokemon`,
+`status_by_pokemon`, `boosts`, etc.), pre/post live-state revision and an
+explicit `claimed_frame_link`. The link contains the frame RGB SHA,
+original raw-observation ID and pre-ingest window reference (if any).
+It does **not** make the OCR text or actor authentic. The independent
+ROI digest, source clock, window identity and actor remain unverified:
+`roi_digest_verified=false`,
+`capture_timestamp_authenticated=false`,
+`current_window_binding_verified=false`,
+`actor_identity_authenticated=false`, and `ready_for_engine=false`.
+
+Without this optional map, the prior local OCR API remains behaviorally
+unchanged and continues its existing non-attested provenance record;
+a `frame_id` alone never gains a pixel digest.
+
+Tests use synthetic receipt objects with the real local OCR reducer
+to cover accepted HP/MOVE/STATUS attribution, mismatched/missing
+origin refusing state mutation in binding mode, and legacy compatibility.
+This is an **opt-in join contract**, not an automatically wired
+cross-pipeline feed: runtime callers still need to carry original
+frame receipts end-to-end from the capture implementation. No
+`WindowEvidenceRecord` from PR #186 is produced here.
+
 ## Strict non-claims and next connection
 
 This is a **capture-pixel and OCR-payload linkage**, not source
 authentication, complete per-field provenance, capture-time actor
 identification, guaranteed monotonic clock, or state reconstruction.
 The separate GPT/OCR `update_battle_evidence` and
-`ai_ocr_state_updates` / `live_state_updates` paths are unchanged;
-they must not be silently declared bound to these receipts without a
-specific event-ID, actor and revision join. No `SYNTHETIC_WINDOW_EVIDENCE`
+`ai_ocr_state_updates` paths remain unchanged; the local OCR reducer
+only gains the explicit optional join described above. Neither is
+automatically declared bound to the real observer at runtime. No `SYNTHETIC_WINDOW_EVIDENCE`
 records are forged; no `SYNTHETIC_WINDOW_FACTS_BOUND` result is treated
 as authentic game evidence. No Showdown Battle/RNG is created. No worker
 IPC, action recommendation, legal-choice policy, game input or GUI wiring
 is added.
 
 Follow-up: source-specific immutable frame clock/sequence attestation,
-per-actor OCR field origin at update time, durable history across switches,
+runtime end-to-end receipt propagation, durable history across switches,
 stale/cancelled update checks, event-to-frame reconciliation, and explicit
 type-safe mapping to the #185 staged observation/ID bridge. Only after
 independent checks should the integration be considered for the engine.
