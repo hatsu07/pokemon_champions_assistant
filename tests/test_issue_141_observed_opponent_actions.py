@@ -197,11 +197,104 @@ class OpponentActionFrontierTests(unittest.TestCase):
         self.assertFalse(out.ready_for_engine)
         self.assertFalse(out.exhaustive_legal_choices_verified)
 
+    def test_faint_then_zero_percent_ocr_switch_stays_valid_without_exact_hp(self):
+        # The production reducer may re-read the fainted actor's 0% HUD
+        # AFTER the explicit FAINT changed its stored bare "0" to "0%".
+        # Preserve the raw percent and FAINT event's same-actor identity,
+        # but never fabricate a simulator maximum HP or exact 0% HP.
+        snapshot=_current()
+        state=snapshot.state
+        state.setdefault("observed_hp", {})
+        state["battle_evidence"].setdefault(
+            "fainted", {"own": {}, "opponent": {}})
+        state["battle_evidence"]["hp_by_pokemon"]["opponent"].clear()
+
+        def apply(*rows):
+            nonlocal state
+            state, audit=apply_local_ocr(state, rows, VERIFIED_ASSETS)
+            self.assertTrue(any(x.get("status")=="APPLIED" for x in audit),audit)
+
+        apply(read("opponent_active_name","カイリュー",1),
+              read("opponent_hp_percent","73%",1,{"percent_displayed":73}))
+        apply(read("battle_message","相手のカイリューはたおれた!",2))
+        self.assertEqual(state["battle_evidence"]["hp_by_pokemon"]
+                         ["opponent"]["カイリュー"],"0")
+        self.assertIs(state["battle_evidence"]["fainted"]
+                      ["opponent"]["カイリュー"],True)
+
+        apply(read("opponent_active_name","カイリュー",3),
+              read("opponent_hp_percent","0%",3,{"percent_displayed":0}))
+        self.assertEqual(state["battle_evidence"]["hp_by_pokemon"]
+                         ["opponent"]["カイリュー"],"0%")
+        before_switch=replace(
+            snapshot,observed_state_json=canonical_json(state))
+        stage=stage_observed_calculation_scenarios(
+            before_switch,VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],))
+        self.assertEqual(stage.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",stage.reason)
+        actor=__import__("json").loads(
+            stage.scenarios[0].observed_constraints_json)["opponent_active"]
+        self.assertEqual(actor["raw_hp_percent"],"0%")
+        self.assertIsNone(actor["hp"])
+        self.assertIsNone(actor["maxhp"])
+        self.assertIs(actor["fainted"],True)
+        self.assertFalse(stage.ready_for_engine)
+
+        apply(read("battle_message","相手はサーフゴーをくりだした！",4))
+        apply(read("opponent_active_name","サーフゴー",5),
+              read("opponent_hp_percent","91%",5,{"percent_displayed":91}))
+        current=replace(snapshot,observed_state_json=canonical_json(state))
+        stage=stage_observed_calculation_scenarios(
+            current,VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],))
+        self.assertEqual(stage.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",stage.reason)
+        constraints=__import__("json").loads(
+            stage.scenarios[0].observed_constraints_json)
+        old=next(x for x in constraints["other_observed_opponents"]
+                 if x["name"]=="カイリュー")
+        self.assertEqual(old["raw_hp_percent"],"0%")
+        self.assertIsNone(old["hp"])
+        self.assertIsNone(old["maxhp"])
+        self.assertTrue(old["fainted"])
+        current_actor=constraints["opponent_active"]
+        self.assertEqual(current_actor["raw_hp_percent"],"91%")
+        self.assertIsNone(current_actor["hp"])
+        out=stage_observed_opponent_action_frontier(
+            current,VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],),
+            observed_batch=stage)
+        self.assertEqual(out.status,"PROVISIONAL_OPPONENT_ACTION_NAMES",out.reason)
+        switches=[p.display_name for p in out.cases[0].possibilities
+                  if p.action_kind=="SWITCH_TARGET_NAME"]
+        self.assertNotIn("カイリュー",switches)
+        self.assertIn("ドドゲザン",switches)
+        self.assertFalse(out.exhaustive_legal_choices_verified)
+        self.assertFalse(out.ready_for_engine)
+        self.assertEqual(out.p2_commands,())
+
+    def test_zero_percent_without_faint_event_never_establishes_ko(self):
+        def zero_percent(state):
+            details(state)
+            state["battle_evidence"]["hp_by_pokemon"]["opponent"][
+                "カイリュー"]="0%"
+        snap=with_state(frozen(),edits=zero_percent)
+        stage=stage_observed_calculation_scenarios(snap,VERIFIED_ASSETS)
+        self.assertEqual(stage.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",stage.reason)
+        actor=__import__("json").loads(
+            stage.scenarios[0].observed_constraints_json)["opponent_active"]
+        self.assertEqual(actor["raw_hp_percent"],"0%")
+        self.assertIsNone(actor["hp"])
+        self.assertIsNone(actor["maxhp"])
+        self.assertIsNone(actor["fainted"])
+        out=stage_observed_opponent_action_frontier(
+            snap,VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],))
+        self.assertEqual(out.status,"PROVISIONAL_OPPONENT_ACTION_NAMES",out.reason)
+        self.assertFalse(out.ready_for_engine)
+
     def test_raw_opponent_faint_requires_true_same_actor_flag(self):
         for raw, flag, expected in (
             ("0", None, "NO_ACTION_FRONTIER"),
             ("0", False, "NO_ACTION_FRONTIER"),
             ("73%", True, "NO_ACTION_FRONTIER"),
+            ("1%", True, "NO_ACTION_FRONTIER"),
+            ("100%", True, "NO_ACTION_FRONTIER"),
             ("99/166", True, "NO_ACTION_FRONTIER"),
             ("101%", None, "NO_ACTION_FRONTIER"),
             ("-1%", None, "NO_ACTION_FRONTIER"),
