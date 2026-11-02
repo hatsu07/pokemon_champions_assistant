@@ -182,7 +182,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     // reject its SHA before ever executing that altered JavaScript.
     const p2Helper=path.join(tmp,"p2_engine_choices.cjs");
     const originalHelper=fs.readFileSync(p2Helper,"utf8");
-    fs.appendFileSync(p2Helper,"\\nthrow Error('UNVERIFIED_HELPER_WAS_EXECUTED');\\n");
+    fs.appendFileSync(p2Helper,"\nthrow Error('UNVERIFIED_HELPER_WAS_EXECUTED');\n");
     const rejectedHelper=await new Promise((resolve,reject)=>{
       const proc=spawn(process.execPath,[workerPath],{
         env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
