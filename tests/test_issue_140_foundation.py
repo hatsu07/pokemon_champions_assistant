@@ -83,7 +83,10 @@ def frozen(*, window_kind: WindowKind = WindowKind.MOVE_COMMAND,
 def successful_result(s: FrozenBattleState) -> SimulationResult:
     return SimulationResult.from_worker(
         s.window.request_id, s.window.identity(), s.snapshot_sha256, "",
-        CapabilityStatus.CONFIRMED, {"test": "synthetic-contract-only"})
+        CapabilityStatus.CONFIRMED, {"test": "synthetic-contract-only"},
+        branch_request_id="test-only-branch-nonce",
+        branch_input_sha256="a"*64,
+        candidate_action_id=move_id("じしん"))
 
 
 class ContractTests(unittest.TestCase):
@@ -183,6 +186,61 @@ class ContractTests(unittest.TestCase):
             outcome = accept_result(s, changed, successful_result(s), earth, ASSETS)
             self.assertEqual(outcome.status, "NO_RECOMMENDATION")
 
+    def test_changed_deadline_invalidates_same_window_id(self):
+        s = frozen()
+        candidate = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
+        result = successful_result(s)
+        for delta in (-10, 10):
+            current = replace(s, window=replace(s.window,
+                      deadline_monotonic=s.window.deadline_monotonic+delta))
+            r = accept_result(s, current, result, candidate, ASSETS,
+                              now=s.window.deadline_monotonic-20)
+            self.assertEqual(r.status, "NO_RECOMMENDATION")
+            self.assertEqual(r.reason, "STALE_WINDOW_OR_REVISION")
+
+    def test_snapshot_bound_to_hypothesis_contents_and_constraint_proof(self):
+        s = frozen()
+        base = Hypothesis.from_assumptions("H1", {"item": "Choice Scarf"},
+                                           evidence_refs=("frame-1",), likelihood=0.4)
+        variant = Hypothesis.from_assumptions("H1", {"item": "Choice Band"},
+                                              evidence_refs=("frame-1",), likelihood=0.4)
+        changed_evidence = Hypothesis.from_assumptions("H1", {"item": "Choice Scarf"},
+                                                       evidence_refs=("frame-2",),
+                                                       likelihood=0.4)
+        changed_likelihood = Hypothesis.from_assumptions("H1", {"item": "Choice Scarf"},
+                                                         evidence_refs=("frame-1",),
+                                                         likelihood=0.5)
+        original = replace(s, hypotheses=(base,))
+        candidate = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
+        resp = SimulationResult.from_worker(
+            s.window.request_id, s.window.identity(), original.snapshot_sha256,
+            "H1", CapabilityStatus.CONFIRMED, {},
+            branch_request_id="bound-test-branch", branch_input_sha256="c"*64,
+            candidate_action_id=candidate.action_id)
+        for current in (
+            replace(original, hypotheses=(variant,)),
+            replace(original, hypotheses=(changed_evidence,)),
+            replace(original, hypotheses=(changed_likelihood,)),
+            replace(original, constraints_confirmed=False),
+            replace(original, verified_action_ids=()),
+        ):
+            self.assertNotEqual(original.snapshot_sha256, current.snapshot_sha256)
+            r=accept_result(original,current,resp,candidate,ASSETS)
+            self.assertEqual(r.status,"NO_RECOMMENDATION")
+
+    def test_confirmed_result_must_be_bound_to_matching_candidate_branch(self):
+        s = frozen()
+        candidate = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
+        result = successful_result(s)
+        for wrong in (
+            replace(result, branch_request_id=""),
+            replace(result, branch_input_sha256=""),
+            replace(result, candidate_action_id="another-action"),
+        ):
+            outcome = accept_result(s,s,wrong,candidate,ASSETS)
+            self.assertEqual(outcome.status,"NO_RECOMMENDATION")
+            self.assertEqual(outcome.reason,"UNBOUND_BRANCH_OR_ACTION")
+
     def test_changed_observation_or_expired_deadline_rejected(self):
         s = frozen()
         earth = next(c for c in generate_candidates(s, ASSETS) if c.move == "じしん")
@@ -256,6 +314,11 @@ class WorkerTests(unittest.TestCase):
             "  wrong_identity['identity']['active_pokemon']='ミミッキュ'\n"
             "  wrong_identity.update(capability_status='CONFIRMED',ok=True)\n"
             "  print(json.dumps(wrong_identity),flush=True)\n"
+            " if r['op']=='SIMULATE':\n"
+            "  r['branch_request_id']=r['branch_request_id']\n"
+            "  r['hypothesis_id']=r['payload']['hypothesis_id']\n"
+            "  r['branch_input_sha256']=r['payload']['branch_input_sha256']\n"
+            "  r['candidate_action_id']=r['payload']['candidate_action_id']\n"
             " r.update(capability_status='PARTIAL',ok=True,payload={})\n"
             " print(json.dumps(r),flush=True)\n"
         )
@@ -264,10 +327,89 @@ class WorkerTests(unittest.TestCase):
             w.start(timeout_seconds=1)
             s = frozen()
             result = w.simulate(s, {"synthetic": True},
-                                "move 1", "move 1")
+                                "move 1", "move 1",
+                                candidate_action_id=move_id("じしん"))
             self.assertEqual(result.capability_status, CapabilityStatus.PARTIAL)
         finally:
             w.close()
+            tmp.cleanup()
+
+    def test_branch_replies_out_of_order_same_window_are_never_adopted(self):
+        # Same window/request/snapshot, but an old response with the wrong
+        # branch nonce, hypothesis or payload hash must not substitute.
+        script = (
+            "import json,sys\n"
+            "previous=None\n"
+            "for line in sys.stdin:\n"
+            " r=json.loads(line)\n"
+            " if r['op']=='SIMULATE':\n"
+            "  r['hypothesis_id']=r['payload']['hypothesis_id']\n"
+            "  r['branch_input_sha256']=r['payload']['branch_input_sha256']\n"
+            "  r['candidate_action_id']=r['payload']['candidate_action_id']\n"
+            "  if previous is not None:\n"
+            "   print(json.dumps(previous),flush=True)\n"
+            "  previous=dict(r)\n"
+            " r.update(capability_status='PARTIAL',ok=True,payload={})\n"
+            " print(json.dumps(r),flush=True)\n"
+        )
+        tmp, worker = self.make_fake_worker(script)
+        try:
+            worker.start(timeout_seconds=2)
+            s = frozen()
+            one = worker.simulate(s, {"synthetic": True}, "move 1", "move 1",
+                                  candidate_action_id=move_id("じしん"))
+            two = worker.simulate(s, {"synthetic": True}, "move 1", "move 2",
+                                  candidate_action_id=move_id("じしん"))
+            self.assertEqual(one.capability_status, CapabilityStatus.PARTIAL)
+            self.assertEqual(two.capability_status, CapabilityStatus.PARTIAL)
+            self.assertNotEqual(one.branch_request_id, two.branch_request_id)
+            self.assertNotEqual(one.branch_input_sha256, two.branch_input_sha256)
+            self.assertEqual(one.candidate_action_id, move_id("じしん"))
+            self.assertEqual(two.candidate_action_id, move_id("じしん"))
+        finally:
+            worker.close()
+            tmp.cleanup()
+
+    def test_wrong_branch_echo_never_pretends_success(self):
+        # A malicious/buggy worker echo with every general identity correct
+        # but an old or forged branch hash must time out, not be relabeled.
+        script = (
+            "import sys,json\n"
+            "for line in sys.stdin:\n"
+            " r=json.loads(line)\n"
+            " if r['op']=='SIMULATE':\n"
+            "  r['hypothesis_id']='wrong-hypothesis'\n"
+            "  r['branch_input_sha256']='0'*64\n"
+            "  r['candidate_action_id']=r['payload']['candidate_action_id']\n"
+            " r.update(capability_status='PARTIAL',ok=True,payload={})\n"
+            " print(json.dumps(r),flush=True)\n"
+        )
+        tmp, worker = self.make_fake_worker(script)
+        try:
+            worker.start(timeout_seconds=2)
+            s=frozen()
+            # Test has a tight explicit deadline rather than 60s turn limit.
+            s=replace(s,window=replace(s.window,
+                  deadline_monotonic=time.monotonic()+0.3))
+            with self.assertRaises(WorkerUnavailable):
+                worker.simulate(s, {"synthetic":True}, "move 1", "move 1",
+                                candidate_action_id=move_id("じしん"))
+        finally:
+            worker.close()
+            tmp.cleanup()
+
+    def test_unregistered_hypothesis_or_action_is_rejected_before_ipc(self):
+        tmp, worker = self.make_fake_worker("import time\ntime.sleep(2)\n")
+        try:
+            with self.assertRaises(WorkerUnavailable):
+                worker.simulate(frozen(), {"synthetic": True},
+                                "move 1", "move 1", candidate_action_id="fake")
+            with self.assertRaises(WorkerUnavailable):
+                worker.simulate(frozen(), {"synthetic": True},
+                                "move 1", "move 1", hypothesis_id="unbound",
+                                candidate_action_id=move_id("じしん"))
+        finally:
+            worker.close()
             tmp.cleanup()
 
     def test_worker_start_timeout_fails_closed(self):
@@ -303,7 +445,8 @@ class WorkerTests(unittest.TestCase):
         try:
             w.start(timeout_seconds=1)
             with self.assertRaises(WorkerUnavailable):
-                w.simulate(frozen(), {"synthetic": True}, "move 1", "move 1")
+                w.simulate(frozen(), {"synthetic": True}, "move 1", "move 1",
+                           candidate_action_id=move_id("じしん"))
             with self.assertRaises(WorkerUnavailable):
                 w.start()
         finally:
