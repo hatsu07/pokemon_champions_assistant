@@ -18,6 +18,7 @@ from .models import (
     action_digest, canonical_json, joint_hypothesis_ids,
 )
 from .one_turn import BranchObservation, ShadowTurnRanking, compare_shadow_turn
+from .opponent_evidence_gate import check_observed_opponent_hypotheses
 from .simulator_adapter import WorkerUnavailable, _verified_roster_binding
 
 MAX_BRANCHES = 240
@@ -127,6 +128,12 @@ def run_shadow_turn(
         hypotheses = set(joint_hypothesis_ids(snapshot.hypotheses))
     except ValueError:
         return _blocked("DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+    # No known opponent observation may contradict or be omitted by any
+    # joint set in a current-window Showdown branch. Do not filter just the
+    # losing hypothesis: the whole provisional ranking becomes unavailable.
+    evidence_gate = check_observed_opponent_hypotheses(snapshot)
+    if evidence_gate.status != "CLEAR":
+        return _blocked(evidence_gate.reason)
     if any(not isinstance(s, ReplayOpponentScenario) for s in scenarios):
         return _blocked("UNVERIFIED_REPLAY_OR_P2_CHOICE_SET")
     if (not scenarios or len(scenarios) != len(hypotheses)
