@@ -30,7 +30,13 @@ For each sourced opponent three, the read-only frontier includes:
   resulting member has `hp=0,maxhp=None,fainted=True`. Unflagged zero,
   invalid percentages and positive HP contradicting an explicit FAINT
   refuse the entire staging operation. A percent is never multiplied
-  by guessed max HP. `"0%"` alone is not proof of a faint.
+  by guessed max HP. `"0%"` alone is not proof of a faint. When the
+  same actor already has an explicit FAINT flag, a later OCR `"0%"`
+  is compatible with that event: keep `raw_hp_percent="0%"`,
+  `hp=None,maxhp=None,fainted=True`. The true flag comes from the
+  event, **not** from assuming that a rounded 0% HUD is exact 0 HP.
+  A subsequent `1%..100%` for that actor with the same FAINT flag
+  remains contradictory and the whole partial stage is refused.
 - The other two members of the same recorded three as conditional switch
   **display names**. A bench member with directly observed zero HP is
   excluded. Unknown bench HP does **not** become an assertion of a
@@ -88,7 +94,10 @@ state through stage ②, keeps the two percentages raw (never exact),
 and suppresses only the knocked-out member's conditional switch name.
 Additional tests reject forged `"0"` without a same-actor flag,
 contradictory FAINT/nonzero HP, malformed percentages and untrusted
-zero flags.
+zero flags. Another reducer-driven E2E reproduces FAINT → fresh 0% OCR
+for the same actor → explicit switch → stage② → frontier. It verifies
+the defeated bench is excluded without inventing exact HP, and a
+separate zero-percent-without-FAINT regression verifies no KO inference.
 
 No raw gameplay frames, user accounts or image bytes are added.
 
