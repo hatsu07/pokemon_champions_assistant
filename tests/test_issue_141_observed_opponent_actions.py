@@ -8,6 +8,8 @@ from dataclasses import replace
 import unittest
 
 from champions_assist.local_strategy.models import canonical_json
+from champions_assist.live_state_updates import apply_local_ocr
+from tests.test_live_state_updates import read
 from champions_assist.local_strategy.observed_calculation_scenarios import (
     stage_observed_calculation_scenarios,
 )
@@ -132,6 +134,101 @@ class OpponentActionFrontierTests(unittest.TestCase):
             joint_candidates=(record(source="MARGINAL_STATS"),))
         self.assertEqual(marg.status,"NO_ACTION_FRONTIER")
         self.assertFalse(marg.ready_for_engine)
+
+    def test_production_ocr_percent_faint_switch_frontier_e2e(self):
+        # Use the REAL local reducer for each state transition. No manually
+        # fabricated "0/maxhp" opponent faint (which production never emits).
+        snapshot=_current()
+        state=snapshot.state
+        state["battle_evidence"]["hp_by_pokemon"]["opponent"].clear()
+        def apply(*reads):
+            nonlocal state
+            state,audit=apply_local_ocr(state,reads,VERIFIED_ASSETS)
+            self.assertTrue(any(row["status"]=="APPLIED" for row in audit),audit)
+
+        apply(read("opponent_active_name","カイリュー",1),
+              read("opponent_hp_percent","73%",1,{"percent_displayed":73}))
+        self.assertEqual(state["battle_evidence"]["hp_by_pokemon"]
+                         ["opponent"]["カイリュー"],"73%")
+        stage=stage_observed_calculation_scenarios(
+            replace(snapshot,observed_state_json=canonical_json(state)),
+            VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],))
+        self.assertEqual(stage.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",stage.reason)
+        active=__import__("json").loads(stage.scenarios[0].observed_constraints_json)[
+            "opponent_active"]
+        self.assertEqual(active["raw_hp_percent"],"73%")
+        self.assertIsNone(active["hp"])
+        self.assertIsNone(active["maxhp"])
+        self.assertFalse(active["fainted"])
+
+        apply(read("battle_message","相手のカイリューはたおれた!",2))
+        self.assertEqual(state["battle_evidence"]["hp_by_pokemon"]
+                         ["opponent"]["カイリュー"],"0")
+        self.assertIs(state["battle_evidence"]["fainted"]
+                      ["opponent"]["カイリュー"],True)
+        apply(read("battle_message","相手はサーフゴーをくりだした！",3))
+        self.assertEqual(state["opponent_active"],"サーフゴー")
+        apply(read("opponent_active_name","サーフゴー",4),
+              read("opponent_hp_percent","91%",4,{"percent_displayed":91}))
+        frozen_state=replace(snapshot,observed_state_json=canonical_json(state))
+        stage=stage_observed_calculation_scenarios(
+            frozen_state,VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],))
+        self.assertEqual(stage.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",stage.reason)
+        o=__import__("json").loads(stage.scenarios[0].observed_constraints_json)
+        self.assertEqual(o["opponent_active"]["raw_hp_percent"],"91%")
+        self.assertIsNone(o["opponent_active"]["hp"])
+        prior=next(m for m in o["other_observed_opponents"]
+                   if m["name"]=="カイリュー")
+        self.assertEqual(prior["hp"],0)
+        self.assertIsNone(prior["maxhp"])
+        self.assertTrue(prior["fainted"])
+        out=stage_observed_opponent_action_frontier(
+            frozen_state,VERIFIED_ASSETS,
+            joint_candidates=(_source_pair()[0],),observed_batch=stage)
+        self.assertEqual(out.status,"PROVISIONAL_OPPONENT_ACTION_NAMES",out.reason)
+        possible={(p.action_kind,p.display_name)
+                  for p in out.cases[0].possibilities}
+        self.assertNotIn(("SWITCH_TARGET_NAME","カイリュー"),possible)
+        self.assertIn(("SWITCH_TARGET_NAME","ドドゲザン"),possible)
+        self.assertIn(("MOVE_NAME","ゴールドラッシュ"),possible)
+        self.assertFalse(out.ready_for_engine)
+        self.assertFalse(out.exhaustive_legal_choices_verified)
+
+    def test_raw_opponent_faint_requires_true_same_actor_flag(self):
+        for raw, flag, expected in (
+            ("0", None, "NO_ACTION_FRONTIER"),
+            ("0", False, "NO_ACTION_FRONTIER"),
+            ("73%", True, "NO_ACTION_FRONTIER"),
+            ("99/166", True, "NO_ACTION_FRONTIER"),
+            ("101%", None, "NO_ACTION_FRONTIER"),
+            ("-1%", None, "NO_ACTION_FRONTIER"),
+            ("073%", None, "NO_ACTION_FRONTIER"),
+            ("33.5%", None, "NO_ACTION_FRONTIER"),
+        ):
+            def mutate(state):
+                details(state)
+                state["battle_evidence"]["hp_by_pokemon"]["opponent"]["カイリュー"]=raw
+                if flag is not None:
+                    state["battle_evidence"]["fainted"]["opponent"]["カイリュー"]=flag
+            with self.subTest(raw=raw,flag=flag):
+                result=stage_observed_opponent_action_frontier(
+                    with_state(frozen(),edits=mutate),VERIFIED_ASSETS,
+                    joint_candidates=(_source_pair()[0],))
+                self.assertEqual(result.status,expected,result.reason)
+                self.assertFalse(result.cases)
+
+    def test_percent_only_opponent_is_not_exact_and_not_rejected(self):
+        def percent(state):
+            details(state)
+            state["battle_evidence"]["hp_by_pokemon"]["opponent"]["カイリュー"]="73%"
+        snap=with_state(frozen(),edits=percent)
+        out=stage_observed_opponent_action_frontier(
+            snap,VERIFIED_ASSETS,joint_candidates=(_source_pair()[0],))
+        self.assertEqual(out.status,"PROVISIONAL_OPPONENT_ACTION_NAMES",out.reason)
+        self.assertFalse(out.ready_for_engine)
+        self.assertIn(("MOVE_NAME","しんそく"),
+                      [(x.action_kind,x.display_name)
+                       for x in out.cases[0].possibilities])
 
     def test_exact_fainted_bench_does_not_appear_as_switch_candidate(self):
         def mark(state):
