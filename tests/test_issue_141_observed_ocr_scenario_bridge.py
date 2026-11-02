@@ -86,6 +86,11 @@ class ObserverToReducerTests(unittest.TestCase):
         self.assertEqual(self.bridge.state["battle_evidence"]["hp_by_pokemon"]
                          ["own"]["Own1"],"35/100")
         self.assertEqual(self.bridge.last_capture_seq,2)
+        self.assertEqual(self.bridge.required_window_revision,
+                         self.session.tactical_state_version)
+        self.assertGreater(self.session.tactical_state_version,0)
+        self.assertEqual(self.session.state_facts["linked_local_ocr_candidate"]
+                         ["raw_observation_id"],y.raw_observation_id)
         self.assertEqual(len(self.store.export_match(self.session.match_id)
                              ["raw_observations"]),2)
         provenance=self.bridge.state["battle_evidence"]["update_provenance"]
@@ -195,6 +200,11 @@ class CalculationScenarioTests(unittest.TestCase):
                          observed.audit)
         linked=replace(
             base,observed_state_json=canonical_json(bridge.state))
+        not_acknowledged=stage_linked_observer_calculation_scenarios(
+            bridge,linked,VERIFIED_ASSETS)
+        self.assertEqual(not_acknowledged.reason,
+                         "LINKED_WINDOW_REVISION_NOT_ACKNOWLEDGED")
+        bridge.record_authoritative_revision(linked.window.state_revision)
         staged=stage_linked_observer_calculation_scenarios(
             bridge,linked,VERIFIED_ASSETS)
         self.assertEqual(staged.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",
