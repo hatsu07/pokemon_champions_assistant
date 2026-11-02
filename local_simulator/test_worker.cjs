@@ -46,7 +46,11 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
   // Fake engine is for wire validation ONLY: not Pokémon mechanics or game evidence.
   const fs=require("node:fs"),os=require("node:os"),crypto=require("node:crypto");
   const tmp=fs.mkdtempSync(path.join(os.tmpdir(),"phase1-test-staged-"));
-  const workerPath=path.join(__dirname,"worker.cjs");
+  // Execute the worker from the *staged* package next to the helper.
+  // Running the repository source would verify/require its own sibling and
+  // miss corruption of the packaged helper entirely.
+  const workerPath=path.join(tmp,"worker.cjs");
+  fs.copyFileSync(path.join(__dirname,"worker.cjs"),workerPath);
   const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
   const sha=file=>crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   const stable=value=>{
@@ -64,14 +68,24 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       "exports.Battle={fromJSON(data){const pokemon=data.team.map(x=>({"+
       "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,fainted:false,status:''}));"+
       "const p1={pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
-      "return {format:{mod:'champions'},requestState:'move',turn:1,"+
-      "field:{weather:''},sides:[p1,{pokemon:[]}],"+
+      "const opp=[{species:{id:'dragonite'},hp:100,maxhp:100,status:'',fainted:false,switchFlag:false},"+
+      "{species:{id:'gholdengo'},hp:60,maxhp:100,status:'',fainted:false,switchFlag:false},"+
+      "{species:{id:'kingambit'},hp:0,maxhp:100,status:'',fainted:true,switchFlag:false}];"+
+      "const r={side:{id:'p2',pokemon:opp.map((p,i)=>({condition:i===2?'0 fnt':i===1?'60/100':'100/100',active:i===0}))},"+
+      "active:[{moves:[{id:'tackle',pp:10,disabled:false}],trapped:false}]};"+
+      "const p2={id:'p2',pokemon:opp,active:[opp[0]],activeRequest:r,requestState:'move',"+
+      "choice:{cantUndo:false,actions:[],error:''},choose(x){if(x!=='move 1'&&x!=='switch 2')return false;"+
+      "this.choice.actions=[{choice:x[0]==='m'?'move':'switch'}];return true},"+
+      "isChoiceDone(){return this.choice.actions.length===1}};"+
+      "return {format:{mod:'champions'},gameType:'singles',activePerHalf:1,"+
+      "requestState:'move',turn:1,field:{weather:''},sides:[p1,p2],"+
       "makeChoices(){this.turn++},toJSON(){return data}}}};");
     fs.mkdirSync(path.join(root,"node_modules","testdep"),{recursive:true});
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),"// verified-test-dependency");
     fs.writeFileSync(path.join(root,"dist","sim","helper.js"),"// verified-test-helper");
     fs.writeFileSync(path.join(root,"package.json"),"{}");
     fs.writeFileSync(path.join(root,"LICENSE"),"test-only");
+    fs.copyFileSync(path.join(__dirname,"p2_engine_choices.cjs"), path.join(tmp,"p2_engine_choices.cjs"));
     const engineFileSha={
       "dist/sim/index.js":sha(path.join(root,"dist","sim","index.js")),
       "dist/sim/helper.js":sha(path.join(root,"dist","sim","helper.js")),
@@ -85,7 +99,9 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       production_enabled:false,
       showdown_entry_sha256:sha(path.join(root,"dist","sim","index.js")),
       engine_file_sha256:engineFileSha,
-      worker_sha256:sha(workerPath),node_exe_sha256:sha(process.execPath),
+      worker_sha256:sha(workerPath),
+      p2_engine_choices_sha256:sha(path.join(tmp,"p2_engine_choices.cjs")),
+      node_exe_sha256:sha(process.execPath),
       node_license_sha256:sha(path.join(tmp,"NODE_LICENSE.txt")),
       third_party_notices_sha256:sha(path.join(tmp,"THIRD_PARTY_NOTICES.txt"))};
     fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
@@ -122,6 +138,11 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     wrongActive.branch_input_sha256=hash(Object.fromEntries(
       Object.entries(wrongActive).filter(([key])=>key!=="branch_input_sha256")));
     const mismatchedActive={...req,branch_request_id:"f".repeat(32),payload:wrongActive};
+    const p2Payload={source:"FULL_REPLAY_SYNTHETIC",battle:payload.battle,
+      expected_p1_roster:roster,expected_p1_active:"Garchomp",hypothesis_id:"H1"};
+    p2Payload.branch_input_sha256=hash(p2Payload);
+    const p2Request={...req,op:"ENUMERATE_P2",branch_request_id:"1".repeat(32),
+      payload:p2Payload};
     // The nonce and branch hash are valid for the wrong roster/moves,
     // so only semantic inspection after Battle.fromJSON can reject these.
     // Mutated choice is NOT covered by the submitted SHA.
@@ -137,9 +158,16 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("worker exited "+code+" "+errors));
         try{resolve(data.trim().split("\n").map(JSON.parse))}catch(e){reject(e)}
       });
-      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive].map(JSON.stringify).join("\n")+"\n");
+      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive,p2Request].map(JSON.stringify).join("\n")+"\n");
     });
-    assert.equal(output.length,5);
+    assert.equal(output.length,6);
+    assert.equal(output[5].op,"ENUMERATE_P2");
+    assert.equal(output[5].capability_status,"PARTIAL");
+    assert.equal(output[5].ok,true);
+    assert.equal(output[5].branch_request_id,p2Request.branch_request_id);
+    assert.equal(output[5].branch_input_sha256,p2Payload.branch_input_sha256);
+    assert.deepEqual(output[5].payload.commands,["move 1","switch 2"]);
+    assert.equal(output[5].payload.exhaustive_legal_choices_verified,false);
     assert.equal(output[0].capability_status,"PARTIAL");
     assert.equal(output[0].ok,true);
     assert.equal(output[0].branch_request_id,"b".repeat(32));
@@ -154,6 +182,61 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       assert.equal(output[index].capability_status,"UNSUPPORTED");
       assert.equal(output[index].reason,"P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
     }
+    // Corrupt the P2 helper with an executable throw. The worker must
+    // reject its SHA before ever executing that altered JavaScript.
+    const p2Helper=path.join(tmp,"p2_engine_choices.cjs");
+    const originalHelper=fs.readFileSync(p2Helper,"utf8");
+    fs.appendFileSync(p2Helper,"\nthrow Error('UNVERIFIED_HELPER_WAS_EXECUTED');\n");
+    const rejectedHelper=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("altered helper executed or worker crashed: "+code+" "+stderr));
+        try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
+      });
+      proc.stdin.end(JSON.stringify(base)+"\n");
+    });
+    assert.equal(rejectedHelper.capability_status,"UNSUPPORTED");
+    assert.equal(rejectedHelper.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
+    fs.writeFileSync(p2Helper,originalHelper);
+
+    // The helper can be SHA-valid yet crash when required. Engine module
+    // success alone must not authorize HELLO or a later P2 operation.
+    fs.writeFileSync(p2Helper,"throw Error('SYNTHETIC_INIT_FAILURE');\n");
+    manifest.p2_engine_choices_sha256=sha(p2Helper);
+    fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
+    const failedInitialization=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("incomplete worker startup crashed: "+code+" "+stderr));
+        try{resolve(stdout.trim().split("\n").map(JSON.parse))}
+        catch(e){reject(e)}
+      });
+      proc.stdin.end([base,p2Request].map(JSON.stringify).join("\n")+"\n");
+    });
+    assert.equal(failedInitialization.length,2);
+    for(const item of failedInitialization){
+      assert.equal(item.capability_status,"UNSUPPORTED");
+      assert.equal(item.reason,"SHOWDOWN_LOAD_FAILED");
+      assert.equal(item.ok,false);
+    }
+    fs.writeFileSync(p2Helper,originalHelper);
+    manifest.p2_engine_choices_sha256=sha(p2Helper);
+    fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
+
     // Manifest entrypoint and pinned source SHA remain unchanged, but a
     // secondary runtime JS dependency has been changed after staging.
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),
