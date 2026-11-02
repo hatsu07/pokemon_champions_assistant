@@ -226,7 +226,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     const readoutHelper=path.join(tmp,"pinned_replay_readout.cjs");
     const originalReadout=fs.readFileSync(readoutHelper,"utf8");
     fs.appendFileSync(readoutHelper,
-                      "\\nthrow Error('UNVERIFIED_READOUT_HELPER_EXECUTED');\\n");
+                      "\nthrow Error('UNVERIFIED_READOUT_HELPER_EXECUTED');\n");
     const invalidReadout=await new Promise((resolve,reject)=>{
       const proc=spawn(process.execPath,[workerPath],{
         env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
@@ -240,7 +240,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("unverified helper executed: "+stderr));
         try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
       });
-      proc.stdin.end(JSON.stringify(base)+"\\n");
+      proc.stdin.end(JSON.stringify(base)+"\n");
     });
     assert.equal(invalidReadout.capability_status,"UNSUPPORTED");
     assert.equal(invalidReadout.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
