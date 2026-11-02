@@ -38,6 +38,14 @@ A synthetic simulation may return PARTIAL, **never CONFIRMED**.
   Standard Choice-item/Encore disabled slots and single PP-depleted slots
   remain subject to exact per-command checks. See
   `docs/ISSUE_141_LOCK_PP_STRUGGLE_SLICE.md`.
+- Read-only observable-state research: `observed_replay_audit.cjs`
+  checks only an **explicitly synthetic, SHA-bound** projection against an
+  independently deserialized *complete* 3v3 `Battle`. It returns
+  `SYNTHETIC_VISIBLE_FIELDS_MATCH` (never complete reconstruction) or a
+  fail-closed mismatch. Different full RNG seeds can satisfy the same
+  displayed facts, so this is **not** actual screen→Battle restoration.
+  It does not run in the worker's IPC or LIVE. See
+  `docs/ISSUE_141_VISIBLE_REPLAY_RECONSTRUCTION_BOUNDARY.md`.
 - As of the latest review, `assets` must be the actual match-preloaded
   `FrozenMatchAssets`. All four on-disk preload SHA hashes must match
   the frozen window and in-memory source bytes; the six registered members

@@ -8,6 +8,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const {enumerateEngineP2} = require("./p2_engine_choices.cjs");
+const {auditSyntheticObservedReplay,SOURCE,sha256} =
+  require("./observed_replay_audit.cjs");
 
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const root = process.env.SHOWDOWN_PINNED_BUILD_ROOT;
@@ -275,4 +277,84 @@ test("real pinned engine: synthetically applied Encore only offers enabled move"
   assert.deepEqual(r.commands,["move 3","switch 2","switch 3"]);
   assert.equal(r.scope,"PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY");
   assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+
+function syntheticProjection(b) {
+  const raw=b.toJSON();
+  const one=(id,side)=>({
+    side:id,slot:1,species_id:side.pokemon[0].species.id,
+    hp:side.pokemon[0].hp,maxhp:side.pokemon[0].maxhp,
+    fainted:side.pokemon[0].fainted,status:side.pokemon[0].status,
+    boosts:{atk:side.pokemon[0].boosts.atk}
+  });
+  return {
+    source:SOURCE,
+    match_id:"controlled-real-engine-battle",
+    decision_window_id:"synthetic-window-1",
+    state_revision:1,battle_sha256:sha256(raw),
+    active:{p1:1,p2:1},turn:b.turn,
+    members:[one("p1",b.p1),one("p2",b.p2)],
+    field:{weather:b.field.weather,terrain:b.field.terrain}
+  };
+}
+
+test("real pinned engine: synthetic visible-state projection matches full clone, never restores hidden state",()=>{
+  const b=fixture();
+  const original=b.toJSON(),hash=fingerprint(original);
+  const packet=syntheticProjection(b);
+  const result=auditSyntheticObservedReplay(Battle,original,packet);
+  assert.equal(result.status,"SYNTHETIC_VISIBLE_FIELDS_MATCH",result.reason);
+  assert.equal(result.battle_sha256,packet.battle_sha256);
+  assert.ok(result.checked_fields.includes("p2:1.hp"));
+  assert.ok(result.checked_fields.includes("p2:1.boosts.atk"));
+  assert.equal(result.full_state_reconstructed,false);
+  assert.equal(result.exhaustive_observation_verified,false);
+  assert.deepEqual(b.toJSON(),original,"No mutation of original Battle");
+  assert.equal(fingerprint(original),hash,"No mutation of input JSON");
+});
+test("real pinned engine: mismatch of observed HP/active/boost/status fails",()=>{
+  const b=fixture(),raw=b.toJSON();
+  const mutate=[
+    p=>p.members[1].hp-=1,
+    p=>p.members[0].boosts.atk+=1,
+    p=>p.members[0].status="brn",
+    p=>p.active.p2=2
+  ];
+  for(const change of mutate) {
+    const packet=syntheticProjection(b);
+    change(packet);
+    const r=auditSyntheticObservedReplay(Battle,raw,packet);
+    assert.equal(r.status,"NO_OBSERVATION_MATCH");
+    assert.equal(r.reason,"VISIBLE_STATE_MISMATCH",r.reason);
+    assert.equal(r.full_state_reconstructed,false);
+  }
+});
+test("real pinned engine: same visible observations do not determine RNG",()=>{
+  const a=fixture(),rawA=a.toJSON();
+  const packetA=syntheticProjection(a);
+  const alt=clone(a);
+  // Pinned Showdown's PRNG API exposes getSeed()/setSeed(); unlike older
+  // versions it does not expose a mutable prng.seed array.
+  const originalSeed=alt.prng.getSeed();
+  assert.match(originalSeed,/^[0-9]+,[0-9]+,[0-9]+,[0-9]+$/);
+  const components=originalSeed.split(",").map(Number);
+  components[0]=(components[0]+1) % 65536;
+  alt.prng.setSeed(components.join(","));
+  assert.notEqual(alt.prng.getSeed(),originalSeed);
+  const rawB=alt.toJSON();
+  assert.notEqual(sha256(rawA),sha256(rawB),
+    "Hidden RNG fork should have a different full serialized state");
+  // The synthetic observation packet carries the same visible fields,
+  // but points to whichever complete hypothetical Battle is being audited.
+  const packetB={...packetA,battle_sha256:sha256(rawB)};
+  assert.equal(
+    auditSyntheticObservedReplay(Battle,rawA,packetA).status,
+    "SYNTHETIC_VISIBLE_FIELDS_MATCH");
+  const other=auditSyntheticObservedReplay(Battle,rawB,packetB);
+  assert.equal(other.status,"SYNTHETIC_VISIBLE_FIELDS_MATCH",other.reason);
+  assert.equal(other.full_state_reconstructed,false);
+  assert.equal(
+    auditSyntheticObservedReplay(Battle,rawB,packetA).reason,
+    "REPLAY_SHA_MISMATCH",
+    "An unchanged identity/hash must not be applied to a different replay");
 });
