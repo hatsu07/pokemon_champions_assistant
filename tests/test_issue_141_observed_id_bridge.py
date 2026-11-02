@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import MappingProxyType
 import copy
+import csv
+import hashlib
+import io
 import unittest
 
+from champions_assist.preload import REQUIRED_MASTER_FILES, _parse_team
 from champions_assist.local_strategy.models import canonical_json
 from champions_assist.local_strategy.observed_id_bridge import (
     stage_observed_champions_ids,
@@ -152,6 +157,50 @@ class ObservedIdBridgeTests(unittest.TestCase):
             with_state(frozen(),edits=wrong),VERIFIED_ASSETS)
         self.assertEqual(result.status,"NO_OBSERVATION_ID_STAGE")
         self.assertEqual(result.reason,"INVALID_OR_CONTRADICTORY_VISIBLE_EVIDENCE")
+
+    def test_frozen_team_duplicate_display_moves_cannot_hide_distinct_ids(self):
+        # A forged/faulty frozen CSV could assign the SAME Japanese display
+        # name to two distinct engine move IDs. Never guess which slot it means.
+        key=REQUIRED_MASTER_FILES[3]
+        rows=list(csv.DictReader(io.StringIO(VERIFIED_ASSETS.contents[key])))
+        self.assertEqual(rows[0]["move2"],"ドラゴンクロー")
+        rows[0]["move2"]="じしん"
+        out=io.StringIO()
+        writer=csv.DictWriter(out,fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+        modified=out.getvalue()
+        contents=dict(VERIFIED_ASSETS.contents)
+        contents[key]=modified
+        hashes=dict(VERIFIED_ASSETS.sha256)
+        hashes[key]=hashlib.sha256(modified.encode("utf-8")).hexdigest()
+        modified_assets=replace(
+            VERIFIED_ASSETS,contents=MappingProxyType(contents),
+            sha256=MappingProxyType(hashes),own_team=_parse_team(modified))
+        old=frozen()
+        window=replace(old.window,team_sha256=hashes[key],
+            four_master_sha256=tuple((name,hashes[name])
+                                     for name in REQUIRED_MASTER_FILES))
+        snapshot=replace(old,window=window)
+        self.assertEqual(
+            stage_observed_champions_ids(snapshot,modified_assets).status,
+            "NO_OBSERVATION_ID_STAGE")
+
+    def test_opponent_bare_zero_cannot_borrow_own_faint_event_semantics(self):
+        def change(s):
+            details(s)
+            s["battle_evidence"]["hp_by_pokemon"]["opponent"]["カイリュー"]="0"
+        snapshot=with_state(frozen(),edits=change)
+        self.assertEqual(stage_observed_champions_ids(
+            snapshot,VERIFIED_ASSETS).status,"NO_OBSERVATION_ID_STAGE")
+        def exact(s):
+            details(s)
+            s["battle_evidence"]["hp_by_pokemon"]["opponent"]["カイリュー"]="0/166"
+        result=stage_observed_champions_ids(
+            with_state(frozen(),edits=exact),VERIFIED_ASSETS)
+        self.assertEqual(result.status,"PARTIAL_OBSERVATION_ID_STAGE")
+        self.assertEqual((result.opponent.hp,result.opponent.maxhp,
+                          result.opponent.fainted),(0,166,True))
 
     def test_unknown_own_active_and_previous_match_actor_block(self):
         for actor in ("ミミッキュ","カイリュー"):
