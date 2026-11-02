@@ -64,8 +64,15 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       "exports.Battle={fromJSON(data){const pokemon=data.team.map(x=>({"+
       "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,fainted:false,status:''}));"+
       "const p1={pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
-      "return {format:{mod:'champions'},requestState:'move',turn:1,"+
-      "field:{weather:''},sides:[p1,{pokemon:[]}],"+
+      "const opp=[{fainted:false,switchFlag:false},{fainted:false,switchFlag:false},{fainted:true,switchFlag:false}];"+
+      "const r={side:{id:'p2',pokemon:opp.map((p,i)=>({condition:i===2?'0 fnt':i===1?'60/100':'100/100',active:i===0}))},"+
+      "active:[{moves:[{id:'tackle',pp:10,disabled:false}],trapped:false}]};"+
+      "const p2={id:'p2',pokemon:opp,active:[opp[0]],activeRequest:r,requestState:'move',"+
+      "choice:{cantUndo:false,actions:[],error:''},choose(x){if(x!=='move 1'&&x!=='switch 2')return false;"+
+      "this.choice.actions=[{choice:x[0]==='m'?'move':'switch'}];return true},"+
+      "isChoiceDone(){return this.choice.actions.length===1}};"+
+      "return {format:{mod:'champions'},gameType:'singles',activePerHalf:1,"+
+      "requestState:'move',turn:1,field:{weather:''},sides:[p1,p2],"+
       "makeChoices(){this.turn++},toJSON(){return data}}}};");
     fs.mkdirSync(path.join(root,"node_modules","testdep"),{recursive:true});
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),"// verified-test-dependency");
@@ -125,6 +132,11 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     wrongActive.branch_input_sha256=hash(Object.fromEntries(
       Object.entries(wrongActive).filter(([key])=>key!=="branch_input_sha256")));
     const mismatchedActive={...req,branch_request_id:"f".repeat(32),payload:wrongActive};
+    const p2Payload={source:"FULL_REPLAY_SYNTHETIC",battle:payload.battle,
+      expected_p1_roster:roster,expected_p1_active:"Garchomp",hypothesis_id:"H1"};
+    p2Payload.branch_input_sha256=hash(p2Payload);
+    const p2Request={...req,op:"ENUMERATE_P2",branch_request_id:"1".repeat(32),
+      payload:p2Payload};
     // The nonce and branch hash are valid for the wrong roster/moves,
     // so only semantic inspection after Battle.fromJSON can reject these.
     // Mutated choice is NOT covered by the submitted SHA.
@@ -140,9 +152,16 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("worker exited "+code+" "+errors));
         try{resolve(data.trim().split("\n").map(JSON.parse))}catch(e){reject(e)}
       });
-      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive].map(JSON.stringify).join("\n")+"\n");
+      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive,p2Request].map(JSON.stringify).join("\n")+"\n");
     });
-    assert.equal(output.length,5);
+    assert.equal(output.length,6);
+    assert.equal(output[5].op,"ENUMERATE_P2");
+    assert.equal(output[5].capability_status,"PARTIAL");
+    assert.equal(output[5].ok,true);
+    assert.equal(output[5].branch_request_id,p2Request.branch_request_id);
+    assert.equal(output[5].branch_input_sha256,p2Payload.branch_input_sha256);
+    assert.deepEqual(output[5].payload.commands,["move 1","switch 2"]);
+    assert.equal(output[5].payload.exhaustive_legal_choices_verified,false);
     assert.equal(output[0].capability_status,"PARTIAL");
     assert.equal(output[0].ok,true);
     assert.equal(output[0].branch_request_id,"b".repeat(32));
