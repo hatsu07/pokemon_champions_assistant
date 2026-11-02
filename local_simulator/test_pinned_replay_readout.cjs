@@ -12,7 +12,7 @@ function fixture(){
     boosts:Object.fromEntries(["atk","def","spa","spd","spe",
                                 "accuracy","evasion"].map(k=>[k,boosts[k]||0])),
   });
-  const build=()=>{
+  const build=(serialized)=>{
     const a={id:"p1",pokemon:[mk("garchomp",88,{atk:2}),
       mk("primarina"),mk("mimikyu")]};
     const b={id:"p2",pokemon:[mk("dragonite",75),
@@ -21,9 +21,9 @@ function fixture(){
     b.active=[b.pokemon[2]];
     return {format:{mod:"champions"},gameType:"singles",
       activePerHalf:1,requestState:"move",sides:[a,b],
-      toJSON:()=>JSON.parse(JSON.stringify(raw))};
+      toJSON:()=>JSON.parse(JSON.stringify(serialized))};
   };
-  return {raw, Battle:{fromJSON:()=>build()}};
+  return {raw, Battle:{fromJSON:serialized=>build(serialized)}};
 }
 test("read-only synthetic projection has six members and no certification",()=>{
   const {raw,Battle}=fixture(),before=JSON.stringify(raw);
