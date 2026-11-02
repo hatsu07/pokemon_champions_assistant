@@ -12,7 +12,9 @@ on:
       - 'tests/test_issue_141_window_bound_readout_transport.py'
       - 'tests/test_issue_141_observed_safe_branch_gate.py'
       - 'tests/test_issue_141_observed_synthetic_replay_bridge.py'
+      - 'tests/test_issue_141_observed_full_grid_diagnostic.py'
       - 'src/champions_assist/local_strategy/observed_synthetic_replay_bridge.py'
+      - 'src/champions_assist/local_strategy/observed_full_grid_diagnostic.py'
       - '.github/workflows/showdown-phase2-real-engine.yml'
   workflow_dispatch:
 

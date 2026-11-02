@@ -20,6 +20,8 @@ on:
       - 'tests/test_issue_141_observed_opponent_actions.py'
       - 'tests/test_issue_141_observed_safe_branch_gate.py'
       - 'tests/test_issue_141_observed_synthetic_replay_bridge.py'
+      - 'tests/test_issue_141_observed_full_grid_diagnostic.py'
+      - 'src/champions_assist/local_strategy/observed_full_grid_diagnostic.py'
       - 'tests/test_issue_141_replay_projection_audit.py'
       - 'tests/test_issue_141_engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_window_bound_readout_transport.py'
@@ -57,7 +59,7 @@ jobs:
       - name: Install Python project for existing validator imports
         run: python -m pip install -e .
       - name: Python contract and failure tests
-        run: python -m unittest tests.test_issue_140_foundation tests.test_issue_141_selection tests.test_issue_141_one_turn tests.test_issue_141_shadow_runner tests.test_issue_141_opponent_evidence_gate tests.test_issue_141_joint_set_intake tests.test_issue_141_opponent_request tests.test_issue_141_engine_p2_transport tests.test_issue_141_observed_id_bridge tests.test_issue_141_observed_provenance_gate tests.test_issue_141_capture_receipts tests.test_issue_141_observed_ocr_scenario_bridge tests.test_issue_141_observed_opponent_actions tests.test_issue_141_observed_safe_branch_gate tests.test_issue_141_observed_synthetic_replay_bridge tests.test_issue_141_replay_projection_audit tests.test_issue_141_engine_replay_readout_bridge tests.test_issue_141_window_bound_readout_transport tests.test_verify_merge_ready -v
+        run: python -m unittest tests.test_issue_140_foundation tests.test_issue_141_selection tests.test_issue_141_one_turn tests.test_issue_141_shadow_runner tests.test_issue_141_opponent_evidence_gate tests.test_issue_141_joint_set_intake tests.test_issue_141_opponent_request tests.test_issue_141_engine_p2_transport tests.test_issue_141_observed_id_bridge tests.test_issue_141_observed_provenance_gate tests.test_issue_141_capture_receipts tests.test_issue_141_observed_ocr_scenario_bridge tests.test_issue_141_observed_opponent_actions tests.test_issue_141_observed_safe_branch_gate tests.test_issue_141_observed_synthetic_replay_bridge tests.test_issue_141_observed_full_grid_diagnostic tests.test_issue_141_replay_projection_audit tests.test_issue_141_engine_replay_readout_bridge tests.test_issue_141_window_bound_readout_transport tests.test_verify_merge_ready -v
       - name: Node protocol tests (unbundled, no real Showdown)
         run: node --test local_simulator/test_worker.cjs local_simulator/test_p2_engine_choices.cjs local_simulator/test_observed_replay_audit.cjs local_simulator/test_pinned_replay_readout.cjs
       - name: Explicit limits
