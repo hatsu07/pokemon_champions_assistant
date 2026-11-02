@@ -39,6 +39,9 @@ class VisibleMember:
     boosts: tuple[tuple[str, int], ...]
     raw_status: str | None
     raw_current_type: str | None
+    raw_item: str | None
+    raw_ability: str | None
+    raw_form: str | None
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class ObservationIdStage:
     state_revision: int = -1
     own_members: tuple[VisibleMember, ...] = ()
     opponent: VisibleMember | None = None
+    other_observed_opponents: tuple[VisibleMember, ...] = ()
     own_active_slot: int | None = None
     unbound: tuple[str, ...] = ()
     # These flags may not be promoted by any caller on this stage alone.
@@ -118,6 +122,8 @@ def _current_member(name: str, side: str,
         ("hp", "hp_by_pokemon"), ("boosts", "boosts"),
         ("status", "status_by_pokemon"), ("type", "current_type"),
         ("moves", "moves_by_pokemon"),
+        ("item","item_by_pokemon"),("ability","ability_by_pokemon"),
+        ("form","form_by_pokemon"),
     ):
         section = sections[section_name][side]
         if name in section:
@@ -128,6 +134,10 @@ def _current_member(name: str, side: str,
     stages = _boosts(observations["boosts"]) if "boosts" in observations else ()
     raw_status = _value(observations["status"]) if "status" in observations else None
     raw_type = _value(observations["type"]) if "type" in observations else None
+    raw_item = _value(observations["item"]) if "item" in observations else None
+    raw_ability = (_value(observations["ability"])
+                   if "ability" in observations else None)
+    raw_form = _value(observations["form"]) if "form" in observations else None
     moves = observations.get("moves", [])
     if (not isinstance(moves, list) or len(moves) > 4
             or len(set(str(x) for x in moves)) != len(moves)):
@@ -144,6 +154,7 @@ def _current_member(name: str, side: str,
         name,side,slot,registered["species_id"] if registered else None,
         registered_moves,resolved,observed_moves,
         hp,maximum,fainted,stages,raw_status,raw_type,
+        raw_item,raw_ability,raw_form,
     )
 
 
@@ -192,6 +203,8 @@ def stage_observed_champions_ids(snapshot: FrozenBattleState,
             field: _section(memory, field) for field in (
                 "hp_by_pokemon", "boosts", "status_by_pokemon",
                 "current_type", "moves_by_pokemon",
+                "item_by_pokemon", "ability_by_pokemon",
+                "form_by_pokemon",
             )
         }
         # This is the *selected* three, not the full registered six. A
@@ -225,6 +238,19 @@ def stage_observed_champions_ids(snapshot: FrozenBattleState,
             opponent_name, "opponent", slot=None,
             registered=None, sections=sections
         ) if opponent_name else None)
+        # Preserve previously revealed opponents even if no longer active;
+        # do not silently erase a known move/item/ability when switching.
+        known_opponents = set().union(*(set(v["opponent"])
+                                       for v in sections.values()))
+        if opponent_name:
+            known_opponents.add(opponent_name)
+        other_names = (name for name in preview if name in known_opponents
+                       and name != opponent_name) if preview else ()
+        other_opponents = tuple(_current_member(
+            name,"opponent",slot=None,registered=None,sections=sections)
+            for name in other_names)
+        visible = (*own_members, *((opponent,) if opponent else ()),
+                   *other_opponents)
         unbound = [
             "OPPONENT_SELECTED_THREE_AND_PARTY_SLOT_UNKNOWN",
             "OPPONENT_SPECIES_AND_MOVE_SHOWDOWN_IDS_UNMAPPED",
@@ -232,19 +258,24 @@ def stage_observed_champions_ids(snapshot: FrozenBattleState,
             "SHOWDOWN_EVENT_QUEUE_AND_EFFECT_TIMERS_UNKNOWN",
             "CHAMPIONS_MECHANICS_PARITY_UNVERIFIED",
         ]
-        if any(m.raw_status is not None for m in (*own_members, *((opponent,) if opponent else ()))):
+        if any(m.raw_status is not None for m in visible):
             unbound.append("STATUS_TRANSLATION_NOT_VERIFIED")
-        if any(m.raw_current_type is not None for m in (*own_members, *((opponent,) if opponent else ()))):
+        if any(m.raw_current_type is not None for m in visible):
             unbound.append("CURRENT_TYPE_TRANSLATION_NOT_VERIFIED")
-        if opponent and opponent.observed_moves_display:
+        if any(m.observed_moves_display for m in
+               (*((opponent,) if opponent else ()), *other_opponents)):
             unbound.append("REVEALED_OPPONENT_MOVE_IDS_UNMAPPED")
+        if any(m.raw_item is not None or m.raw_ability is not None
+               or m.raw_form is not None for m in visible):
+            unbound.append("ITEM_ABILITY_AND_FORM_IDS_UNVERIFIED")
         return ObservationIdStage(
             "PARTIAL_OBSERVATION_ID_STAGE",
             "FROZEN_OWN_IDS_AND_ONLY_EXACT_VISIBLE_VALUES",
             snapshot.snapshot_sha256, snapshot.window.match_id,
             snapshot.window.decision_window_id,
             snapshot.window.state_revision, tuple(own_members),
-            opponent, order.index(own_name) + 1, tuple(unbound)
+            opponent, other_opponents, order.index(own_name) + 1,
+            tuple(unbound)
         )
     except (ValueError, KeyError, TypeError, AttributeError):
         return _refuse("INVALID_OR_CONTRADICTORY_VISIBLE_EVIDENCE")
