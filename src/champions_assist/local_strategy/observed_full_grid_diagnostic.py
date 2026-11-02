@@ -10,8 +10,10 @@ There is no LIVE/GPT/GUI/LOCAL_SHADOW import or automatic promotion.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from hashlib import sha256
+from json import loads
 from time import monotonic
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .joint_set_intake import (
     MAX_JOINT_RECORDS, SourcedJointSetCandidate, stage_sourced_joint_candidates,
@@ -27,6 +29,8 @@ from .shadow_runner import (
 from .simulator_adapter import (
     EngineP2CandidateSet, LocalSimulatorWorker, WorkerUnavailable,
 )
+
+_MAX_SYNTHETIC_BATTLE_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,37 @@ def audit_observed_synthetic_turn(
 
     if not current_is_frozen():
         return _no("OBSERVATION_REVISION_CHANGED")
+
+    # Freeze every complete hypothetical Battle ONCE at entry, prior to any
+    # worker call. This detached canonical UTF-8 JSON is the single source of
+    # truth for READOUT_REPLAY, ENUMERATE_P2 and all SIMULATE branches. In
+    # particular, a worker mutating a dict it received or a concurrent caller
+    # changing a nested HP/move/RNG value cannot alter a later stage.
+    try:
+        frozen_texts: list[str] = []
+        frozen_sha: list[str] = []
+        for case in complete_branches:
+            if (not isinstance(case, ExplicitSyntheticBattleBranch)
+                    or not isinstance(case.complete_battle, Mapping)):
+                return _no("INVALID_COMPLETE_SYNTHETIC_BATTLE")
+            text = canonical_json(dict(case.complete_battle))
+            if len(text.encode("utf-8")) > _MAX_SYNTHETIC_BATTLE_BYTES:
+                return _no("SYNTHETIC_BATTLE_SIZE_LIMIT")
+            if not isinstance(loads(text), dict):
+                return _no("INVALID_COMPLETE_SYNTHETIC_BATTLE")
+            frozen_texts.append(text)
+            frozen_sha.append(sha256(text.encode("utf-8")).hexdigest())
+        # #194 receives detached copies; no references to the mutable caller
+        # Battle are sent across this readout or later processing stages.
+        readout_cases = tuple(
+            ExplicitSyntheticBattleBranch(
+                case.hypothesis_id, loads(text), case.opponent_display_by_slot)
+            for case, text in zip(complete_branches, frozen_texts))
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return _no("INVALID_COMPLETE_SYNTHETIC_BATTLE")
+    if clock() + reserve_seconds >= snapshot.window.deadline_monotonic:
+        return _no("FROZEN_BATTLE_PREFLIGHT_DEADLINE")
+
     frontier = stage_observed_opponent_action_frontier(
         snapshot, assets, joint_candidates=joint_candidates)
     expected = tuple(c.candidate_id for c in joint_candidates)
@@ -130,7 +165,7 @@ def audit_observed_synthetic_turn(
     # must succeed before ANY simulation or opponent-choice enumeration.
     replay = compare_observed_to_synthetic_replays(
         snapshot, assets, joint_candidates=joint_candidates,
-        complete_branches=complete_branches, worker=worker,
+        complete_branches=readout_cases, worker=worker,
         linked_observer=linked_observer)
     if (replay.status != "SYNTHETIC_REPLAYS_MATCH_OBSERVED_CONSTRAINTS_ONLY"
             or replay.ranking_status != "NO_RANKING"
@@ -139,7 +174,10 @@ def audit_observed_synthetic_turn(
             or replay.full_state_reconstructed
             or replay.exhaustive_opponent_policy
             or replay.hypothesis_ids != expected
-            or len(replay.battle_sha256) != len(expected)):
+            or len(replay.battle_sha256) != len(expected)
+            or replay.battle_sha256 != tuple(frozen_sha)):
+        # The readout must refer to the exact frozen UTF-8 Battle bytes,
+        # not merely to whichever mutable mapping is currently supplied.
         return _no("OBSERVED_SYNTHETIC_READOUT_REFUSED:" + replay.reason)
     if not current_is_frozen():
         return _no("OBSERVATION_REVISION_CHANGED")
@@ -156,33 +194,35 @@ def audit_observed_synthetic_turn(
     scenarios: list[ReplayOpponentScenario] = []
     counts: list[int] = []
     try:
-        for case, expected_battle_sha in zip(complete_branches,
-                                             replay.battle_sha256):
+        for case, battle_text, expected_battle_sha in zip(
+                readout_cases, frozen_texts, frozen_sha):
             if (not current_is_frozen()
                     or clock() + reserve_seconds >=
                        snapshot.window.deadline_monotonic):
                 return _no("OBSERVATION_CHANGED_OR_DEADLINE")
+            # Give ENUMERATE_P2 a fresh copy. Even if the worker mutates it,
+            # the later SIMULATE branches use only battle_text from entry.
+            stable_battle = loads(battle_text)
+            object_sha = fingerprint(stable_battle)
+            if (object_sha != expected_battle_sha
+                    or replay.battle_sha256[
+                        len(scenarios)] != expected_battle_sha):
+                return _no("FROZEN_BATTLE_READOUT_SHA_MISMATCH")
             choices: EngineP2CandidateSet = worker.enumerate_p2_from_replay(
-                hypothetical, case.complete_battle,
+                hypothetical, stable_battle,
                 hypothesis_id=case.hypothesis_id, assets=assets)
             if (not isinstance(choices, EngineP2CandidateSet)
                     or choices.status != "ENGINE_CHECKED_SIMPLE_CHOICES"
                     or choices.exhaustive_legal_choices_verified
-                    or choices.battle_sha256 != fingerprint(
-                        dict(case.complete_battle))
+                    or choices.battle_sha256 != object_sha
+                    or choices.battle_sha256 != expected_battle_sha
                     or not 1 <= len(choices.commands) <= 24
                     or len(set(choices.commands)) != len(choices.commands)
                     or any(not isinstance(c, str) or not c
                            for c in choices.commands)):
                 return _no("INCOMPLETE_OR_UNBOUND_SYNTHETIC_P2_REQUEST")
-            # The SHA of the original READOUT_REPLAY UTF-8 JSON remains
-            # separate from the JSON-object fingerprint for ENUMERATE_P2.
-            if not expected_battle_sha or len(expected_battle_sha) != 64:
-                return _no("MISSING_READOUT_REPLAY_SHA")
             scenarios.append(ReplayOpponentScenario(
-                case.hypothesis_id,
-                canonical_json(dict(case.complete_battle)),
-                choices.commands))
+                case.hypothesis_id, battle_text, choices.commands))
             counts.append(len(choices.commands))
         if sum(counts) * len(hypothetical.verified_action_ids) > MAX_BRANCHES:
             return _no("CROSS_PRODUCT_BRANCH_LIMIT")

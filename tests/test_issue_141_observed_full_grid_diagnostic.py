@@ -6,9 +6,15 @@ NO_RANKING even when a hypothetical model has a unique preferred move.
 from __future__ import annotations
 
 from dataclasses import replace
+from hashlib import sha256
+import json
 import unittest
+from unittest.mock import patch
 
 from champions_assist.local_strategy.models import canonical_json, fingerprint
+from champions_assist.local_strategy.observed_synthetic_replay_bridge import (
+    compare_observed_to_synthetic_replays,
+)
 from champions_assist.local_strategy.observed_full_grid_diagnostic import (
     audit_observed_synthetic_turn,
 )
@@ -145,6 +151,85 @@ class ObservedFullGridDiagnosticTests(unittest.TestCase):
         self.assertEqual(out.evaluated_branch_count,0)
         self.assertEqual(out.hypothetical_nondominated_action_ids,())
         self.assertEqual(out.ranking_status,"NO_RANKING")
+
+    def test_worker_and_caller_mutate_hp_moves_rng_after_readout_but_grid_is_frozen(self):
+        # Regression for review P2: A was OCR-readout validated; B must never
+        # silently replace A for ENUMERATE_P2 or SIMULATE.
+        branches=cases()
+        source_text={c.hypothesis_id:canonical_json(dict(c.complete_battle))
+                     for c in branches}
+        source_digest=tuple(sha256(t.encode("utf-8")).hexdigest()
+                            for t in source_text.values())
+
+        class MutatingWorker(FullGridFakeWorker):
+            def readout_synthetic_replay(self, snap, battle_json, **kwargs):
+                receipt=super().readout_synthetic_replay(
+                    snap,battle_json,**kwargs)
+                # The worker changes its passed readout object AFTER issuing
+                # the receipt; also emulate external caller changing original
+                # nested data while the diagnostic is in progress.
+                battle_json["state"]["seed"][0]=9999
+                battle_json["state"]["hp"]=[0,999]
+                battle_json["state"]["moves"]=["changed"]
+                for case in branches:
+                    case.complete_battle["state"]["seed"][0]=8080
+                    case.complete_battle["state"]["hp"]=[0,0]
+                    case.complete_battle["state"]["moves"]=["different"]
+                return receipt
+
+            def enumerate_p2_from_replay(self, snap, battle_json, **kwargs):
+                result=super().enumerate_p2_from_replay(
+                    snap,battle_json,**kwargs)
+                # Enumeration may mutate a fresh copy; SIMULATE must still
+                # receive the immutable original, not the mutated p2 input.
+                battle_json["state"]["seed"][0]=7070
+                battle_json["state"]["hp"]=[1,1]
+                battle_json["state"]["moves"]=["mutated-enumerator"]
+                return result
+
+        worker=MutatingWorker()
+        out=run(worker=worker,branches=branches)
+        self.assertEqual(out.status,"SYNTHETIC_TURN_DIAGNOSTIC_ONLY",out.reason)
+        self.assertEqual(out.synthetic_battle_sha256,source_digest)
+        self.assertEqual(out.ranking_status,"NO_RANKING")
+        self.assertEqual(len(worker.simulator.calls),4)
+        for hyp, p2, p1, battle_json in worker.simulator.calls:
+            self.assertEqual(battle_json,source_text[hyp])
+        # The originally supplied mutable mapping really did change, showing
+        # that success came from a detached freeze rather than lucky timing.
+        self.assertNotEqual(
+            canonical_json(dict(branches[0].complete_battle)),
+            source_text["Joint-1"])
+
+    def test_forged_readout_sha_never_authorizes_enumeration(self):
+        real_compare=compare_observed_to_synthetic_replays
+
+        def mismatched(*args,**kwargs):
+            good=real_compare(*args,**kwargs)
+            self.assertEqual(
+                good.status,"SYNTHETIC_REPLAYS_MATCH_OBSERVED_CONSTRAINTS_ONLY")
+            return replace(good,battle_sha256=("0"*64,good.battle_sha256[1]))
+        worker=FullGridFakeWorker()
+        with patch(
+            "champions_assist.local_strategy.observed_full_grid_diagnostic."
+            "compare_observed_to_synthetic_replays",side_effect=mismatched):
+            out=run(worker=worker)
+        self.assertEqual(out.status,"NO_OBSERVED_TURN_DIAGNOSTIC")
+        self.assertEqual(worker.enumerated,[])
+        self.assertEqual(worker.simulator.calls,[])
+        self.assertEqual(out.hypothesis_ids,())
+
+    def test_nonfinite_and_oversized_battle_fail_before_worker(self):
+        for invalid in ({"state":{"seed":[float("nan")]}},
+                        {"state":{"data":"x"*(4*1024*1024)}}):
+            with self.subTest(kind=list(invalid["state"])):
+                branches=(replace(cases()[0],complete_battle=invalid),
+                          cases()[1])
+                worker=FullGridFakeWorker()
+                out=run(branches=branches,worker=worker)
+                self.assertEqual(out.status,"NO_OBSERVED_TURN_DIAGNOSTIC")
+                self.assertEqual(worker.calls,[])
+                self.assertEqual(worker.enumerated,[])
 
     def test_no_budget_and_unverified_input_are_fail_closed(self):
         worker=FullGridFakeWorker()

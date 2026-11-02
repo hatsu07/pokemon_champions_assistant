@@ -16,10 +16,13 @@ import tempfile
 import time
 import unittest
 
-from champions_assist.local_strategy.models import canonical_json
+from champions_assist.local_strategy.models import canonical_json, fingerprint
 from champions_assist.local_strategy.simulator_adapter import LocalSimulatorWorker
 from champions_assist.local_strategy.observed_synthetic_replay_bridge import (
     ExplicitSyntheticBattleBranch, compare_observed_to_synthetic_replays,
+)
+from champions_assist.local_strategy.observed_full_grid_diagnostic import (
+    audit_observed_synthetic_turn,
 )
 from tests.test_issue_141_joint_set_intake import record
 from tests.test_issue_141_observed_id_bridge import with_state
@@ -186,6 +189,95 @@ class RealPinnedReadoutPythonE2E(unittest.TestCase):
         self.assertEqual(out.ranking_status,"NO_RANKING")
         self.assertFalse(out.game_battle_authenticated)
         self.assertFalse(out.opponent_mapping_authenticated)
+        self.assertFalse(out.full_state_reconstructed)
+        self.assertFalse(out.ready_for_engine)
+ 
+    def test_actual_pinned_worker_observed_readout_p2_and_simulation_same_battle(self):
+        """Real worker E2E for the review P2 integrity fix, synthetic only.
+
+        Three operations must see the same *original complete* Battle/RNG
+        bytes for every hypothesis and p1/p2 branch. This is not proof that
+        any such Battle came from an actual Champions match.
+        """
+        fixture=os.environ.get("READOUT_E2E_FIXTURE_PATH","")
+        upstream=os.environ.get("SHOWDOWN_PINNED_BUILD_ROOT","")
+        self.assertTrue(fixture and upstream)
+        battle=json.loads(Path(fixture).read_text(encoding="utf-8"))
+        expected_sha=digest(canonical_json(battle).encode("utf-8"))
+        snap=with_state(frozen(),edits=lambda s:s.update(
+            opponent_active="カイリュー",
+            opponent_six=["カイリュー","サーフゴー","ドドゲザン",
+                          "ウルガモス","ミミッキュ","ロトム"]))
+        snap=replace(snap,window=replace(
+            snap.window,deadline_monotonic=time.monotonic()+90))
+        sources=(
+            record("Joint-1"),
+            record("Joint-2",source_ref="synthetic://second-joint"),
+        )
+        entries=tuple(ExplicitSyntheticBattleBranch(
+            c.candidate_id,battle,("カイリュー","サーフゴー","ドドゲザン"))
+            for c in sources)
+
+        class TracingActualWorker(LocalSimulatorWorker):
+            def __init__(self,**kwargs):
+                super().__init__(**kwargs)
+                self.readouts=[]
+                self.enumerations=[]
+                self.simulations=[]
+
+            def readout_synthetic_replay(self,snap,battle_json,**kwargs):
+                self.readouts.append((
+                    kwargs["hypothesis_id"],
+                    digest(canonical_json(dict(battle_json)).encode("utf-8"))))
+                return super().readout_synthetic_replay(
+                    snap,battle_json,**kwargs)
+
+            def enumerate_p2_from_replay(self,snap,battle_json,**kwargs):
+                self.enumerations.append((
+                    kwargs["hypothesis_id"],fingerprint(dict(battle_json))))
+                return super().enumerate_p2_from_replay(
+                    snap,battle_json,**kwargs)
+
+            def simulate(self,snap,battle_json,own_choice,opponent_choice,
+                         **kwargs):
+                self.simulations.append((
+                    kwargs["hypothesis_id"],fingerprint(dict(battle_json)),
+                    own_choice,opponent_choice))
+                return super().simulate(
+                    snap,battle_json,own_choice,opponent_choice,**kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target=make_ci_test_runtime(Path(upstream),Path(tmp))
+            with TracingActualWorker(
+                node_executable=shutil.which("node"),
+                worker_script=str(REPO / "local_simulator/worker.cjs"),
+                showdown_root=str(target),simulator_sha=PIN,
+            ) as worker:
+                out=audit_observed_synthetic_turn(
+                    snap,VERIFIED_ASSETS,joint_candidates=sources,
+                    complete_branches=entries,worker=worker,
+                    preserve="ガブリアス",stopper="ミミッキュ",
+                    current_snapshot=lambda:snap,reserve_seconds=0.5)
+        self.assertEqual(
+            out.status,"SYNTHETIC_TURN_DIAGNOSTIC_ONLY",out.reason)
+        self.assertEqual(out.ranking_status,"NO_RANKING")
+        self.assertEqual(out.hypothesis_ids,("Joint-1","Joint-2"))
+        self.assertEqual(out.synthetic_battle_sha256,
+                         (expected_sha,expected_sha))
+        self.assertEqual(worker.readouts,
+                         [("Joint-1",expected_sha),("Joint-2",expected_sha)])
+        self.assertEqual(worker.enumerations,
+                         [("Joint-1",expected_sha),("Joint-2",expected_sha)])
+        self.assertEqual(len(worker.simulations),
+                         out.evaluated_branch_count)
+        self.assertTrue(worker.simulations)
+        self.assertEqual(
+            {v for _,v,_,_ in worker.simulations},{expected_sha})
+        self.assertEqual(out.evaluated_branch_count,
+                         sum(out.engine_choice_counts))
+        self.assertFalse(out.game_battle_authenticated)
+        self.assertFalse(out.opponent_mapping_authenticated)
+        self.assertFalse(out.exhaustive_opponent_policy)
         self.assertFalse(out.full_state_reconstructed)
         self.assertFalse(out.ready_for_engine)
 

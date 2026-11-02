@@ -11,16 +11,22 @@ their judgment logic:
 1. Revalidates the exact frozen match/window/revision/4-master snapshot and
    **all** supplied co-recorded, source/regulation-validated opponent 3-member
    hypotheses, including the observed move/switch **name possibilities**.
-2. For **every** hypothesis, calls the existing #194 worker-backed readout
-   and all-case observed-state constraint audit. Every complete Battle with
+2. At entry, canonicalizes each complete synthetic Battle to bounded
+   **immutable UTF-8 JSON**, checking valid finite JSON and the 4MiB limit.
+   These bytes and their SHA-256 are preserved for the entire request.
+   Detached fresh copies are passed to #194's worker-backed readout and its
+   all-case observed-state constraint audit. Every complete Battle with
    RNG and its p2 display-name-to-slot binding is independently supplied by
    the caller. **Nothing is constructed from missing OCR fields.**
 3. Stages all source hypotheses into a separate private synthetic snapshot;
    it does **not** mutate the original OCR state or store hypotheses as facts.
-4. For every synthetic Battle, invokes the existing pinned worker
-   `ENUMERATE_P2` and validates that the response is bound to the same
-   complete Battle fingerprint and source hypothesis. Incomplete,
-   unsupported or hash-mismatched cases fail the **entire batch**.
+4. For every synthetic Battle, invokes pinned `ENUMERATE_P2` on a
+   **new copy of the frozen bytes**. It independently verifies the SHA of the
+   #194 READOUT_REPLAY UTF-8 submission, the canonical object fingerprint in
+   ENUMERATE_P2, and the original stored hash. All subsequent SIMULATE
+   scenarios use the **same original immutable JSON**, not any worker-mutated
+   mapping. Incomplete, unsupported or hash-mismatched cases fail the **entire
+   batch**.
 5. Sends the exact Cartesian product of those hypothetical engine-issued p2
    commands and the current verified p1 actions into the existing
    `run_shadow_turn` comparator. Existing budget (240 branches),
@@ -74,9 +80,15 @@ Even a unique synthetic model action remains **non-actionable**.
 hypothetical success, no-promotion flags, mismatched readouts, missing /
 duplicate / re-ordered hypotheses, unsupported and SHA-mismatched p2,
 changed OCR revision, simulated worker errors and invalid requests.
-The new tests run in isolated Linux and Windows contract CI. Existing
-real pinned-Showdown worker E2E remains in the Phase 2 workflow; this PR
-does **not** claim a new real-game E2E.
+Additional regression tests mutate the caller's nested Battle HP,
+moves and RNG after readout and mutate the dictionary passed to the
+enumerator. All later SIMULATE branches must still use the original frozen
+SHA and byte representation; forged readout SHA and oversized/nonfinite
+initial values fail closed. A new **real pinned Showdown worker** Python E2E
+test traces READOUT_REPLAY → ENUMERATE_P2 → SIMULATE and checks one complete
+synthetic Battle/RNG SHA across every branch. The isolated regressions run on
+Linux/Windows, with this pinned-worker E2E in the Phase 2 real-engine job.
+These tests do **not** claim a new real-game E2E.
 
 For Phase 2② acceptance, provide independently grounded exact
 opponent-species/slot provenance and a bounded reproducible game-to-engine
