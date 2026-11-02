@@ -13,7 +13,13 @@ function fakeBattle(){
     const pokemon=data.hp.map((hp,i)=>({
       hp,maxhp:data.maxhp?.[i] ?? 100,
       fainted:hp===0,switchFlag:i===0&&reqState==="switch",
-      canMegaEvo:i===0&&data.movePatch?.canMegaEvo===true?"Garchomp-Mega":null
+      canMegaEvo:i===0&&data.movePatch?.canMegaEvo===true?"Garchomp-Mega":null,
+      moveSlots:data.special==="struggle"?
+        [{id:"extremespeed",pp:0},{id:"dragonclaw",pp:0}]:
+        [{id:"extremespeed",pp:5},{id:"dragonclaw",pp:9}],
+      getLockedMove(){return i===0&&data.special==="hardlock"?
+        "extremespeed":null;},
+      getMoves(){return data.special==="struggle"?[]:[{id:"extremespeed"}];}
     }));
     const active=pokemon[0];
     const request={
@@ -52,7 +58,8 @@ function fakeBattle(){
         const move=/^move ([1-4])$/.exec(ordinary);
         const sw=/^switch ([1-3])$/.exec(ordinary);
         const action=move?{
-          choice:"move",moveSlot:Number(move[1])-1,
+          choice:"move",
+          ...(data.special?{}:{moveSlot:Number(move[1])-1}),
           moveid:request.active[0].moves[Number(move[1])-1].id,mega
         }:{
           choice:reqState==="switch"?"instaswitch":"switch",
@@ -218,4 +225,49 @@ test("engine acceptance alone cannot mask a different move or lost Mega flag",()
   const sw=base();sw.requestState="switch";sw.hp=[0,70,0];
   sw.actionPatch={target:{position:2}};
   assert.equal(enumerateEngineP2(fakeBattle(),sw).reason,"ENGINE_P2_ACTION_MISMATCH");
+});
+
+test("bounded real-style hard LockMove uses only the slot-less locked action",()=>{
+  const b=base();b.special="hardlock";b.trapped=true;
+  b.movePatch={moves:[{id:"extremespeed"}]};
+  const r=enumerateEngineP2(fakeBattle(),b);
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.deepEqual(r.commands,["move 1"]);
+  assert.equal(r.scope,"PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY");
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+test("all PP exhausted requests Struggle and may still switch",()=>{
+  const b=base();b.special="struggle";
+  b.movePatch={moves:[{id:"struggle",target:"randomNormal",disabled:false}]};
+  const r=enumerateEngineP2(fakeBattle(),b);
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.deepEqual(r.commands,["move 1","switch 2"]);
+  assert.equal(r.scope,"PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY");
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+test("unproven PP-less requests, false hard locks and substituted actions fail closed",()=>{
+  for (const b of [
+    {...base(),movePatch:{moves:[{id:"extremespeed"}]}},
+    {...base(),special:"hardlock",movePatch:{moves:[{id:"extremespeed"}]}},
+    {...base(),special:"struggle",
+      movePatch:{moves:[{id:"struggle",target:"randomNormal"}]}},
+    {...base(),special:"struggle",
+      movePatch:{moves:[{id:"struggle",target:"randomNormal",disabled:false}],
+        canMegaEvo:true}},
+    {...base(),special:"hardlock",trapped:true,
+      movePatch:{moves:[{id:"dragonclaw"}]}},
+    {...base(),special:"struggle",trapped:true,
+      movePatch:{moves:[{id:"struggle",target:"randomNormal",disabled:false}]}},
+  ]){
+    assert.equal(enumerateEngineP2(fakeBattle(),b).status,"NO_CHOICES",
+      JSON.stringify(b));
+  }
+  const b=base();b.special="hardlock";b.trapped=true;
+  b.movePatch={moves:[{id:"extremespeed"}]};
+  b.actionPatch={moveSlot:0};
+  assert.equal(enumerateEngineP2(fakeBattle(),b).reason,
+    "ENGINE_P2_ACTION_MISMATCH");
+  b.actionPatch={moveid:"dragonclaw"};
+  assert.equal(enumerateEngineP2(fakeBattle(),b).reason,
+    "ENGINE_P2_ACTION_MISMATCH");
 });

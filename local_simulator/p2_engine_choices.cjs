@@ -97,7 +97,7 @@ function requestCommands(b) {
     else if (health.hp>0) bench.push(i+1);
   }
   if (active.length!==1) return reject("ENGINE_P2_ROSTER_INVALID");
-  let commands=[];
+  let commands=[], noSlotAction=false;
   if (b.requestState==="switch") {
     if (!Array.isArray(req.forceSwitch) || req.forceSwitch.length!==1 ||
         req.forceSwitch[0]!==true || "active" in req ||
@@ -121,22 +121,60 @@ function requestCommands(b) {
         !Array.isArray(a.moves) || !a.moves.length || a.moves.length>4) {
       return reject("ENGINE_P2_COMPLEX_MOVE_REQUEST");
     }
-    const ids=new Set();
-    for (let i=0;i<a.moves.length;i++) {
-      const m=a.moves[i];
-      if (!onlyKeys(m,SLOT_KEYS) || typeof m.id!=="string" ||
-          !/^[a-z0-9]+$/.test(m.id) || ids.has(m.id) ||
-          !Number.isSafeInteger(m.pp) || m.pp<0 ||
-          (m.disabled!==undefined && m.disabled!==false && m.disabled!==true) ||
-          (!m.disabled && m.pp===0)) {
-        return reject("ENGINE_P2_MOVE_SLOTS_INVALID");
+    // The pinned engine issues a single PP-less request for hard LockMove
+    // (e.g. Outrage) or for Struggle when every ordinary move is unavailable.
+    // Side.choose then intentionally omits moveSlot: this must NOT be confused
+    // with an ordinary one-slot set or a Choice-item/Encore-disabled move.
+    const p=active[0].actual;
+    const ppLess=a.moves.length===1 && a.moves[0]?.pp===undefined;
+    if (ppLess) {
+      const m=a.moves[0];
+      if (!onlyKeys(m,SLOT_KEYS) ||
+          typeof m.id!=="string" || !/^[a-z0-9]+$/.test(m.id) ||
+          a.canMegaEvo===true || m.maxpp!==undefined ||
+          m.disabled===true || m.disabledSource!==undefined ||
+          !Array.isArray(p.moveSlots) || p.moveSlots.length<1 ||
+          p.moveSlots.length>4) {
+        return reject("ENGINE_P2_LOCK_OR_STRUGGLE_INVALID");
       }
-      ids.add(m.id);
-      if (!m.disabled) {
-        commands.push("move "+(i+1));
-        // Mega is an additional action, not a substitute for the normal move.
-        // Side.choose on fresh complete Battle copies must accept EACH variant.
-        if (a.canMegaEvo===true) commands.push("move "+(i+1)+" mega");
+      if (m.id==="struggle") {
+        // Explicit PP exhaustion only; disabled/Encore combinations with
+        // surviving PP are outside this slice and must not be guessed.
+        if (a.trapped===true ||
+            typeof p.getMoves!=="function" ||
+            p.getMoves().length!==0 ||
+            !p.moveSlots.every(slot=>Number.isSafeInteger(slot.pp) && slot.pp===0) ||
+            m.disabled!==false || m.target!=="randomNormal") {
+          return reject("ENGINE_P2_STRUGGLE_UNVERIFIED");
+        }
+      } else {
+        const locked=typeof p.getLockedMove==="function"?p.getLockedMove():null;
+        if (typeof locked!=="string" || locked!==m.id ||
+            a.trapped!==true || m.target!==undefined ||
+            !p.moveSlots.some(slot=>slot.id===locked)) {
+          return reject("ENGINE_P2_HARD_LOCK_UNVERIFIED");
+        }
+      }
+      commands.push("move 1");
+      noSlotAction=true;
+    } else {
+      const ids=new Set();
+      for (let i=0;i<a.moves.length;i++) {
+        const m=a.moves[i];
+        if (!onlyKeys(m,SLOT_KEYS) || typeof m.id!=="string" ||
+            !/^[a-z0-9]+$/.test(m.id) || ids.has(m.id) ||
+            !Number.isSafeInteger(m.pp) || m.pp<0 ||
+            (m.disabled!==undefined && m.disabled!==false && m.disabled!==true) ||
+            (!m.disabled && m.pp===0)) {
+          return reject("ENGINE_P2_MOVE_SLOTS_INVALID");
+        }
+        ids.add(m.id);
+        if (!m.disabled) {
+          commands.push("move "+(i+1));
+          // A Choice lock or Encore normally disables other slots; the
+          // independent engine choice must still match the selected slot.
+          if (a.canMegaEvo===true) commands.push("move "+(i+1)+" mega");
+        }
       }
     }
     if (!commands.length) return reject("ENGINE_P2_NO_SIMPLE_MOVE");
@@ -144,7 +182,7 @@ function requestCommands(b) {
   }
   if (!commands.length || commands.length>24 || new Set(commands).size!==commands.length)
     return reject("ENGINE_P2_CHOICE_SET_EMPTY_OR_OVERSIZED");
-  return {status:"SIMPLE_CANDIDATES",reason:"OK",commands,
+  return {status:"SIMPLE_CANDIDATES",reason:"OK",commands,noSlotAction,
     request:JSON.parse(JSON.stringify(req))};
 }
 
@@ -188,7 +226,9 @@ function enumerateEngineP2(Battle, battleJson) {
         const wanted=parsed.request.active[0].moves[slot]?.id;
         // A forced/Encore/locked action may cause Side.choose to return true
         // while silently selecting a DIFFERENT move. Do not call that legal.
-        if (action.choice!=="move" || action.moveSlot!==slot ||
+        if (action.choice!=="move" ||
+            (parsed.noSlotAction ? (slot!==0 || action.moveSlot!==undefined) :
+              action.moveSlot!==slot) ||
             action.moveid!==wanted || !!action.mega!==requestedMega ||
             !!action.megax || !!action.megay || !!action.zmove ||
             !!action.maxMove || !!action.terastallize) {
@@ -208,9 +248,11 @@ function enumerateEngineP2(Battle, battleJson) {
       // supported request grammar cannot independently prove that all
       // engine/game mechanics and hidden response variants were modeled.
       exhaustive_legal_choices_verified:false,
-      scope:parsed.commands.some(c=>c.endsWith(" mega")) ?
-        "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY" :
-        "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"};
+      scope:parsed.noSlotAction ?
+        "PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY" :
+        parsed.commands.some(c=>c.endsWith(" mega")) ?
+          "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY" :
+          "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"};
   } catch (_e) {
     return reject("ENGINE_P2_UNAVAILABLE_OR_INVALID");
   }
