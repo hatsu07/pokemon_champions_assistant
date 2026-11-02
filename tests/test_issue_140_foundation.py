@@ -795,6 +795,8 @@ class StagingTests(unittest.TestCase):
         worker.write_text("// synthetic worker")
         worker.with_name("p2_engine_choices.cjs").write_text(
             "// synthetic request helper, not real Showdown")
+        worker.with_name("pinned_replay_readout.cjs").write_text(
+            "// synthetic replay readout helper, not real Showdown")
         independent = root / "reviewed-manifest.json"
         independent.write_text(json.dumps({
             "engine_sha": PINNED_SHOWDOWN_SHA,
@@ -825,6 +827,10 @@ class StagingTests(unittest.TestCase):
             self.assertEqual(
                 manifest["p2_engine_choices_sha256"],
                 hashlib.sha256((opts["output"] / "p2_engine_choices.cjs"
+                                ).read_bytes()).hexdigest())
+            self.assertEqual(
+                manifest["pinned_replay_readout_sha256"],
+                hashlib.sha256((opts["output"] / "pinned_replay_readout.cjs"
                                 ).read_bytes()).hexdigest())
             self.assertIn("node_modules/dependency/index.js",
                           manifest["engine_file_sha256"])
