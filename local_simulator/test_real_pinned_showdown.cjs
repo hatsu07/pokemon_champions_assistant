@@ -103,18 +103,33 @@ test("real pinned engine: forced replacement from synthetic engine request",()=>
   original.makeRequest("switch");
   assert.equal(original.p2.requestState,"switch");
   assert.deepEqual(original.p2.activeRequest.forceSwitch,[true]);
+  const restored=clone(original);
+  const details={
+    battleState:restored.requestState,
+    sideState:restored.p2.requestState,
+    request:restored.p2.activeRequest,
+    activeHp:restored.p2.active[0].hp,
+    activeFainted:restored.p2.active[0].fainted,
+    activeSwitchFlag:restored.p2.active[0].switchFlag,
+    choice:restored.p2.choice,
+    pokemonLeft:restored.p2.pokemonLeft,
+  };
   const result=enumerateEngineP2(Battle,original.toJSON());
-  assert.equal(result.status,"ENGINE_CHECKED_SIMPLE_CHOICES",result.reason);
+  assert.equal(result.status,"ENGINE_CHECKED_SIMPLE_CHOICES",
+    result.reason+"; restored="+JSON.stringify(details));
   assert.deepEqual(result.commands,["switch 2","switch 3"]);
   assert.equal(result.exhaustive_legal_choices_verified,false);
 });
 
-test("real pinned engine: tampered request is not treated as exhaustive legality",()=>{
+test("real pinned engine: transient request edits cannot forge saved Battle policy",()=>{
   const b=fixture();
+  const immutableBefore=b.toJSON();
+  // The pinned serializer deliberately omits activeRequest and regenerates it
+  // in Battle.fromJSON. This edit is an in-memory test, not fixture evidence.
   b.p2.activeRequest.active[0].canMegaEvo=true;
-  const result=enumerateEngineP2(Battle,b.toJSON());
-  assert.equal(result.status,"NO_CHOICES");
-  assert.deepEqual(result.commands,[]);
+  assert.deepEqual(b.toJSON(),immutableBefore);
+  const result=enumerateEngineP2(Battle,immutableBefore);
+  assert.equal(result.status,"ENGINE_CHECKED_SIMPLE_CHOICES",result.reason);
   assert.equal(result.exhaustive_legal_choices_verified,false);
 });
 
