@@ -14,6 +14,7 @@ from typing import Any, Mapping, Protocol
 
 from .battle_visual_fields import HpBarCalibration, IconCalibration, VisualCandidateStabilizer, estimate_hp_bar, recognize_icon
 from .capture import Frame
+from .capture_provenance import FrameCaptureReceipt, capture_frame_receipt, matches_original_frame
 from .effect_catalog import FrozenEffectCatalog
 from .fsm import MatchSession, ObservationEvent, VisualUI
 from .observation_events import EventCertainty, MessageEpisodeTracker, ObservedEvent, ObservedEventKind, ParsedOcr, ScreenLexicon, TextObservationParser
@@ -167,6 +168,7 @@ class ObserverPipeline:
         self._observed_event_seq = 0
         self._processed_event_seq = 0
         self._recent_frames: deque[Frame] = deque(maxlen=recent_frame_limit)
+        self._recent_capture_receipts: deque[FrameCaptureReceipt] = deque(maxlen=recent_frame_limit)
         self._reanalysis_seq = 0
         self.hp_calibrations = hp_calibrations
         self.icon_calibrations = icon_calibrations
@@ -176,8 +178,10 @@ class ObserverPipeline:
     def process_frame(self, frame: Frame, *, now_ms: int | None = None, actual_ui_remaining_ms: int | None = None) -> FrameObservation:
         started = perf_counter()
         effective_now = frame.captured_at_ms if now_ms is None else now_ms
-        self._recent_frames.append(frame)
         raw_observation_id = f"{self.session.match_id}:frame:{frame.capture_seq}:{frame.frame_id}"
+        receipt = capture_frame_receipt(frame, self.session, raw_observation_id)
+        self._recent_frames.append(frame)
+        self._recent_capture_receipts.append(receipt)
         classification_image = frame.image if self.classification_roi_name is None else self.roi_config.crop(self.classification_roi_name, frame.image)
         classification = self.ui_classifier.classify(frame.image if classification_image is None else classification_image)
         parsed_rois: dict[str, ParsedOcr] = {}
@@ -188,7 +192,8 @@ class ObserverPipeline:
             if crop is None:
                 continue
             changed, difference = self.change_detector.changed(roi_name, crop)
-            raw_rois[roi_name] = {"changed": changed, "difference": difference}
+            raw_rois[roi_name] = {"changed": changed, "difference": difference,
+                                  "roi_rgb_sha256": image_digest(crop)}
             if not changed:
                 continue
             reading = self.ocr_engine.read(crop, roi_name=roi_name)
@@ -208,10 +213,11 @@ class ObserverPipeline:
             self._latest_parsed_rois[roi_name] = parsed
             pending_events.extend(parsed.events)
 
-        self.store.append_raw_observation(
+        stored = self.store.append_raw_observation(
             self.session.match_id,
             raw_observation_id,
             {
+                "capture_receipt": receipt.as_dict(),
                 "frame_id": frame.frame_id,
                 "capture_seq": frame.capture_seq,
                 "captured_at_ms": frame.captured_at_ms,
@@ -224,6 +230,10 @@ class ObserverPipeline:
             },
             capture_seq=frame.capture_seq,
         )
+        if not stored:
+            # An old raw observation may refer to different image bytes.
+            # Do not apply a second OCR interpretation under that identity.
+            raise ValueError("duplicate raw frame observation identity")
 
         self._observe_visual_fields(frame, raw_observation_id)
         applied_events: list[ObservedEvent] = []
@@ -323,6 +333,10 @@ class ObserverPipeline:
         frame = next((item for item in reversed(self._recent_frames) if item.frame_id == frame_id), None)
         if frame is None:
             raise KeyError(f"frame is not retained for reanalysis: {frame_id}")
+        receipt = next((item for item in reversed(self._recent_capture_receipts)
+                        if item.frame_id == frame_id), None)
+        if receipt is None or not matches_original_frame(receipt, frame, self.session.match_id):
+            raise ValueError("reanalysis frame changed since original observer ingest")
         self._reanalysis_seq += 1
         effective_now = frame.captured_at_ms if now_ms is None else now_ms
         raw_observation_id = f"{self.session.match_id}:reanalysis:{self._reanalysis_seq}:{frame.capture_seq}"
@@ -334,14 +348,21 @@ class ObserverPipeline:
             if crop is None:
                 continue
             reading = self.ocr_engine.read(crop, roi_name=roi_name)
-            raw_rois[roi_name] = {"text": reading.text, "confidence": reading.confidence, "engine": reading.engine}
+            raw_rois[roi_name] = {"text": reading.text, "confidence": reading.confidence,
+                                  "engine": reading.engine, "roi_rgb_sha256": image_digest(crop)}
             # The reanalysis sequence makes this a distinct evidence episode.
             parsed = parser.parse(reading, roi_name=roi_name, raw_observation_id=raw_observation_id, episode_id=self._reanalysis_seq)
             events.extend(parsed.events)
         self.store.append_raw_observation(
             self.session.match_id,
             raw_observation_id,
-            {"kind": "OCR_REANALYSIS", "original_frame_id": frame.frame_id, "capture_seq": frame.capture_seq, "rois": raw_rois},
+            {"kind": "OCR_REANALYSIS", "original_frame_id": frame.frame_id,
+             "original_raw_observation_id": receipt.raw_observation_id,
+             "original_capture_receipt": receipt.as_dict(),
+             "reanalyzed_after_observation_seq": self.session.observation_seq,
+             "reanalyzed_after_state_version": self.session.tactical_state_version,
+             "historical_frame_not_authenticated_as_current_window": True,
+             "capture_seq": frame.capture_seq, "rois": raw_rois},
             capture_seq=frame.capture_seq,
         )
         applied: list[ObservedEvent] = []
