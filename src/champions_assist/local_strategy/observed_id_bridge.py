@@ -16,6 +16,7 @@ from .simulator_adapter import WorkerUnavailable, _verified_roster_binding
 
 _EXACT_HP = re.compile(r"([0-9]{1,6})/([0-9]{1,6})\Z")
 _ZERO_HP = re.compile(r"0\Z")
+_OPPONENT_PERCENT_HP = re.compile(r"(?:0|[1-9][0-9]?|100)%\Z")
 _BOOST_NAMES = {
     "A": "atk", "B": "def", "C": "spa", "D": "spd",
     "S": "spe", "ACC": "accuracy", "EVA": "evasion",
@@ -42,6 +43,8 @@ class VisibleMember:
     raw_item: str | None
     raw_ability: str | None
     raw_form: str | None
+    # Literal OCR opponent HUD percentage, NOT exact hp/maxhp.
+    raw_hp_percent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,21 +91,36 @@ def _section(memory: dict[str, Any], key: str) -> dict[str, dict[str, Any]]:
     return {"own": raw.get("own", {}), "opponent": raw.get("opponent", {})}
 
 
-def _hp(value: Any, *, allow_own_faint_marker: bool) -> tuple[int, int | None, bool]:
+def _hp(value: Any, *, allow_own_faint_marker: bool,
+        opponent_faint_attested: bool = False,
+        ) -> tuple[int | None, int | None, bool | None, str | None]:
     raw = _value(value)
-    # battle_evidence.py writes literal "0" for an observed own KO.
-    # No positive bare integer or percentage is interpreted as exact HP.
+    # The actual OCR reducer stores opponent percentages and the literal
+    # "0" on FAINT. Percentages are *not* hp/maxhp, nor evidence of an
+    # exact simulator condition. A bare opponent zero requires the same
+    # actor's explicit FAINT flag from the observed battle ledger.
     if _ZERO_HP.fullmatch(raw):
-        if not allow_own_faint_marker:
-            raise ValueError("OPPONENT_ZERO_HP_NEEDS_EXPLICIT_MAXIMUM")
-        return (0, None, True)
+        if not allow_own_faint_marker and not opponent_faint_attested:
+            raise ValueError("OPPONENT_ZERO_HP_NOT_ATTESTED")
+        return (0, None, True, None)
+    if not allow_own_faint_marker and _OPPONENT_PERCENT_HP.fullmatch(raw):
+        if opponent_faint_attested:
+            if raw != "0%":
+                raise ValueError("CONTRADICTORY_FAINT_AND_PERCENT_HP")
+            # The *explicit FAINT* establishes this actor's defeat; 0%
+            # alone does not. Preserve its OCR text without pretending that
+            # the rounded HUD gives exact HP or maximum HP for Showdown.
+            return (None, None, True, raw)
+        return (None, None, False if raw != "0%" else None, raw)
     m = _EXACT_HP.fullmatch(raw)
     if m is None:
         raise ValueError("AMBIGUOUS_HP_SCALE_OR_FORMAT")
     hp, maximum = map(int, m.groups())
     if maximum < 1 or hp > maximum:
         raise ValueError("CONTRADICTORY_VISIBLE_HP")
-    return (hp, maximum, hp == 0)
+    if opponent_faint_attested and hp != 0:
+        raise ValueError("CONTRADICTORY_FAINT_AND_POSITIVE_HP")
+    return (hp, maximum, hp == 0, None)
 
 
 def _boosts(raw: Any) -> tuple[tuple[str, int], ...]:
@@ -121,7 +139,8 @@ def _current_member(name: str, side: str,
                     ) -> VisibleMember:
     observations = {}
     for field, section_name in (
-        ("hp", "hp_by_pokemon"), ("boosts", "boosts"),
+        ("hp", "hp_by_pokemon"), ("faint", "fainted"),
+        ("boosts", "boosts"),
         ("status", "status_by_pokemon"), ("type", "current_type"),
         ("moves", "moves_by_pokemon"),
         ("item","item_by_pokemon"),("ability","ability_by_pokemon"),
@@ -130,10 +149,20 @@ def _current_member(name: str, side: str,
         section = sections[section_name][side]
         if name in section:
             observations[field] = section[name]
-    hp, maximum, fainted = (None, None, None)
+    hp, maximum, fainted, raw_hp_percent = (None, None, None, None)
+    faint_flag = observations.get("faint")
+    if faint_flag is not None and type(faint_flag) is not bool:
+        raise ValueError("INVALID_FAINT_EVIDENCE_FLAG")
+    if faint_flag is True and "hp" not in observations:
+        raise ValueError("UNBOUND_FAINT_WITHOUT_HP_EVIDENCE")
     if "hp" in observations:
-        hp, maximum, fainted = _hp(
-            observations["hp"],allow_own_faint_marker=(side=="own"))
+        hp, maximum, fainted, raw_hp_percent = _hp(
+            observations["hp"], allow_own_faint_marker=(side=="own"),
+            opponent_faint_attested=(side=="opponent" and faint_flag is True))
+        if faint_flag is True and fainted is not True:
+            raise ValueError("CONTRADICTORY_FAINT_AND_HP")
+        if faint_flag is False and fainted is True:
+            raise ValueError("CONTRADICTORY_FAINT_AND_HP")
     stages = _boosts(observations["boosts"]) if "boosts" in observations else ()
     raw_status = _value(observations["status"]) if "status" in observations else None
     raw_type = _value(observations["type"]) if "type" in observations else None
@@ -157,7 +186,7 @@ def _current_member(name: str, side: str,
         name,side,slot,registered["species_id"] if registered else None,
         registered_moves,resolved,observed_moves,
         hp,maximum,fainted,stages,raw_status,raw_type,
-        raw_item,raw_ability,raw_form,
+        raw_item,raw_ability,raw_form,raw_hp_percent,
     )
 
 
@@ -207,7 +236,7 @@ def stage_observed_champions_ids(snapshot: FrozenBattleState,
                 "hp_by_pokemon", "boosts", "status_by_pokemon",
                 "current_type", "moves_by_pokemon",
                 "item_by_pokemon", "ability_by_pokemon",
-                "form_by_pokemon",
+                "form_by_pokemon", "fainted",
             )
         }
         # This is the *selected* three, not the full registered six. A
@@ -262,6 +291,8 @@ def stage_observed_champions_ids(snapshot: FrozenBattleState,
             "SHOWDOWN_EVENT_QUEUE_AND_EFFECT_TIMERS_UNKNOWN",
             "CHAMPIONS_MECHANICS_PARITY_UNVERIFIED",
         ]
+        if any(m.raw_hp_percent is not None for m in visible):
+            unbound.append("OPPONENT_PERCENT_HP_NOT_EXACT")
         if any(m.raw_status is not None for m in visible):
             unbound.append("STATUS_TRANSLATION_NOT_VERIFIED")
         if any(m.raw_current_type is not None for m in visible):

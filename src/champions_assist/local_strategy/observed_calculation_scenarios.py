@@ -89,6 +89,7 @@ def stage_observed_calculation_scenarios(
             "observed_move_ids": list(m.revealed_move_ids),
             "observed_moves_display": list(m.observed_moves_display),
             "hp": m.hp, "maxhp": m.maxhp, "fainted": m.fainted,
+            "raw_hp_percent": m.raw_hp_percent,
             "boosts": list(map(list, m.boosts)),
             "raw_status": m.raw_status,
             "raw_type": m.raw_current_type,
