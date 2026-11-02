@@ -198,6 +198,9 @@ class FrameReceiptTests(unittest.TestCase):
             {"frame-1":replace(origin,frame_id="different")},
             {"frame-1":replace(origin,image_rgb_sha256="sha256:"+"0"*63)},
             {"frame-1":replace(origin,raw_observation_id="wrong-window")},
+            {"frame-1":replace(origin,raw_observation_id=(
+                self.session.match_id + ":frame:999:frame-1"))},
+            {"frame-1":replace(origin,capture_seq=-1)},
         ):
             with self.subTest(claims=repr(claims)):
                 initial=local_state()
