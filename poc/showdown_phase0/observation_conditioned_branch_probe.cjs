@@ -304,9 +304,11 @@ function condition(obs, ctx = context()) {
     // A single revealed move never proves the opponent has no other moves.
     "opponent_unrevealed_moves",
     ...(ppKnown?[]:["opponent_revealed_moves","opponent_remaining_pp"]),
-    ...(consumedKnown?[]:["opponent_item"]),
-    "opponent_ability","opponent_ap",
+    ...(consumedKnown||plan.removed?[]:["opponent_item"]),
+    ...(plan.mega?[]:["opponent_ability"]),"opponent_ap",
     ...(plan.mega?[]:["opponent_mega_history"]),
+    ...(plan.choice?[]:["choice_lock"]),
+    ...(plan.removed?[]:["opponent_removed_item"]),
     "unresolved_queue","internal_rng","action_history",
     "effect_remaining_turns","own_side_unknown_history"],
   assumption:"fixed registered teams and unobserved effects/history, RNG, and the current move boundary remain hypotheses; changed current state does not reconstruct prior events",
