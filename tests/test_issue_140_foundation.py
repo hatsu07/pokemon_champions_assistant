@@ -178,6 +178,35 @@ class ContractTests(unittest.TestCase):
             FrozenBattleState.freeze(s.window, s.state, wrong,
                                      verified_action_ids=s.verified_action_ids)
 
+    def test_freeze_rejects_duplicate_or_invalid_joint_hypothesis_ids(self):
+        s = frozen()
+        a = Hypothesis.from_assumptions("H1", {"item": "A"})
+        b = Hypothesis.from_assumptions("H1", {"item": "B"})
+        for hypotheses in (
+            (a, b),
+            (replace(a, hypothesis_id=""),),
+            (replace(a, hypothesis_id=" H1 "),),
+        ):
+            with self.subTest(ids=[h.hypothesis_id for h in hypotheses]):
+                with self.assertRaisesRegex(
+                    ValueError, "DUPLICATE_OR_INVALID_HYPOTHESIS_ID"
+                ):
+                    FrozenBattleState.freeze(
+                        s.window, s.state, s.observation,
+                        hypotheses=hypotheses,
+                        verified_action_ids=s.verified_action_ids,
+                        constraints_confirmed=s.constraints_confirmed,
+                    )
+        # Distinct IDs still produce a frozen state with both assumptions.
+        good = FrozenBattleState.freeze(
+            s.window, s.state, s.observation,
+            hypotheses=(a, replace(b, hypothesis_id="H2")),
+            verified_action_ids=s.verified_action_ids,
+            constraints_confirmed=s.constraints_confirmed,
+        )
+        self.assertEqual(tuple(h.hypothesis_id for h in good.hypotheses),
+                         ("H1", "H2"))
+
     def test_snapshot_rejects_digest_mismatch(self):
         s = frozen()
         with self.assertRaises(ValueError):
