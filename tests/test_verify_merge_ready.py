@@ -5,7 +5,10 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from scripts.verify_merge_ready import REQUIRED_JOB, REQUIRED_WORKFLOW_PATH, verify
+from scripts.verify_merge_ready import (
+    REQUIRED_JOB, REQUIRED_WORKFLOW_PATH, INTEGRATION_BASE,
+    PHASE1_WORKFLOW_PATH, PHASE1_JOB, verify,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -71,6 +74,49 @@ class MergeReadinessTests(unittest.TestCase):
         self.assertTrue(verify(pr, runs, jobs))
         pr["draft"] = False
         pr["base"]["ref"] = "dev"
+        self.assertTrue(verify(pr, runs, jobs))
+
+    def test_integration_branch_requires_both_current_head_windows_and_phase1_ci(self):
+        pr, runs, jobs = snapshot()
+        pr["base"]["ref"] = INTEGRATION_BASE
+        self.assertTrue(verify(pr, runs, jobs))
+        linux = {"id": 456, "head_sha": pr["head"]["sha"],
+                 "event": "pull_request", "path": PHASE1_WORKFLOW_PATH,
+                 "created_at": "2026-10-24T12:00:00Z",
+                 "status": "completed", "conclusion": "success"}
+        jobs[456] = [{"name": PHASE1_JOB, "status": "completed",
+                      "conclusion": "success"}]
+        runs.append(linux)
+        self.assertEqual(verify(pr, runs, jobs), [])
+        # Failure of any required Linux job cannot be offset by Windows green.
+        jobs[456][0]["conclusion"] = "failure"
+        self.assertTrue(verify(pr, runs, jobs))
+        jobs[456][0]["conclusion"] = "success"
+        linux["conclusion"] = "failure"
+        self.assertTrue(verify(pr, runs, jobs))
+        linux["conclusion"] = "success"
+        # No replacing current CI with a green result from an older commit.
+        linux["head_sha"] = "b" * 40
+        self.assertTrue(verify(pr, runs, jobs))
+        linux["head_sha"] = pr["head"]["sha"]
+        linux["event"] = "workflow_dispatch"
+        self.assertTrue(verify(pr, runs, jobs))
+        linux["event"] = "pull_request"
+        # Latest failed run outranks an older successful one.
+        newer = deepcopy(linux)
+        newer["id"] = 457
+        newer["created_at"] = "2026-10-25T12:00:00Z"
+        newer["status"] = "completed"
+        newer["conclusion"] = "failure"
+        jobs[457] = deepcopy(jobs[456])
+        runs.append(newer)
+        self.assertTrue(verify(pr, runs, jobs))
+        newer["conclusion"] = "success"
+        self.assertEqual(verify(pr, runs, jobs), [])
+        pr["draft"] = True
+        self.assertTrue(verify(pr, runs, jobs))
+        pr["draft"] = False
+        pr["base"]["ref"] = INTEGRATION_BASE + "-unapproved"
         self.assertTrue(verify(pr, runs, jobs))
 
     def test_dispatch_run_cannot_serve_as_pr_ci(self):
