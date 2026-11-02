@@ -101,6 +101,7 @@ class LinkedObserverState:
         # No mutating the OCR reducer before ALL configured ROI digests are
         # cross-checked against the actual source pixels.
         records = []
+        preflight_audit = []
         for roi, field in self.roi_fields.items():
             item = raw_rois.get(roi)
             if item is None:
@@ -120,6 +121,41 @@ class LinkedObserverState:
                 region, text, frame_id=receipt.raw_observation_id)
             if candidate is None:
                 continue
+            # The local OCR reducer accepts historical name attestations for
+            # 2 seconds. That is intentionally NOT sufficient for this
+            # frame-bound path: a fresh HP/PP value requires a high-confidence
+            # name OCR from the SAME frame, including when its pixels did not
+            # change. A simultaneous name change could be a switch animation,
+            # so refuse the HP/PP until a later stable frame confirms actor.
+            if (field in ("own_hp_fraction", "opponent_hp_percent",
+                          "own_pp_move1", "own_pp_move2",
+                          "own_pp_move3", "own_pp_move4")):
+                own = field != "opponent_hp_percent"
+                needed_field = ("own_active_name" if own
+                                else "opponent_active_name")
+                name_roi = next(
+                    (key for key, name in self.roi_fields.items()
+                     if name == needed_field), None)
+                name_item = raw_rois.get(name_roi) if name_roi else None
+                name_conf = (name_item.get("confidence")
+                             if isinstance(name_item, dict) else None)
+                name_fresh = (
+                    isinstance(name_item, dict)
+                    and name_item.get("changed") is False
+                    and name_item.get("actor_refresh_same_frame") is True
+                    and isinstance(name_item.get("text"), str)
+                    and bool(name_item["text"])
+                    and type(name_conf) in (float, int)
+                    and name_conf >= 0.72
+                )
+                if not name_fresh:
+                    preflight_audit.append({
+                        "kind": "HP" if "hp" in field else "PP",
+                        "status": "CANDIDATE",
+                        "reason": "SAME_FRAME_STABLE_ACTOR_NAME_REQUIRED",
+                        "frame_id": frame.frame_id,
+                    })
+                    continue
             records.append(LocalFieldRead(
                 field=candidate.field, value=candidate.value,
                 frame_id=frame.frame_id,
@@ -150,5 +186,5 @@ class LinkedObserverState:
             "LOCAL_OCR_REDUCER_ONLY_NOT_GAME_ATTESTATION",
             self.match_id, receipt.raw_observation_id,
             int(before), int(proposed.get("_live_state_revision", 0)),
-            applied, tuple(audit),
+            applied, tuple((*preflight_audit, *audit)),
         )
