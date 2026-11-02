@@ -14,8 +14,8 @@ from typing import Any, Callable
 
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 from .models import (
-    FrozenBattleState, LegalStatus, CapabilityStatus, action_digest,
-    canonical_json,
+    FrozenBattleState, LegalStatus, CapabilityStatus, SimulationResult,
+    action_digest, canonical_json,
 )
 from .one_turn import BranchObservation, ShadowTurnRanking, compare_shadow_turn
 from .simulator_adapter import WorkerUnavailable, _verified_roster_binding
@@ -41,6 +41,42 @@ class ReplayOpponentScenario:
 
 def _blocked(reason: str) -> ShadowTurnRanking:
     return ShadowTurnRanking("NO_RANKING", reason)
+
+
+def _valid_worker_result(value: Any) -> bool:
+    """Reject malformed external branch results before using any attributes.
+
+    Semantic verification of the SHA, window, original request and opponent
+    scenario remains in compare_shadow_turn; this gate is a boundary check
+    that keeps None/dicts/incomplete objects from breaking the caller.
+    """
+    if not isinstance(value, SimulationResult):
+        return False
+    required_text = (
+        value.request_id, value.identity_json, value.snapshot_sha256,
+        value.hypothesis_id, value.payload_json, value.reason,
+        value.branch_request_id, value.branch_input_sha256,
+        value.candidate_action_id, value.submitted_request_json,
+    )
+    if not all(isinstance(v, str) for v in required_text):
+        return False
+    if not all((
+        value.request_id, value.identity_json, value.snapshot_sha256,
+        value.payload_json, value.branch_request_id,
+        value.branch_input_sha256, value.candidate_action_id,
+        value.submitted_request_json,
+    )):
+        return False
+    if not isinstance(value.capability_status, CapabilityStatus):
+        return False
+    if (len(value.branch_request_id) != 32
+            or any(ch not in "0123456789abcdef"
+                   for ch in value.branch_request_id)
+            or len(value.branch_input_sha256) != 64
+            or any(ch not in "0123456789abcdef"
+                   for ch in value.branch_input_sha256)):
+        return False
+    return True
 
 
 def run_shadow_turn(
@@ -134,7 +170,10 @@ def run_shadow_turn(
                         if (current.window.identity() != window.identity()
                                 or current.snapshot_sha256 != initial_snapshot_sha):
                             return _blocked("CURRENT_OBSERVATION_CHANGED")
-                    except (ValueError, TypeError, AttributeError):
+                    except Exception:
+                        # A session swap or an invalidated state store may
+                        # raise RuntimeError rather than an attribute error.
+                        # Do not let a shadow callback break the LIVE UI.
                         return _blocked("CURRENT_SNAPSHOT_UNAVAILABLE")
                 try:
                     # The worker receives a distinct detached Battle JSON per
@@ -145,7 +184,11 @@ def run_shadow_turn(
                         hypothesis_id=hypothesis,
                         candidate_action_id=candidate.action_id, assets=assets,
                     )
-                except (WorkerUnavailable, OSError, ValueError, TypeError):
+                except Exception:
+                    # The worker is an external boundary: even unexpected
+                    # runtime exceptions abort this complete grid safely.
+                    return _blocked("WORKER_BRANCH_UNAVAILABLE")
+                if not _valid_worker_result(result):
                     return _blocked("WORKER_BRANCH_UNAVAILABLE")
                 if result.capability_status != CapabilityStatus.PARTIAL:
                     return _blocked("WORKER_BRANCH_NOT_PARTIAL")
@@ -157,11 +200,17 @@ def run_shadow_turn(
             if (current.window.identity() != window.identity()
                     or current.snapshot_sha256 != initial_snapshot_sha):
                 return _blocked("CURRENT_OBSERVATION_CHANGED")
-        except (ValueError, TypeError, AttributeError):
+        except Exception:
             return _blocked("CURRENT_SNAPSHOT_UNAVAILABLE")
     if clock() + reserve_seconds >= window.deadline_monotonic:
         return _blocked("BRANCH_DEADLINE_EXCEEDED")
-    return compare_shadow_turn(
-        snapshot, assets, tuple(branches),
-        preserve=preserve, stopper=stopper, now=clock(),
-    )
+    try:
+        return compare_shadow_turn(
+            snapshot, assets, tuple(branches),
+            preserve=preserve, stopper=stopper, now=clock(),
+        )
+    except Exception:
+        # Defensive isolation if a structurally valid but malformed worker
+        # payload trips an unforeseen downstream parsing path. Never publish
+        # a partial rank or propagate a crash to the existing GPT/LIVE app.
+        return _blocked("COMPARISON_UNAVAILABLE")
