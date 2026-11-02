@@ -30,6 +30,15 @@ duplicate fields/IDs, changed values, old window/revision, actor mismatch or
 malformed evidence => `NO_WINDOW_EVIDENCE_BINDING`. The original frozen
 snapshot is never mutated.
 
+**Absent keys are unknown; present-but-empty keys are corrupt.** This gate
+refuses explicit `None`, `""`, `[]`, `{}`, and invalid section-specific
+shapes, rather than skipping them. It validates **all present stored actor
+values** before deciding whether they belong to the current active actors
+or a historical entry. This includes a switched-out opponent's malformed
+HP, move list, boost, or item/ability record: history cannot disappear just
+because its stored value is empty. A valid, nonempty historical record is
+still listed as unverified history rather than reauthenticated.
+
 Sections are `hp_by_pokemon`, `boosts`, `status_by_pokemon`,
 `current_type`, `moves_by_pokemon`, `item_by_pokemon`,
 `ability_by_pokemon`, and `form_by_pokemon`. Values are compared
@@ -65,7 +74,10 @@ GUI or current gameplay code is modified.
 covers current-window identity, changed observation SHA, stale revision,
 malformed timezone, wrong/duplicate/omitted evidence, inactive actor
 relabeling, real-source self-claims, retained history and snapshot
-immutability. Linux/Windows isolated test lists include these cases.
+immutability. The regression suite also injects explicit empty/null active
+HP, moves, boosts and scalar facts, plus corrupt switched-out historical
+entries, including cases where self-generated records match the broken state.
+Linux/Windows isolated test lists include these cases.
 
 Next PR should instrument the actual capture/evidence writer to store
 provenance **at capture time**, including image/event source digest and
