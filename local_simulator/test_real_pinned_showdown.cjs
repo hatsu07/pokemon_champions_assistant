@@ -20,7 +20,7 @@ const {Battle} = require(entry);
 assert.equal(typeof Battle, "function", "Use real Battle class, not a mock");
 assert.equal(typeof Battle.fromJSON, "function");
 
-function fixture({p2Mega=false}={}) {
+function fixture({p2Mega=false,p2Choice=false,p2Outrage=false}={}) {
   // Synthetic 3v3 teams. Their identity/sets are intentionally fully known;
   // never use these as Pokémon Champions usage-rate or ladder evidence.
   const p1=[
@@ -39,6 +39,8 @@ function fixture({p2Mega=false}={}) {
     {name:"P2 Kingambit",species:"Kingambit",ability:"Defiant",item:"Black Glasses",
      moves:["kowtowcleave","suckerpunch","protect","swordsdance"],nature:"Adamant",level:50},
   ];
+  if(p2Choice) p2[0].item="Choice Band";
+  if(p2Outrage) p2[0].moves[0]="outrage";
   if(p2Mega){
     // Source-backed pinned-Showdown fixture only. Garchompite exists in its
     // item data and Champions mod returns the item-defined Mega form.
@@ -175,4 +177,98 @@ test("real pinned engine: single Mega produces distinct exact cloned choices",()
     }
   }
   assert.equal(fingerprint(raw),before,"Source Battle/RNG must remain unchanged");
+});
+
+test("real pinned engine: one exhausted PP slot is excluded, with other choices retained",()=>{
+  const b=fixture();
+  b.p2.active[0].moveSlots[0].pp=0;
+  b.makeRequest("move");
+  const req=b.p2.activeRequest.active[0];
+  assert.equal(req.moves.length,4);
+  assert.equal(req.moves[0].disabled,true);
+  const r=enumerateEngineP2(Battle,b.toJSON());
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.equal(r.commands.includes("move 1"),false);
+  assert.ok(r.commands.includes("move 2"));
+  assert.ok(r.commands.includes("switch 2"));
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+
+test("real pinned engine: all PP zero yields exactly Struggle and normal switch",()=>{
+  const b=fixture();
+  for(const slot of b.p2.active[0].moveSlots)slot.pp=0;
+  b.makeRequest("move");
+  const req=b.p2.activeRequest.active[0];
+  assert.deepEqual(req.moves.map(m=>m.id),["struggle"]);
+  assert.equal(req.moves[0].pp,undefined);
+  const raw=b.toJSON(),before=fingerprint(raw);
+  const r=enumerateEngineP2(Battle,raw);
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.equal(r.scope,"PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY");
+  assert.deepEqual(r.commands,["move 1","switch 2","switch 3"]);
+  const separate=Battle.fromJSON(raw);
+  assert.equal(separate.p2.choose("move 1"),true);
+  assert.equal(separate.p2.choice.actions[0].moveid,"struggle");
+  assert.equal(separate.p2.choice.actions[0].moveSlot,undefined);
+  assert.equal(fingerprint(raw),before);
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+
+test("real pinned engine: hard locked Outrage has only a slot-less forced move",()=>{
+  // Synthetic effect injection (not a claimed naturally observed game turn).
+  const b=fixture({p2Outrage:true});
+  const p=b.p2.active[0];
+  assert.equal(p.addVolatile("lockedmove",p,b.dex.moves.get("outrage")),true);
+  assert.equal(p.getLockedMove(),"outrage");
+  b.makeRequest("move");
+  const req=b.p2.activeRequest.active[0];
+  assert.deepEqual(req.moves.map(m=>m.id),["outrage"]);
+  assert.equal(req.moves[0].pp,undefined);
+  assert.equal(req.trapped,true);
+  const raw=b.toJSON(),before=fingerprint(raw);
+  const r=enumerateEngineP2(Battle,raw);
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.equal(r.scope,"PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY");
+  assert.deepEqual(r.commands,["move 1"]);
+  const separate=Battle.fromJSON(raw);
+  assert.equal(separate.p2.choose("move 1"),true);
+  assert.equal(separate.p2.choice.actions[0].moveid,"outrage");
+  assert.equal(separate.p2.choice.actions[0].moveSlot,undefined);
+  assert.equal(fingerprint(raw),before);
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+
+test("real pinned engine: Choice Band restricts moves but allows bench switches",()=>{
+  const b=fixture({p2Choice:true});
+  b.makeChoices("move 3","move 1");
+  assert.equal(b.requestState,"move");
+  assert.ok(b.p2.active[0].volatiles.choicelock);
+  const req=b.p2.activeRequest.active[0];
+  assert.equal(req.moves.length,4);
+  assert.equal(req.moves[0].disabled,false);
+  assert.ok(req.moves.slice(1).every(m=>m.disabled===true));
+  const r=enumerateEngineP2(Battle,b.toJSON());
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.deepEqual(r.commands,["move 1","switch 2","switch 3"]);
+  assert.equal(r.scope,"PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY");
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+});
+
+test("real pinned engine: synthetically applied Encore only offers enabled move",()=>{
+  const b=fixture();
+  const p=b.p2.active[0];
+  // Not a cartridge observation; exercise actual pinned Encore condition
+  // with a deterministically supplied previous move, not an inferred set.
+  p.lastMove=b.dex.moves.get("protect");
+  assert.equal(p.addVolatile("encore",b.p1.active[0],b.dex.moves.get("encore")),true);
+  b.makeRequest("move");
+  const req=b.p2.activeRequest.active[0];
+  assert.equal(req.moves.length,4);
+  assert.equal(req.moves[2].disabled,false);
+  assert.ok(req.moves.filter((m,i)=>i!==2).every(m=>m.disabled===true));
+  const r=enumerateEngineP2(Battle,b.toJSON());
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.deepEqual(r.commands,["move 3","switch 2","switch 3"]);
+  assert.equal(r.scope,"PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY");
+  assert.equal(r.exhaustive_legal_choices_verified,false);
 });
