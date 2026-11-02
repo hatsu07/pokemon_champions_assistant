@@ -261,6 +261,10 @@ test("real pinned engine: synthetically applied Encore only offers enabled move"
   // with a deterministically supplied previous move, not an inferred set.
   p.lastMove=b.dex.moves.get("protect");
   assert.equal(p.addVolatile("encore",b.p1.active[0],b.dex.moves.get("encore")),true);
+  // In an actual nextTurn(), Battle runs DisableMove before issuing requests.
+  // makeRequest() alone does not run that event, so reproduce that exact
+  // event instead of treating a bare Encore volatile as a complete turn.
+  b.runEvent("DisableMove",p);
   b.makeRequest("move");
   const req=b.p2.activeRequest.active[0];
   assert.equal(req.moves.length,4);
