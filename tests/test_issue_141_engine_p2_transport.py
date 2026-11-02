@@ -49,6 +49,12 @@ MEGA_REPLY = (
 )
 
 
+SPECIAL_REPLY = (
+    REPLY.replace("'scope':'PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY'",
+                  "'scope':'PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY'")
+)
+
+
 class EngineP2WorkerTransportTests(unittest.TestCase):
     def test_valid_synthetic_echo_is_partial_and_nonexhaustive(self):
         tmp, worker=WorkerTests().make_fake_worker(REPLY)
@@ -140,6 +146,59 @@ class EngineP2WorkerTransportTests(unittest.TestCase):
         finally:
             worker.close()
             tmp.cleanup()
+
+    def test_verified_slotless_move_scope_is_preserved(self):
+        tmp,worker=WorkerTests().make_fake_worker(SPECIAL_REPLY)
+        try:
+            worker.start()
+            s=frozen()
+            s=replace(s,window=replace(s.window,
+                deadline_monotonic=time.monotonic()+3))
+            result=worker.enumerate_p2_from_replay(
+                s, {"fixture":"complete-synthetic","rng":[1,2,3,4]},
+                assets=VERIFIED_ASSETS)
+            self.assertEqual(result.status,"ENGINE_CHECKED_SIMPLE_CHOICES")
+            self.assertEqual(result.commands,("move 1","switch 2"))
+            self.assertEqual(result.scope,
+                "PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY")
+            self.assertFalse(result.exhaustive_legal_choices_verified)
+        finally:
+            worker.close()
+            tmp.cleanup()
+
+    def test_slotless_scope_rejects_unbound_or_altered_choices(self):
+        for forged in (
+            SPECIAL_REPLY.replace("'move 1','switch 2'",
+                                  "'move 2','switch 2'"),
+            SPECIAL_REPLY.replace("'move 1','switch 2'",
+                                  "'switch 2'"),
+            SPECIAL_REPLY.replace("'move 1','switch 2'",
+                                  "'move 1 mega','switch 2'"),
+            SPECIAL_REPLY.replace("'move 1','switch 2'",
+                                  "'move 1','move 3','switch 2'"),
+            SPECIAL_REPLY.replace("'move 1','switch 2'",
+                                  "'move 1','move 1','switch 2'"),
+            SPECIAL_REPLY.replace("'exhaustive_legal_choices_verified':False",
+                                  "'exhaustive_legal_choices_verified':True"),
+            SPECIAL_REPLY.replace("'battle_sha256':h(p['battle'])",
+                                  "'battle_sha256':'0'*64"),
+            SPECIAL_REPLY.replace(
+                "branch_request_id=r['branch_request_id']",
+                "branch_request_id='0'*32"),
+        ):
+            tmp,worker=WorkerTests().make_fake_worker(forged)
+            try:
+                worker.start()
+                s=frozen()
+                s=replace(s,window=replace(s.window,
+                    deadline_monotonic=time.monotonic()+3))
+                with self.assertRaises(WorkerUnavailable):
+                    worker.enumerate_p2_from_replay(
+                        s, {"fixture":"complete-synthetic","rng":[1,2,3,4]},
+                        assets=VERIFIED_ASSETS)
+            finally:
+                worker.close()
+                tmp.cleanup()
 
     def test_wrong_nonce_and_response_hash_never_adopted(self):
         tampered=REPLY.replace(
