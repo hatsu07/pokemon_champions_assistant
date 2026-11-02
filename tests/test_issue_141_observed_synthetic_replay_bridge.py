@@ -15,6 +15,7 @@ from typing import Any
 from champions_assist.local_strategy.models import canonical_json, fingerprint
 from champions_assist.local_strategy.simulator_adapter import (
     LocalSimulatorWorker, SyntheticEngineReadoutReceipt, WorkerUnavailable,
+    _verified_roster_binding,
 )
 from champions_assist.local_strategy.observed_synthetic_replay_bridge import (
     ExplicitSyntheticBattleBranch, compare_observed_to_synthetic_replays,
@@ -46,7 +47,7 @@ class FakeProcessWorker(LocalSimulatorWorker):
         payload={
             "source":"FULL_REPLAY_SYNTHETIC","battle_json":raw,
             "hypothesis_id":hypothesis_id,
-            "expected_p1_roster":[{"test":"not-authenticated"}],
+            "expected_p1_roster":_verified_roster_binding(snap, assets),
             "expected_p1_active":snap.window.active_pokemon,
         }
         payload["branch_input_sha256"]=fingerprint(payload)
