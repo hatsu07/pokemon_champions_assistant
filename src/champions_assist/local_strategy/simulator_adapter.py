@@ -483,11 +483,14 @@ class LocalSimulatorWorker:
             raise WorkerUnavailable("complete synthetic Battle JSON required")
         roster = _verified_roster_binding(snapshot, assets)
         battle = dict(battle_json)
-        # Computing this here binds *exactly the bytes serialized for the
-        # worker request*, rather than a caller-provided external digest.
-        digest = hashlib.sha256(canonical_json(battle).encode("utf-8")).hexdigest()
+        # Serialize ONCE in Python and pass this same UTF-8 JSON string to
+        # the worker/engine extractor. Node cannot reformat number/key order
+        # before computing the SHA; even 3.0 and integer-shaped dict keys
+        # remain hash-bound to the original submitted representation.
+        battle_text = canonical_json(battle)
+        digest = hashlib.sha256(battle_text.encode("utf-8")).hexdigest()
         payload = {
-            "source": "FULL_REPLAY_SYNTHETIC", "battle": battle,
+            "source": "FULL_REPLAY_SYNTHETIC", "battle_json": battle_text,
             "hypothesis_id": hypothesis_id,
             "expected_p1_roster": roster,
             "expected_p1_active": window.active_pokemon,
