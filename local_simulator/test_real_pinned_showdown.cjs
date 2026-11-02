@@ -10,6 +10,8 @@ const crypto = require("node:crypto");
 const {enumerateEngineP2} = require("./p2_engine_choices.cjs");
 const {auditSyntheticObservedReplay,SOURCE,sha256} =
   require("./observed_replay_audit.cjs");
+const {extractPinnedReplayReadout} =
+  require("./pinned_replay_readout.cjs");
 
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const root = process.env.SHOWDOWN_PINNED_BUILD_ROOT;
@@ -357,4 +359,46 @@ test("real pinned engine: same visible observations do not determine RNG",()=>{
     auditSyntheticObservedReplay(Battle,rawB,packetA).reason,
     "REPLAY_SHA_MISMATCH",
     "An unchanged identity/hash must not be applied to a different replay");
+});
+
+test("real pinned Battle: engine-only six-member readout is accurate and inert",()=>{
+  const b=fixture(),raw=b.toJSON(),before=fingerprint(raw);
+  const r=extractPinnedReplayReadout(Battle,raw);
+  assert.equal(r.status,"SYNTHETIC_ENGINE_REPLAY_READOUT",r.reason);
+  assert.equal(r.engine_sha,PIN);
+  assert.equal(r.battle_sha256,before);
+  assert.deepEqual(r.active,{p1:1,p2:1});
+  assert.equal(r.members.length,6);
+  for(const [side,party] of [["p1",b.p1],["p2",b.p2]]){
+    for(let i=0;i<3;i++){
+      const m=r.members.find(x=>x.side===side && x.slot===i+1);
+      const p=party.pokemon[i];
+      assert.equal(m.species_id,p.species.id);
+      assert.deepEqual(m.move_ids,p.moveSlots.map(slot=>slot.id));
+      assert.equal(m.hp,p.hp);
+      assert.equal(m.maxhp,p.maxhp);
+      assert.equal(m.fainted,p.fainted);
+      assert.deepEqual(Object.fromEntries(m.boosts),p.boosts);
+    }
+  }
+  assert.equal(r.full_state_reconstructed,false);
+  assert.equal(r.ready_for_engine,false);
+  assert.equal(r.opponent_slot_mapping_authenticated,false);
+  assert.equal(fingerprint(raw),before);
+  assert.deepEqual(b.toJSON(),raw);
+});
+test("real pinned Battle: different hidden RNG yields distinct full readout SHA",()=>{
+  const a=fixture(),other=clone(a);
+  const first=extractPinnedReplayReadout(Battle,a.toJSON());
+  assert.equal(first.status,"SYNTHETIC_ENGINE_REPLAY_READOUT",first.reason);
+  const parts=other.prng.getSeed().split(",").map(Number);
+  parts[0]=(parts[0]+1)%65536;
+  other.prng.setSeed(parts.join(","));
+  const second=extractPinnedReplayReadout(Battle,other.toJSON());
+  assert.equal(second.status,"SYNTHETIC_ENGINE_REPLAY_READOUT",second.reason);
+  assert.deepEqual(first.members,second.members);
+  assert.deepEqual(first.active,second.active);
+  assert.notEqual(first.battle_sha256,second.battle_sha256);
+  assert.equal(first.ready_for_engine,false);
+  assert.equal(second.ready_for_engine,false);
 });
