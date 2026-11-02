@@ -447,6 +447,7 @@ class LocalSimulatorWorker:
     def readout_synthetic_replay(
         self, snapshot: FrozenBattleState, battle_json: Mapping[str, Any],
         *, assets: Any, hypothesis_id: str = "",
+        joint_candidates: tuple[Any, ...] = (),
     ) -> SyntheticEngineReadoutReceipt:
         """Obtain a synthetic-only readout from this verified worker process.
 
@@ -464,7 +465,19 @@ class LocalSimulatorWorker:
             known = joint_hypothesis_ids(snapshot.hypotheses)
         except ValueError as exc:
             raise WorkerUnavailable("invalid opponent hypotheses") from exc
-        if hypothesis_id not in known:
+        if joint_candidates:
+            from .observed_calculation_scenarios import (
+                stage_observed_calculation_scenarios,
+            )
+            stage = stage_observed_calculation_scenarios(
+                snapshot, assets, joint_candidates=joint_candidates)
+            if (stage.status != "PARTIAL_SCENARIOS_NOT_RUNNABLE"
+                    or stage.ready_for_engine
+                    or stage.full_state_reconstructed
+                    or hypothesis_id not in
+                    tuple(c.hypothesis_id for c in stage.scenarios)):
+                raise WorkerUnavailable("unverified or missing sourced joint hypothesis")
+        elif hypothesis_id not in known:
             raise WorkerUnavailable("unregistered opponent hypothesis")
         if not isinstance(battle_json, Mapping):
             raise WorkerUnavailable("complete synthetic Battle JSON required")
