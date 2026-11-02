@@ -793,6 +793,8 @@ class StagingTests(unittest.TestCase):
         notices.write_text("third-party-notices-placeholder")
         worker = root / "worker.cjs"
         worker.write_text("// synthetic worker")
+        worker.with_name("p2_engine_choices.cjs").write_text(
+            "// synthetic request helper, not real Showdown")
         independent = root / "reviewed-manifest.json"
         independent.write_text(json.dumps({
             "engine_sha": PINNED_SHOWDOWN_SHA,
@@ -820,6 +822,10 @@ class StagingTests(unittest.TestCase):
                 manifest = stage(**opts)
             self.assertEqual(manifest["engine_sha"], PINNED_SHOWDOWN_SHA)
             self.assertFalse(manifest["production_enabled"])
+            self.assertEqual(
+                manifest["p2_engine_choices_sha256"],
+                hashlib.sha256((opts["output"] / "p2_engine_choices.cjs"
+                                ).read_bytes()).hexdigest())
             self.assertIn("node_modules/dependency/index.js",
                           manifest["engine_file_sha256"])
             self.assertEqual((opts["output"] / "showdown/.champions-source-sha")
