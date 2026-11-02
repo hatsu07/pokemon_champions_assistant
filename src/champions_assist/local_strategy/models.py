@@ -84,6 +84,30 @@ class Hypothesis:
                    tuple(evidence_refs), likelihood)
 
 
+def joint_hypothesis_ids(hypotheses: tuple[Hypothesis, ...]) -> tuple[str, ...]:
+    """Reject ambiguous joint conditions before any scenario can be omitted.
+
+    With no hypotheses there is precisely one known/empty hypothetical
+    scenario, represented by the empty ID. An explicit hypothesis must always
+    have a nonblank, unique ID; otherwise a set() would hide untested cases.
+    """
+    if not hypotheses:
+        return ("",)
+    ids: list[str] = []
+    seen: set[str] = set()
+    for hypothesis in hypotheses:
+        if not isinstance(hypothesis, Hypothesis):
+            raise ValueError("DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+        name = hypothesis.hypothesis_id
+        if (not isinstance(name, str) or not name
+                or not name.strip() or name != name.strip()
+                or name in seen):
+            raise ValueError("DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+        seen.add(name)
+        ids.append(name)
+    return tuple(ids)
+
+
 def action_digest(action_ids: tuple[str, ...]) -> str:
     return fingerprint(sorted(set(action_ids)))
 
@@ -163,6 +187,10 @@ class FrozenBattleState:
         if (state.get("our_active", "") != window.active_pokemon
                 or observation.get("visual_ui") != window.screen_kind):
             raise ValueError("actor or screen changed before freeze")
+        # Freeze must not silently collapse two distinct assumptions with
+        # the same identifier. Direct construction/replace is separately
+        # guarded at every comparison and orchestration entry point.
+        joint_hypothesis_ids(tuple(hypotheses))
         verified = tuple(sorted(set(verified_action_ids)))
         if action_digest(verified) != window.allowed_action_digest:
             raise ValueError("current allowed actions digest mismatch")
