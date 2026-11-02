@@ -10,6 +10,7 @@ const {assertObservation, makeCandidates} = require("./partial_observation_probe
 const {copy, serialize, pinned} = require("./worker.cjs");
 const {restoreChecked, state} = require("./gate_b_probe.cjs");
 const {fingerprint, stableStringify} = require("./state_compare.cjs");
+const combined=require("./gate_b_four_mechanisms.cjs");
 const CONDITIONAL_FIELDS = ["opponent_hp_exact", "opponent_boosts", "screens",
   "screen_remaining_turns"];
 const BOOSTS = ["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"];
@@ -76,13 +77,9 @@ function condition(obs, ctx = context()) {
  if(screens.length===0 && known(obs,"screen_remaining_turns")&&
     stableStringify(durations)!=="{}")
    return deny("screen duration contradicts empty screen list",originHash);
- // Exclude weather effects rather than inventing weather/turn-history.
- if(f.weather.value!=="") return deny("nonempty weather requires duration/history reconstruction",originHash);
- // A fresh selected-turn Battle has no terrain or hazards. These must be
- // explicitly observed as absent, not silently assumed absent when UNKNOWN.
- if(f.terrain.value!=="") return deny("observed terrain is not represented in conditioned Battle",originHash);
- if(!Array.isArray(f.hazards.value)||f.hazards.value.length)
-   return deny("observed hazards are not represented in conditioned Battle",originHash);
+ // Nonempty weather, terrain and one opponent-side hazard are handled only
+ // when their current-frame evidence and exact applicable turns are available.
+ // Unsupported statuses/other effects remain fail-closed in the combined gate.
  // Only the unchanged current form/type is supported. The frozen Champions
  // master and the pinned Dex were cross-checked during context() construction.
  // A known changed type MUST NOT be ignored by makeCandidates().
@@ -93,17 +90,8 @@ function condition(obs, ctx = context()) {
     !reportedTypes.every((type,index)=>type===currentForm.types[index]))
    return deny("observed current type differs from the pinned Champions base form or is malformed",
      originHash);
- // Exclude observed effects that this narrow probe cannot reconstruct.
- for(const k of ["effect_remaining_turns","opponent_mega_history",
-   "choice_lock","action_history"]){
-   if(known(obs,k))return deny("known hidden-history field not represented: "+k,originHash);
- }
  if(!["",null].includes(f.opponent_status.value)&&known(obs,"opponent_status"))
    return deny("opponent status duration/history not reconstructable here",originHash);
- if(known(obs,"opponent_mega_state")&&f.opponent_mega_state.value===true)
-   return deny("Mega state requires separate current-form/history reconstruction",originHash);
- if(known(obs,"pending_choice")||known(obs,"unresolved_queue"))
-   return deny("queued actions cannot be overwritten",originHash);
  // A legacy scalar PP is not tied to any specific move or point in time.
  // Only an atomic move-scoped reading from the SAME current-frame evidence
  // as the move request, active opponent, HP and boosts can condition a Battle.
@@ -137,6 +125,10 @@ function condition(obs, ctx = context()) {
    if(ppReading.remaining_pp===0)
      return deny("zero PP continuation requires unmodeled move availability",originHash);
  }
+ // Bind atomic PP before checking other current-state fields so stale PP
+ // is never masked by a separate invalid synthetic hazard baseline.
+ const plan=combined.inspect(obs,ctx);
+ if(plan.error)return deny(plan.error,originHash);
  // A confirmed consumed item and a confirmed current empty item jointly
  // constrain a *hypothetical* source held item. This is not proof that the
  // Showdown item-use event, HP restoration, or lastItem history occurred.
@@ -144,7 +136,7 @@ function condition(obs, ctx = context()) {
  const currentItemKnown=known(obs,"opponent_item");
  // An empty currently held item without verified consumption/removal history
  // must not return a Battle that still holds its original registered item.
- if(currentItemKnown&&f.opponent_item.value===""&&!consumedKnown)
+ if(currentItemKnown&&f.opponent_item.value===""&&!consumedKnown&&!plan.removed)
    return deny("observed empty current item lacks supported consumption history",originHash);
  if(consumedKnown&&(!currentItemKnown||f.opponent_item.value!==""))
    return deny("consumed item requires observed empty current item",originHash);
@@ -162,6 +154,10 @@ function condition(obs, ctx = context()) {
  // Filter by the independently revealed move, but do not compare current
  // remaining PP to the fresh, full-PP registered-set hypothesis.
  if(ppKnown)hypotheticalObs.facts.opponent_remaining_pp={source:"UNKNOWN"};
+ if(plan.removed){
+   hypotheticalObs.facts.opponent_item={source:"UNKNOWN"};
+   hypotheticalObs.facts.opponent_removed_item={source:"UNKNOWN"};
+ }
  // The same observed "now empty" item would otherwise exclude every
  // candidate whose ORIGINAL held item was later consumed.
  if(consumedKnown){
@@ -175,6 +171,16 @@ function condition(obs, ctx = context()) {
   const baseHash=fingerprint(state(c.battle));
   const battle=copy(c.battle),active=battle.p2.active[0];
   const originalItem=active.item;
+  if(plan.removed&&originalItem!==plan.removed.item_id){
+    rejected.push({id:c.id,reason:"original item mismatches observed removal"});
+    continue;
+  }
+  // These are current-state constraints, not a replay of real past turns.
+  const combinedError=combined.apply(battle,active,plan);
+  if(combinedError){
+    rejected.push({id:c.id,reason:combinedError});
+    continue;
+  }
   if(ppKnown){
     const slots=active.moveSlots,baseSlots=active.baseMoveSlots;
     if(slots?.length!==1||baseSlots?.length!==1||
@@ -235,6 +241,8 @@ function condition(obs, ctx = context()) {
   }
   const digest=fingerprint(state(battle));
   const restored=restoreChecked(serialize(battle),digest);
+  if(!combined.matches(restored,plan))
+    throw Error("restored four-mechanism Battle conflicts with observed current state");
   if(ppKnown&&(
     restored.p2.active[0].moveSlots[0]?.id!==ppMove||
     restored.p2.active[0].moveSlots[0]?.pp!==ppReading.remaining_pp||
@@ -259,6 +267,17 @@ function condition(obs, ctx = context()) {
    pp_history_scope:ppKnown?"ATOMIC_MOVE_PP_SAME_CURRENT_SNAPSHOT_NO_MOVE_EVENT_REPLAY":
      "NO_PP_HISTORY_RECONSTRUCTED",
    conditioned_item:active.item,original_hypothesis_item:originalItem,
+   conditioned_choice_lock:active.volatiles.choicelock?.move||null,
+   conditioned_mega_form:plan.mega?active.species.id:null,
+   conditioned_mega_ability:plan.mega?active.ability:null,
+   conditioned_weather:battle.field.weather,
+   conditioned_weather_turns:plan.weather?battle.field.weatherState.duration:null,
+   conditioned_terrain:battle.field.terrain,
+   conditioned_terrain_turns:plan.terrain?battle.field.terrainState.duration:null,
+   conditioned_hazards:plan.hazards,
+   hazard_observation_scope:plan.hazardObservationScope,
+   removed_item_observation:plan.removed?.item_id||null,
+   history_scope:"CONDITIONED_CURRENT_STATE_ONLY_NO_PRIOR_EVENT_OR_RNG_REPLAY",
    consumed_item_observation:consumedKnown?consumedId:null,
    item_history_scope:consumedKnown?
      "CONDITIONED_EMPTY_ITEM_ONLY_NO_CONSUMPTION_EFFECT_OR_LOG_REPLAY":
@@ -280,18 +299,29 @@ function condition(obs, ctx = context()) {
   live_recommendation_permitted:false,
   admitted_evidence_fields:["opponent_hp_exact","opponent_boosts","screens",
     ...(screens.length?["screen_remaining_turns"]:[]),
-    "opponent_current_type","terrain","hazards",
+    "opponent_current_type","terrain",
+    ...(plan.hazardObservationScope==="CURRENT_OPPONENT_SIDE_AND_REVISION"?["hazards"]:[]),
     ...(consumedKnown?["opponent_item","opponent_consumed_item"]:[]),
-    ...(ppKnown?["opponent_revealed_moves","opponent_remaining_pp"]:[])],
+    ...(ppKnown?["opponent_revealed_moves","opponent_remaining_pp"]:[]),
+    ...plan.admitted],
   unrecovered_hidden_fields:[
     // A single revealed move never proves the opponent has no other moves.
     "opponent_unrevealed_moves",
+    ...(plan.hazardObservationScope==="SYNTHETIC_BASELINE_ONLY_NOT_CURRENT_GAME_EVIDENCE"?
+      ["current_hazard_absence_unverified_for_game"]:[]),
     ...(ppKnown?[]:["opponent_revealed_moves","opponent_remaining_pp"]),
-    ...(consumedKnown?[]:["opponent_item"]),
-    "opponent_ability","opponent_ap","opponent_mega_history",
+    ...(consumedKnown||plan.removed?[]:["opponent_item"]),
+    ...(plan.mega?[]:["opponent_ability"]),"opponent_ap",
+    ...(plan.mega?[]:["opponent_mega_history"]),
+    ...(plan.choice?[]:["choice_lock"]),
+    ...(plan.removed?[]:["opponent_removed_item"]),
     "unresolved_queue","internal_rng","action_history",
-    "effect_remaining_turns","own_side_unknown_history"],
-  assumption:"fixed registered teams, other hidden facts, previous move/PP events, consumption effects and move boundary are hypotheses",
+    ...(plan.effects?[]:["effect_remaining_turns"]),
+    ...(plan.mega?["mega_transition_log_not_replayed"]:[]),
+    ...(plan.removed?["item_removal_log_not_replayed"]:[]),
+    ...(plan.choice?["choice_lock_creation_history_not_replayed"]:[]),
+    "own_side_unknown_history"],
+  assumption:"fixed registered teams and unobserved effects/history, RNG, and the current move boundary remain hypotheses; changed current state does not reconstruct prior events",
   candidate_count:candidates.length,unevaluated_candidate_count:generated.unevaluated_candidate_count,
   candidates,rejected,not_a_unique_true_state:true};
 }

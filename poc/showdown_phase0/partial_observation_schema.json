@@ -7,10 +7,10 @@
     "schema": {"const": "phase0-partial-observation-v1"},
     "origin": {"enum": ["SYNTHETIC", "REAL_GAME"]},
     "verification": {"enum": ["UNVERIFIED", "USER_VERIFIED"]},
-    "evidence": {"type": "array", "items": {"type": "object", "required": ["id", "kind"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"enum": ["SYNTHETIC_FIXTURE", "GAME_FRAME", "GAME_LOG"]}, "match_id": {"type": "string", "minLength": 1}, "turn_epoch": {"type": "integer", "minimum": 0}, "state_revision": {"type": "integer", "minimum": 0}}, "additionalProperties": false}},
+    "evidence": {"type": "array", "items": {"type": "object", "required": ["id", "kind"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"enum": ["SYNTHETIC_FIXTURE", "GAME_FRAME", "GAME_LOG"]}, "match_id": {"type": "string", "minLength": 1}, "turn_epoch": {"type": "integer", "minimum": 0}, "state_revision": {"type": "integer", "minimum": 0}, "active_instance_id": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
     "facts": {
       "type": "object",
-      "required": ["own_registered", "opponent_registered", "own_selected", "opponent_selected", "active_own", "active_opponent", "opponent_species", "opponent_form", "opponent_hp_exact", "opponent_status", "opponent_boosts", "opponent_revealed_moves", "opponent_remaining_pp", "opponent_ability", "opponent_item", "opponent_consumed_item", "opponent_mega_state", "opponent_mega_history", "opponent_current_type", "weather", "terrain", "screens", "screen_remaining_turns", "hazards", "effect_remaining_turns", "choice_lock", "speed_relation", "action_history", "request_state", "pending_choice", "unresolved_queue", "internal_rng", "opponent_ap", "opponent_nature"],
+      "required": ["own_registered", "opponent_registered", "own_selected", "opponent_selected", "active_own", "active_opponent", "opponent_species", "opponent_form", "opponent_hp_exact", "opponent_status", "opponent_boosts", "opponent_revealed_moves", "opponent_remaining_pp", "opponent_ability", "opponent_item", "opponent_consumed_item", "opponent_removed_item", "opponent_mega_state", "opponent_mega_history", "opponent_current_type", "weather", "terrain", "screens", "screen_remaining_turns", "hazards", "effect_remaining_turns", "choice_lock", "speed_relation", "action_history", "request_state", "pending_choice", "unresolved_queue", "internal_rng", "opponent_ap", "opponent_nature"],
       "additionalProperties": {"$ref": "#/$defs/fact"}
     }
   },

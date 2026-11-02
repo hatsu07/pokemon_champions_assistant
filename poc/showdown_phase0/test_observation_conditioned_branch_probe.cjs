@@ -3,7 +3,8 @@ const {test}=require("node:test");
 const assert=require("node:assert/strict");
 const {condition,BOOSTS}=require("./observation_conditioned_branch_probe.cjs");
 const {context}=require("./six_team_selection_probe.cjs");
-const {projectObservation,syntheticTruth}=require("./partial_observation_probe.cjs");
+const {projectObservation,syntheticTruth,makeCandidates}=require("./partial_observation_probe.cjs");
+const combined=require("./gate_b_four_mechanisms.cjs");
 const {fingerprint}=require("./state_compare.cjs");
 let ctx,base;
 function setup(){
@@ -334,7 +335,7 @@ test("a known consumed item plus an unrepresented effect history remains unsuppo
  obs.facts.effect_remaining_turns=known({encore:2});
  const r=condition(obs,ctx);
  assert.equal(r.status,"UNSUPPORTED");
- assert.match(r.reason,/known hidden-history field/);
+ assert.match(r.reason,/effect duration/);
 });
 test("known terrain, hazards and changed types fail closed rather than contradict the Battle",()=>{
  const obs=withHPAndBoosts();
@@ -374,7 +375,7 @@ test("known but unmodeled effect history is not silently ignored",()=>{
    obs.facts[field]=known(value);
    const r=condition(obs,ctx);
    assert.equal(r.status,"UNSUPPORTED",field);
-   assert.match(r.reason,/known hidden-history field/);
+   assert.ok(r.reason,"unmodeled history must be rejected");
  }
 });
 test("HP exceeding legal maximum and fainted state fail closed",()=>{
@@ -415,6 +416,204 @@ test("unresolved choice, Mega history and weather are not fabricated",()=>{
  // The existing observation validator detects incompatible base form.
  assert.throws(()=>condition(obs,ctx),/Mega state conflicts/);
 });
+
+function bindCurrentFrame(obs){
+ const frame=obs.evidence.find(e=>e.id==="fixture-CONDITION");
+ Object.assign(frame,{match_id:"match-COMBINED",turn_epoch:4,state_revision:42,
+   active_instance_id:"p2-mon-slot-2"});
+ return obs;
+}
+function pastEvent(obs,key,value,id="observed-past"){
+ bindCurrentFrame(obs);
+ obs.evidence.push({id,kind:"SYNTHETIC_FIXTURE",
+   match_id:"match-COMBINED",turn_epoch:2,state_revision:20,
+   active_instance_id:"p2-mon-slot-2"});
+ obs.facts[key]=known({...value,turn_epoch:2,state_revision:20},id);
+ return obs;
+}
+function removedScarf(){
+ const obs=withHPAndBoosts({hp:70});
+ obs.facts.opponent_item=known("");
+ pastEvent(obs,"opponent_removed_item",{
+   item_id:"choicescarf",cause:"knockoff",target_species:"garchomp"});
+ return obs;
+}
+function megaGarchomp(){
+ const obs=withHPAndBoosts({hp:70});
+ obs.facts.active_opponent=known("garchompmega");
+ obs.facts.opponent_form=known("garchompmega");
+ obs.facts.opponent_current_type=known([...ctx.dex.species.get("garchompmega").types]);
+ obs.facts.opponent_mega_state=known(true);
+ obs.facts.opponent_item=known("garchompite");
+ obs.facts.opponent_ability=known("sandforce");
+ pastEvent(obs,"opponent_mega_history",{
+   from_form:"garchomp",to_form:"garchompmega",stone_id:"garchompite"});
+ return obs;
+}
+function withField(obs){
+ bindCurrentFrame(obs);
+ obs.facts.weather=known("raindance");
+ obs.facts.terrain=known("electricterrain");
+ obs.facts.hazards=known({side:"p2",effects:["stealthrock"],
+   turn_epoch:4,state_revision:42});
+ obs.facts.effect_remaining_turns=known({weather:3,terrain:2});
+ return obs;
+}
+test("current choice lock conditions actual item and volatile without recreating past turns",()=>{
+ const obs=withHPAndBoosts({hp:70});
+ bindCurrentFrame(obs);
+ obs.facts.opponent_item=known("choicescarf");
+ obs.facts.choice_lock=known({
+   move_id:"earthquake",item_id:"choicescarf",turn_epoch:4,state_revision:42});
+ const hash=fingerprint(obs),result=condition(obs,ctx);
+ assert.equal(fingerprint(obs),hash);
+ assert.equal(result.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+ assert.deepEqual(result.candidates.map(c=>c.id),["C"]);
+ assert.equal(result.candidates[0].conditioned_choice_lock,"earthquake");
+ assert.ok(result.admitted_evidence_fields.includes("choice_lock"));
+ assert.equal(result.gate_B,"UNSUPPORTED");
+});
+test("Choice lock disappears from actual synthetic Battle when locked user switches out",()=>{
+ const obs=withHPAndBoosts({hp:70});
+ bindCurrentFrame(obs);
+ obs.facts.opponent_item=known("choicescarf");
+ obs.facts.choice_lock=known({
+  move_id:"earthquake",item_id:"choicescarf",turn_epoch:4,state_revision:42});
+ const plan=combined.inspect(obs,ctx);
+ assert.equal(plan.error,undefined);
+ const baseObs=structuredClone(obs);
+ baseObs.facts.opponent_hp_exact={source:"UNKNOWN"};
+ baseObs.facts.opponent_boosts={source:"UNKNOWN"};
+ const selected=makeCandidates(baseObs,ctx).candidates;
+ assert.deepEqual(selected.map(c=>c.id),["C"]);
+ const battle=selected[0].battle,locked=battle.p2.active[0];
+ assert.equal(combined.apply(battle,locked,plan),null);
+ assert.equal(locked.volatiles.choicelock.move,"earthquake");
+ battle.makeChoices("move 1","switch 2");
+ assert.equal(battle.p2.active[0]!==locked,true,"active opponent must change");
+ assert.equal(Boolean(locked.volatiles.choicelock),false,
+  "switching out must clear old active Choice lock");
+ assert.equal(locked.item,"choicescarf","switch must not remove the held Choice item");
+});
+test("observed Knock Off removal conditions empty current item but never a Berry event",()=>{
+ const obs=removedScarf(),hash=fingerprint(obs);
+ const result=condition(obs,ctx);
+ assert.equal(result.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+ assert.deepEqual(result.candidates.map(c=>c.id),["C"]);
+ assert.equal(result.candidates[0].conditioned_item,"");
+ assert.equal(result.candidates[0].original_hypothesis_item,"choicescarf");
+ assert.equal(result.candidates[0].removed_item_observation,"choicescarf");
+ assert.equal(result.candidates[0].consumed_item_observation,null);
+ assert.equal(fingerprint(obs),hash);
+ assert.equal(result.live_recommendation_permitted,false);
+});
+test("linked Mega history changes actual current Battle form and ability",()=>{
+ const obs=megaGarchomp(),hash=fingerprint(obs);
+ const result=condition(obs,ctx);
+ assert.equal(result.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",result.reason);
+ assert.deepEqual(result.candidates.map(c=>c.id),["D"]);
+ assert.equal(result.candidates[0].conditioned_mega_form,"garchompmega");
+ assert.equal(result.candidates[0].conditioned_mega_ability,"sandforce");
+ assert.equal(result.candidates[0].conditioned_item,"garchompite");
+ assert.equal(fingerprint(obs),hash);
+});
+test("weather, terrain and one opponent-side hazard require and preserve exact conditions",()=>{
+ const obs=withField(withHPAndBoosts({hp:70}));
+ obs.facts.screens=known(["reflect"]);
+ obs.facts.screen_remaining_turns=known({reflect:3});
+ const hash=fingerprint(obs),result=condition(obs,ctx);
+ assert.equal(result.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",result.reason);
+ assert.equal(result.candidate_count,4);
+ assert.ok(result.candidates.every(c=>c.conditioned_weather==="raindance"&&
+   c.conditioned_weather_turns===3&&c.conditioned_terrain==="electricterrain"&&
+   c.conditioned_terrain_turns===2&&c.conditioned_hazards.includes("stealthrock")&&
+   c.conditioned_screen_ids.includes("reflect")));
+ assert.equal(fingerprint(obs),hash);
+});
+test("empty hazards require current opponent side and request revision",()=>{
+ const original=withHPAndBoosts({hp:70});bindCurrentFrame(original);
+ original.facts.hazards=known({side:"p2",effects:[],turn_epoch:4,state_revision:42});
+ const sourceHash=fingerprint(original),ok=condition(original,ctx);
+ assert.equal(ok.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",ok.reason);
+ assert.equal(fingerprint(original),sourceHash);
+ assert.ok(ok.admitted_evidence_fields.includes("hazards"));
+ assert.ok(ok.candidates.every(c=>c.hazard_observation_scope===
+   "CURRENT_OPPONENT_SIDE_AND_REVISION"&&c.conditioned_hazards.length===0));
+ for(const change of [
+  o=>{o.facts.hazards.value.turn_epoch=2;o.facts.hazards.value.state_revision=20;},
+  o=>{o.facts.hazards.value.state_revision=41;},
+  o=>{o.facts.hazards.value.side="p1";},
+  o=>{o.facts.hazards={source:"UNKNOWN"};},
+  o=>{o.evidence.push({id:"old",kind:"SYNTHETIC_FIXTURE",turn_epoch:2,
+       state_revision:20,match_id:"match-COMBINED"});
+       o.facts.hazards.evidence_ids=["old"];},
+  o=>{o.evidence.push({id:"other",kind:"SYNTHETIC_FIXTURE",turn_epoch:4,
+       state_revision:42,match_id:"match-COMBINED"});
+       o.facts.hazards.evidence_ids=["other"];}
+ ]){
+  const obs=structuredClone(original);change(obs);
+  const hash=fingerprint(obs),r=condition(obs,ctx);
+  assert.equal(r.status,"UNSUPPORTED",r.reason);
+  assert.equal(r.candidates?.length||0,0);
+  assert.equal(fingerprint(obs),hash);
+ }
+});
+test("flat [] hazards are only a synthetic fixture assumption, never a real-game proof",()=>{
+ const synthetic=withHPAndBoosts(),s=condition(synthetic,ctx);
+ assert.equal(s.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
+ assert.ok(!s.admitted_evidence_fields.includes("hazards"));
+ assert.ok(s.unrecovered_hidden_fields.includes("current_hazard_absence_unverified_for_game"));
+ assert.ok(s.candidates.every(c=>c.hazard_observation_scope===
+   "SYNTHETIC_BASELINE_ONLY_NOT_CURRENT_GAME_EVIDENCE"));
+ const real=structuredClone(synthetic);
+ real.origin="REAL_GAME";real.verification="USER_VERIFIED";
+ real.evidence=[{id:"game-1",kind:"GAME_FRAME"}];
+ for(const [k,v] of Object.entries(real.facts))
+  if(v.source==="SYNTHETIC")
+   real.facts[k]={source:"GAME_OBSERVED",value:structuredClone(v.value),evidence_ids:["game-1"]};
+ const r=condition(real,ctx);
+ assert.equal(r.status,"UNSUPPORTED");
+ assert.match(r.reason,/flat hazards absence is synthetic-fixture-only/);
+});
+
+test("Mega with field and Knock Off with field compose independently",()=>{
+ const mega=condition(withField(megaGarchomp()),ctx);
+ assert.equal(mega.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",mega.reason);
+ assert.deepEqual(mega.candidates.map(c=>c.id),["D"]);
+ assert.equal(mega.candidates[0].conditioned_terrain,"electricterrain");
+ const removed=condition(withField(removedScarf()),ctx);
+ assert.equal(removed.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC",removed.reason);
+ assert.deepEqual(removed.candidates.map(c=>c.id),["C"]);
+ assert.equal(removed.candidates[0].conditioned_item,"");
+ assert.equal(removed.candidates[0].conditioned_weather_turns,3);
+});
+test("stale and contradictory four-mechanism histories fail closed",()=>{
+ for(const change of [
+  obs=>{obs.facts.opponent_removed_item.value.turn_epoch=5;},
+  obs=>{obs.facts.opponent_removed_item.value.item_id="leftovers";},
+  obs=>{obs.evidence.find(e=>e.id==="observed-past").match_id="another-match";},
+  obs=>{obs.evidence.find(e=>e.id==="observed-past").active_instance_id="another-mon";},
+  obs=>{obs.facts.opponent_consumed_item=known("sitrusberry");},
+  obs=>{obs.facts.opponent_item=known("choicescarf");},
+  obs=>{obs.facts.choice_lock=known({
+     move_id:"earthquake",item_id:"choicescarf",turn_epoch:4,state_revision:42});}
+ ]){
+  const obs=removedScarf();change(obs);
+  const result=condition(obs,ctx);
+  assert.equal(result.status,"UNSUPPORTED",result.reason);
+  assert.equal(result.candidates?.length||0,0);
+ }
+ const old=megaGarchomp();
+ old.facts.opponent_mega_history={source:"UNKNOWN"};
+ assert.match(condition(old,ctx).reason,/Mega requires linked history/);
+ const field=withField(withHPAndBoosts());
+ field.facts.effect_remaining_turns=known({weather:3});
+ assert.equal(condition(field,ctx).status,"UNSUPPORTED");
+ const wrong=withField(withHPAndBoosts());
+ wrong.evidence[0].turn_epoch=3;
+ assert.equal(condition(wrong,ctx).status,"UNSUPPORTED");
+});
+
 test("synthetic evidence cannot be mislabeled as real-game proof; even verified provenance stays provisional",()=>{
  const obs=withHPAndBoosts();
  obs.facts.opponent_hp_exact={source:"GAME_OBSERVED",value:100,
@@ -422,13 +621,17 @@ test("synthetic evidence cannot be mislabeled as real-game proof; even verified 
  assert.throws(()=>condition(obs,ctx),/game observation lacks verified/);
  const real=withHPAndBoosts();
  real.origin="REAL_GAME";real.verification="USER_VERIFIED";
- real.evidence=[{id:"game-frame-1",kind:"GAME_FRAME"}];
+ real.evidence=[{id:"game-frame-1",kind:"GAME_FRAME",
+   match_id:"game-match-1",turn_epoch:1,state_revision:1}];
  for(const [key,fact] of Object.entries(real.facts)){
   if(fact.source==="SYNTHETIC"){
    real.facts[key]={source:"GAME_OBSERVED",value:structuredClone(fact.value),
      evidence_ids:["game-frame-1"]};
   }
  }
+ real.facts.hazards={source:"GAME_OBSERVED",
+   value:{side:"p2",effects:[],turn_epoch:1,state_revision:1},
+   evidence_ids:["game-frame-1"]};
  const r=condition(real,ctx);
  assert.equal(r.status,"PROVISIONAL_CONDITIONAL_SYNTHETIC");
  assert.equal(r.game_compatibility_verified,false);
