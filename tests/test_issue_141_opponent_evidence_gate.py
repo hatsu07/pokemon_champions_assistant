@@ -140,6 +140,74 @@ class Phase2OpponentEvidenceTests(unittest.TestCase):
         self.assertEqual(result.status, "NO_RANKING")
         self.assertEqual(result.reason, "INVALID_OBSERVED_OPPONENT_EVIDENCE")
 
+    def test_present_falsy_corrupt_evidence_blocks_gate_and_worker(self):
+        # Reviewed P2 regression: a present malformed value must not be
+        # replaced by the {} default and misinterpreted as missing evidence.
+        for corrupt in ([], "", 0, False, None):
+            with self.subTest(value=repr(corrupt)):
+                snapshot = current()
+                state = snapshot.state
+                state["opponent_active"] = NAME
+                state["battle_evidence"] = corrupt
+                snapshot = with_hypotheses(
+                    replace(snapshot, observed_state_json=canonical_json(state)),
+                    {"opponent_sets": {NAME: {}}},
+                )
+                gate = check_observed_opponent_hypotheses(snapshot)
+                self.assertEqual(gate.status, "NO_RANKING")
+                self.assertEqual(gate.reason,
+                                 "INVALID_OBSERVED_OPPONENT_EVIDENCE")
+                worker = FakePhase1Worker()
+                ranking = run_shadow_turn(
+                    snapshot, VERIFIED_ASSETS, worker,
+                    (scenario("H1"),), preserve="ガブリアス",
+                    stopper="ミミッキュ")
+                self.assertEqual(ranking.status, "NO_RANKING")
+                self.assertEqual(ranking.reason,
+                                 "INVALID_OBSERVED_OPPONENT_EVIDENCE")
+                self.assertEqual(ranking.best_action_id, "")
+                self.assertEqual(ranking.evaluated_branch_count, 0)
+                self.assertEqual(worker.calls, [])
+
+    def test_missing_evidence_is_distinct_from_explicit_corrupt_evidence(self):
+        snapshot = current()
+        state = snapshot.state
+        state.pop("battle_evidence", None)
+        state["opponent_active"] = ""
+        snapshot = replace(
+            snapshot, observed_state_json=canonical_json(state))
+        gate = check_observed_opponent_hypotheses(snapshot)
+        self.assertEqual(gate.status, "CLEAR")
+        self.assertEqual(gate.reason, "NO_REVEALED_OPPONENT_DETAILS")
+        state["battle_evidence"] = {}
+        snapshot = replace(
+            snapshot, observed_state_json=canonical_json(state))
+        gate = check_observed_opponent_hypotheses(snapshot)
+        self.assertEqual(gate.status, "CLEAR")
+        self.assertEqual(gate.reason, "NO_REVEALED_OPPONENT_DETAILS")
+
+    def test_direct_comparator_rejects_present_falsy_corrupt_evidence(self):
+        snapshot = current()
+        state = snapshot.state
+        state["opponent_active"] = NAME
+        state["battle_evidence"] = []
+        snapshot = with_hypotheses(
+            replace(snapshot, observed_state_json=canonical_json(state)),
+            {"opponent_sets": {NAME: {}}},
+        )
+        branches = (
+            make_branch(snapshot, EARTH, "attack", hypothesis="H1"),
+            make_branch(snapshot, CLAW, "attack", hypothesis="H1"),
+        )
+        result = compare_shadow_turn(
+            snapshot, VERIFIED_ASSETS, branches,
+            preserve="ガブリアス", stopper="ミミッキュ",
+            now=snapshot.window.deadline_monotonic - 5,
+        )
+        self.assertEqual(result.status, "NO_RANKING")
+        self.assertEqual(result.reason, "INVALID_OBSERVED_OPPONENT_EVIDENCE")
+        self.assertEqual(result.best_action_id, "")
+
     def test_standalone_comparator_must_not_bypass_evidence(self):
         snapshot = with_hypotheses(observed(), assumptions(item="別の道具"))
         branches = (
