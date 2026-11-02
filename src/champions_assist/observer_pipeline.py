@@ -169,6 +169,7 @@ class ObserverPipeline:
         self._processed_event_seq = 0
         self._recent_frames: deque[Frame] = deque(maxlen=recent_frame_limit)
         self._recent_capture_receipts: deque[FrameCaptureReceipt] = deque(maxlen=recent_frame_limit)
+        self._processed_raw_frame_ids: set[str] = set()
         self._reanalysis_seq = 0
         self.hp_calibrations = hp_calibrations
         self.icon_calibrations = icon_calibrations
@@ -179,9 +180,9 @@ class ObserverPipeline:
         started = perf_counter()
         effective_now = frame.captured_at_ms if now_ms is None else now_ms
         raw_observation_id = f"{self.session.match_id}:frame:{frame.capture_seq}:{frame.frame_id}"
+        if raw_observation_id in self._processed_raw_frame_ids:
+            raise ValueError("duplicate raw frame observation identity")
         receipt = capture_frame_receipt(frame, self.session, raw_observation_id)
-        self._recent_frames.append(frame)
-        self._recent_capture_receipts.append(receipt)
         classification_image = frame.image if self.classification_roi_name is None else self.roi_config.crop(self.classification_roi_name, frame.image)
         classification = self.ui_classifier.classify(frame.image if classification_image is None else classification_image)
         parsed_rois: dict[str, ParsedOcr] = {}
@@ -234,6 +235,9 @@ class ObserverPipeline:
             # An old raw observation may refer to different image bytes.
             # Do not apply a second OCR interpretation under that identity.
             raise ValueError("duplicate raw frame observation identity")
+        self._processed_raw_frame_ids.add(raw_observation_id)
+        self._recent_frames.append(frame)
+        self._recent_capture_receipts.append(receipt)
 
         self._observe_visual_fields(frame, raw_observation_id)
         applied_events: list[ObservedEvent] = []
