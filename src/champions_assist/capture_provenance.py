@@ -106,7 +106,10 @@ def linked_local_ocr_origin(receipt: FrameCaptureReceipt, *,
             or not isinstance(frame_id, str) or not frame_id
             or receipt.frame_id != frame_id
             or not isinstance(receipt.raw_observation_id, str)
-            or not receipt.raw_observation_id.startswith(match_id + ":frame:")
+            or receipt.raw_observation_id != (
+                f"{match_id}:frame:{receipt.capture_seq}:{frame_id}")
+            or type(receipt.capture_seq) is not int or receipt.capture_seq < 0
+            or type(receipt.captured_at_ms) is not int or receipt.captured_at_ms < 0
             or not isinstance(receipt.image_rgb_sha256, str)
             or len(receipt.image_rgb_sha256) != 71
             or not receipt.image_rgb_sha256.startswith("sha256:")
