@@ -48,7 +48,7 @@ def _verified_roster_binding(snapshot: FrozenBattleState, assets: Any) -> list[d
             # The match preloader decodes UTF-8-SIG; original bytes may or
             # may not have a BOM. Accept only those two exact encodings.
             if (hashlib.sha256(raw).hexdigest() != digest
-                    and hashlib.sha256(b"\\xef\\xbb\\xbf" + raw).hexdigest() != digest):
+                    and hashlib.sha256(bytes.fromhex("efbbbf") + raw).hexdigest() != digest):
                 raise WorkerUnavailable("preloaded master bytes do not match SHA manifest")
         # CSV index must be derived from the very same frozen team bytes.
         parsed = _parse_team(assets.contents[REQUIRED_MASTER_FILES[3]])
