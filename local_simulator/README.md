@@ -17,6 +17,14 @@ A synthetic simulation may return PARTIAL, **never CONFIRMED**.
   branch payload (hypothesis, candidate action and both Showdown choices) and
   action ID. Node checks the payload SHA and echoes these fields; Python
   rejects stale, swapped, duplicated, malformed, late or dead-worker replies.
+- `simulate(...,candidate_action_id=...,assets=...)` requires frozen team
+  assets and a currently LEGAL candidate. The caller's `p1_choice` must
+  exactly match the move slot resolved from the team; for switch windows,
+  an explicit frozen `showdown_party_order` matching the selected three is
+  necessary. Missing/ambiguous mappings are rejected, never silently guessed.
+- Worker `stdin.write/flush` runs on a separate bounded writer thread.
+  A stalled worker that stops reading its pipe is killed and cannot block the
+  decision thread past its deadline.
 - PIVOT_TARGET/FAINT_REPLACEMENT/NORMAL_SWITCH are distinct decision windows.
   Input choices after an intervening turn/KO must be revalidated.
 - Do not reconstruct arbitrary real partially observed turns with Showdown.
@@ -30,9 +38,11 @@ Fixed candidate upstream SHA:
 This source SHA is only the pinned PoC candidate, **not proof of Champions
 compatibility**. The runtime is disabled unless a prebuilt Showdown tree has
 `dist/sim/index.js` and a text marker `.champions-source-sha` with that SHA,
-plus a local Node executable. The worker also checks the staging manifest's
-SHA256 fields for Node, worker, Showdown entry and license files; a bare marker
-is not sufficient. Do not create the marker without verifying the upstream checkout. Python's LocalSimulatorWorker requires explicit paths.
+plus a local Node executable. The worker also checks the staging manifest's SHA256 fields for Node, worker,
+licenses **and every file in the Showdown dist/dependency runtime tree**.
+The staging input must include an independently reviewed exact-file inventory
+(`--verified-build-manifest`) and a clean pinned checkout. Added, removed,
+or modified dependencies prevent startup; a bare source marker is insufficient. Do not create the marker without verifying the upstream checkout. Python's LocalSimulatorWorker requires explicit paths.
 This project does not download or update anything while playing.
 
 Windows onedir bundling of Node, licenses and dependencies is **a remaining
