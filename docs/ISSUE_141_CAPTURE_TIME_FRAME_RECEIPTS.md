@@ -40,11 +40,20 @@ translating screen text into an assumed active participant.
 
 - `process_frame` rejects a reused match/capture-seq/frame-ID composite,
   including a new image hidden under an old raw observation ID. A refused
-  frame does not apply extra interpreted state.
+  frame does not apply extra interpreted state. The ROI change/episode/last
+  parsed data are computed in a **staged cache** and committed only if the
+  SQLite raw insert succeeds. This protects a restarted observer instance:
+  a cross-instance DB duplicate must not suppress OCR on the following
+  new-ID frame with the same RGB pixels.
 - Buffered OCR reanalysis references the **original** frame receipt and
   original raw observation ID, rather than claiming the old pixels belong
-  to the *current* window. The later observation/tactical versions are
-  labeled `reanalyzed_after_...`, not original capture metadata.
+  to the *current* window. The raw reanalysis ID includes that exact
+  original frame identity, original pixel SHA256, and a local episode
+  sequence. Distinct frames with the same capture sequence cannot alias.
+  A repeated reanalysis ID that SQLite refuses to insert is a hard stop:
+  **no semantic event is applied under an unpersisted raw source ID**.
+  The later observation/tactical versions are labeled
+  `reanalyzed_after_...`, not original capture metadata.
 - Before reanalysis, the retained image is rehashed and checked against
   its original receipt. If the mutable numpy array was overwritten, replay
   stops without creating a new raw observation.
