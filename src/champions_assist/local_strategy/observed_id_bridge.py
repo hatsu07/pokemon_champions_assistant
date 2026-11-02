@@ -105,7 +105,12 @@ def _hp(value: Any, *, allow_own_faint_marker: bool,
         return (0, None, True, None)
     if not allow_own_faint_marker and _OPPONENT_PERCENT_HP.fullmatch(raw):
         if opponent_faint_attested:
-            raise ValueError("CONTRADICTORY_FAINT_AND_PERCENT_HP")
+            if raw != "0%":
+                raise ValueError("CONTRADICTORY_FAINT_AND_PERCENT_HP")
+            # The *explicit FAINT* establishes this actor's defeat; 0%
+            # alone does not. Preserve its OCR text without pretending that
+            # the rounded HUD gives exact HP or maximum HP for Showdown.
+            return (None, None, True, raw)
         return (None, None, False if raw != "0%" else None, raw)
     m = _EXACT_HP.fullmatch(raw)
     if m is None:
