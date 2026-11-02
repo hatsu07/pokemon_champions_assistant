@@ -163,12 +163,18 @@ class Phase2ShadowRunnerTests(unittest.TestCase):
     def test_missing_or_unsupported_worker_branch_discards_all(self):
         for w in (FakePhase1Worker(fail_at=3),
                   FakePhase1Worker(status=CapabilityStatus.UNSUPPORTED),
-                  FakePhase1Worker(stale_echo=True),
-                  FakePhase1Worker(mutate_input=True)):
+                  FakePhase1Worker(stale_echo=True)):
             with self.subTest(worker=w.__dict__):
                 result=self.run_plan(worker=w)
                 self.assertEqual(result.status, "NO_RANKING")
                 self.assertEqual(result.best_action_id, "")
+
+    def test_worker_mutating_passed_battle_copy_does_not_change_next_branch(self):
+        worker = FakePhase1Worker(mutate_input=True)
+        result = self.run_plan(worker=worker)
+        self.assertEqual(result.status, "MODEL_PROVISIONAL")
+        self.assertEqual(len(worker.calls), 4)
+        self.assertEqual(len({row[3] for row in worker.calls}), 1)
 
     def test_deadline_and_midrun_revision_are_not_silently_adopted(self):
         s = current()
