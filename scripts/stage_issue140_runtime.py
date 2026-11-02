@@ -26,13 +26,25 @@ def _digest(path: Path) -> str:
 
 
 def _engine_files(root: Path) -> dict[str, str]:
-    """Enumerate all packaged code and dependency files; never follow links."""
-    names = {}
-    for path in sorted(root.rglob("*")):
+    """Hash only the exact packaged dist/modules/licenses, not .git/cache."""
+    names: dict[str, str] = {}
+    for folder in ("dist", "node_modules"):
+        base = root / folder
+        if base.is_symlink():
+            raise ValueError("symlink runtime folder is prohibited")
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if path.is_symlink():
+                raise ValueError("symlink in Showdown runtime tree is prohibited")
+            if path.is_file():
+                names[path.relative_to(root).as_posix()] = _digest(path)
+    for filename in ("LICENSE", "package.json", "package-lock.json"):
+        path = root / filename
         if path.is_symlink():
-            raise ValueError("symlink in Showdown runtime tree is prohibited")
-        if path.is_file() and path.name != ".champions-source-sha":
-            names[path.relative_to(root).as_posix()] = _digest(path)
+            raise ValueError("symlink runtime file is prohibited")
+        if path.is_file():
+            names[filename] = _digest(path)
     return names
 
 
@@ -73,10 +85,7 @@ def stage(*, showdown_root: Path, node_exe: Path, node_license: Path,
     observed = _engine_files(showdown_root)
     # Only the exact runtime files staged below, not unrelated repository
     # sources, are compared to the independent build inventory.
-    included = {k: v for k, v in observed.items()
-                if k.startswith(("dist/", "node_modules/"))
-                or k in ("LICENSE", "package.json", "package-lock.json")}
-    if included != reference["engine_file_sha256"]:
+    if observed != reference["engine_file_sha256"]:
         raise ValueError("Showdown build/dependency tree differs from verified inventory")
     if node_exe.name.lower() != "node.exe":
         raise ValueError("Windows runtime must contain a node.exe binary")
