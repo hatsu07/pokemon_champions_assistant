@@ -157,6 +157,10 @@ def compare_shadow_turn(snapshot: FrozenBattleState, assets: Any,
                 or not isinstance(submitted.get("payload"), dict)):
             return ShadowTurnRanking("NO_RANKING", "MISSING_OR_UNBOUND_SUBMISSION")
         request = submitted["payload"]
+        # Scenario identity is the *actual Showdown opponent command*, not
+        # a caller-written semantic label such as "attack" or "switch".
+        if branch.opponent_choice_id != request.get("p2_choice"):
+            return ShadowTurnRanking("NO_RANKING", "OPPONENT_CHOICE_NOT_SUBMITTED")
         if (request.get("source") != "FULL_REPLAY_SYNTHETIC"
                 or request.get("hypothesis_id") != branch.hypothesis_id
                 or request.get("candidate_action_id") != branch.candidate_action_id
