@@ -65,12 +65,14 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.mkdirSync(path.join(root,"dist","sim"),{recursive:true});
     fs.writeFileSync(path.join(root,".champions-source-sha"),PIN+"\n");
     fs.writeFileSync(path.join(root,"dist","sim","index.js"),
-      "exports.Battle={fromJSON(data){const pokemon=data.team.map(x=>({"+
-      "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,fainted:false,status:''}));"+
-      "const p1={pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
+      "exports.Battle={fromJSON(data){const boosts=()=>({atk:0,def:0,spa:0,spd:0,spe:0,accuracy:0,evasion:0});"+
+      "const pokemon=data.team.map(x=>({"+
+      "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,maxhp:100,fainted:false,status:'',boosts:boosts()}));"+
+      "const p1={id:'p1',pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
       "const opp=[{species:{id:'dragonite'},hp:100,maxhp:100,status:'',fainted:false,switchFlag:false},"+
       "{species:{id:'gholdengo'},hp:60,maxhp:100,status:'',fainted:false,switchFlag:false},"+
       "{species:{id:'kingambit'},hp:0,maxhp:100,status:'',fainted:true,switchFlag:false}];"+
+      "for(const p of opp){p.moveSlots=[{id:'tackle'}];p.boosts=boosts()}"+
       "const r={side:{id:'p2',pokemon:opp.map((p,i)=>({condition:i===2?'0 fnt':i===1?'60/100':'100/100',active:i===0}))},"+
       "active:[{moves:[{id:'tackle',pp:10,disabled:false}],trapped:false}]};"+
       "const p2={id:'p2',pokemon:opp,active:[opp[0]],activeRequest:r,requestState:'move',"+
@@ -172,8 +174,14 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     // Old mock lacks complete 3v3 p2 state and engine boosts. It must
     // never be silently promoted into a successful complete readout.
     assert.equal(output[6].op,"READOUT_REPLAY");
-    assert.equal(output[6].ok,false);
-    assert.equal(output[6].capability_status,"UNSUPPORTED");
+    assert.equal(output[6].ok,true);
+    assert.equal(output[6].capability_status,"PARTIAL");
+    assert.equal(output[6].branch_request_id,readoutRequest.branch_request_id);
+    assert.equal(output[6].branch_input_sha256,p2Payload.branch_input_sha256);
+    assert.equal(output[6].payload.readout.status,"SYNTHETIC_ENGINE_REPLAY_READOUT");
+    assert.equal(output[6].payload.readout.ready_for_engine,false);
+    assert.equal(output[6].payload.readout.members.length,6);
+    assert.deepEqual(output[6].payload.readout.active,{p1:1,p2:1});
     assert.equal(output[7].ok,false);
     assert.equal(output[7].reason,"INCOMPLETE_OR_REAL_OBSERVATION");
     assert.equal(output[5].op,"ENUMERATE_P2");
