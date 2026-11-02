@@ -23,7 +23,10 @@ OCR is not carried forward. The linked reducer accepts an HP/PP record
 only if the name ROI was unchanged *and freshly re-read* on that same
 frame with sufficient confidence. If the name ROI changes in the same
 frame (possible switch animation), or the name is missing/unclear, HP
-and PP are held as candidates; a subsequent stable same-actor frame
+and PP are held as candidates. The refreshed name must also match the
+existing current actor under the frozen roster: a new name returned for
+identical original name pixels is treated as OCR drift, not a switch.
+A subsequent stable same-actor frame
 is required before committing them. The legacy two-second actor-name
 attestation is never extended or used as an implicit exception here.
 The extra OCR is performed only for the explicitly enabled bridge,
