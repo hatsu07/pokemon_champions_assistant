@@ -19,6 +19,7 @@ from .models import (
     CapabilityStatus, FrozenBattleState, PROTOCOL_VERSION,
     SimulationResult, canonical_json, fingerprint,
 )
+from .legal_actions import generate_candidates, showdown_choice_for_candidate
 
 _MAX_BYTES = 1024 * 1024
 
@@ -98,13 +99,45 @@ class LocalSimulatorWorker:
             data = canonical_json(dict(request)) + "\n"
             if len(data.encode("utf-8")) > _MAX_BYTES:
                 raise WorkerUnavailable("request too large")
+            # A child process may remain alive but stop draining stdin.
+            # Pipe write/flush can block before the reply deadline is checked.
+            # Keep ALL blocking stdin operations in a daemon writer and
+            # terminate the worker on a deadline breach; never wait for that
+            # writer on the GUI/decision thread.
             assert self._proc.stdin
-            try:
-                self._proc.stdin.write(data)
-                self._proc.stdin.flush()
-            except (OSError, BrokenPipeError) as exc:
+            if time.monotonic() >= deadline_monotonic:
                 self._failed = True
-                raise WorkerUnavailable("worker channel lost") from exc
+                raise WorkerUnavailable("worker deadline before send")
+            sent: queue.Queue[BaseException | None] = queue.Queue(maxsize=1)
+            stdin = self._proc.stdin
+
+            def write_request() -> None:
+                try:
+                    stdin.write(data)
+                    stdin.flush()
+                    sent.put_nowait(None)
+                except (OSError, ValueError, BrokenPipeError) as exc:
+                    sent.put_nowait(exc)
+
+            threading.Thread(target=write_request, daemon=True).start()
+            try:
+                remaining = max(0.0, deadline_monotonic - time.monotonic())
+                failure = sent.get(timeout=remaining)
+            except queue.Empty as exc:
+                self._failed = True
+                # Killing the child releases a blocked OS pipe writer.
+                try:
+                    self._proc.kill()
+                except OSError:
+                    pass
+                raise WorkerUnavailable("worker stdin write timed out") from exc
+            if failure is not None:
+                self._failed = True
+                try:
+                    self._proc.kill()
+                except OSError:
+                    pass
+                raise WorkerUnavailable("worker channel lost") from failure
             mismatches = 0
             while True:
                 remaining = deadline_monotonic-time.monotonic()
@@ -147,7 +180,7 @@ class LocalSimulatorWorker:
     def simulate(self, snapshot: FrozenBattleState, battle_json: Mapping[str, Any],
                  own_choice: str, opponent_choice: str,
                  *, hypothesis_id: str = "",
-                 candidate_action_id: str = "") -> SimulationResult:
+                 candidate_action_id: str = "", assets: Any = None) -> SimulationResult:
         """Only FULL_REPLAY_SYNTHETIC states. Always PARTIAL or UNSUPPORTED.
 
         No request or result is written to the evidence ledger.  Unknown
@@ -158,6 +191,19 @@ class LocalSimulatorWorker:
         # Showdown choice that has no explicit local action identity.
         if not candidate_action_id or candidate_action_id not in snapshot.verified_action_ids:
             raise WorkerUnavailable("branch candidate is not an allowed action")
+        if assets is None:
+            raise WorkerUnavailable("frozen team asset validation required")
+        matching = [a for a in generate_candidates(snapshot, assets)
+                    if a.action_id == candidate_action_id]
+        if len(matching) != 1:
+            raise WorkerUnavailable("branch action is ambiguous or unavailable")
+        try:
+            expected_choice = showdown_choice_for_candidate(
+                matching[0], snapshot, assets)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise WorkerUnavailable("branch action has no verified Showdown slot") from exc
+        if own_choice != expected_choice:
+            raise WorkerUnavailable("branch choice does not match candidate action")
         hypothesis_ids = {h.hypothesis_id for h in snapshot.hypotheses}
         if (hypothesis_id not in hypothesis_ids if hypothesis_ids else bool(hypothesis_id)):
             raise WorkerUnavailable("branch hypothesis is not registered")
