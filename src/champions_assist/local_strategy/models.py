@@ -133,6 +133,9 @@ class DecisionWindow:
             "simulator_sha": self.simulator_sha,
             "allowed_action_digest": self.allowed_action_digest,
             "request_id": self.request_id,
+            # A deadline update invalidates all earlier requests, even when
+            # the apparent input window and turn IDs are unchanged.
+            "deadline_monotonic": self.deadline_monotonic,
         }
 
 
@@ -183,6 +186,11 @@ class FrozenBattleState:
             "observation": self.observation_json,
             "facts": [(f.key, f.value_json, f.source, f.captured_at,
                        f.confidence) for f in self.facts],
+            "hypotheses": [(h.hypothesis_id, h.assumptions_json,
+                           list(h.evidence_refs), h.likelihood)
+                          for h in self.hypotheses],
+            "constraints_confirmed": self.constraints_confirmed,
+            "verified_action_ids": self.verified_action_ids,
         })
 
 
@@ -210,14 +218,22 @@ class SimulationResult:
     capability_status: CapabilityStatus
     payload_json: str
     reason: str = ""
+    # These are generated per independent branch, never borrowed from the
+    # input-window request ID. All are received back from the worker.
+    branch_request_id: str = ""
+    branch_input_sha256: str = ""
+    candidate_action_id: str = ""
 
     @classmethod
     def from_worker(cls, request_id: str, identity: Mapping[str, Any],
                     snapshot_sha256: str, hypothesis_id: str,
                     status: CapabilityStatus, payload: Mapping[str, Any],
-                    reason: str = "") -> "SimulationResult":
+                    reason: str = "", *, branch_request_id: str = "",
+                    branch_input_sha256: str = "",
+                    candidate_action_id: str = "") -> "SimulationResult":
         return cls(request_id, canonical_json(dict(identity)), snapshot_sha256,
-                   hypothesis_id, status, canonical_json(dict(payload)), reason)
+                   hypothesis_id, status, canonical_json(dict(payload)), reason,
+                   branch_request_id, branch_input_sha256, candidate_action_id)
 
 def window_from_preload(assets: Any, *, match_id: str,
                         decision_window_id: str, window_kind: WindowKind,
