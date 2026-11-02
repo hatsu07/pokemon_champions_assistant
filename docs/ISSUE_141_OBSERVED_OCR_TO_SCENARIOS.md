@@ -29,6 +29,19 @@ identical original name pixels is treated as OCR drift, not a switch.
 A subsequent stable same-actor frame
 is required before committing them. The legacy two-second actor-name
 attestation is never extended or used as an implicit exception here.
+
+**Explicit same-frame switch vs stale HUD:** before the existing local
+reducer orders events as SWITCH → ACTIVE → HP, the optional bridge
+interprets any same-frame mapped battle-message SWITCH with the
+*same existing game-specific message parser*. The bridge withholds
+both ACTIVE-name and HP/PP records for that side from that frame,
+even when a high-confidence refreshed name exactly matches the
+*outgoing* actor. Otherwise the stale HUD would undo the SWITCH.
+The message proceeds through the existing reducer's confidence and
+roster gates; when the switch is not trustworthy, no side's stale
+name/HP is promoted. After the transition, the new name needs a
+separate stable frame before HP/PP attribution. Both own and opponent
+switches and 3.5-second same-name refresh are covered by synthetic tests.
 The extra OCR is performed only for the explicitly enabled bridge,
 only on relevant changed HP/PP frames, and prior to the raw SQLite insert. The existing sample OCR
 field parser parses numbers, and existing `apply_local_ocr` handles
