@@ -23,12 +23,22 @@ function plain(x){
 }
 function extractPinnedReplayReadout(Battle, battleJson) {
   try {
-    if(typeof Battle?.fromJSON!=="function" || !plain(battleJson))
+    // READOUT_REPLAY supplies the exact canonical UTF-8 JSON text already
+    // hashed by Python. A standalone synthetic caller may still pass an
+    // object; BOTH paths hash precisely the text used for fromJSON.
+    if(typeof Battle?.fromJSON!=="function" ||
+       (typeof battleJson!=="string" && !plain(battleJson)))
       return fail("COMPLETE_SYNTHETIC_BATTLE_REQUIRED");
-    const original=JSON.stringify(battleJson);
-    if(original.length>4*1024*1024) return fail("REPLAY_SIZE_LIMIT");
+    const original=typeof battleJson==="string" ?
+      battleJson : JSON.stringify(battleJson);
+    if(Buffer.byteLength(original,"utf8")>4*1024*1024)
+      return fail("REPLAY_SIZE_LIMIT");
+    const parsed=JSON.parse(original);
+    if(!plain(parsed))return fail("COMPLETE_SYNTHETIC_BATTLE_REQUIRED");
     // Clone the entire caller input *before* asking the real engine to
     // rehydrate. Do not use a mutable raw Battle or populate from OCR.
+    // Rehydrate a separate clone: the original parsed input remains
+    // immutable reference evidence even if an engine mutates its argument.
     const b=Battle.fromJSON(JSON.parse(original));
     if(b.format?.mod!=="champions" || b.gameType!=="singles" ||
        b.activePerHalf!==1 || !["move","switch"].includes(b.requestState) ||
@@ -38,7 +48,7 @@ function extractPinnedReplayReadout(Battle, battleJson) {
           Array.isArray(s.active) && s.active.length===1))
       return fail("UNSUPPORTED_ENGINE_BATTLE_SCOPE");
     // No silent projection of a partial/fromJSON-modified representation.
-    if(!isDeepStrictEqual(b.toJSON(),JSON.parse(original)))
+    if(!isDeepStrictEqual(b.toJSON(),parsed))
       return fail("ENGINE_REPLAY_ROUNDTRIP_MISMATCH");
     const active={};
     const members=[];
@@ -72,10 +82,12 @@ function extractPinnedReplayReadout(Battle, battleJson) {
           move_ids:moveIds,hp:p.hp,maxhp:p.maxhp,fainted:p.fainted,boosts});
       }
     }
-    if(JSON.stringify(battleJson)!==original)
+    if(typeof battleJson==="string" ?
+       battleJson!==original : JSON.stringify(battleJson)!==original)
       return fail("REPLAY_INPUT_MUTATED");
     return {status:"SYNTHETIC_ENGINE_REPLAY_READOUT",
-      source:SOURCE,engine_sha:PIN,battle_sha256:sha(battleJson),
+      source:SOURCE,engine_sha:PIN,battle_sha256:
+        crypto.createHash("sha256").update(original,"utf8").digest("hex"),
       active,members,
       full_state_reconstructed:false,ready_for_engine:false,
       opponent_slot_mapping_authenticated:false,

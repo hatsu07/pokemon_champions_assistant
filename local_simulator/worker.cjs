@@ -10,6 +10,7 @@ const crypto = require("node:crypto");
 // Never execute a helper before the pinned runtime/worker/helper hashes
 // have been verified. A modified helper must not run during startup.
 let enumerateEngineP2 = null;
+let extractPinnedReplayReadout = null;
 
 const VERSION = "issue140.v1";
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
@@ -67,6 +68,7 @@ function tryLoadEngine() {
         !matchesVerifiedInventory(root,manifest.engine_file_sha256) ||
         manifest.worker_sha256 !== fileHash(__filename) ||
         manifest.p2_engine_choices_sha256 !== fileHash(path.join(__dirname,"p2_engine_choices.cjs")) ||
+        manifest.pinned_replay_readout_sha256 !== fileHash(path.join(__dirname,"pinned_replay_readout.cjs")) ||
         manifest.node_exe_sha256 !== fileHash(process.execPath) ||
         manifest.node_license_sha256 !== fileHash(nodeLicensePath) ||
         manifest.third_party_notices_sha256 !== fileHash(noticePath)) {
@@ -76,14 +78,17 @@ function tryLoadEngine() {
     // Both scripts are executed only *after* all runtime hashes matched.
     ({Battle} = require(file));
     ({enumerateEngineP2} = require(path.join(__dirname,"p2_engine_choices.cjs")));
+    ({extractPinnedReplayReadout} = require(path.join(__dirname,"pinned_replay_readout.cjs")));
     if (!Battle || typeof Battle.fromJSON !== "function" ||
-        typeof enumerateEngineP2 !== "function")
+        typeof enumerateEngineP2 !== "function" ||
+        typeof extractPinnedReplayReadout !== "function")
       throw Error("pinned Showdown or P2 helper entry unavailable");
     unavailable = "";
   } catch (err) {
     // Partial module initialization must never authorize HELLO or any op.
     Battle = null;
     enumerateEngineP2 = null;
+    extractPinnedReplayReadout = null;
     unavailable = "SHOWDOWN_LOAD_FAILED";
   }
 }
@@ -92,7 +97,8 @@ tryLoadEngine();
 function engineReady() {
   return unavailable === "" && !!Battle &&
     typeof Battle.fromJSON === "function" &&
-    typeof enumerateEngineP2 === "function";
+    typeof enumerateEngineP2 === "function" &&
+    typeof extractPinnedReplayReadout === "function";
 }
 
 function stable(value) {
@@ -170,7 +176,7 @@ function handle(req) {
           {engine_sha: PIN}, ready);
     return;
   }
-  if (!["SIMULATE","ENUMERATE_P2"].includes(req.op)) {
+  if (!["SIMULATE","ENUMERATE_P2","READOUT_REPLAY"].includes(req.op)) {
     reply(req, "UNSUPPORTED", "UNKNOWN_OPERATION");
     return;
   }
@@ -179,6 +185,60 @@ function handle(req) {
     return;
   }
   const data = req.payload || {};
+  if (req.op === "READOUT_REPLAY") {
+    // Match/window identity and the complete Battle bytes are bound to one
+    // nonce and input hash. No claims about *real game* provenance or RNG.
+    if (data.source !== "FULL_REPLAY_SYNTHETIC" ||
+        typeof req.branch_request_id !== "string" ||
+        !/^[a-f0-9]{32}$/.test(req.branch_request_id) ||
+        typeof data.hypothesis_id !== "string" ||
+        typeof data.branch_input_sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(data.branch_input_sha256) ||
+        data.branch_input_sha256 !== fingerprint(Object.fromEntries(
+          Object.entries(data).filter(([k])=>k!=="branch_input_sha256"))) ||
+        typeof data.battle_json !== "string" ||
+        !data.battle_json || Buffer.byteLength(data.battle_json,"utf8") > MAX ||
+        !Array.isArray(data.expected_p1_roster) ||
+        typeof data.expected_p1_active !== "string" ||
+        !req.identity.match_id || !req.identity.decision_window_id ||
+        !req.identity.team_sha256 || req.identity.simulator_sha !== PIN ||
+        !req.identity.allowed_action_digest || !req.snapshot_sha256) {
+      reply(req,"UNSUPPORTED","INCOMPLETE_OR_REAL_OBSERVATION");
+      return;
+    }
+    try {
+      // Verifies actual p1 identities against the rehydrated pinned Battle;
+      // never infer a p2 display name or trust the requested roster alone.
+      // Use the exact UTF-8 text already hashed by Python, not a re-render
+      // of a parsed object with JavaScript numeric/key normalization.
+      const parsed=JSON.parse(data.battle_json);
+      if (!parsed || typeof parsed!=="object" || Array.isArray(parsed)) {
+        reply(req,"UNSUPPORTED","INCOMPLETE_OR_REAL_OBSERVATION");
+        return;
+      }
+      const b=Battle.fromJSON(parsed);
+      if (!matchesP1BattleRoster(b,data.expected_p1_roster,data.expected_p1_active)) {
+        reply(req,"UNSUPPORTED","P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
+        return;
+      }
+      const result=extractPinnedReplayReadout(Battle,data.battle_json);
+      if (result.status!=="SYNTHETIC_ENGINE_REPLAY_READOUT") {
+        reply(req,"UNSUPPORTED",result.reason);
+        return;
+      }
+      reply(req,"PARTIAL","PINNED_SYNTHETIC_READOUT_NOT_GAME_AUTHENTICATED",{
+        source:"FULL_REPLAY_SYNTHETIC",
+        hypothesis_id:data.hypothesis_id,
+        branch_input_sha256:data.branch_input_sha256,
+        transport_scope:"VERIFIED_LOCAL_PROCESS_SYNTHETIC_ONLY",
+        readout:result,
+        full_state_reconstructed:false,ready_for_engine:false,
+      },true);
+    } catch (_err) {
+      reply(req,"UNKNOWN","ENGINE_READOUT_UNAVAILABLE_OR_INVALID");
+    }
+    return;
+  }
   if (req.op === "ENUMERATE_P2") {
     // A separate read-only protocol operation. It returns only options
     // checked on independent engine clones, not LIVE tactical advice.

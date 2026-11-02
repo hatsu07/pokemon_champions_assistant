@@ -65,12 +65,14 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.mkdirSync(path.join(root,"dist","sim"),{recursive:true});
     fs.writeFileSync(path.join(root,".champions-source-sha"),PIN+"\n");
     fs.writeFileSync(path.join(root,"dist","sim","index.js"),
-      "exports.Battle={fromJSON(data){const pokemon=data.team.map(x=>({"+
-      "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,fainted:false,status:''}));"+
-      "const p1={pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
+      "exports.Battle={fromJSON(data){const boosts=()=>({atk:0,def:0,spa:0,spd:0,spe:0,accuracy:0,evasion:0});"+
+      "const pokemon=data.team.map(x=>({"+
+      "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,maxhp:100,fainted:false,status:'',boosts:boosts()}));"+
+      "const p1={id:'p1',pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
       "const opp=[{species:{id:'dragonite'},hp:100,maxhp:100,status:'',fainted:false,switchFlag:false},"+
       "{species:{id:'gholdengo'},hp:60,maxhp:100,status:'',fainted:false,switchFlag:false},"+
       "{species:{id:'kingambit'},hp:0,maxhp:100,status:'',fainted:true,switchFlag:false}];"+
+      "for(const p of opp){p.moveSlots=[{id:'tackle'}];p.boosts=boosts()}"+
       "const r={side:{id:'p2',pokemon:opp.map((p,i)=>({condition:i===2?'0 fnt':i===1?'60/100':'100/100',active:i===0}))},"+
       "active:[{moves:[{id:'tackle',pp:10,disabled:false}],trapped:false}]};"+
       "const p2={id:'p2',pokemon:opp,active:[opp[0]],activeRequest:r,requestState:'move',"+
@@ -88,6 +90,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.writeFileSync(path.join(root,"package.json"),"{}");
     fs.writeFileSync(path.join(root,"LICENSE"),"test-only");
     fs.copyFileSync(path.join(__dirname,"p2_engine_choices.cjs"), path.join(tmp,"p2_engine_choices.cjs"));
+    fs.copyFileSync(path.join(__dirname,"pinned_replay_readout.cjs"), path.join(tmp,"pinned_replay_readout.cjs"));
     const engineFileSha={
       "dist/sim/index.js":sha(path.join(root,"dist","sim","index.js")),
       "dist/sim/helper.js":sha(path.join(root,"dist","sim","helper.js")),
@@ -103,6 +106,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       engine_file_sha256:engineFileSha,
       worker_sha256:sha(workerPath),
       p2_engine_choices_sha256:sha(path.join(tmp,"p2_engine_choices.cjs")),
+      pinned_replay_readout_sha256:sha(path.join(tmp,"pinned_replay_readout.cjs")),
       node_exe_sha256:sha(process.execPath),
       node_license_sha256:sha(path.join(tmp,"NODE_LICENSE.txt")),
       third_party_notices_sha256:sha(path.join(tmp,"THIRD_PARTY_NOTICES.txt"))};
@@ -145,6 +149,14 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     p2Payload.branch_input_sha256=hash(p2Payload);
     const p2Request={...req,op:"ENUMERATE_P2",branch_request_id:"1".repeat(32),
       payload:p2Payload};
+    const readoutPayload={...p2Payload,battle_json:JSON.stringify(p2Payload.battle)};
+    delete readoutPayload.battle;
+    readoutPayload.branch_input_sha256=hash(Object.fromEntries(
+      Object.entries(readoutPayload).filter(([key])=>key!=="branch_input_sha256")));
+    const readoutRequest={...req,op:"READOUT_REPLAY",branch_request_id:"2".repeat(32),
+      payload:readoutPayload};
+    const partialRequest={...readoutRequest,branch_request_id:"3".repeat(32),
+      payload:{...readoutPayload,source:"PARTIAL_OBSERVED"}};
     // The nonce and branch hash are valid for the wrong roster/moves,
     // so only semantic inspection after Battle.fromJSON can reject these.
     // Mutated choice is NOT covered by the submitted SHA.
@@ -160,9 +172,22 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("worker exited "+code+" "+errors));
         try{resolve(data.trim().split("\n").map(JSON.parse))}catch(e){reject(e)}
       });
-      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive,p2Request].map(JSON.stringify).join("\n")+"\n");
+      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive,p2Request,readoutRequest,partialRequest].map(JSON.stringify).join("\n")+"\n");
     });
-    assert.equal(output.length,6);
+    assert.equal(output.length,8);
+    // Old mock lacks complete 3v3 p2 state and engine boosts. It must
+    // never be silently promoted into a successful complete readout.
+    assert.equal(output[6].op,"READOUT_REPLAY");
+    assert.equal(output[6].ok,true);
+    assert.equal(output[6].capability_status,"PARTIAL");
+    assert.equal(output[6].branch_request_id,readoutRequest.branch_request_id);
+    assert.equal(output[6].branch_input_sha256,readoutPayload.branch_input_sha256);
+    assert.equal(output[6].payload.readout.status,"SYNTHETIC_ENGINE_REPLAY_READOUT");
+    assert.equal(output[6].payload.readout.ready_for_engine,false);
+    assert.equal(output[6].payload.readout.members.length,6);
+    assert.deepEqual(output[6].payload.readout.active,{p1:1,p2:1});
+    assert.equal(output[7].ok,false);
+    assert.equal(output[7].reason,"INCOMPLETE_OR_REAL_OBSERVATION");
     assert.equal(output[5].op,"ENUMERATE_P2");
     assert.equal(output[5].capability_status,"PARTIAL");
     assert.equal(output[5].ok,true);
@@ -207,6 +232,31 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     assert.equal(rejectedHelper.capability_status,"UNSUPPORTED");
     assert.equal(rejectedHelper.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
     fs.writeFileSync(p2Helper,originalHelper);
+
+    // The newly loaded replay helper is independently hash-pinned; changing
+    // it must block HELLO BEFORE requiring/executing injected JavaScript.
+    const readoutHelper=path.join(tmp,"pinned_replay_readout.cjs");
+    const originalReadout=fs.readFileSync(readoutHelper,"utf8");
+    fs.appendFileSync(readoutHelper,
+                      "\nthrow Error('UNVERIFIED_READOUT_HELPER_EXECUTED');\n");
+    const invalidReadout=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("unverified helper executed: "+stderr));
+        try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
+      });
+      proc.stdin.end(JSON.stringify(base)+"\n");
+    });
+    assert.equal(invalidReadout.capability_status,"UNSUPPORTED");
+    assert.equal(invalidReadout.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
+    fs.writeFileSync(readoutHelper,originalReadout);
 
     // The helper can be SHA-valid yet crash when required. Engine module
     // success alone must not authorize HELLO or a later P2 operation.

@@ -9,6 +9,7 @@ on:
       - 'local_simulator/**'
       - 'src/champions_assist/local_strategy/engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_engine_replay_readout_bridge.py'
+      - 'tests/test_issue_141_window_bound_readout_transport.py'
       - '.github/workflows/showdown-phase2-real-engine.yml'
   workflow_dispatch:
 
@@ -63,7 +64,18 @@ jobs:
       - name: Real Showdown Battle / P2 request integration
         env:
           SHOWDOWN_PINNED_BUILD_ROOT: ${{ github.workspace }}/pinned-showdown
+          READOUT_E2E_FIXTURE_PATH: ${{ runner.temp }}/issue141-pinned-complete-battle.json
         run: node --test local_simulator/test_real_pinned_showdown.cjs
+      - name: Actual pinned Showdown to verified worker to Python READOUT E2E
+        env:
+          SHOWDOWN_PINNED_BUILD_ROOT: ${{ github.workspace }}/pinned-showdown
+          READOUT_E2E_FIXTURE_PATH: ${{ runner.temp }}/issue141-pinned-complete-battle.json
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$READOUT_E2E_FIXTURE_PATH"
+          python -m unittest -v tests.test_issue_141_real_worker_python_e2e
       - name: Explicit validity boundary
         if: always()
         shell: bash
