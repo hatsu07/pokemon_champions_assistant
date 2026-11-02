@@ -61,8 +61,11 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.mkdirSync(path.join(root,"dist","sim"),{recursive:true});
     fs.writeFileSync(path.join(root,".champions-source-sha"),PIN+"\n");
     fs.writeFileSync(path.join(root,"dist","sim","index.js"),
-      "exports.Battle={fromJSON(data){return {format:{mod:'champions'},"+
-      "requestState:'move',turn:1,field:{weather:''},sides:[{pokemon:[]},{pokemon:[]}],"+
+      "exports.Battle={fromJSON(data){const pokemon=data.team.map(x=>({"+
+      "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,fainted:false,status:''}));"+
+      "const p1={pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
+      "return {format:{mod:'champions'},requestState:'move',turn:1,"+
+      "field:{weather:''},sides:[p1,{pokemon:[]}],"+
       "makeChoices(){this.turn++},toJSON(){return data}}}};");
     fs.mkdirSync(path.join(root,"node_modules","testdep"),{recursive:true});
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),"// verified-test-dependency");
@@ -88,7 +91,15 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
     const baseIdentity={match_id:"synthetic",decision_window_id:"one",
       team_sha256:"team",simulator_sha:PIN,allowed_action_digest:"digest"};
-    const payload={source:"FULL_REPLAY_SYNTHETIC",battle:{state:"dummy"},
+    const roster=[
+      {name:"Garchomp",species_id:"garchomp",moves:["earthquake","dragonclaw"]},
+      {name:"Primarina",species_id:"primarina",moves:["moonblast"]},
+      {name:"Mimikyu",species_id:"mimikyu",moves:["playrough"]}
+    ];
+    const payload={source:"FULL_REPLAY_SYNTHETIC",
+      battle:{team:roster.map(x=>({species_id:x.species_id,moves:[...x.moves]})),
+        activeIndex:0},
+      expected_p1_roster:roster,expected_p1_active:"Garchomp",
       p1_choice:"move 1",p2_choice:"move 1",hypothesis_id:"H1",
       candidate_action_id:"a".repeat(64)};
     payload.branch_input_sha256=hash(payload);
@@ -97,6 +108,19 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       identity:baseIdentity,payload};
     const wrong={...req,branch_request_id:"c".repeat(32),payload:{
       ...payload,p2_choice:"move 2"}};
+    const reordered={...payload,battle:{team:[
+      payload.battle.team[0],payload.battle.team[2],payload.battle.team[1]],activeIndex:0}};
+    reordered.branch_input_sha256=hash(reordered);
+    const mismatchedParty={...req,branch_request_id:"d".repeat(32),payload:reordered};
+    const wrongMoves={...payload,battle:{team:payload.battle.team.map((x,i)=>({
+      ...x,moves:i===0?["dragonclaw","earthquake"]:x.moves}))}};
+    wrongMoves.branch_input_sha256=hash(wrongMoves);
+    const mismatchedMoves={...req,branch_request_id:"e".repeat(32),payload:wrongMoves};
+    const wrongActive={...payload,battle:{...payload.battle,activeIndex:1}};
+    wrongActive.branch_input_sha256=hash(wrongActive);
+    const mismatchedActive={...req,branch_request_id:"f".repeat(32),payload:wrongActive};
+    // The nonce and branch hash are valid for the wrong roster/moves,
+    // so only semantic inspection after Battle.fromJSON can reject these.
     // Mutated choice is NOT covered by the submitted SHA.
     const child=spawn(process.execPath,[workerPath],{
       env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
@@ -110,9 +134,9 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("worker exited "+code+" "+errors));
         try{resolve(data.trim().split("\n").map(JSON.parse))}catch(e){reject(e)}
       });
-      child.stdin.end([req,wrong].map(JSON.stringify).join("\n")+"\n");
+      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive].map(JSON.stringify).join("\n")+"\n");
     });
-    assert.equal(output.length,2);
+    assert.equal(output.length,5);
     assert.equal(output[0].capability_status,"PARTIAL");
     assert.equal(output[0].ok,true);
     assert.equal(output[0].branch_request_id,"b".repeat(32));
@@ -122,6 +146,11 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     assert.equal(output[1].capability_status,"UNSUPPORTED");
     assert.equal(output[1].ok,false);
     assert.equal(output[1].branch_request_id,"c".repeat(32));
+    for(const index of [2,3,4]) {
+      assert.equal(output[index].ok,false);
+      assert.equal(output[index].capability_status,"UNSUPPORTED");
+      assert.equal(output[index].reason,"P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
+    }
     // Manifest entrypoint and pinned source SHA remain unchanged, but a
     // secondary runtime JS dependency has been changed after staging.
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),
