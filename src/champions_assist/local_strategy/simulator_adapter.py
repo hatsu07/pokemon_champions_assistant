@@ -25,7 +25,7 @@ from .models import (
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 
 _MAX_BYTES = 1024 * 1024
-_P2_COMMAND = re.compile(r"(?:move [1-4]|switch [1-3])\\Z")
+_P2_COMMAND = re.compile(r"(?:move [1-4]|switch [1-3])\Z")
 
 @dataclass(frozen=True)
 class EngineP2CandidateSet:
