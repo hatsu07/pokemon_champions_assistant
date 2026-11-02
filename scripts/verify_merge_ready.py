@@ -17,16 +17,20 @@ from urllib.request import Request, urlopen
 
 REQUIRED_WORKFLOW_PATH = ".github/workflows/windows-validation-artifact.yml"
 REQUIRED_JOB = "desktop-windows-validation"
+INTEGRATION_BASE = "integration/issue-138-showdown-local-engine"
+PHASE1_WORKFLOW_PATH = ".github/workflows/showdown-phase1-foundation.yml"
+PHASE1_JOB = "phase1-isolated-foundation"
 
 
 def verify(pr, runs, jobs_by_run, *, required_job=REQUIRED_JOB):
     """Return all blocking CI reasons, without relying on repository protection."""
     errors = []
     head = pr.get("head", {}).get("sha")
+    base = pr.get("base", {}).get("ref")
     if (pr.get("state") != "open" or pr.get("draft") is not False
-            or pr.get("base", {}).get("ref") != "master"
+            or base not in ("master", INTEGRATION_BASE)
             or not isinstance(head, str) or not re.fullmatch(r"[a-f0-9]{40}", head)):
-        errors.append("PR must be open, Ready, target master and have a valid HEAD SHA")
+        errors.append("PR must be open, Ready, target master or approved integration branch and have a valid HEAD SHA")
     matches = [run for run in runs if run.get("head_sha") == head
                and run.get("event") == "pull_request"
                and run.get("path") == REQUIRED_WORKFLOW_PATH]
@@ -47,6 +51,30 @@ def verify(pr, runs, jobs_by_run, *, required_job=REQUIRED_JOB):
         errors.append("required Windows job must be completed/success")
     if not jobs or any(job.get("status") != "completed" or job.get("conclusion") != "success" for job in jobs):
         errors.append("all Windows jobs must be completed/success")
+    if base == INTEGRATION_BASE:
+        # Integration PRs do not trigger the master-only release workflow.
+        # Require the separate Phase 1 isolated foundation check on the
+        # same HEAD; never waive the normal Windows gate.
+        linux = [run for run in runs if run.get("head_sha") == head
+                 and run.get("event") == "pull_request"
+                 and run.get("path") == PHASE1_WORKFLOW_PATH]
+        linux.sort(key=lambda run: (run.get("created_at") or "", run.get("id") or 0),
+                   reverse=True)
+        if not linux:
+            errors.append("integration PR missing latest HEAD Phase 1 workflow")
+        else:
+            latest_linux = linux[0]
+            if (latest_linux.get("status") != "completed"
+                    or latest_linux.get("conclusion") != "success"):
+                errors.append("latest Phase 1 workflow must be completed/success")
+            linux_jobs = jobs_by_run.get(latest_linux.get("id"), [])
+            required_linux = [j for j in linux_jobs if j.get("name") == PHASE1_JOB]
+            if (len(required_linux) != 1
+                    or required_linux[0].get("status") != "completed"
+                    or required_linux[0].get("conclusion") != "success"
+                    or not linux_jobs or any(j.get("status") != "completed"
+                    or j.get("conclusion") != "success" for j in linux_jobs)):
+                errors.append("all required Phase 1 jobs must be completed/success")
     return errors
 
 
@@ -85,7 +113,7 @@ def main(argv=None):
         jobs = {}
         for run in runs:
             if (run.get("head_sha") == head and run.get("event") == "pull_request"
-                    and run.get("path") == REQUIRED_WORKFLOW_PATH):
+                    and run.get("path") in (REQUIRED_WORKFLOW_PATH, PHASE1_WORKFLOW_PATH)):
                 jobs[run["id"]] = _get_json(
                     f"{base}/actions/runs/{run['id']}/jobs?per_page=100", token
                 ).get("jobs", [])
@@ -97,7 +125,7 @@ def main(argv=None):
         print("BLOCKED: " + failure, file=sys.stderr)
     if failures:
         return 1
-    print(f"PASS: PR #{args.pr} HEAD {head}, latest Windows PR CI completed/success")
+    print(f"PASS: PR #{args.pr} HEAD {head}, latest required PR CI completed/success")
     print("NOTE: This repository has no server-side required-check merge protection.")
     return 0
 
