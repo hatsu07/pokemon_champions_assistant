@@ -177,7 +177,13 @@ def compare_observed_to_synthetic_replays(
             text = canonical_json(dict(case.complete_battle))
             if len(text.encode("utf-8")) > _MAX_BATTLE_BYTES:
                 return _no("SYNTHETIC_BATTLE_SIZE_LIMIT")
-            if not isinstance(json.loads(text), dict):
+            # canonical_json is the existing project serialization, but
+            # Python json.dumps defaults to allowing NaN/Infinity. These
+            # are not valid JSON Battle values: reject before contacting
+            # Node instead of relying on a downstream parse difference.
+            def reject_nonfinite(value: str) -> None:
+                raise ValueError("non-finite JSON number: " + value)
+            if not isinstance(json.loads(text, parse_constant=reject_nonfinite), dict):
                 return _no("SYNTHETIC_BATTLE_ROOT_INVALID")
             battle_texts.append(text)
     except (TypeError, ValueError, OverflowError, RecursionError):
