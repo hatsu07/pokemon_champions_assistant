@@ -24,7 +24,7 @@ REPLY = (
     " if r['op']=='HELLO':\n"
     "  r.update(capability_status='PARTIAL',ok=True,payload={})\n"
     " else:\n"
-    "  p=r['payload']; source=p['battle']\n"
+    "  p=r['payload']; source=p['battle_json']\n"
     "  own=p['expected_p1_roster']\n"
     "  roster=[{'side':'p1','slot':i+1,'species_id':m['species_id'],"
     "'move_ids':m['moves'],'hp':80,'maxhp':100,'fainted':False,"
@@ -36,7 +36,7 @@ REPLY = (
     " for i,name in enumerate(('dragonite','gholdengo','kingambit'))]\n"
     "  readout={'status':'SYNTHETIC_ENGINE_REPLAY_READOUT',"
     "'source':'PINNED_SHOWDOWN_COMPLETE_SYNTHETIC_REPLAY',"
-    "'engine_sha':'"+PIN+"','battle_sha256':h(source),"
+    "'engine_sha':'"+PIN+"','battle_sha256':hashlib.sha256(source.encode('utf-8')).hexdigest(),"
     "'active':{'p1':1,'p2':1},'members':roster,"
     "'full_state_reconstructed':False,'ready_for_engine':False,"
     "'opponent_slot_mapping_authenticated':False,"
@@ -53,7 +53,7 @@ REPLY = (
 
 
 class ReadoutWorkerTransportTests(unittest.TestCase):
-    def exchange(self, source=REPLY, *, mutate=None):
+    def exchange(self, source=REPLY, *, mutate=None, battle=None):
         tmp, worker=WorkerTests().make_fake_worker(source)
         try:
             worker.start()
@@ -63,8 +63,9 @@ class ReadoutWorkerTransportTests(unittest.TestCase):
             if mutate:
                 snapshot=mutate(snapshot)
             return worker.readout_synthetic_replay(
-                snapshot,{"synthetic_complete_battle":True,
-                          "rng":[1,2,3,4]},assets=VERIFIED_ASSETS)
+                snapshot, battle if battle is not None else
+                {"synthetic_complete_battle":True,
+                 "rng":[1,2,3,4]},assets=VERIFIED_ASSETS)
         finally:
             worker.close()
             tmp.cleanup()
@@ -81,15 +82,39 @@ class ReadoutWorkerTransportTests(unittest.TestCase):
                          submitted["payload"]["branch_input_sha256"])
         self.assertEqual(readout["battle_sha256"],receipt.battle_sha256)
         self.assertEqual(submitted["op"],"READOUT_REPLAY")
+        self.assertNotIn("battle",submitted["payload"])
+        self.assertEqual(
+            receipt.battle_sha256,
+            __import__("hashlib").sha256(
+                submitted["payload"]["battle_json"].encode("utf-8")
+            ).hexdigest())
         self.assertEqual(len(readout["members"]),6)
         self.assertFalse(receipt.engine_battle_authenticated)
         self.assertFalse(receipt.full_state_reconstructed)
         self.assertFalse(receipt.opponent_slot_mapping_authenticated)
         self.assertFalse(receipt.ready_for_engine)
 
+    def test_numeric_normalization_and_integer_like_keys_share_exact_sha(self):
+        battle={"seed":[1,2,3,4],"turn":3.0,
+                "condition":{"10":3,"2":5,"a":1}}
+        receipt=self.exchange(battle=battle)
+        request=json.loads(receipt.submitted_request_json)
+        raw=request["payload"]["battle_json"]
+        self.assertIn('"turn":3.0',raw)
+        self.assertLess(raw.index('"10"'),raw.index('"2"'))
+        self.assertEqual(
+            receipt.battle_sha256,
+            __import__("hashlib").sha256(raw.encode("utf-8")).hexdigest())
+        self.assertFalse(receipt.ready_for_engine)
+        # Distinct JSON numeric representations remain distinct byte hashes;
+        # neither is an attestation of an actual real-game Battle.
+        other=self.exchange(battle={**battle,"turn":3})
+        self.assertNotEqual(receipt.battle_sha256,other.battle_sha256)
+
     def test_reject_forged_readout_hash_or_runnable_flags(self):
         for old,new in (
-            ("'battle_sha256':h(source)","'battle_sha256':'0'*64"),
+            ("'battle_sha256':hashlib.sha256(source.encode('utf-8')).hexdigest()",
+             "'battle_sha256':'0'*64"),
             ("'ready_for_engine':False","'ready_for_engine':True"),
             ("'full_state_reconstructed':False","'full_state_reconstructed':True"),
             ("'transport_scope':'VERIFIED_LOCAL_PROCESS_SYNTHETIC_ONLY'",
