@@ -109,6 +109,10 @@ class ReplayProjectionAuditTests(unittest.TestCase):
             ((a,replace(b,source="REAL_OCR_CONFIRMED")),"STALE_OR_MALFORMED_REPLAY_PROJECTION"),
             ((a,replace(b,battle_sha256="not-a-real-hash")),
              "STALE_OR_MALFORMED_REPLAY_PROJECTION"),
+            ((a,replace(b,p1_active_slot=True)),
+             "STALE_OR_MALFORMED_REPLAY_PROJECTION"),
+            ((a,replace(b,p2_active_slot=True)),
+             "STALE_OR_MALFORMED_REPLAY_PROJECTION"),
         ]
         for cases, expected in tests:
             with self.subTest(expected=expected,cases=cases):
