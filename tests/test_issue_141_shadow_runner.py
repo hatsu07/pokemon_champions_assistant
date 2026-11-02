@@ -143,6 +143,29 @@ class Phase2ShadowRunnerTests(unittest.TestCase):
                                  "JOINT_HYPOTHESIS_SET_INCOMPLETE")
                 self.assertFalse(w.calls)
 
+    def test_duplicate_registered_hypothesis_ids_cannot_drop_unrun_set(self):
+        # Both hypotheses are frozen into the *observed snapshot* with the
+        # same ID, not duplicated in the scenario inputs. Old set() logic
+        # silently reduced them to one and published a favorable best action.
+        a = Hypothesis.from_assumptions("H1", {"item": "A"})
+        b = Hypothesis.from_assumptions("H1", {"item": "B"})
+        for invalid in (
+            (a, b),
+            (a, replace(b, hypothesis_id="")),
+            (a, replace(b, hypothesis_id=" H2 ")),
+            (a, replace(b, hypothesis_id="H1")),
+        ):
+            snapshot = replace(current(), hypotheses=invalid)
+            worker = FakePhase1Worker()
+            with self.subTest(ids=tuple(h.hypothesis_id for h in invalid)):
+                outcome = self.run_plan(snapshot, (scenario("H1"),), worker)
+                self.assertEqual(outcome.status, "NO_RANKING")
+                self.assertEqual(outcome.reason,
+                                 "DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+                self.assertFalse(outcome.best_action_id)
+                self.assertEqual(outcome.evaluated_branch_count, 0)
+                self.assertEqual(worker.calls, [])
+
     def test_missing_source_unconfirmed_p2_and_branch_limit_fail_closed(self):
         for value in (
             (scenario(source="OCR_PARTIAL"),),
