@@ -73,6 +73,19 @@ test("no accidental guessing of missing boost/move/active roster details",()=>{
     assert.equal(x.ready_for_engine,false);
   }
 });
+test("exact JSON text SHA is invariant across Python 3.0 and JS numeric-key normalization",()=>{
+  const {Battle}=fixture();
+  const raw='{"condition":{"10":3,"2":5,"a":1},"seed":[1,2,3,4],"turn":3.0}';
+  const data=JSON.parse(raw);
+  const out=extractPinnedReplayReadout(Battle,raw);
+  const expected=require("node:crypto").createHash("sha256")
+    .update(raw,"utf8").digest("hex");
+  assert.equal(out.status,"SYNTHETIC_ENGINE_REPLAY_READOUT",out.reason);
+  assert.equal(out.battle_sha256,expected);
+  assert.notEqual(out.battle_sha256,sha(data));
+  assert.equal(out.members.length,6);
+  assert.equal(out.ready_for_engine,false);
+});
 test("different hidden RNG with unchanged visible values hashes differently",()=>{
   const {raw,Battle}=fixture();
   const a=extractPinnedReplayReadout(Battle,raw);
