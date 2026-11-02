@@ -27,9 +27,12 @@ def records_for(snapshot):
     for section in SECTIONS:
         for side, actor in (("own", state["our_active"]),
                             ("opponent", state["opponent_active"])):
-            value = memory.get(section, {}).get(side, {}).get(actor)
-            if value is None or value == "" or value == [] or value == {}:
+            by_name = memory.get(section, {}).get(side, {})
+            # Test helper must not silently hide *present* corrupt values.
+            # Presence is determined by actor membership, not truthiness.
+            if actor not in by_name:
                 continue
+            value = by_name[actor]
             out.append(WindowEvidenceRecord(
                 f"synthetic.{len(out)+1}", SOURCE,
                 w.match_id, w.decision_window_id, w.turn_epoch,
@@ -157,6 +160,77 @@ class ObservationWindowProvenanceTests(unittest.TestCase):
             modified = with_state(s, field="battle_evidence", value=bad)
             self.assertEqual(audit_synthetic_window_evidence(
                 modified, stamps).status, "NO_WINDOW_EVIDENCE_BINDING")
+
+    def test_explicitly_empty_active_fact_is_never_silently_dropped(self):
+        s = current_snapshot()
+        clean_records = records_for(s)
+        for section, values in (
+            ("hp_by_pokemon", (None, "", [], {})),
+            ("moves_by_pokemon", (None, "", [], {})),
+            ("boosts", (None, "", [], {})),
+            ("status_by_pokemon", (None, "", [], {})),
+            ("item_by_pokemon", (None, "", [], {})),
+        ):
+            for bad in values:
+                with self.subTest(section=section, value=repr(bad)):
+                    state = s.state
+                    state["battle_evidence"][section]["own"]["ガブリアス"] = bad
+                    broken = replace(s, observed_state_json=canonical_json(state))
+                    # Even when the record generator reflects the same
+                    # corrupted snapshot, a self-consistent packet is invalid.
+                    for stamps in (clean_records, records_for(broken)):
+                        self.assertEqual(
+                            audit_synthetic_window_evidence(broken, stamps).reason,
+                            "MALFORMED_STORED_EVIDENCE_VALUE",
+                        )
+                    if section == "hp_by_pokemon" and bad is None:
+                        self.assertTrue(any(
+                            r.section == section and r.side == "own"
+                            and r.actor == "ガブリアス" and r.value_json == "null"
+                            for r in records_for(broken)
+                        ))
+
+    def test_invalid_historical_values_fail_even_without_history_stamps(self):
+        s = current_snapshot()
+        stamps = records_for(s)
+        for section, side, actor, bad in (
+            ("hp_by_pokemon", "opponent", "サーフゴー", None),
+            ("moves_by_pokemon", "opponent", "サーフゴー", []),
+            ("ability_by_pokemon", "opponent", "サーフゴー", ""),
+            ("hp_by_pokemon", "own", "ミミッキュ", {}),
+            ("boosts", "opponent", "サーフゴー", {}),
+        ):
+            with self.subTest(section=section, actor=actor):
+                state = s.state
+                state["battle_evidence"][section][side][actor] = bad
+                broken = replace(s, observed_state_json=canonical_json(state))
+                self.assertEqual(
+                    audit_synthetic_window_evidence(broken, stamps).reason,
+                    "MALFORMED_STORED_EVIDENCE_VALUE",
+                )
+
+    def test_nonempty_wrong_fact_shapes_and_placeholders_also_fail(self):
+        s = current_snapshot()
+        stamps = records_for(s)
+        for section, bad in (
+            ("hp_by_pokemon", 0),
+            ("status_by_pokemon", True),
+            ("status_by_pokemon", "UNKNOWN"),
+            ("boosts", {"A": True}),
+            ("boosts", {"A": 7}),
+            ("boosts", {"wrong": 1}),
+            ("moves_by_pokemon", [""]),
+            ("moves_by_pokemon", ["じしん", "じしん"]),
+            ("moves_by_pokemon", ["じしん", 0]),
+        ):
+            with self.subTest(section=section, value=repr(bad)):
+                state = s.state
+                state["battle_evidence"][section]["own"]["ガブリアス"] = bad
+                broken = replace(s, observed_state_json=canonical_json(state))
+                self.assertEqual(
+                    audit_synthetic_window_evidence(broken, stamps).reason,
+                    "MALFORMED_STORED_EVIDENCE_VALUE",
+                )
 
     def test_no_stored_current_fact_cannot_certify_an_empty_event(self):
         s = frozen()
