@@ -15,7 +15,7 @@ from typing import Any, Callable
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 from .models import (
     FrozenBattleState, LegalStatus, CapabilityStatus, SimulationResult,
-    action_digest, canonical_json,
+    action_digest, canonical_json, joint_hypothesis_ids,
 )
 from .one_turn import BranchObservation, ShadowTurnRanking, compare_shadow_turn
 from .simulator_adapter import WorkerUnavailable, _verified_roster_binding
@@ -123,7 +123,10 @@ def run_shadow_turn(
                    for candidate in eligible}
     except (WorkerUnavailable, ValueError, TypeError, KeyError, AttributeError) as exc:
         return _blocked("ACTION_OR_ROSTER_UNVERIFIED:" + str(exc)[:100])
-    hypotheses = {h.hypothesis_id for h in snapshot.hypotheses} or {""}
+    try:
+        hypotheses = set(joint_hypothesis_ids(snapshot.hypotheses))
+    except ValueError:
+        return _blocked("DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
     if any(not isinstance(s, ReplayOpponentScenario) for s in scenarios):
         return _blocked("UNVERIFIED_REPLAY_OR_P2_CHOICE_SET")
     if (not scenarios or len(scenarios) != len(hypotheses)
