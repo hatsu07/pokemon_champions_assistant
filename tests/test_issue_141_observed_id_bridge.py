@@ -27,7 +27,17 @@ def details(state):
     evidence = state["battle_evidence"]
     evidence["hp_by_pokemon"] = {
         "own": {"ガブリアス": "63/184", "ミミッキュ": "0"},
-        "opponent": {"カイリュー": "99/166"},
+        "opponent": {"カイリュー": "99/166", "サーフゴー": "20/120"},
+    }
+    evidence["item_by_pokemon"] = {
+        "own": {"ガブリアス": "いのちのたま"},
+        "opponent": {"カイリュー": "ラムのみ"},
+    }
+    evidence["ability_by_pokemon"] = {
+        "own": {}, "opponent": {"サーフゴー": "おうごんのからだ"},
+    }
+    evidence["form_by_pokemon"] = {
+        "own": {}, "opponent": {"カイリュー": "カイリュー"},
     }
     evidence["boosts"] = {
         "own": {"ガブリアス": {"A": 1, "S": -1}},
@@ -43,7 +53,8 @@ def details(state):
     }
     evidence["moves_by_pokemon"] = {
         "own": {"ガブリアス": ["じしん", "ドラゴンクロー"]},
-        "opponent": {"カイリュー": ["しんそく"]},
+        "opponent": {"カイリュー": ["しんそく"],
+                     "サーフゴー": ["ゴールドラッシュ"]},
     }
     state["opponent_active"] = "カイリュー"
     state["opponent_six"] = [
@@ -89,6 +100,18 @@ class ObservedIdBridgeTests(unittest.TestCase):
         self.assertEqual(result.opponent.registered_move_ids,())
         self.assertEqual(result.opponent.revealed_move_ids,())
         self.assertEqual(result.opponent.observed_moves_display,("しんそく",))
+        self.assertEqual(result.opponent.raw_item, "ラムのみ")
+        self.assertEqual(result.opponent.raw_form, "カイリュー")
+        self.assertEqual(result.own_members[0].raw_item, "いのちのたま")
+        self.assertEqual(len(result.other_observed_opponents), 1)
+        other=result.other_observed_opponents[0]
+        self.assertEqual(other.display_name,"サーフゴー")
+        self.assertEqual((other.hp,other.maxhp),(20,120))
+        self.assertEqual(other.raw_ability,"おうごんのからだ")
+        self.assertEqual(other.observed_moves_display,("ゴールドラッシュ",))
+        self.assertIsNone(other.registered_species_id)
+        self.assertIsNone(other.own_party_slot)
+        self.assertIn("ITEM_ABILITY_AND_FORM_IDS_UNVERIFIED",result.unbound)
         self.assertIn("REVEALED_OPPONENT_MOVE_IDS_UNMAPPED",result.unbound)
         self.assertIn("STATUS_TRANSLATION_NOT_VERIFIED",result.unbound)
         self.assertIn("CURRENT_TYPE_TRANSLATION_NOT_VERIFIED",result.unbound)
