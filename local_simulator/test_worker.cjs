@@ -221,6 +221,31 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     assert.equal(rejectedHelper.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
     fs.writeFileSync(p2Helper,originalHelper);
 
+    // The newly loaded replay helper is independently hash-pinned; changing
+    // it must block HELLO BEFORE requiring/executing injected JavaScript.
+    const readoutHelper=path.join(tmp,"pinned_replay_readout.cjs");
+    const originalReadout=fs.readFileSync(readoutHelper,"utf8");
+    fs.appendFileSync(readoutHelper,
+                      "\\nthrow Error('UNVERIFIED_READOUT_HELPER_EXECUTED');\\n");
+    const invalidReadout=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("unverified helper executed: "+stderr));
+        try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
+      });
+      proc.stdin.end(JSON.stringify(base)+"\\n");
+    });
+    assert.equal(invalidReadout.capability_status,"UNSUPPORTED");
+    assert.equal(invalidReadout.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
+    fs.writeFileSync(readoutHelper,originalReadout);
+
     // The helper can be SHA-valid yet crash when required. Engine module
     // success alone must not authorize HELLO or a later P2 operation.
     fs.writeFileSync(p2Helper,"throw Error('SYNTHETIC_INIT_FAILURE');\n");
