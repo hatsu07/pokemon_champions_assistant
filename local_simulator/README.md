@@ -46,6 +46,13 @@ A synthetic simulation may return PARTIAL, **never CONFIRMED**.
   displayed facts, so this is **not** actual screen→Battle restoration.
   It does not run in the worker's IPC or LIVE. See
   `docs/ISSUE_141_VISIBLE_REPLAY_RECONSTRUCTION_BOUNDARY.md`.
+- The separate Python read-only `observed_id_bridge.py` stages exact
+  Champions visible literals against the **currently frozen own-team CSV**
+  and its explicit Showdown IDs. Opponent IDs and hidden information remain
+  unmapped; missing exact-HP/status/type evidence is never filled in. This
+  remains a non-runnable partial observation envelope, not a Showdown
+  `Battle` or evidence of real-game parity. See
+  `docs/ISSUE_141_CHAMPIONS_OBSERVED_ID_STAGING.md`.
 - As of the latest review, `assets` must be the actual match-preloaded
   `FrozenMatchAssets`. All four on-disk preload SHA hashes must match
   the frozen window and in-memory source bytes; the six registered members
