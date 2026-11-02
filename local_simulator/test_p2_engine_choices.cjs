@@ -142,6 +142,24 @@ test("matching HP and maxHP, fainted active replacement remain accepted",()=>{
   fainted.hp=[0,70,0];fainted.maxhp=[200,100,100];
   assert.deepEqual(enumerateEngineP2(fakeBattle(),fainted).commands,["switch 2"]);
 });
+test("real-style noCancel only allowed for single forced replacement",()=>{
+  const forced=base();
+  forced.requestState="switch";
+  forced.hp=[0,70,0];
+  forced.requestPatch={noCancel:true};
+  const r=enumerateEngineP2(fakeBattle(),forced);
+  assert.equal(r.status,"ENGINE_CHECKED_SIMPLE_CHOICES",r.reason);
+  assert.deepEqual(r.commands,["switch 2"]);
+  assert.equal(r.exhaustive_legal_choices_verified,false);
+  const moving=base();
+  moving.requestPatch={noCancel:true};
+  assert.equal(enumerateEngineP2(fakeBattle(),moving).status,"NO_CHOICES");
+  const malformed=base();
+  malformed.requestState="switch";
+  malformed.hp=[0,70,0];
+  malformed.requestPatch={noCancel:"true"};
+  assert.equal(enumerateEngineP2(fakeBattle(),malformed).status,"NO_CHOICES");
+});
 test("stale/untrusted engine missing Battle.fromJSON is NO_CHOICES",()=>{
   assert.equal(enumerateEngineP2({},base()).status,"NO_CHOICES");
   assert.equal(enumerateEngineP2({fromJSON(){throw Error("bad")}},base()).status,"NO_CHOICES");
