@@ -29,13 +29,14 @@ All values are compared **literally** with game-visible strings. The gate does n
 
 - `local_strategy/opponent_evidence_gate.py::check_observed_opponent_hypotheses(snapshot)` reads only the current `FrozenBattleState`; no I/O, Web, statistics, screenshots or mutating evidence.
 - `shadow_runner.run_shadow_turn` invokes the check **before any worker calls**. `one_turn.compare_shadow_turn` independently invokes it to protect direct invocation.
+- The check distinguishes an absent `battle_evidence` key (no recorded details) from a present but corrupt value: `[]`, `""`, `0`, `False`, and `None` are all **INVALID_OBSERVED_OPPONENT_EVIDENCE**, never silently coerced to empty `{}`. A truly absent key with no other observed opponent details remains `CLEAR/NO_REVEALED_OPPONENT_DETAILS`; that does not certify a real set.
 - The check processes **every registered joint hypothesis**. If even one set is missing evidence or contradicts any observed move/item/ability/form/type/status, the entire calculation returns `NO_RANKING` with a stable reason (`JOINT_ASSUMPTIONS_UNBOUND`, `JOINT_ASSUMPTIONS_CONTRADICT_OBSERVATION`, `INVALID_OBSERVED_OPPONENT_EVIDENCE`, etc.). Never silently drop a losing hypothesis from a comparison grid.
 - The unique joint hypothesis-ID gate from PR #176 is preserved. This evidence gate does not certify the initial Battle JSON, the simulated p2 choice legality, the opponent's unknown moves, or Showdown/Champions mechanical parity.
 - No change to the production LIVE/GPT path, Windows GUI, automatic input control, local file loading during a match, or the existing four-master preloader.
 
 ## Synthetic regression
 
-`tests/test_issue_141_opponent_evidence_gate.py`: empty evidence; two consistent joint sets; conflicting revealed item, move, ability, form, current type and status; missing item/member/legacy unstructured hypothesis; an observed actor with no joint sets; malformed observed move list; independent `compare_shadow_turn` call; blocker before all worker calls, and no invented moves from marginal adoption data. CI on Linux isolated and Windows desktop.
+`tests/test_issue_141_opponent_evidence_gate.py`: empty evidence; two consistent joint sets; conflicting revealed item, move, ability, form, current type and status; missing item/member/legacy unstructured hypothesis; an observed actor with no joint sets; malformed observed move list; independent `compare_shadow_turn` call; blocker before all worker calls, and no invented moves from marginal adoption data. Review P2 regression additionally tests all five explicit falsy corrupt `battle_evidence` values, zero worker calls, no provisional best action, and direct comparison guard; separate missing/empty-dict positive control. CI on Linux isolated and Windows desktop.
 
 ## Still required
 
