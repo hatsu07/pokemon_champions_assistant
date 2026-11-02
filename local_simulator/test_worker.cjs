@@ -196,7 +196,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("altered helper executed or worker crashed: "+code+" "+stderr));
         try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
       });
-      proc.stdin.end(JSON.stringify(base)+"\\n");
+      proc.stdin.end(JSON.stringify(base)+"\n");
     });
     assert.equal(rejectedHelper.capability_status,"UNSUPPORTED");
     assert.equal(rejectedHelper.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
