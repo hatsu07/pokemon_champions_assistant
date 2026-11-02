@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import csv
+import hashlib
+import io
 import json
 from pathlib import Path
+from types import MappingProxyType
 from unittest.mock import patch
 import sys
 import tempfile
@@ -23,6 +27,7 @@ from champions_assist.local_strategy.simulator_adapter import (
     LocalSimulatorWorker, WorkerUnavailable,
 )
 from scripts.stage_issue140_runtime import stage, PINNED_SHOWDOWN_SHA, _engine_files
+from champions_assist.preload import FrozenMatchAssets, REQUIRED_MASTER_FILES, _parse_team
 
 
 class FakeAssets:
@@ -48,6 +53,56 @@ class FakeAssetsWrongMove:
 MEMBERS = tuple(m["name"] for m in ASSETS.own_team)
 
 
+def _fake_preloaded_assets():
+    """Real FrozenMatchAssets type with synthetic, internally consistent bytes."""
+    species_ids = {
+        "ガブリアス": "garchomp", "アシレーヌ": "primarina",
+        "ミミッキュ": "mimikyu", "カイリュー": "dragonite",
+        "サーフゴー": "gholdengo", "ドドゲザン": "kingambit",
+    }
+    move_ids = {
+        "じしん": "earthquake", "ドラゴンクロー": "dragonclaw",
+        "いわなだれ": "rockslide", "つるぎのまい": "swordsdance",
+        "ムーンフォース": "moonblast", "じゃれつく": "playrough",
+    }
+    columns = ["record", "name"] + [f"move{i}" for i in range(1, 5)] + [
+        "showdown_species_id"] + [f"showdown_move{i}_id" for i in range(1, 5)]
+    rows = []
+    for member in list(ASSETS.own_team) + [
+        {"name": "カイリュー", "move1": "じしん"},
+        {"name": "サーフゴー", "move1": "ムーンフォース"},
+        {"name": "ドドゲザン", "move1": "じゃれつく"},
+    ]:
+        row = {name: "" for name in columns}
+        row.update({"record": "MON", "name": member["name"],
+                    "showdown_species_id": species_ids[member["name"]]})
+        for i in range(1, 5):
+            move = member.get(f"move{i}", "")
+            row[f"move{i}"] = move
+            row[f"showdown_move{i}_id"] = move_ids.get(move, "")
+        rows.append(row)
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns)
+    writer.writeheader()
+    writer.writerows(rows)
+    contents = {name: (output.getvalue() if i == 3 else f"synthetic-master-{i}")
+                for i, name in enumerate(REQUIRED_MASTER_FILES)}
+    sha = {name: hashlib.sha256(body.encode("utf-8")).hexdigest()
+           for name, body in contents.items()}
+    return FrozenMatchAssets(
+        contents=MappingProxyType(contents),
+        sha256=MappingProxyType(sha),
+        matrix_index=MappingProxyType({}),
+        lookup_index=MappingProxyType({}),
+        own_team=_parse_team(contents[REQUIRED_MASTER_FILES[3]]),
+        frozen_at="synthetic-not-game",
+        move_class_index=MappingProxyType(ASSETS.move_class_index),
+    )
+
+
+VERIFIED_ASSETS = _fake_preloaded_assets()
+
+
 def move_id(move: str) -> str:
     return fingerprint({"action_kind": "MOVE", "move": move, "switch_target": ""})
 
@@ -68,6 +123,7 @@ def frozen(*, window_kind: WindowKind = WindowKind.MOVE_COMMAND,
              if pp is not None else {"own": {}})
     state = {
         "our_active": active, "selected_three": list(MEMBERS),
+        "showdown_party_order": list(MEMBERS),
         "awaiting_replacement": awaiting,
         "battle_evidence": {
             "pp_by_pokemon": pp_by,
@@ -80,8 +136,8 @@ def frozen(*, window_kind: WindowKind = WindowKind.MOVE_COMMAND,
            "visible_party": ["アシレーヌ", "ミミッキュ"]}
     window = DecisionWindow(
         "match-1", decision_window_id, window_kind, 4, state_revision,
-        visual_ui, active, "team-sha",
-        tuple((x, "sha-"+x) for x in ("gate", "matrix", "lookup", "team")),
+        visual_ui, active, VERIFIED_ASSETS.sha256[REQUIRED_MASTER_FILES[3]],
+        tuple((name, VERIFIED_ASSETS.sha256[name]) for name in REQUIRED_MASTER_FILES),
         "M-C", "ccfaa20f32af363569cd21a9d501b2bc1ded26b1",
         action_digest(verified), "req-1", time.monotonic()+60)
     return FrozenBattleState.freeze(
@@ -337,7 +393,7 @@ class WorkerTests(unittest.TestCase):
             s = frozen()
             result = w.simulate(s, {"synthetic": True},
                                 "move 1", "move 1",
-                                candidate_action_id=move_id("じしん"), assets=ASSETS)
+                                candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
             self.assertEqual(result.capability_status, CapabilityStatus.PARTIAL)
         finally:
             w.close()
@@ -350,7 +406,7 @@ class WorkerTests(unittest.TestCase):
             for choice in ("move 2", "move 3", "switch 2", "move 1 mega"):
                 with self.assertRaises(WorkerUnavailable):
                     w.simulate(s, {"synthetic":True},choice,"move 1",
-                               candidate_action_id=move_id("じしん"),assets=ASSETS)
+                               candidate_action_id=move_id("じしん"),assets=VERIFIED_ASSETS)
             with self.assertRaises(WorkerUnavailable):
                 w.simulate(s, {"synthetic":True},"move 1","move 1",
                            candidate_action_id=move_id("じしん"))
@@ -399,7 +455,7 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkerUnavailable,
                                         "stdin write timed out|worker timed out"):
                 w.simulate(s,{"synthetic": "Z"*850_000},"move 1","move 1",
-                           candidate_action_id=move_id("じしん"),assets=ASSETS)
+                           candidate_action_id=move_id("じしん"),assets=VERIFIED_ASSETS)
             self.assertLess(time.monotonic()-before, 2.0)
             self.assertTrue(w._failed)
             self.assertIsNotNone(w._proc)
@@ -431,9 +487,9 @@ class WorkerTests(unittest.TestCase):
             worker.start(timeout_seconds=2)
             s = frozen()
             one = worker.simulate(s, {"synthetic": True}, "move 1", "move 1",
-                                  candidate_action_id=move_id("じしん"), assets=ASSETS)
+                                  candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
             two = worker.simulate(s, {"synthetic": True}, "move 1", "move 2",
-                                  candidate_action_id=move_id("じしん"), assets=ASSETS)
+                                  candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
             self.assertEqual(one.capability_status, CapabilityStatus.PARTIAL)
             self.assertEqual(two.capability_status, CapabilityStatus.PARTIAL)
             self.assertNotEqual(one.branch_request_id, two.branch_request_id)
@@ -467,7 +523,7 @@ class WorkerTests(unittest.TestCase):
                   deadline_monotonic=time.monotonic()+0.3))
             with self.assertRaises(WorkerUnavailable):
                 worker.simulate(s, {"synthetic":True}, "move 1", "move 1",
-                                candidate_action_id=move_id("じしん"), assets=ASSETS)
+                                candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
         finally:
             worker.close()
             tmp.cleanup()
@@ -481,7 +537,7 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaises(WorkerUnavailable):
                 worker.simulate(frozen(), {"synthetic": True},
                                 "move 1", "move 1", hypothesis_id="unbound",
-                                candidate_action_id=move_id("じしん"), assets=ASSETS)
+                                candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
         finally:
             worker.close()
             tmp.cleanup()
@@ -520,7 +576,7 @@ class WorkerTests(unittest.TestCase):
             w.start(timeout_seconds=1)
             with self.assertRaises(WorkerUnavailable):
                 w.simulate(frozen(), {"synthetic": True}, "move 1", "move 1",
-                           candidate_action_id=move_id("じしん"), assets=ASSETS)
+                           candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
             with self.assertRaises(WorkerUnavailable):
                 w.start()
         finally:
