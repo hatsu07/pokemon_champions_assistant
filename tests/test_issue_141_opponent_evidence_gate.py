@@ -24,7 +24,7 @@ GOLD = "サーフゴー"
 
 def observed(*, active=NAME, move="しんそく", item="ラムのみ",
              ability="マルチスケイル", form="カイリュー", other=False,
-             malformed=False):
+             malformed=False, current_type="", status=""):
     snapshot = current()
     state = snapshot.state
     state["opponent_active"] = active
@@ -37,6 +37,12 @@ def observed(*, active=NAME, move="しんそく", item="ラムのみ",
         "own": {}, "opponent": {NAME: ability}}
     evidence["form_by_pokemon"] = {
         "own": {}, "opponent": {NAME: form}}
+    if current_type:
+        evidence["current_type"] = {
+            "own": {}, "opponent": {NAME: current_type}}
+    if status:
+        evidence["status_by_pokemon"] = {
+            "own": {}, "opponent": {NAME: status}}
     if other:
         evidence["moves_by_pokemon"]["opponent"][GOLD] = ["ゴールドラッシュ"]
     if malformed:
@@ -46,10 +52,14 @@ def observed(*, active=NAME, move="しんそく", item="ラムのみ",
 
 def assumptions(*, item="ラムのみ", ability="マルチスケイル",
                 move="しんそく", form="カイリュー", other=False,
-                include_item=True):
+                include_item=True, current_type="", status=""):
     member = {"moves": [move, "じしん"], "ability": ability, "form": form}
     if include_item:
         member["item"] = item
+    if current_type:
+        member["current_type"] = current_type
+    if status:
+        member["status"] = status
     sets = {NAME: member}
     if other:
         sets[GOLD] = {"moves": ["ゴールドラッシュ"]}
@@ -143,6 +153,32 @@ class Phase2OpponentEvidenceTests(unittest.TestCase):
         self.assertEqual(result.status, "NO_RANKING")
         self.assertEqual(result.reason,
                          "JOINT_ASSUMPTIONS_CONTRADICT_OBSERVATION")
+
+    def test_revealed_current_type_and_status_are_not_silently_ignored(self):
+        s = with_hypotheses(
+            observed(current_type="ひこう", status="まひ"),
+            assumptions(current_type="ひこう", status="まひ"),
+            assumptions(current_type="ドラゴン", status="まひ"),
+        )
+        self.assertEqual(
+            check_observed_opponent_hypotheses(s).offending_field,
+            "current_type")
+        self.assertEqual(
+            check_observed_opponent_hypotheses(s).reason,
+            "JOINT_ASSUMPTIONS_CONTRADICT_OBSERVATION")
+        s = with_hypotheses(
+            observed(current_type="ひこう", status="まひ"),
+            assumptions(current_type="ひこう", status="どく"),
+        )
+        self.assertEqual(
+            check_observed_opponent_hypotheses(s).offending_field,
+            "status")
+        good = with_hypotheses(
+            observed(current_type="ひこう", status="まひ"),
+            assumptions(current_type="ひこう", status="まひ"),
+        )
+        self.assertEqual(
+            check_observed_opponent_hypotheses(good).status, "CLEAR")
 
     def test_unseen_move_is_not_inferred_from_marginal_usage_stats(self):
         snapshot = with_hypotheses(
