@@ -25,6 +25,7 @@ from .models import FrozenBattleState, canonical_json, fingerprint
 from .observed_safe_branch_gate import stage_safe_observed_branches
 from .simulator_adapter import (
     LocalSimulatorWorker, SyntheticEngineReadoutReceipt, WorkerUnavailable,
+    _verified_roster_binding,
 )
 
 _MAX_BATTLE_BYTES = 4 * 1024 * 1024
@@ -67,7 +68,7 @@ def _no(reason: str) -> SyntheticReplayComparison:
 
 
 def _valid_receipt(
-    receipt: Any, snapshot: FrozenBattleState,
+    receipt: Any, snapshot: FrozenBattleState, assets: Any,
     hypothesis_id: str, battle_text: str,
 ) -> bool:
     """Verify original request binding in addition to the worker's echo.
@@ -117,6 +118,8 @@ def _valid_receipt(
                 or payload["battle_json"] != battle_text
                 or payload["hypothesis_id"] != hypothesis_id
                 or payload["expected_p1_active"] != window.active_pokemon
+                or payload["expected_p1_roster"] !=
+                   _verified_roster_binding(snapshot, assets)
                 or payload["branch_input_sha256"] != receipt.branch_input_sha256
                 or fingerprint({k:v for k,v in payload.items()
                                 if k!="branch_input_sha256"})
@@ -200,7 +203,7 @@ def compare_observed_to_synthetic_replays(
                 snapshot, case.complete_battle,
                 assets=assets, hypothesis_id=case.hypothesis_id,
                 joint_candidates=joint_candidates)
-            if (not _valid_receipt(receipt, snapshot, case.hypothesis_id, text)
+            if (not _valid_receipt(receipt, snapshot, assets, case.hypothesis_id, text)
                     or receipt.branch_request_id in seen_nonce):
                 return _no("WORKER_READOUT_RECEIPT_OR_NONCE_UNBOUND")
             seen_nonce.add(receipt.branch_request_id)
