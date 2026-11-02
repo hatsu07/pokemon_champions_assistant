@@ -42,6 +42,25 @@ class EngineP2CandidateSet:
     # Intentionally not a certificate of exhaustive real-game legality.
     exhaustive_legal_choices_verified: bool = False
 
+@dataclass(frozen=True)
+class SyntheticEngineReadoutReceipt:
+    """In-process worker-returned synthetic projection; NEVER game evidence."""
+    match_id: str
+    decision_window_id: str
+    state_revision: int
+    snapshot_sha256: str
+    hypothesis_id: str
+    branch_request_id: str
+    branch_input_sha256: str
+    battle_sha256: str
+    readout_json: str
+    submitted_request_json: str
+    engine_battle_authenticated: bool = False
+    full_state_reconstructed: bool = False
+    opponent_slot_mapping_authenticated: bool = False
+    ready_for_engine: bool = False
+
+
 
 def _verified_roster_binding(snapshot: FrozenBattleState, assets: Any) -> list[dict[str, Any]]:
     """Tie Showdown's p1 order and moves to the actual match-preloaded bytes.
@@ -260,7 +279,7 @@ class LocalSimulatorWorker:
                         or resp.get("identity") != request.get("identity")
                         or resp.get("protocol") != PROTOCOL_VERSION
                         or resp.get("op") != request.get("op")
-                        or (request.get("op") in ("SIMULATE", "ENUMERATE_P2") and (
+                        or (request.get("op") in ("SIMULATE", "ENUMERATE_P2", "READOUT_REPLAY") and (
                             resp.get("branch_request_id") != request.get("branch_request_id")
                             or resp.get("hypothesis_id") != request["payload"]["hypothesis_id"]
                             or resp.get("branch_input_sha256") != request["payload"]["branch_input_sha256"]
@@ -423,6 +442,75 @@ class LocalSimulatorWorker:
             tuple(commands), battle_sha, token,
             scope,
             False,
+        )
+
+    def readout_synthetic_replay(
+        self, snapshot: FrozenBattleState, battle_json: Mapping[str, Any],
+        *, assets: Any, hypothesis_id: str = "",
+    ) -> SyntheticEngineReadoutReceipt:
+        """Obtain a synthetic-only readout from this verified worker process.
+
+        Source is the *caller-supplied full Battle*, not actual Champions.
+        This does NOT authenticate an arbitrary external Node-shaped JSON,
+        prove observed opponents or authorize engine/live recommendations.
+        """
+        from .engine_replay_readout_bridge import _valid_readout
+        from .models import joint_hypothesis_ids
+
+        window = snapshot.window
+        if window.simulator_sha != self._sha:
+            raise WorkerUnavailable("pinned engine changed within match")
+        try:
+            known = joint_hypothesis_ids(snapshot.hypotheses)
+        except ValueError as exc:
+            raise WorkerUnavailable("invalid opponent hypotheses") from exc
+        if hypothesis_id not in known:
+            raise WorkerUnavailable("unregistered opponent hypothesis")
+        if not isinstance(battle_json, Mapping):
+            raise WorkerUnavailable("complete synthetic Battle JSON required")
+        roster = _verified_roster_binding(snapshot, assets)
+        battle = dict(battle_json)
+        # Computing this here binds *exactly the bytes serialized for the
+        # worker request*, rather than a caller-provided external digest.
+        digest = hashlib.sha256(canonical_json(battle).encode("utf-8")).hexdigest()
+        payload = {
+            "source": "FULL_REPLAY_SYNTHETIC", "battle": battle,
+            "hypothesis_id": hypothesis_id,
+            "expected_p1_roster": roster,
+            "expected_p1_active": window.active_pokemon,
+        }
+        payload["branch_input_sha256"] = fingerprint(payload)
+        request = {
+            "protocol": PROTOCOL_VERSION, "op": "READOUT_REPLAY",
+            "request_id": window.request_id,
+            "branch_request_id": uuid4().hex,
+            "identity": window.identity(),
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "payload": payload,
+        }
+        response = self._exchange(request, window.deadline_monotonic)
+        if (response.get("capability_status") != "PARTIAL"
+                or response.get("ok") is not True):
+            raise WorkerUnavailable(str(response.get("reason") or "SYNTHETIC_READOUT_REFUSED"))
+        body = response.get("payload")
+        if (not isinstance(body, dict)
+                or set(body) != {"source", "hypothesis_id", "branch_input_sha256",
+                                 "transport_scope", "readout",
+                                 "full_state_reconstructed", "ready_for_engine"}
+                or body.get("source") != "FULL_REPLAY_SYNTHETIC"
+                or body.get("hypothesis_id") != hypothesis_id
+                or body.get("branch_input_sha256") != payload["branch_input_sha256"]
+                or body.get("transport_scope") != "VERIFIED_LOCAL_PROCESS_SYNTHETIC_ONLY"
+                or body.get("full_state_reconstructed") is not False
+                or body.get("ready_for_engine") is not False
+                or not _valid_readout(body.get("readout"), self._sha)
+                or body["readout"]["battle_sha256"] != digest):
+            raise WorkerUnavailable("readout response not bound to submitted Battle")
+        return SyntheticEngineReadoutReceipt(
+            window.match_id, window.decision_window_id, window.state_revision,
+            snapshot.snapshot_sha256, hypothesis_id,
+            request["branch_request_id"], payload["branch_input_sha256"],
+            digest, canonical_json(body["readout"]), canonical_json(request),
         )
 
     def close(self) -> None:
