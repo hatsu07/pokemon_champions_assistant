@@ -55,6 +55,57 @@ function basicFactCheck(doc){
      throw Error("observed fact requires one linked evidence id: "+k);
  }
 }
+const sameKeys=(value,keys)=>isObject(value)&&
+ Object.keys(value).sort().join(",")===keys.slice().sort().join(",");
+const validDuration=x=>Number.isInteger(x)&&x>=1&&x<=8;
+const validScreens=s=>Array.isArray(s)&&s.length<=2&&
+ new Set(s).size===s.length&&s.every(x=>["reflect","lightscreen"].includes(x));
+// Mirror the LIMITED supported current-state envelope of #172, not its
+// Battle creation. A shared evidence ID cannot make inconsistent values valid.
+function invalidCurrentFieldValues(f,frame,statuses){
+ const linked=k=>statuses[k]==="LINKED_CURRENT_GAME_FACT";
+ const invalid=new Set();
+ if(linked("request_state")&&f.request_state.value!=="move")
+   invalid.add("request_state");
+ if(linked("hazards")){
+   const value=f.hazards.value;
+   if(!sameKeys(value,["side","effects","turn_epoch","state_revision"])||
+     value.side!=="p2"||value.turn_epoch!==frame.turn_epoch||
+     value.state_revision!==frame.state_revision||
+     !Array.isArray(value.effects)||value.effects.length>1||
+     (value.effects.length===1&&value.effects[0]!=="stealthrock"))
+     invalid.add("hazards");
+ }
+ if(linked("screens")&&!validScreens(f.screens.value))
+   invalid.add("screens");
+ if(linked("weather")&&!["","raindance"].includes(f.weather.value))
+   invalid.add("weather");
+ if(linked("terrain")&&!["","electricterrain"].includes(f.terrain.value))
+   invalid.add("terrain");
+ if(linked("screens")&&validScreens(f.screens.value)){
+   const active=f.screens.value;
+   const durationKnown=linked("screen_remaining_turns");
+   if(active.length){
+     if(durationKnown&&(!sameKeys(f.screen_remaining_turns.value,active)||
+         active.some(k=>!validDuration(f.screen_remaining_turns.value[k]))))
+       invalid.add("screen_remaining_turns");
+   }else if(durationKnown&&!sameKeys(f.screen_remaining_turns.value,[])){
+     invalid.add("screen_remaining_turns");
+   }
+ }
+ const fieldListValid=linked("weather")&&linked("terrain")&&
+   ["","raindance"].includes(f.weather.value)&&
+   ["","electricterrain"].includes(f.terrain.value);
+ if(fieldListValid){
+   const active=[...(f.weather.value?["weather"]:[]),
+     ...(f.terrain.value?["terrain"]:[])];
+   if(linked("effect_remaining_turns")&&
+      (!sameKeys(f.effect_remaining_turns.value,active)||
+       active.some(k=>!validDuration(f.effect_remaining_turns.value[k]))))
+     invalid.add("effect_remaining_turns");
+ }
+ return [...invalid];
+}
 function triagePartialBoard(doc){
  basicFactCheck(doc);
  const refs=new Map(doc.evidence.map(x=>[x.id,x]));
@@ -78,6 +129,8 @@ function triagePartialBoard(doc){
    return [key,sameFrame(e,current)?"LINKED_CURRENT_GAME_FACT":
      "STALE_OR_CROSS_FRAME_GAME_FACT"];
  }));
+ const invalid=currentValid?invalidCurrentFieldValues(doc.facts,current,statuses):[];
+ for(const key of invalid)statuses[key]="INVALID_CURRENT_STATE_EVIDENCE";
  const blockers=CURRENT_REQUIRED.filter(k=>statuses[k]!=="LINKED_CURRENT_GAME_FACT");
  const screen=doc.facts.screens;
  if(statuses.screens==="LINKED_CURRENT_GAME_FACT"&&
@@ -95,8 +148,10 @@ function triagePartialBoard(doc){
   ...GATES,scope:"READ_ONLY_PROVENANCE_COVERAGE_NOT_RECONSTRUCTION",
   current_request_evidence_linked:!!currentValid,
   statuses,required_current_fields:[...CURRENT_REQUIRED],
+  invalid_current_state_fields:invalid,
   missing_or_unbound_current_fields:[...new Set(blockers)],
-  observation_readiness: blockers.length?"INSUFFICIENT_CURRENT_OBSERVATION":
+  observation_readiness: invalid.length?"INVALID_CURRENT_STATE_EVIDENCE":
+   blockers.length?"INSUFFICIENT_CURRENT_OBSERVATION":
    "CURRENT_FACTS_LINKED_BUT_HIDDEN_BATTLE_UNRECOVERED",
   hidden_state_not_recovered:true,full_battle_restored:false,
   observations_independently_authenticated:false,
@@ -105,9 +160,25 @@ function triagePartialBoard(doc){
 const exactKeys=(x,keys)=>isObject(x)&&
  Object.keys(x).sort().join(",")===keys.slice().sort().join(",");
 function triageRoundingDamage(input){
+ const rows=secondaryComparison().rows;
+ const combined=new Set(rows.map(r=>r.combined));
+ const separate=new Set(rows.map(r=>r.sequential));
+ const onlyCombined=[...combined].filter(n=>!separate.has(n));
+ const onlySeparate=[...separate].filter(n=>!combined.has(n));
+ const rollDifferences=rows.filter(r=>r.combined!==r.sequential).length;
+ // For the CURRENT reviewed fixture both sets are identical despite four
+ // RNG-position differences: no unknown-roll single hit can select a method.
+ if(rows.length!==16||rollDifferences!==4||
+    onlyCombined.length||onlySeparate.length)
+   throw Error("reviewed fixture identifiability contract changed; re-review needed");
  const result={schema:"phase0-targeted-evidence-triage-v1",kind:"GATE_A_BURN_REFLECT",
   ...GATES,scope:"ONE_REVIEWED_SECONDARY_FINAL_MODIFIER_STEP_ONLY",
   classification:"INSUFFICIENT_INDEPENDENT_GAME_EVIDENCE",
+  fixture_identifiability:"NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE",
+  reviewed_roll_position_difference_count:rollDifferences,
+  combined_only_integer_delta_count:onlyCombined.length,
+  sequential_only_integer_delta_count:onlySeparate.length,
+  single_unknown_roll_hit_can_discriminate:false,
   resolves_champions_rounding:false,independent_rng_roll_observed:false,
   full_damage_formula_verified:false,observations_independently_authenticated:false,
   live_use_permitted:false,raw_evidence_in_output:false};
@@ -136,13 +207,9 @@ function triageRoundingDamage(input){
    input.after_hp>=input.before_hp)
    return {...result,reason:"case provenance, exact HP, or all relevant independent-condition assertions missing"};
  const delta=input.before_hp-input.after_hp;
- const rows=secondaryComparison().rows;
- const combined=[...new Set(rows.map(r=>r.combined))].sort((a,b)=>a-b);
- const separate=[...new Set(rows.map(r=>r.sequential))].sort((a,b)=>a-b);
- const inCombined=combined.includes(delta),inSeparate=separate.includes(delta);
- const classification=inCombined&&inSeparate?"INCONCLUSIVE_INTEGER_OVERLAP":
-   inCombined?"POTENTIAL_COMBINED_ONLY_UNDER_DECLARED_FIXTURE":
-   inSeparate?"POTENTIAL_SEPARATE_ONLY_UNDER_DECLARED_FIXTURE":
+ const inCombined=combined.has(delta),inSeparate=separate.has(delta);
+ const classification=inCombined&&inSeparate?
+   "NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE":
    "OUTSIDE_BOTH_REVIEWED_METHODS_RECHECK_CONDITIONS";
  return {...result,classification,
   basis:"USER_DECLARED_MATCH_AND_CONDITIONS_NOT_IMAGE_AUTHENTICATED",
@@ -150,8 +217,8 @@ function triageRoundingDamage(input){
   observed_delta_matches_combined_set:inCombined,
   observed_delta_matches_separate_set:inSeparate,
   unknown_roll_handled_as_all_sixteen:true,
-  discriminates_reviewed_two_method_sets:inCombined!==inSeparate,
-  reason:"one claimed game hit can discriminate only this local pair of secondary formulas, not full Champions parity"};
+  discriminates_reviewed_two_method_sets:false,
+  reason:"the two reviewed integer-damage sets are identical across unknown RNG rolls; one hit cannot identify the rounding method for this fixture"};
 }
 function runCli(argv=process.argv.slice(2)){
  if(argv.length===1&&argv[0]==="--empty")return triageRoundingDamage(null);
