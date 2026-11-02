@@ -62,6 +62,19 @@ effect timers, unseen RNG and move ID translation need explicit
 bounded assumptions and real-game reconciliation. Do not rename
 `PARTIAL_SCENARIOS_NOT_RUNNABLE` as `FULL_REPLAY_SYNTHETIC`.
 
+## Explicit ① → ② join
+
+`stage_linked_observer_calculation_scenarios` joins those two halves
+only when the caller supplies a `FrozenBattleState` whose complete
+observed-state JSON is **identical** to the current detached OCR reducer
+state. It additionally requires the same match, the same frozen asset
+object, the same active actor and at least one accepted OCR provenance
+record tied to an in-process receipt recorded by the linked observer.
+A stale or unlinked snapshot returns `NO_SCENARIOS`; no new decision
+window is invented and no timestamp is treated as authoritative.
+The game/window owner must supply a real decision window using its normal
+snapshot-generation and legal-choice contract.
+
 ## Tests / release boundaries
 
 `tests/test_issue_141_observed_ocr_scenario_bridge.py` tests the
