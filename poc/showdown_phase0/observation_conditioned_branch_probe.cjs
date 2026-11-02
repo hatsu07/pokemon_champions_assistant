@@ -310,7 +310,11 @@ function condition(obs, ctx = context()) {
     ...(plan.choice?[]:["choice_lock"]),
     ...(plan.removed?[]:["opponent_removed_item"]),
     "unresolved_queue","internal_rng","action_history",
-    "effect_remaining_turns","own_side_unknown_history"],
+    ...(plan.effects?[]:["effect_remaining_turns"]),
+    ...(plan.mega?["mega_transition_log_not_replayed"]:[]),
+    ...(plan.removed?["item_removal_log_not_replayed"]:[]),
+    ...(plan.choice?["choice_lock_creation_history_not_replayed"]:[]),
+    "own_side_unknown_history"],
   assumption:"fixed registered teams and unobserved effects/history, RNG, and the current move boundary remain hypotheses; changed current state does not reconstruct prior events",
   candidate_count:candidates.length,unevaluated_candidate_count:generated.unevaluated_candidate_count,
   candidates,rejected,not_a_unique_true_state:true};
