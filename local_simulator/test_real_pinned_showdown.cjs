@@ -24,7 +24,8 @@ const {Battle} = require(entry);
 assert.equal(typeof Battle, "function", "Use real Battle class, not a mock");
 assert.equal(typeof Battle.fromJSON, "function");
 
-function fixture({p2Mega=false,p2Choice=false,p2Outrage=false}={}) {
+function fixture({p2Mega=false,p2Choice=false,p2Outrage=false,
+                  p1RegisteredSubset=false}={}) {
   // Synthetic 3v3 teams. Their identity/sets are intentionally fully known;
   // never use these as Pokémon Champions usage-rate or ladder evidence.
   const p1=[
@@ -43,6 +44,13 @@ function fixture({p2Mega=false,p2Choice=false,p2Outrage=false}={}) {
     {name:"P2 Kingambit",species:"Kingambit",ability:"Defiant",item:"Black Glasses",
      moves:["kowtowcleave","suckerpunch","protect","swordsdance"],nature:"Adamant",level:50},
   ];
+  if(p1RegisteredSubset){
+    // Match the frozen four-master ids of tests.test_issue_140_foundation.
+    // This fixture is synthetic and never game-captured.
+    p1[0].moves=["earthquake","dragonclaw","rockslide","swordsdance"];
+    p1[1].moves=["moonblast"];
+    p1[2].moves=["playrough"];
+  }
   if(p2Choice) p2[0].item="Choice Band";
   if(p2Outrage) p2[0].moves[0]="outrage";
   if(p2Mega){
@@ -401,4 +409,16 @@ test("real pinned Battle: different hidden RNG yields distinct full readout SHA"
   assert.notEqual(first.battle_sha256,second.battle_sha256);
   assert.equal(first.ready_for_engine,false);
   assert.equal(second.ready_for_engine,false);
+});
+
+test("real pinned fixture export for Python→worker integration (synthetic)",()=>{
+  const target=process.env.READOUT_E2E_FIXTURE_PATH;
+  if(!target)return;
+  const b=fixture({p1RegisteredSubset:true});
+  assert.equal(b.requestState,"move");
+  assert.deepEqual(
+    b.p1.pokemon.map(p=>p.moveSlots.map(x=>x.id)),
+    [["earthquake","dragonclaw","rockslide","swordsdance"],
+     ["moonblast"],["playrough"]]);
+  fs.writeFileSync(target,JSON.stringify(b.toJSON()),"utf8");
 });
