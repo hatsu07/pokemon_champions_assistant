@@ -68,6 +68,10 @@ class LinkedObserverState:
         self.roi_fields = dict(roi_fields)
         self.last_capture_seq = -1
         self._seen_frames: set[str] = set()
+        # Explicit per-ROI retry set for HUD values refused during switches,
+        # name changes or low-confidence OCR. Only current-frame RGB is read
+        # again; never replay a previously rejected HP/PP text value.
+        self._pending_hud_rois: set[str] = set()
         self.required_window_revision: int | None = None
 
     def record_authoritative_revision(self, revision: int) -> None:
@@ -80,6 +84,10 @@ class LinkedObserverState:
     @property
     def linked_raw_observation_ids(self) -> frozenset[str]:
         return frozenset(self._seen_frames)
+
+    @property
+    def pending_hud_rois(self) -> frozenset[str]:
+        return frozenset(self._pending_hud_rois)
 
     def ingest(self, frame: Frame, receipt: FrameCaptureReceipt,
                raw_rois: Mapping[str, Any],
@@ -102,6 +110,18 @@ class LinkedObserverState:
         # cross-checked against the actual source pixels.
         records = []
         preflight_audit = []
+        # This is staged until all ROI digests and reducer postconditions
+        # succeed, so an aborted or replayed capture cannot poison retries.
+        pending = set(self._pending_hud_rois)
+        def hud_kind(field: str) -> tuple[str, str] | None:
+            if field == "own_hp_fraction":
+                return ("own", "HP")
+            if field == "opponent_hp_percent":
+                return ("opponent", "HP")
+            if field.startswith("own_pp_move"):
+                return ("own", "PP")
+            return None
+
         for roi, field in self.roi_fields.items():
             item = raw_rois.get(roi)
             if item is None:
@@ -110,6 +130,9 @@ class LinkedObserverState:
             if (crop is None or not isinstance(item, dict)
                     or item.get("roi_rgb_sha256") != image_digest(crop)):
                 return blocked("ROI_PIXELS_NOT_BOUND_TO_FRAME")
+            if hud_kind(field) and (
+                    item.get("changed") is True or roi in pending):
+                pending.add(roi)
             text = item.get("text")
             conf = item.get("confidence")
             if (not isinstance(text, str) or not text
@@ -206,6 +229,12 @@ class LinkedObserverState:
                     and parsed.get("side") in ("own", "opponent")):
                 switching_sides.add(parsed["side"])
         if switching_sides:
+            # A switch may be visible even without any numeric HUD change.
+            # Recheck all mapped HUD fields for this side after landing.
+            for roi, field in self.roi_fields.items():
+                kind = hud_kind(field)
+                if kind and kind[0] in switching_sides:
+                    pending.add(roi)
             retained = []
             for read in records:
                 field = read.field
@@ -244,6 +273,20 @@ class LinkedObserverState:
         # verified gameplay. The provenance carries false authenticity flags.
         if proposed.get("match_id") != self.match_id:
             return blocked("MATCH_CHANGED_DURING_REDUCE")
+        # Clear a retry only when ALL explicitly re-read fields of its
+        # (side, kind) group were accepted by the reducer on this frame.
+        # Since audits identify kind/side, not the ROI, group completeness
+        # avoids clearing one refused PP slot because another PP succeeded.
+        for side, kind in (("own", "HP"), ("opponent", "HP"), ("own", "PP")):
+            group = [r.roi for r in records
+                     if hud_kind(self.roi_fields.get(r.roi, "")) == (side, kind)]
+            accepted = sum(
+                row.get("status") == "APPLIED"
+                and row.get("kind") == kind and row.get("side") == side
+                for row in audit)
+            if group and accepted == len(group):
+                pending.difference_update(group)
+        self._pending_hud_rois = pending
         self.state = proposed
         self._seen_frames.add(receipt.raw_observation_id)
         self.last_capture_seq = frame.capture_seq
