@@ -44,7 +44,11 @@ def _verified_roster_binding(snapshot: FrozenBattleState, assets: Any) -> list[d
             raise WorkerUnavailable("frozen master or team SHA differs from decision window")
         for name, digest in expected:
             body = assets.contents[name]
-            if hashlib.sha256(body.encode("utf-8-sig")).hexdigest() != digest:
+            raw = body.encode("utf-8")
+            # The match preloader decodes UTF-8-SIG; original bytes may or
+            # may not have a BOM. Accept only those two exact encodings.
+            if (hashlib.sha256(raw).hexdigest() != digest
+                    and hashlib.sha256(b"\\xef\\xbb\\xbf" + raw).hexdigest() != digest):
                 raise WorkerUnavailable("preloaded master bytes do not match SHA manifest")
         # CSV index must be derived from the very same frozen team bytes.
         parsed = _parse_team(assets.contents[REQUIRED_MASTER_FILES[3]])
@@ -84,6 +88,8 @@ def _verified_roster_binding(snapshot: FrozenBattleState, assets: Any) -> list[d
             if len(set(moves)) != len(moves) or not moves:
                 raise WorkerUnavailable("ambiguous Showdown move slots")
             roster.append({"name": name, "species_id": species_id, "moves": moves})
+        if len({r["species_id"] for r in roster}) != len(roster):
+            raise WorkerUnavailable("ambiguous duplicate Showdown species mapping")
         if (w.active_pokemon and w.active_pokemon not in order):
             raise WorkerUnavailable("active Pokémon not in frozen Showdown team")
         return roster
