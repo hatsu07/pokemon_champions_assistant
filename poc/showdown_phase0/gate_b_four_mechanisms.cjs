@@ -25,6 +25,8 @@ function inspect(obs,ctx){
    if(!has(key)||!exact(event,keys)||fact.evidence_ids?.length!==1)return false;
    const evidence=obs.evidence.find(e=>e.id===fact.evidence_ids[0]);
    return !!(evidence&&typeof evidence.match_id==="string"&&
+     typeof frame.active_instance_id==="string"&&frame.active_instance_id.length>0&&
+     evidence.active_instance_id===frame.active_instance_id&&
      evidence.match_id===frame.match_id&&
      evidence.turn_epoch===event.turn_epoch&&
      evidence.state_revision===event.state_revision&&
@@ -36,7 +38,11 @@ function inspect(obs,ctx){
  const choice=has("choice_lock")?f.choice_lock.value:null;
  const removed=has("opponent_removed_item")?f.opponent_removed_item.value:null;
  const mega=has("opponent_mega_history")?f.opponent_mega_history.value:null;
- const weather=f.weather.value,terrain=f.terrain.value,hazards=f.hazards.value;
+ const weather=f.weather.value,terrain=f.terrain.value,rawHazards=f.hazards.value;
+ // An old list alone cannot prove which side contains the hazard.
+ const hazards=Array.isArray(rawHazards)?rawHazards:
+   exact(rawHazards,["side","effects","turn_epoch","state_revision"])&&
+   rawHazards.side==="p2"&&Array.isArray(rawHazards.effects)?rawHazards.effects:null;
  if(has("action_history"))return deny("other action history cannot be reconstructed");
  if(has("pending_choice")||has("unresolved_queue"))
    return deny("unresolved action or pending choice is not reconstructable");
@@ -57,6 +63,11 @@ function inspect(obs,ctx){
    return deny("effect duration with no supported weather or terrain");
  }
  if(hazards.length){
+   if(Array.isArray(rawHazards)||rawHazards.turn_epoch!==
+       obs.evidence.find(e=>e.id===f.request_state.evidence_ids?.[0])?.turn_epoch||
+       rawHazards.state_revision!==
+       obs.evidence.find(e=>e.id===f.request_state.evidence_ids?.[0])?.state_revision)
+     return deny("hazards require current opponent-side and revision binding");
    if(hazards.length!==1||hazards[0]!=="stealthrock")
      return deny("only single opponent-side Stealth Rock is modeled");
    if(!frameFor(["active_opponent","opponent_hp_exact","opponent_boosts",
