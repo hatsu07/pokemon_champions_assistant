@@ -4,6 +4,7 @@
 // Showdown Battle. No real Champions OCR/provenance, opponent mapping, or RNG
 // reconstruction. In particular this is NOT an engine authorization ticket.
 const crypto=require("node:crypto");
+const {isDeepStrictEqual}=require("node:util");
 const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const SOURCE="PINNED_SHOWDOWN_COMPLETE_SYNTHETIC_REPLAY";
 const BOOSTS=["atk","def","spa","spd","spe","accuracy","evasion"];
@@ -37,7 +38,7 @@ function extractPinnedReplayReadout(Battle, battleJson) {
           Array.isArray(s.active) && s.active.length===1))
       return fail("UNSUPPORTED_ENGINE_BATTLE_SCOPE");
     // No silent projection of a partial/fromJSON-modified representation.
-    if(JSON.stringify(b.toJSON())!==original)
+    if(!isDeepStrictEqual(b.toJSON(),JSON.parse(original)))
       return fail("ENGINE_REPLAY_ROUNDTRIP_MISMATCH");
     const active={};
     const members=[];
