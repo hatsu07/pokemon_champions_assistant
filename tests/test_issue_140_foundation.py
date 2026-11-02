@@ -95,7 +95,7 @@ def successful_result(s: FrozenBattleState) -> SimulationResult:
         CapabilityStatus.CONFIRMED, {"test": "synthetic-contract-only"},
         branch_request_id="test-only-branch-nonce",
         branch_input_sha256="a"*64,
-        candidate_action_id=move_id("じしん"), assets=ASSETS)
+        candidate_action_id=move_id("じしん"))
 
 
 class ContractTests(unittest.TestCase):
