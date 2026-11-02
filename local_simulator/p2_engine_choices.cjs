@@ -28,12 +28,14 @@ function condition(raw) {
       (hp===0 && status && status!=="fnt")) return null;
   return {hp,maxhp};
 }
-const COMPLEX = [
+// Only the unambiguous canMegaEvo boolean is admitted. X/Y, Ultra and all
+// other unmodeled modes remain a hard NO_CHOICES, never a partial choice list.
+const UNSUPPORTED_MOVE_FLAGS = [
   "maybeDisabled","maybeLocked","maybeTrapped",
-  "canMegaEvo","canMegaEvoX","canMegaEvoY","canUltraBurst",
+  "canMegaEvoX","canMegaEvoY","canUltraBurst",
   "canZMove","canDynamax","maxMoves","canTerastallize",
 ];
-const MOVE_KEYS = new Set(["moves","trapped",...COMPLEX]);
+const MOVE_KEYS = new Set(["moves","trapped","canMegaEvo",...UNSUPPORTED_MOVE_FLAGS]);
 const ROOT_KEYS = new Set(["active","forceSwitch","side","noCancel","update"]);
 const SIDE_KEYS = new Set(["id","name","pokemon","noCancel"]);
 const POKEMON_KEYS = new Set([
@@ -111,7 +113,10 @@ function requestCommands(b) {
       return reject("ENGINE_P2_COMPLEX_MOVE_REQUEST");
     }
     const a=req.active[0];
-    if (COMPLEX.some(k=>k in a && a[k]!==false && a[k]!==null) ||
+    if (UNSUPPORTED_MOVE_FLAGS.some(k=>k in a && a[k]!==false && a[k]!==null) ||
+        (a.canMegaEvo!==undefined && a.canMegaEvo!==null &&
+          typeof a.canMegaEvo!=="boolean") ||
+        (a.canMegaEvo===true && !active[0].actual.canMegaEvo) ||
         (a.trapped!==undefined && typeof a.trapped!=="boolean") ||
         !Array.isArray(a.moves) || !a.moves.length || a.moves.length>4) {
       return reject("ENGINE_P2_COMPLEX_MOVE_REQUEST");
@@ -127,7 +132,12 @@ function requestCommands(b) {
         return reject("ENGINE_P2_MOVE_SLOTS_INVALID");
       }
       ids.add(m.id);
-      if (!m.disabled) commands.push("move "+(i+1));
+      if (!m.disabled) {
+        commands.push("move "+(i+1));
+        // Mega is an additional action, not a substitute for the normal move.
+        // Side.choose on fresh complete Battle copies must accept EACH variant.
+        if (a.canMegaEvo===true) commands.push("move "+(i+1)+" mega");
+      }
     }
     if (!commands.length) return reject("ENGINE_P2_NO_SIMPLE_MOVE");
     if (!a.trapped) commands.push(...bench.map(i=>"switch "+i));
@@ -169,10 +179,23 @@ function enumerateEngineP2(Battle, battleJson) {
         return reject("ENGINE_P2_CHOICE_REJECTED");
       }
       const action=clone.sides[1].choice.actions[0];
-      if (!action ||
-          (cmd.startsWith("move ") && action.choice!=="move") ||
-          (cmd.startsWith("switch ") &&
-            !["switch","instaswitch"].includes(action.choice))) {
+      const move=/^move ([1-4])( mega)?$/.exec(cmd);
+      const sw=/^switch ([1-3])$/.exec(cmd);
+      if (!action || (!move && !sw)) return reject("ENGINE_P2_ACTION_MISMATCH");
+      if (move) {
+        const slot=Number(move[1])-1;
+        const requestedMega=!!move[2];
+        const wanted=parsed.request.active[0].moves[slot]?.id;
+        // A forced/Encore/locked action may cause Side.choose to return true
+        // while silently selecting a DIFFERENT move. Do not call that legal.
+        if (action.choice!=="move" || action.moveSlot!==slot ||
+            action.moveid!==wanted || !!action.mega!==requestedMega ||
+            !!action.megax || !!action.megay || !!action.zmove ||
+            !!action.maxMove || !!action.terastallize) {
+          return reject("ENGINE_P2_ACTION_MISMATCH");
+        }
+      } else if (!["switch","instaswitch"].includes(action.choice) ||
+                 action.target?.position!==Number(sw[1])-1) {
         return reject("ENGINE_P2_ACTION_MISMATCH");
       }
     }
@@ -185,7 +208,9 @@ function enumerateEngineP2(Battle, battleJson) {
       // supported request grammar cannot independently prove that all
       // engine/game mechanics and hidden response variants were modeled.
       exhaustive_legal_choices_verified:false,
-      scope:"PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"};
+      scope:parsed.commands.some(c=>c.endsWith(" mega")) ?
+        "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY" :
+        "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"};
   } catch (_e) {
     return reject("ENGINE_P2_UNAVAILABLE_OR_INVALID");
   }
