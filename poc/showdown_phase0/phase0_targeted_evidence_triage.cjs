@@ -165,8 +165,10 @@ if(require.main===module){
  try{
   process.stdout.write(JSON.stringify(runCli())+"\n");
  }catch(err){
+  // I/O errors may include the user's private local path. Never emit any
+  // raw exception message or user-supplied value from the local-only CLI.
   process.stdout.write(JSON.stringify({status:"NOT_RUN",
-    reason:String(err.message).replace(/\s+/g," ").slice(0,180),
+    reason:err instanceof SyntaxError?"MALFORMED_LOCAL_JSON":"INPUT_REJECTED_OR_UNREADABLE",
     ...GATES,live_use_permitted:false})+"\n");
   process.exitCode=2;
  }
