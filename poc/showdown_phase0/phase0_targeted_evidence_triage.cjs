@@ -152,4 +152,23 @@ function triageRoundingDamage(input){
   discriminates_reviewed_two_method_sets:inCombined!==inSeparate,
   reason:"one claimed game hit can discriminate only this local pair of secondary formulas, not full Champions parity"};
 }
-module.exports={triagePartialBoard,triageRoundingDamage,CURRENT_REQUIRED,GATES};
+function runCli(argv=process.argv.slice(2)){
+ if(argv.length===1&&argv[0]==="--empty")return triageRoundingDamage(null);
+ if(argv.length!==2||!["--damage","--partial"].includes(argv[0]))
+   throw Error("usage: --empty OR --damage local.json OR --partial local.json");
+ const fs=require("node:fs");
+ // Only read bytes locally. No raw evidence is ever written to output.
+ const input=JSON.parse(fs.readFileSync(argv[1],"utf8"));
+ return argv[0]==="--damage"?triageRoundingDamage(input):triagePartialBoard(input);
+}
+if(require.main===module){
+ try{
+  process.stdout.write(JSON.stringify(runCli())+"\n");
+ }catch(err){
+  process.stdout.write(JSON.stringify({status:"NOT_RUN",
+    reason:String(err.message).replace(/\s+/g," ").slice(0,180),
+    ...GATES,live_use_permitted:false})+"\n");
+  process.exitCode=2;
+ }
+}
+module.exports={triagePartialBoard,triageRoundingDamage,runCli,CURRENT_REQUIRED,GATES};
