@@ -56,7 +56,12 @@ function requestCommands(b) {
   const side=b.sides[1], req=side?.activeRequest;
   if (!side || side.id!=="p2" || side.requestState!==b.requestState ||
       !req || !onlyKeys(req,ROOT_KEYS) || req.wait || req.teamPreview ||
-      req.noCancel || req.update ||
+      // Showdown's real forced-replacement request sets noCancel=true.
+      // It prohibits undoing that switch; Side.choose validates each target.
+      // Never permit this flag on a normal move request.
+      (req.noCancel && b.requestState!=="switch") ||
+      (req.noCancel!==undefined && typeof req.noCancel!=="boolean") ||
+      req.update ||
       !onlyKeys(req.side,SIDE_KEYS) || req.side.id!=="p2" ||
       req.side.noCancel || !Array.isArray(req.side.pokemon) ||
       req.side.pokemon.length!==3 || !Array.isArray(side.pokemon) ||
