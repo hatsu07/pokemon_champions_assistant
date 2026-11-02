@@ -137,7 +137,7 @@ class ClaimedEngineReadoutAdapterTests(unittest.TestCase):
             readouts=(a,)).reason,"COMPLETE_SOURCED_ENGINE_READOUT_BATCH_REQUIRED")
         self.assertEqual(self.audit(s,a,replace(b,hypothesis_id="Joint-1")).reason,
                          "READOUT_HYPOTHESIS_OR_DISPLAY_BINDING_INVALID")
-        self.assertEqual(self.audit(s,replace(a,battle_sha256="a"*64),b).reason,
+        self.assertEqual(self.audit(s,replace(a,battle_sha256="0"*64),b).reason,
                          "UNTRUSTED_OR_MALFORMED_ENGINE_READOUT")
         self.assertEqual(self.audit(s,replace(a,state_revision=1),b).reason,
                          "READOUT_HYPOTHESIS_OR_DISPLAY_BINDING_INVALID")
