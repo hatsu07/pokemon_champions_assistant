@@ -6,7 +6,7 @@ import json
 import unittest
 
 from champions_assist.local_strategy.models import (
-    CapabilityStatus, SimulationResult, fingerprint, PROTOCOL_VERSION,
+    CapabilityStatus, Hypothesis, SimulationResult, fingerprint, PROTOCOL_VERSION,
 )
 from champions_assist.local_strategy.one_turn import (
     BranchObservation, compare_shadow_turn,
@@ -241,6 +241,31 @@ class Phase2TurnTests(unittest.TestCase):
         d = make_branch(s, CLAW, "switch")
         self.assertEqual(self.score(s, (a, b, c, d)).reason,
                          "SCENARIO_INPUT_MISMATCH")
+
+    def test_direct_comparator_rejects_duplicate_snapshot_hypothesis_ids(self):
+        # Calling compare_shadow_turn directly must not bypass the runner's
+        # duplicate-ID gate. Both synthetically distinct item states share H1.
+        two = (
+            Hypothesis.from_assumptions("H1", {"item": "A"}),
+            Hypothesis.from_assumptions("H1", {"item": "B"}),
+        )
+        for hypotheses in (
+            two,
+            (replace(two[0], hypothesis_id=""),),
+            (replace(two[0], hypothesis_id=" H1 "),),
+        ):
+            snapshot = replace(current(), hypotheses=hypotheses)
+            branches = (
+                make_branch(snapshot, EARTH, "move 1", hypothesis="H1"),
+                make_branch(snapshot, CLAW, "move 1", hypothesis="H1"),
+            )
+            with self.subTest(ids=[h.hypothesis_id for h in hypotheses]):
+                result = self.score(snapshot, branches)
+                self.assertEqual(result.status, "NO_RANKING")
+                self.assertEqual(result.reason,
+                                 "DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+                self.assertEqual(result.best_action_id, "")
+                self.assertEqual(result.evaluated_branch_count, 0)
 
     def test_no_unknown_success_on_expiry_or_fake_assets(self):
         s = current()
