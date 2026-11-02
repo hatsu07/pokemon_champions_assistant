@@ -213,6 +213,17 @@ class ObserverPipeline:
             raw_rois[roi_name] = {"changed": changed, "difference": difference,
                                   "roi_rgb_sha256": image_digest(crop)}
             if not changed:
+                if (self.linked_local_ocr_bridge is not None
+                        and roi_name in self.linked_local_ocr_bridge.pending_hud_rois):
+                    # A switched-in actor can retain identical HP/PP pixels
+                    # after the unsafe switch frame. Read the CURRENT pixels
+                    # again, but do not re-emit observer episode/events for
+                    # an unchanged ROI. Raw identity stays this new frame.
+                    reading = self.ocr_engine.read(crop, roi_name=roi_name)
+                    raw_rois[roi_name].update({
+                        "text": reading.text, "confidence": reading.confidence,
+                        "engine": reading.engine, "hud_retry_same_frame": True,
+                    })
                 continue
             reading = self.ocr_engine.read(crop, roi_name=roi_name)
             raw_rois[roi_name].update({"text": reading.text, "confidence": reading.confidence, "engine": reading.engine})
@@ -248,7 +259,8 @@ class ObserverPipeline:
                 )
                 if not any(
                     field in hp_fields
-                    and raw_rois.get(roi, {}).get("changed") is True
+                    and (raw_rois.get(roi, {}).get("changed") is True
+                         or raw_rois.get(roi, {}).get("hud_retry_same_frame") is True)
                     and bool(raw_rois.get(roi, {}).get("text"))
                     for roi, field in fields.items()
                 ):
