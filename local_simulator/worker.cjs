@@ -16,6 +16,32 @@ let Battle = null, unavailable = "ENGINE_NOT_BUNDLED_OR_UNVERIFIED";
 function fileHash(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
+function runtimeFileInventory(root) {
+  const inventory={};
+  function visit(dir, relative="") {
+    const children=fs.readdirSync(dir,{withFileTypes:true});
+    for(const child of children) {
+      const name=relative ? relative+"/"+child.name : child.name;
+      const absolute=path.join(dir,child.name);
+      if(child.isSymbolicLink())throw Error("runtime tree symlink");
+      if(child.isDirectory())visit(absolute,name);
+      else if(child.isFile() && name!==".champions-source-sha")
+        inventory[name]=fileHash(absolute);
+      else if(!child.isFile())throw Error("runtime tree special file");
+    }
+  }
+  visit(root);
+  return inventory;
+}
+function matchesVerifiedInventory(root,files) {
+  if(!files || typeof files!=="object" || Array.isArray(files) ||
+      Object.keys(files).length===0)return false;
+  const actual=runtimeFileInventory(root);
+  const keys=Object.keys(actual).sort();
+  const expected=Object.keys(files).sort();
+  return keys.length===expected.length &&
+    keys.every((k,i)=>k===expected[i] && actual[k]===files[k]);
+}
 function tryLoadEngine() {
   const root = process.env.SHOWDOWN_ROOT || "";
   const expected = process.env.SHOWDOWN_EXPECTED_SHA || "";
@@ -35,6 +61,7 @@ function tryLoadEngine() {
     if (manifest.scope !== "ISSUE_140_SYNTHETIC_ONLY" ||
         manifest.engine_sha !== PIN || manifest.production_enabled !== false ||
         manifest.showdown_entry_sha256 !== fileHash(file) ||
+        !matchesVerifiedInventory(root,manifest.engine_file_sha256) ||
         manifest.worker_sha256 !== fileHash(__filename) ||
         manifest.node_exe_sha256 !== fileHash(process.execPath) ||
         manifest.node_license_sha256 !== fileHash(nodeLicensePath) ||
