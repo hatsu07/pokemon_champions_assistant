@@ -15,7 +15,7 @@ from typing import Any, Mapping
 from .calibrated_screen_fields import FieldRegion, parse_field_text
 from .capture import Frame
 from .capture_provenance import FrameCaptureReceipt, matches_original_frame
-from .live_state_updates import apply_local_ocr, _flat, _names
+from .live_state_updates import apply_local_ocr, _event_for_message, _flat, _names
 from .local_event_worker import LocalFieldRead
 from .ocr import image_digest
 from .roi import RoiConfiguration
@@ -191,6 +191,47 @@ class LinkedObserverState:
                 text=text, status="CANDIDATE",
                 display_id=receipt.raw_observation_id,
             ))
+        # A battle-message SWITCH and a still-displayed outgoing name can
+        # coexist during animation. The local reducer processes SWITCH before
+        # ACTIVE before HP on the *same timestamp*; without preflight, old
+        # name text would undo the switch and bind HP to the outgoing actor.
+        # Use the SAME existing game-specific message parser as the reducer.
+        own_names, opponent_names = _names(self.assets, self.state)
+        switching_sides: set[str] = set()
+        for read in records:
+            if read.field != "screen_text.battle_message":
+                continue
+            parsed = _event_for_message(read.text, own_names, opponent_names)
+            if (isinstance(parsed, dict) and parsed.get("kind") == "SWITCH"
+                    and parsed.get("side") in ("own", "opponent")):
+                switching_sides.add(parsed["side"])
+        if switching_sides:
+            retained = []
+            for read in records:
+                field = read.field
+                field_side = (
+                    "own" if field == "screen_text.own_active_name"
+                    or field == "screen_text.own_hp_fraction"
+                    or field.startswith("screen_text.own_pp_move") else
+                    "opponent" if field in (
+                        "screen_text.opponent_active_name",
+                        "screen_text.opponent_hp_percent") else None
+                )
+                if field_side in switching_sides:
+                    # Even a perfectly legible same-frame HUD is not safe:
+                    # the outgoing name and HP can lag behind the explicit
+                    # switch. Only a following stable frame may attest them.
+                    preflight_audit.append({
+                        "kind": "ACTIVE" if field.endswith("_active_name")
+                                else "HP" if "hp" in field else "PP",
+                        "status": "CANDIDATE",
+                        "reason": "SAME_FRAME_EXPLICIT_SWITCH_HUD_AMBIGUOUS",
+                        "frame_id": frame.frame_id,
+                        "side": field_side,
+                    })
+                    continue
+                retained.append(read)
+            records = retained
         try:
             proposed, audit = apply_local_ocr(
                 self.state, tuple(records), self.assets,
