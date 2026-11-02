@@ -73,6 +73,7 @@ test("rounding source assumptions and pre/post identity fail closed",()=>{
   d=>{d.verification="UNVERIFIED";},
   d=>{d.evidence.after.match_id="other";},
   d=>{d.evidence.after.active_instance_id="another";},
+  d=>{d.evidence.after.kind="SYNTHETIC_FIXTURE";},
   d=>{d.evidence.after.turn_epoch=5;},
   d=>{d.evidence.after.state_revision=40;},
   d=>{d.evidence.after.id=d.evidence.before.id;},
@@ -150,6 +151,10 @@ test("unknown or unauthenticated partial-board data cannot pretend game observat
  const third=board();
  third.facts.request_state.evidence_ids=["nonexistent"];
  assert.throws(()=>triagePartialBoard(third),/linked evidence/);
+ const fake=board();
+ fake.evidence[0].kind="SYNTHETIC_FIXTURE";
+ assert.equal(triagePartialBoard(fake).observation_readiness,
+   "INSUFFICIENT_CURRENT_OBSERVATION");
  const fourth=board();
  fourth.evidence[0].active_instance_id="";
  const r=triagePartialBoard(fourth);
