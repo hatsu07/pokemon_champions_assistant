@@ -437,6 +437,62 @@ class WorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             showdown_choice_for_candidate(candidate,s3,ASSETS)
 
+    def test_four_master_hashes_accept_real_utf8_bom_or_plain_bytes(self):
+        # MasterPreloader.decode("utf-8-sig") strips the BOM from its
+        # in-memory strings while its sha256 is based on original bytes.
+        # Exercise each of the four sources individually, plus all at once.
+        from champions_assist.local_strategy.simulator_adapter import (
+            _verified_roster_binding,
+        )
+        bom = bytes.fromhex("efbbbf")
+        self.assertEqual(len(bom), 3)
+        baseline = frozen()
+        self.assertEqual(len(_verified_roster_binding(baseline, VERIFIED_ASSETS)), 3)
+        for bom_sources in (
+            *(frozenset((name,)) for name in REQUIRED_MASTER_FILES),
+            frozenset(REQUIRED_MASTER_FILES),
+            frozenset(),
+        ):
+            digest_by_name = {}
+            for name in REQUIRED_MASTER_FILES:
+                stripped_text = VERIFIED_ASSETS.contents[name]
+                original_bytes = (
+                    (bom if name in bom_sources else b"")
+                    + stripped_text.encode("utf-8")
+                )
+                # Verify the same BOM-removal semantics as the actual preloader.
+                self.assertEqual(original_bytes.decode("utf-8-sig"), stripped_text)
+                digest_by_name[name] = hashlib.sha256(original_bytes).hexdigest()
+            sha = MappingProxyType(digest_by_name)
+            bound_assets = replace(VERIFIED_ASSETS, sha256=sha)
+            win = replace(
+                baseline.window,
+                team_sha256=sha[REQUIRED_MASTER_FILES[3]],
+                four_master_sha256=tuple(
+                    (name, sha[name]) for name in REQUIRED_MASTER_FILES
+                ),
+            )
+            bound_state = replace(baseline, window=win)
+            self.assertEqual(
+                len(_verified_roster_binding(bound_state, bound_assets)), 3
+            )
+            # A normal body edit must NOT be legitimized by accepting the BOM.
+            for name in REQUIRED_MASTER_FILES:
+                modified = dict(VERIFIED_ASSETS.contents)
+                if name == REQUIRED_MASTER_FILES[3]:
+                    modified[name] = modified[name].replace(
+                        "garchomp", "garchompchanged", 1
+                    )
+                else:
+                    modified[name] += "\nmodified master content"
+                changed_assets = replace(
+                    bound_assets, contents=MappingProxyType(modified)
+                )
+                with self.assertRaisesRegex(
+                    WorkerUnavailable, "preloaded master bytes do not match"
+                ):
+                    _verified_roster_binding(bound_state, changed_assets)
+
     def test_preload_sha_and_registered_roster_must_match_current_window(self):
         s = frozen()
         tmp,w = self.make_fake_worker("import sys\nfor line in sys.stdin: pass\n")
