@@ -88,11 +88,13 @@ def _section(memory: dict[str, Any], key: str) -> dict[str, dict[str, Any]]:
     return {"own": raw.get("own", {}), "opponent": raw.get("opponent", {})}
 
 
-def _hp(value: Any) -> tuple[int, int | None, bool]:
+def _hp(value: Any, *, allow_own_faint_marker: bool) -> tuple[int, int | None, bool]:
     raw = _value(value)
     # battle_evidence.py writes literal "0" for an observed own KO.
     # No positive bare integer or percentage is interpreted as exact HP.
     if _ZERO_HP.fullmatch(raw):
+        if not allow_own_faint_marker:
+            raise ValueError("OPPONENT_ZERO_HP_NEEDS_EXPLICIT_MAXIMUM")
         return (0, None, True)
     m = _EXACT_HP.fullmatch(raw)
     if m is None:
@@ -130,7 +132,8 @@ def _current_member(name: str, side: str,
             observations[field] = section[name]
     hp, maximum, fainted = (None, None, None)
     if "hp" in observations:
-        hp, maximum, fainted = _hp(observations["hp"])
+        hp, maximum, fainted = _hp(
+            observations["hp"],allow_own_faint_marker=(side=="own"))
     stages = _boosts(observations["boosts"]) if "boosts" in observations else ()
     raw_status = _value(observations["status"]) if "status" in observations else None
     raw_type = _value(observations["type"]) if "type" in observations else None
@@ -227,7 +230,8 @@ def stage_observed_champions_ids(snapshot: FrozenBattleState,
             ids = member["moves"]
             source_moves = [own[f"move{k}"] for k in range(1, 5)
                             if own.get(f"move{k}", "")]
-            if len(ids) != len(source_moves):
+            if (len(ids) != len(source_moves)
+                    or len(set(source_moves)) != len(source_moves)):
                 raise ValueError("FROZEN_TEAM_MOVE_BINDING_CHANGED")
             info = {"species_id": member["species_id"],
                     "move_pairs": tuple(zip(source_moves, ids))}
