@@ -16,7 +16,10 @@ from .models import FrozenBattleState, canonical_json, fingerprint
 
 _MAX_P2_CHOICES = 24
 _ID = re.compile(r"[a-z0-9]+\Z")
-_HP = re.compile(r"(\d+)/(\d+)(?: [a-z]+)?\Z")
+# Bound both decimal tokens before int() to keep hostile/malformed request
+# fields from leaking CPython's integer digit-limit ValueError. These are
+# synthetic request parsing limits, not assumptions about Champions HP caps.
+_HP = re.compile(r"([0-9]{1,9})/([0-9]{1,9})(?: ([a-z]+))?\Z")
 _FNT = re.compile(r"0 fnt\Z")
 
 @dataclass(frozen=True)
@@ -54,13 +57,21 @@ def _condition(value: Any) -> tuple[int, int] | None:
     match = _HP.fullmatch(value)
     if not match:
         return None
-    hp, maximum = int(match[1]), int(match[2])
-    if maximum < 1 or hp < 0 or hp > maximum:
+    try:
+        hp, maximum = int(match[1]), int(match[2])
+    except ValueError:
+        return None
+    status = match[3]
+    if (maximum < 1 or hp < 0 or hp > maximum
+            or (status == "fnt" and hp != 0)
+            or (hp == 0 and status not in (None, "fnt"))):
+        # A "fnt" flag and positive HP conflict, as do other statuses
+        # on a zero-HP Pokémon. Never treat either as a live switch option.
         return None
     return hp, maximum
 
 
-def _pokemon(request: dict[str, Any]) -> tuple[list[int], int] | None:
+def _pokemon(request: dict[str, Any]) -> tuple[list[int], int, int] | None:
     side = request.get("side")
     if not isinstance(side, dict) or side.get("id") != "p2":
         return None
@@ -68,7 +79,7 @@ def _pokemon(request: dict[str, Any]) -> tuple[list[int], int] | None:
     if not isinstance(roster, list) or len(roster) != 3:
         return None
     bench = []
-    active = []
+    active: list[tuple[int, int]] = []
     for index, item in enumerate(roster, 1):
         if not isinstance(item, dict) or not isinstance(item.get("active"), bool):
             return None
@@ -76,12 +87,12 @@ def _pokemon(request: dict[str, Any]) -> tuple[list[int], int] | None:
         if hp is None:
             return None
         if item["active"]:
-            active.append(index)
+            active.append((index, hp[0]))
         elif hp[0] > 0:
             bench.append(index)
     if len(active) != 1:
         return None
-    return bench, active[0]
+    return bench, active[0][0], active[0][1]
 
 
 def enumerate_simple_p2_request(
@@ -117,7 +128,7 @@ def enumerate_simple_p2_request(
     detail = _pokemon(request)
     if detail is None:
         return _blocked("P2_SINGLES_ROSTER_UNVERIFIED")
-    bench, active_slot = detail
+    bench, active_slot, active_hp = detail
     if active_slot not in (1, 2, 3):
         return _blocked("P2_SINGLES_ROSTER_UNVERIFIED")
 
@@ -135,6 +146,10 @@ def enumerate_simple_p2_request(
 
     if "active" not in request or "forceSwitch" in request:
         return _blocked("UNSUPPORTED_P2_REQUEST_STATE")
+    # A fainted active actor may be awaiting a replacement, but can never
+    # supply an ordinary attack in a simple singles move request.
+    if active_hp == 0:
+        return _blocked("P2_SINGLES_ROSTER_UNVERIFIED")
     actors = request["active"]
     if not isinstance(actors, list) or len(actors) != 1 or not isinstance(actors[0], dict):
         return _blocked("UNSUPPORTED_P2_REQUEST_STATE")
