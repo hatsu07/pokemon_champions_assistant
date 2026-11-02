@@ -156,3 +156,27 @@ test("unknown or unauthenticated partial-board data cannot pretend game observat
  assert.equal(r.current_request_evidence_linked,false);
  assert.equal(r.observation_readiness,"INSUFFICIENT_CURRENT_OBSERVATION");
 });
+
+test("local CLI outputs only sanitized status and refuses malformed file input",()=>{
+ const fs=require("node:fs"),os=require("node:os"),path=require("node:path");
+ const {execFileSync}=require("node:child_process");
+ const entry=path.join(__dirname,"phase0_targeted_evidence_triage.cjs");
+ const blank=JSON.parse(execFileSync(process.execPath,[entry,"--empty"],{encoding:"utf8"}));
+ assert.equal(blank.classification,"INSUFFICIENT_INDEPENDENT_GAME_EVIDENCE");
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),"phase0-triage-only-"));
+ try{
+  const fp=path.join(dir,"fake-not-a-real-game.json");
+  fs.writeFileSync(fp,JSON.stringify(damage()));
+  const result=execFileSync(process.execPath,[entry,"--damage",fp],{encoding:"utf8"});
+  const parsed=JSON.parse(result);
+  assert.equal(parsed.kind,"GATE_A_BURN_REFLECT");
+  assert.equal(parsed.live_use_permitted,false);
+  assert.ok(!result.includes("PRIVATE_TEST_ONLY_MATCH"));
+  assert.ok(!result.includes(fp));
+  fs.writeFileSync(fp,JSON.stringify(board()));
+  const boardResult=execFileSync(process.execPath,[entry,"--partial",fp],{encoding:"utf8"});
+  assert.equal(JSON.parse(boardResult).kind,"GATE_B_BOARD");
+  assert.ok(!boardResult.includes("PRIVATE_TEST_ONLY_MATCH"));
+  assert.ok(!boardResult.includes(fp));
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
