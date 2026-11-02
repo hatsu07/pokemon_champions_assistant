@@ -1,0 +1,71 @@
+name: Phase 2 pinned Showdown real-engine integration
+
+# Unlike the isolated fake-engine CI, this job builds the actual pinned
+# upstream simulator and runs synthetic Battle/RNG fixtures against it.
+# It is not Champions real-game compatibility certification.
+on:
+  pull_request:
+    paths:
+      - 'local_simulator/**'
+      - '.github/workflows/showdown-phase2-real-engine.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase2-real-engine-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-showdown-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify test source HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - name: Checkout exact upstream Showdown SHA
+        uses: actions/checkout@v4
+        with:
+          repository: smogon/pokemon-showdown
+          ref: ccfaa20f32af363569cd21a9d501b2bc1ded26b1
+          path: pinned-showdown
+          persist-credentials: false
+      - name: Verify upstream SHA, lockfile and source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C pinned-showdown rev-parse HEAD)" = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
+          test -f pinned-showdown/package-lock.json
+          test -f pinned-showdown/LICENSE
+          echo "Real upstream SHA: $(git -C pinned-showdown rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+      - name: Install exact upstream locked dependencies (no lifecycle scripts)
+        working-directory: pinned-showdown
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build pinned Showdown simulator
+        working-directory: pinned-showdown
+        run: |
+          npm run build
+          test -f dist/sim/index.js
+      - name: Real Showdown Battle / P2 request integration
+        env:
+          SHOWDOWN_PINNED_BUILD_ROOT: ${{ github.workspace }}/pinned-showdown
+        run: node --test local_simulator/test_real_pinned_showdown.cjs
+      - name: Explicit validity boundary
+        if: always()
+        shell: bash
+        run: |
+          echo "Built upstream pinned Showdown and ran SYNTHETIC 3v3 fixtures; NOT game observations." >> "$GITHUB_STEP_SUMMARY"
+          echo "No proof of all legal Champions choices or complete midbattle reconstruction." >> "$GITHUB_STEP_SUMMARY"
+          echo "No runtime promotion to LIVE/GPT or production installer." >> "$GITHUB_STEP_SUMMARY"
