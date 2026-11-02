@@ -41,10 +41,26 @@ function inspect(obs,ctx){
  if(has("opponent_removed_item")&&!removed)
    return deny("known item-removal evidence cannot be empty");
  const weather=f.weather.value,terrain=f.terrain.value,rawHazards=f.hazards.value;
- // An old list alone cannot prove which side contains the hazard.
- const hazards=Array.isArray(rawHazards)?rawHazards:
+ const legacyEmptyHazards=Array.isArray(rawHazards);
+ // Flat [] is a historical *synthetic fixture baseline*, not an observed
+ // current state. It is never sufficient to assert no hazards in REAL_GAME.
+ // Scoped hazards (including effects:[]) always require current frame proof.
+ const syntheticBaseline=legacyEmptyHazards&&rawHazards.length===0&&
+   obs.origin==="SYNTHETIC"&&f.hazards.source==="SYNTHETIC"&&
+   f.hazards.evidence_ids?.length===1&&
+   f.request_state.evidence_ids?.length===1&&
+   f.hazards.evidence_ids[0]===f.request_state.evidence_ids[0]&&
+   obs.evidence.some(e=>e.id===f.hazards.evidence_ids[0]&&
+     e.kind==="SYNTHETIC_FIXTURE");
+ if(legacyEmptyHazards&&!syntheticBaseline)
+   return deny("flat hazards absence is synthetic-fixture-only; current side/frame is unverified");
+ const scopedHazards=!legacyEmptyHazards&&
    exact(rawHazards,["side","effects","turn_epoch","state_revision"])&&
-   rawHazards.side==="p2"&&Array.isArray(rawHazards.effects)?rawHazards.effects:null;
+   rawHazards.side==="p2"&&Array.isArray(rawHazards.effects);
+ const hazards=syntheticBaseline?[]:scopedHazards?rawHazards.effects:null;
+ const hazardObservationScope=syntheticBaseline?
+   "SYNTHETIC_BASELINE_ONLY_NOT_CURRENT_GAME_EVIDENCE":
+   "CURRENT_OPPONENT_SIDE_AND_REVISION";
  if(has("action_history"))return deny("other action history cannot be reconstructed");
  if(has("pending_choice")||has("unresolved_queue"))
    return deny("queued unresolved action or pending choice is not reconstructable");
@@ -64,18 +80,17 @@ function inspect(obs,ctx){
  }else if(has("effect_remaining_turns")){
    return deny("effect duration with no supported weather or terrain");
  }
- if(hazards.length){
-   if(Array.isArray(rawHazards)||rawHazards.turn_epoch!==
-       obs.evidence.find(e=>e.id===f.request_state.evidence_ids?.[0])?.turn_epoch||
-       rawHazards.state_revision!==
-       obs.evidence.find(e=>e.id===f.request_state.evidence_ids?.[0])?.state_revision)
-     return deny("hazards require current opponent-side and revision binding");
-   if(hazards.length!==1||hazards[0]!=="stealthrock")
-     return deny("only single opponent-side Stealth Rock is modeled");
-   if(!frameFor(["active_opponent","opponent_hp_exact","opponent_boosts",
-       "hazards","weather","terrain"]))
-     return deny("hazards side lacks matching current-frame evidence");
+ // Nonexistence also needs *current* evidence. Check scoped observations
+ // even when effects is empty; otherwise a stale empty set is accepted.
+ if(scopedHazards){
+   const frame=frameFor(["active_opponent","opponent_hp_exact",
+     "opponent_boosts","hazards","weather","terrain"]);
+   if(!frame||rawHazards.turn_epoch!==frame.turn_epoch||
+      rawHazards.state_revision!==frame.state_revision)
+     return deny("hazards require current opponent-side, evidence ID and revision binding");
  }
+ if(hazards.length&&(hazards.length!==1||hazards[0]!=="stealthrock"))
+   return deny("only single opponent-side Stealth Rock is modeled");
  // Unverified change histories must not slip into the created Battle.
  if(choice){
    if(!exact(choice,["move_id","item_id","turn_epoch","state_revision"])||
@@ -120,6 +135,7 @@ function inspect(obs,ctx){
    return deny("Mega history supplied without confirmed current Mega");
  }
  return {choice,removed,mega,effects,weather,terrain,hazards,
+   hazardObservationScope,
    admitted:["choice_lock","opponent_removed_item","opponent_mega_history",
        "effect_remaining_turns"].filter(has)};
 }
