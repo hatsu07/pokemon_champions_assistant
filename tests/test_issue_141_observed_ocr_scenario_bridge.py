@@ -159,6 +159,27 @@ class ObserverToReducerTests(unittest.TestCase):
         self.assertEqual(self.pipeline.last_linked_ocr_result.status,
                          "LINKED_CANDIDATE_STATE")
 
+    def test_same_name_pixels_cannot_promote_conflicting_actor_ocr(self):
+        self.pipeline.process_frame(self.f1)
+        self.pipeline.ocr_engine=MappingOcrEngine.for_images([
+            ("ROI_UI_CONTROLS",roi_config().crop("ROI_UI_CONTROLS",self.f2.image),
+             OcrRead("Own2",.99,"SYNTHETIC_OCR")),
+            ("ROI_BATTLE_LOG",roi_config().crop("ROI_BATTLE_LOG",self.f2.image),
+             OcrRead("35/100",.99,"SYNTHETIC_OCR")),
+        ])
+        late=Frame("ocr-drift-same-name-pixels",2,3500,
+                   self.f2.image.copy(),source="SYNTHETIC_TEST")
+        self.pipeline.process_frame(late)
+        self.assertEqual(self.bridge.state["our_active"],"Own1")
+        self.assertNotIn("Own1",self.bridge.state["battle_evidence"]
+                         ["hp_by_pokemon"]["own"])
+        self.assertNotIn("Own2",self.bridge.state["battle_evidence"]
+                         ["hp_by_pokemon"]["own"])
+        reasons={a.get("reason") for a in
+                 self.pipeline.last_linked_ocr_result.audit}
+        self.assertIn("UNSTABLE_ACTOR_OCR_ON_UNCHANGED_PIXELS",reasons)
+        self.assertIn("SAME_FRAME_STABLE_ACTOR_NAME_REQUIRED",reasons)
+
     def test_pp_after_two_seconds_uses_same_frame_name(self):
         bridge=LinkedObserverState(
             match_id=self.session.match_id,assets=self.session.assets,
