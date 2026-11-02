@@ -22,7 +22,7 @@ from champions_assist.local_strategy.decision_service import accept_result
 from champions_assist.local_strategy.simulator_adapter import (
     LocalSimulatorWorker, WorkerUnavailable,
 )
-from scripts.stage_issue140_runtime import stage, PINNED_SHOWDOWN_SHA
+from scripts.stage_issue140_runtime import stage, PINNED_SHOWDOWN_SHA, _engine_files
 
 
 class FakeAssets:
@@ -529,42 +529,87 @@ class WorkerTests(unittest.TestCase):
 
 
 class StagingTests(unittest.TestCase):
+    @staticmethod
+    def make_stage_inputs(root):
+        showdown = root / "showdown"
+        (showdown / "dist/sim").mkdir(parents=True)
+        (showdown / "node_modules/dependency").mkdir(parents=True)
+        (showdown / "dist/sim/index.js").write_text("module.exports = {};")
+        (showdown / "dist/sim/other.js").write_text("// trusted")
+        (showdown / "node_modules/dependency/index.js").write_text("// trusted")
+        (showdown / "LICENSE").write_text("test-only-upstream-license")
+        (showdown / "package.json").write_text("{}")
+        (showdown / "package-lock.json").write_text("{}")
+        node = root / "node.exe"
+        node.write_bytes(b"synthetic-node-not-real-executable")
+        node_license = root / "NODE_LICENSE"
+        node_license.write_text("node-license-placeholder")
+        notices = root / "notices"
+        notices.write_text("third-party-notices-placeholder")
+        worker = root / "worker.cjs"
+        worker.write_text("// synthetic worker")
+        independent = root / "reviewed-manifest.json"
+        independent.write_text(json.dumps({
+            "engine_sha": PINNED_SHOWDOWN_SHA,
+            "engine_file_sha256": _engine_files(showdown)
+        }), encoding="utf-8")
+        return dict(showdown_root=showdown, node_exe=node,
+                    node_license=node_license, third_party_notices=notices,
+                    worker_script=worker, verified_build_manifest=independent,
+                    output=root / "out")
+
+    @staticmethod
+    def clean_mock(command, *args, **kwargs):
+        return PINNED_SHOWDOWN_SHA + "\n" if "rev-parse" in command else ""
+
     def test_pinned_runtime_stage_requires_sha_and_licenses(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            showdown = root / "showdown"
-            (showdown / "dist/sim").mkdir(parents=True)
-            (showdown / "node_modules").mkdir()
-            (showdown / "dist/sim/index.js").write_text("module.exports = {};")
-            (showdown / "LICENSE").write_text("test-only-upstream-license")
-            (showdown / "package.json").write_text("{}")
-            node = root / "node.exe"
-            node.write_bytes(b"synthetic-node-not-real-executable")
-            node_license = root / "NODE_LICENSE"
-            node_license.write_text("node-license-placeholder")
-            notices = root / "notices"
-            notices.write_text("third-party-notices-placeholder")
-            worker = root / "worker.cjs"
-            worker.write_text("// synthetic worker")
-            target = root / "output"
-            opts = dict(showdown_root=showdown, node_exe=node,
-                        node_license=node_license,
-                        third_party_notices=notices, worker_script=worker,
-                        output=target)
+            opts = self.make_stage_inputs(Path(tmp))
             with patch("scripts.stage_issue140_runtime.subprocess.check_output",
                        return_value="wrong-SHA\n"):
                 with self.assertRaises(ValueError):
                     stage(**opts)
-            self.assertFalse(target.exists())
+            self.assertFalse(opts["output"].exists())
             with patch("scripts.stage_issue140_runtime.subprocess.check_output",
-                       return_value=PINNED_SHOWDOWN_SHA + "\n"):
+                       side_effect=self.clean_mock):
                 manifest = stage(**opts)
             self.assertEqual(manifest["engine_sha"], PINNED_SHOWDOWN_SHA)
             self.assertFalse(manifest["production_enabled"])
-            self.assertEqual((target / "showdown/.champions-source-sha")
+            self.assertIn("node_modules/dependency/index.js",
+                          manifest["engine_file_sha256"])
+            self.assertEqual((opts["output"] / "showdown/.champions-source-sha")
                              .read_text().strip(), PINNED_SHOWDOWN_SHA)
             with self.assertRaises(FileExistsError):
                 stage(**opts)
+
+    def test_dirty_checkout_and_unverified_dependency_files_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            opts = self.make_stage_inputs(Path(tmp))
+            def dirty(command, *args, **kwargs):
+                return (PINNED_SHOWDOWN_SHA + "\n" if "rev-parse" in command
+                        else " M src/sim/battle.ts\n")
+            with patch("scripts.stage_issue140_runtime.subprocess.check_output",
+                       side_effect=dirty):
+                with self.assertRaisesRegex(ValueError, "uncommitted"):
+                    stage(**opts)
+            self.assertFalse(opts["output"].exists())
+            dependency = opts["showdown_root"] / "node_modules/dependency/index.js"
+            dependency.write_text("// modified post-review")
+            with patch("scripts.stage_issue140_runtime.subprocess.check_output",
+                       side_effect=self.clean_mock):
+                with self.assertRaisesRegex(ValueError, "verified inventory"):
+                    stage(**opts)
+            self.assertFalse(opts["output"].exists())
+            # Also catch modified dist output even when tracked git status
+            # remains clean, as dist may be ignored by Git.
+            dependency.write_text("// trusted")
+            dist = opts["showdown_root"] / "dist/sim/other.js"
+            dist.write_text("// modified ignored dist output")
+            with patch("scripts.stage_issue140_runtime.subprocess.check_output",
+                       side_effect=self.clean_mock):
+                with self.assertRaisesRegex(ValueError, "verified inventory"):
+                    stage(**opts)
+            self.assertFalse(opts["output"].exists())
 
     def test_stage_rejects_empty_dependency_notices(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -574,14 +619,16 @@ class StagingTests(unittest.TestCase):
             (root / "LICENSE").write_text("license")
             (root / "NOTICES").touch()
             (root / "worker.cjs").write_text("// worker")
+            (root / "reviewed.json").write_text("{}")
             with patch("scripts.stage_issue140_runtime.subprocess.check_output",
-                       return_value=PINNED_SHOWDOWN_SHA + "\n"):
-                with self.assertRaises(FileNotFoundError):
+                       side_effect=self.clean_mock):
+                with self.assertRaises((FileNotFoundError,ValueError)):
                     stage(showdown_root=root / "engine",
                           node_exe=root / "node.exe",
                           node_license=root / "LICENSE",
                           third_party_notices=root / "NOTICES",
                           worker_script=root / "worker.cjs",
+                          verified_build_manifest=root / "reviewed.json",
                           output=root / "out")
 
 
