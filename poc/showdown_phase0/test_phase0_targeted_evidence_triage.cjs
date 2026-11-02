@@ -178,5 +178,17 @@ test("local CLI outputs only sanitized status and refuses malformed file input",
   assert.equal(JSON.parse(boardResult).kind,"GATE_B_BOARD");
   assert.ok(!boardResult.includes("PRIVATE_TEST_ONLY_MATCH"));
   assert.ok(!boardResult.includes(fp));
+  const {spawnSync}=require("node:child_process");
+  const missing=path.join(dir,"SECRET_LOCAL_PATH_DO_NOT_DISCLOSE.json");
+  const failed=spawnSync(process.execPath,[entry,"--damage",missing],{encoding:"utf8"});
+  assert.equal(failed.status,2);
+  assert.equal(JSON.parse(failed.stdout).reason,"INPUT_REJECTED_OR_UNREADABLE");
+  assert.ok(!failed.stdout.includes(missing));
+  fs.writeFileSync(fp,"{PRIVATE_SENSITIVE_CONTENTS_MALFORMED");
+  const malformed=spawnSync(process.execPath,[entry,"--partial",fp],{encoding:"utf8"});
+  assert.equal(malformed.status,2);
+  assert.equal(JSON.parse(malformed.stdout).reason,"MALFORMED_LOCAL_JSON");
+  assert.ok(!malformed.stdout.includes(fp));
+  assert.ok(!malformed.stdout.includes("PRIVATE_SENSITIVE_CONTENTS"));
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
