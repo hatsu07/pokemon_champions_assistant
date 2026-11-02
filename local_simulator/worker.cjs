@@ -7,7 +7,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 const crypto = require("node:crypto");
-const {enumerateEngineP2} = require("./p2_engine_choices.cjs");
+// Never execute a helper before the pinned runtime/worker/helper hashes
+// have been verified. A modified helper must not run during startup.
+let enumerateEngineP2 = null;
 
 const VERSION = "issue140.v1";
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
@@ -71,9 +73,12 @@ function tryLoadEngine() {
       unavailable = "RUNTIME_MANIFEST_SHA_MISMATCH";
       return;
     }
+    // Both scripts are executed only *after* all runtime hashes matched.
     ({Battle} = require(file));
-    if (!Battle || typeof Battle.fromJSON !== "function")
-      throw Error("no Battle.fromJSON");
+    ({enumerateEngineP2} = require(path.join(__dirname,"p2_engine_choices.cjs")));
+    if (!Battle || typeof Battle.fromJSON !== "function" ||
+        typeof enumerateEngineP2 !== "function")
+      throw Error("pinned Showdown or P2 helper entry unavailable");
     unavailable = "";
   } catch (err) {
     unavailable = "SHOWDOWN_LOAD_FAILED";
