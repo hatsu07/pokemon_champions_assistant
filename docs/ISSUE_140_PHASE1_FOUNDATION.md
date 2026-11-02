@@ -32,6 +32,15 @@ Parent: #138. **2026-11-02 user decision / PR #174:** fixed Showdown Champions i
   of choices/opponent hypothesis/battle/action, and `candidate_action_id`.
   Node validates and echoes all branch fields. Python rejects an old/wrong
   response even if the window request ID and snapshot SHA still match.
+- Review P1 follow-up: Python derives a candidate's exact move index from
+  frozen team assets and revalidates the LEGAL candidate before SIMULATE;
+  caller-provided `p1_choice` must equal that binding. Switches require an
+  exact, frozen `showdown_party_order`; ambiguous mapping fails closed.
+  stdin write/flush has its own deadline and kills an unresponsive worker.
+- Review P2 follow-up: staging requires clean pinned tracked sources plus a
+  **separately verified whole-runtime file SHA inventory**. Node hashes the
+  full dist/dependency tree before load, with tamper tests. This is not a
+  substitute for acquiring an actually audited Windows runtime and SBOM.
 - Explicitly opt-in Python `LocalSimulatorWorker` and pinned SHA Node JSONL
   process for full **synthetic/replay-only** snapshots. 1 MiB request/response,
   read-only worker, request serialisation, no silent restart, stale replies
