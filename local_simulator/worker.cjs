@@ -81,10 +81,19 @@ function tryLoadEngine() {
       throw Error("pinned Showdown or P2 helper entry unavailable");
     unavailable = "";
   } catch (err) {
+    // Partial module initialization must never authorize HELLO or any op.
+    Battle = null;
+    enumerateEngineP2 = null;
     unavailable = "SHOWDOWN_LOAD_FAILED";
   }
 }
 tryLoadEngine();
+
+function engineReady() {
+  return unavailable === "" && !!Battle &&
+    typeof Battle.fromJSON === "function" &&
+    typeof enumerateEngineP2 === "function";
+}
 
 function stable(value) {
   if (Array.isArray(value)) return "[" + value.map(stable).join(",") + "]";
@@ -155,17 +164,18 @@ function handle(req) {
     return;
   }
   if (req.op === "HELLO") {
-    reply(req, Battle ? "PARTIAL" : "UNSUPPORTED",
-          Battle ? "SYNTHETIC_ONLY_NOT_CHAMPIONS_VERIFIED" : unavailable,
-          {engine_sha: PIN}, !!Battle);
+    const ready = engineReady();
+    reply(req, ready ? "PARTIAL" : "UNSUPPORTED",
+          ready ? "SYNTHETIC_ONLY_NOT_CHAMPIONS_VERIFIED" : unavailable,
+          {engine_sha: PIN}, ready);
     return;
   }
   if (!["SIMULATE","ENUMERATE_P2"].includes(req.op)) {
     reply(req, "UNSUPPORTED", "UNKNOWN_OPERATION");
     return;
   }
-  if (!Battle) {
-    reply(req, "UNSUPPORTED", unavailable);
+  if (!engineReady()) {
+    reply(req, "UNSUPPORTED", unavailable || "SHOWDOWN_LOAD_FAILED");
     return;
   }
   const data = req.payload || {};
