@@ -137,11 +137,18 @@ class ObserverPipeline:
         recent_frame_limit: int = 120,
         hp_calibrations: tuple[HpBarCalibration, ...] = (),
         icon_calibrations: tuple[IconCalibration, ...] = (),
+        linked_local_ocr_bridge: Any | None = None,
     ) -> None:
         if session.store is not store:
             raise ValueError("observer pipeline and session must use the same BattleStore")
         if recent_frame_limit < 1:
             raise ValueError("recent_frame_limit must be positive")
+        if linked_local_ocr_bridge is not None and (
+                getattr(linked_local_ocr_bridge, "match_id", None) != session.match_id
+                or getattr(linked_local_ocr_bridge, "assets", None) is not session.assets):
+            raise ValueError("local OCR bridge must use current match and frozen assets")
+        self.linked_local_ocr_bridge = linked_local_ocr_bridge
+        self.last_linked_ocr_result = None
         self.session = session
         self.store = store
         self.roi_config = roi_config
@@ -206,6 +213,17 @@ class ObserverPipeline:
             raw_rois[roi_name] = {"changed": changed, "difference": difference,
                                   "roi_rgb_sha256": image_digest(crop)}
             if not changed:
+                if (self.linked_local_ocr_bridge is not None
+                        and roi_name in self.linked_local_ocr_bridge.pending_hud_rois):
+                    # A switched-in actor can retain identical HP/PP pixels
+                    # after the unsafe switch frame. Read the CURRENT pixels
+                    # again, but do not re-emit observer episode/events for
+                    # an unchanged ROI. Raw identity stays this new frame.
+                    reading = self.ocr_engine.read(crop, roi_name=roi_name)
+                    raw_rois[roi_name].update({
+                        "text": reading.text, "confidence": reading.confidence,
+                        "engine": reading.engine, "hud_retry_same_frame": True,
+                    })
                 continue
             reading = self.ocr_engine.read(crop, roi_name=roi_name)
             raw_rois[roi_name].update({"text": reading.text, "confidence": reading.confidence, "engine": reading.engine})
@@ -223,6 +241,51 @@ class ObserverPipeline:
             parsed_rois[roi_name] = parsed
             staged_latest_parsed[roi_name] = parsed
             pending_events.extend(parsed.events)
+
+        if self.linked_local_ocr_bridge is not None:
+            # A stable name ROI is normally skipped by the change detector.
+            # HP/PP can change many seconds later: re-OCR the name from THIS
+            # same frame instead of trusting the old name across a switch.
+            # Keep the fresh read inside the frame's persisted raw ROI record.
+            fields = self.linked_local_ocr_bridge.roi_fields
+            for side, name_field in (
+                ("own", "own_active_name"),
+                ("opponent", "opponent_active_name"),
+            ):
+                hp_fields = (
+                    ("own_hp_fraction", "own_pp_move1", "own_pp_move2",
+                     "own_pp_move3", "own_pp_move4")
+                    if side == "own" else ("opponent_hp_percent",)
+                )
+                if not any(
+                    field in hp_fields
+                    and (raw_rois.get(roi, {}).get("changed") is True
+                         or raw_rois.get(roi, {}).get("hud_retry_same_frame") is True)
+                    and bool(raw_rois.get(roi, {}).get("text"))
+                    for roi, field in fields.items()
+                ):
+                    continue
+                name_roi = next(
+                    (roi for roi, field in fields.items()
+                     if field == name_field), None
+                )
+                if name_roi is None or name_roi not in raw_rois:
+                    # Missing explicit name region: the linked reducer will
+                    # refuse the HP/PP rather than use a past-frame name.
+                    continue
+                name_entry = raw_rois[name_roi]
+                if name_entry.get("changed") or "text" in name_entry:
+                    continue
+                crop = self.roi_config.crop(name_roi, frame.image)
+                if crop is None:
+                    continue
+                reading = self.ocr_engine.read(crop, roi_name=name_roi)
+                name_entry.update({
+                    "text": reading.text,
+                    "confidence": reading.confidence,
+                    "engine": reading.engine,
+                    "actor_refresh_same_frame": True,
+                })
 
         stored = self.store.append_raw_observation(
             self.session.match_id,
@@ -277,6 +340,26 @@ class ObserverPipeline:
                         quality="CONFIRMED" if actions.completeness == "COMPLETE" else "CANDIDATE",
                     )
             self.session.present_ui(_FSM_UI[stable], actions, now_ms=effective_now, actual_ui_remaining_ms=actual_ui_remaining_ms)
+
+        # This is a deliberately opt-in OBSERVER->LOCAL_OCR path. It receives
+        # only the just-persisted frame receipt and ROI text and updates a
+        # detached state, never the production GPT/LIVE tactical state.
+        if self.linked_local_ocr_bridge is not None:
+            self.last_linked_ocr_result = self.linked_local_ocr_bridge.ingest(
+                frame, receipt, raw_rois, self.roi_config)
+            # Any newly accepted OCR *candidate* invalidates an old
+            # in-flight decision window, but does NOT write HP/actor/type
+            # as confirmed FSM facts. It only records the evidence identity.
+            candidate = self.last_linked_ocr_result
+            if candidate.state_revision_after > candidate.state_revision_before:
+                self.session.update_observed_state(
+                    f"{receipt.raw_observation_id}:linked-ocr-candidate",
+                    {"linked_local_ocr_candidate": {
+                        "raw_observation_id": receipt.raw_observation_id,
+                        "local_ocr_revision": candidate.state_revision_after}},
+                    source_kind="UI_DIRECT", quality="CANDIDATE")
+            self.linked_local_ocr_bridge.record_authoritative_revision(
+                self.session.tactical_state_version)
 
         return FrameObservation(
             frame_id=frame.frame_id,
