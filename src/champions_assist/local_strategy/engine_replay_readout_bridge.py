@@ -40,6 +40,13 @@ class ClaimedEngineReadoutCase:
     readout: Mapping[str, Any]
     # A separate UNVERIFIED opponent display-name -> engine slot claim.
     opponent_display_by_slot: tuple[str, str, str]
+    # Bound by the independent window owner AT CAPTURE TIME. The adapter
+    # must never re-stamp an old readout with a newer snapshot identity.
+    match_id: str
+    decision_window_id: str
+    state_revision: int
+    snapshot_sha256: str
+    battle_sha256: str
 
 
 def _no(reason: str) -> ReplayProjectionAudit:
@@ -126,6 +133,13 @@ def audit_claimed_engine_readouts(
         for scenario, case in zip(staged.scenarios, readouts):
             if (not isinstance(case, ClaimedEngineReadoutCase)
                     or case.hypothesis_id != scenario.hypothesis_id
+                    or case.match_id != snapshot.window.match_id
+                    or case.decision_window_id != snapshot.window.decision_window_id
+                    or type(case.state_revision) is not int
+                    or case.state_revision != snapshot.window.state_revision
+                    or case.snapshot_sha256 != snapshot.snapshot_sha256
+                    or not isinstance(case.battle_sha256, str)
+                    or _SHA.fullmatch(case.battle_sha256) is None
                     or not isinstance(case.opponent_display_by_slot, tuple)
                     or len(case.opponent_display_by_slot)!=3
                     or any(not isinstance(n,str) or not n or n!=n.strip()
@@ -133,7 +147,8 @@ def audit_claimed_engine_readouts(
                     or len(set(case.opponent_display_by_slot))!=3):
                 return _no("READOUT_HYPOTHESIS_OR_DISPLAY_BINDING_INVALID")
             row=deepcopy(case.readout)
-            if not _valid_readout(row,snapshot.window.simulator_sha):
+            if (not _valid_readout(row,snapshot.window.simulator_sha)
+                    or row["battle_sha256"] != case.battle_sha256):
                 return _no("UNTRUSTED_OR_MALFORMED_ENGINE_READOUT")
             observed=json.loads(scenario.observed_constraints_json)
             own=observed["own"]
