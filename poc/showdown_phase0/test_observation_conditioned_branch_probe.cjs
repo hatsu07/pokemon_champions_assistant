@@ -418,13 +418,15 @@ test("unresolved choice, Mega history and weather are not fabricated",()=>{
 
 function bindCurrentFrame(obs){
  const frame=obs.evidence.find(e=>e.id==="fixture-CONDITION");
- Object.assign(frame,{match_id:"match-COMBINED",turn_epoch:4,state_revision:42});
+ Object.assign(frame,{match_id:"match-COMBINED",turn_epoch:4,state_revision:42,
+   active_instance_id:"p2-mon-slot-2"});
  return obs;
 }
 function pastEvent(obs,key,value,id="observed-past"){
  bindCurrentFrame(obs);
  obs.evidence.push({id,kind:"SYNTHETIC_FIXTURE",
-   match_id:"match-COMBINED",turn_epoch:2,state_revision:20});
+   match_id:"match-COMBINED",turn_epoch:2,state_revision:20,
+   active_instance_id:"p2-mon-slot-2"});
  obs.facts[key]=known({...value,turn_epoch:2,state_revision:20},id);
  return obs;
 }
@@ -451,7 +453,8 @@ function withField(obs){
  bindCurrentFrame(obs);
  obs.facts.weather=known("raindance");
  obs.facts.terrain=known("electricterrain");
- obs.facts.hazards=known(["stealthrock"]);
+ obs.facts.hazards=known({side:"p2",effects:["stealthrock"],
+   turn_epoch:4,state_revision:42});
  obs.facts.effect_remaining_turns=known({weather:3,terrain:2});
  return obs;
 }
@@ -520,6 +523,7 @@ test("stale and contradictory four-mechanism histories fail closed",()=>{
   obs=>{obs.facts.opponent_removed_item.value.turn_epoch=5;},
   obs=>{obs.facts.opponent_removed_item.value.item_id="sitrusberry";},
   obs=>{obs.evidence.find(e=>e.id==="observed-past").match_id="another-match";},
+  obs=>{obs.evidence.find(e=>e.id==="observed-past").active_instance_id="another-mon";},
   obs=>{obs.facts.opponent_consumed_item=known("sitrusberry");},
   obs=>{obs.facts.opponent_item=known("choicescarf");},
   obs=>{obs.facts.choice_lock=known({
