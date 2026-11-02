@@ -161,7 +161,7 @@ class Phase2TurnTests(unittest.TestCase):
                          "INVALID_OR_DUPLICATE_SCENARIO")
         self.assertEqual(self.score(s, (a, replace(b,result=replace(
             b.result, branch_request_id=a.result.branch_request_id)))).reason,
-            "STALE_OR_UNBOUND_BRANCH")
+            "MISSING_OR_UNBOUND_SUBMISSION")
         corrupt = make_branch(s, CLAW, "attack", corrupt=True)
         self.assertEqual(self.score(s, (a,corrupt)).reason,
                          "STALE_OR_UNBOUND_BRANCH")
