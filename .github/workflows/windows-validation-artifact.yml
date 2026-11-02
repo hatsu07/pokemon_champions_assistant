@@ -44,6 +44,14 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: python -m pip install --upgrade pip pyinstaller pyyaml .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+      - name: Run isolated Phase 1 Node worker protocol tests on native Windows
+        shell: pwsh
+        run: |
+          node --test local_simulator/test_worker.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Phase 1 native Windows Node protocol test failed" }
       - name: Stage and verify pinned PP-OCRv6 small ONNX bundle
         shell: pwsh
         run: |
