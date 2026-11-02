@@ -12,7 +12,8 @@ function fakeBattle(){
     const reqState=data.requestState;
     const pokemon=data.hp.map((hp,i)=>({
       hp,maxhp:data.maxhp?.[i] ?? 100,
-      fainted:hp===0,switchFlag:i===0&&reqState==="switch"
+      fainted:hp===0,switchFlag:i===0&&reqState==="switch",
+      canMegaEvo:i===0&&data.movePatch?.canMegaEvo===true?"Garchomp-Mega":null
     }));
     const active=pokemon[0];
     const request={
@@ -39,14 +40,26 @@ function fakeBattle(){
       pokemon,active:[active],
       choice:{cantUndo:false,actions:[],forcedSwitchesLeft:reqState==="switch"?1:0,error:""},
       choose(command){
+        const mega=command.endsWith(" mega");
+        const ordinary=mega?command.slice(0,-5):command;
         const legal=reqState==="switch"?
           data.hp.map((hp,i)=>hp>0&&i!==0?"switch "+(i+1):"").filter(Boolean):
           ["move 1","move 3",...(!data.trapped&&data.hp[1]>0?["switch 2"]:[])];
-        if(!legal.includes(command)||command===data.reject){
+        if(!legal.includes(ordinary)||(mega&&request.active?.[0]?.canMegaEvo!==true)||
+            command===data.reject){
           this.choice.error="invalid";return false;
         }
-        this.choice.actions=[{choice:command.startsWith("move ")?"move":
-          reqState==="switch"?"instaswitch":"switch"}];return true;
+        const move=/^move ([1-4])$/.exec(ordinary);
+        const sw=/^switch ([1-3])$/.exec(ordinary);
+        const action=move?{
+          choice:"move",moveSlot:Number(move[1])-1,
+          moveid:request.active[0].moves[Number(move[1])-1].id,mega
+        }:{
+          choice:reqState==="switch"?"instaswitch":"switch",
+          target:{position:Number(sw[1])-1}
+        };
+        if(data.actionPatch)Object.assign(action,data.actionPatch);
+        this.choice.actions=[action];return true;
       },
       isChoiceDone(){return this.choice.actions.length===1;}
     };
@@ -73,7 +86,7 @@ test("fainted active forced switch is checked but cannot attack",()=>{
 });
 test("unknown or form operations are not incorrectly certified exhaustive",()=>{
   for(const movePatch of [
-    {canMegaEvo:true},{maybeLocked:true},{maybeTrapped:true},
+    {maybeLocked:true},{maybeTrapped:true},
     {canTerastallize:"Flying"},{maxMoves:{maxMoves:[]}},
     {moves:[{id:"custom",pp:0,disabled:false}]},
   ]){
@@ -163,4 +176,46 @@ test("real-style noCancel only allowed for single forced replacement",()=>{
 test("stale/untrusted engine missing Battle.fromJSON is NO_CHOICES",()=>{
   assert.equal(enumerateEngineP2({},base()).status,"NO_CHOICES");
   assert.equal(enumerateEngineP2({fromJSON(){throw Error("bad")}},base()).status,"NO_CHOICES");
+});
+
+test("single Mega adds distinct checked normal and mega choices",()=>{
+  const b=base();b.movePatch={canMegaEvo:true};
+  const result=enumerateEngineP2(fakeBattle(),b);
+  assert.equal(result.status,"ENGINE_CHECKED_SIMPLE_CHOICES",result.reason);
+  assert.deepEqual(result.commands,[
+    "move 1","move 1 mega","move 3","move 3 mega","switch 2"
+  ]);
+  assert.equal(result.scope,"PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY");
+  assert.equal(result.exhaustive_legal_choices_verified,false);
+});
+test("fake Mega and unrelated action flags must fail closed",()=>{
+  for(const patch of [
+    {canMegaEvo:"true"},{canMegaEvo:1},
+    {canMegaEvoX:true},{canMegaEvoY:true},{canUltraBurst:true},
+    {canZMove:[{}]},{canTerastallize:"Flying"},
+  ]){
+    const b=base();b.movePatch=patch;
+    assert.equal(enumerateEngineP2(fakeBattle(),b).status,"NO_CHOICES");
+  }
+  const forged=base();forged.requestPatch={active:[{
+    moves:[{id:"extremespeed",pp:5,disabled:false}],canMegaEvo:true
+  }]};
+  assert.equal(enumerateEngineP2(fakeBattle(),forged).status,"NO_CHOICES");
+});
+test("engine acceptance alone cannot mask a different move or lost Mega flag",()=>{
+  for(const actionPatch of [
+    {moveSlot:2},{moveid:"dragonclaw"},{mega:true},
+    {zmove:true},{maxMove:"maxquake"}
+  ]){
+    const b=base();b.actionPatch=actionPatch;
+    const result=enumerateEngineP2(fakeBattle(),b);
+    assert.equal(result.status,"NO_CHOICES",JSON.stringify(actionPatch));
+    assert.equal(result.reason,"ENGINE_P2_ACTION_MISMATCH");
+  }
+  const b=base();b.movePatch={canMegaEvo:true};
+  b.actionPatch={mega:false};
+  assert.equal(enumerateEngineP2(fakeBattle(),b).status,"NO_CHOICES");
+  const sw=base();sw.requestState="switch";sw.hp=[0,70,0];
+  sw.actionPatch={target:{position:2}};
+  assert.equal(enumerateEngineP2(fakeBattle(),sw).reason,"ENGINE_P2_ACTION_MISMATCH");
 });

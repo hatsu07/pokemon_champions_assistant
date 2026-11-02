@@ -20,7 +20,7 @@ const {Battle} = require(entry);
 assert.equal(typeof Battle, "function", "Use real Battle class, not a mock");
 assert.equal(typeof Battle.fromJSON, "function");
 
-function fixture() {
+function fixture({p2Mega=false}={}) {
   // Synthetic 3v3 teams. Their identity/sets are intentionally fully known;
   // never use these as Pokémon Champions usage-rate or ladder evidence.
   const p1=[
@@ -39,6 +39,13 @@ function fixture() {
     {name:"P2 Kingambit",species:"Kingambit",ability:"Defiant",item:"Black Glasses",
      moves:["kowtowcleave","suckerpunch","protect","swordsdance"],nature:"Adamant",level:50},
   ];
+  if(p2Mega){
+    // Source-backed pinned-Showdown fixture only. Garchompite exists in its
+    // item data and Champions mod returns the item-defined Mega form.
+    p2[0]={name:"P2 Garchomp",species:"Garchomp",ability:"Rough Skin",
+      item:"Garchompite",moves:["dragonclaw","earthquake","protect","swordsdance"],
+      nature:"Jolly",level:50};
+  }
   const b=new Battle({
     formatid:"gen9championsbssregmc",
     seed:[123,456,789,321],
@@ -138,4 +145,34 @@ test("real pinned engine: no runtime or wrong format yields NO_CHOICES",()=>{
   const b=fixture();
   const invalid={...b.toJSON(),requestState:"teampreview"};
   assert.equal(enumerateEngineP2(Battle,invalid).status,"NO_CHOICES");
+});
+
+test("real pinned engine: single Mega produces distinct exact cloned choices",()=>{
+  const original=fixture({p2Mega:true});
+  const raw=original.toJSON();
+  const request=original.p2.activeRequest;
+  assert.equal(request.active[0].canMegaEvo,true,
+    "Pinned Champions Showdown must issue a real Mega request");
+  assert.ok(original.p2.active[0].canMegaEvo);
+  const before=fingerprint(raw);
+  const result=enumerateEngineP2(Battle,raw);
+  assert.equal(result.status,"ENGINE_CHECKED_SIMPLE_CHOICES",result.reason);
+  assert.equal(result.scope,"PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY");
+  assert.equal(result.exhaustive_legal_choices_verified,false);
+  assert.ok(result.commands.includes("move 1"));
+  assert.ok(result.commands.includes("move 1 mega"));
+  assert.ok(result.commands.includes("switch 2"));
+  assert.equal(result.commands.filter(c=>c.endsWith(" mega")).length,4);
+  for(const cmd of result.commands){
+    const clone=Battle.fromJSON(raw);
+    assert.equal(clone.p2.choose(cmd),true,cmd);
+    const action=clone.p2.choice.actions[0];
+    if(cmd.endsWith(" mega")){
+      assert.equal(action.mega,true,cmd);
+      assert.equal(action.moveid,request.active[0].moves[Number(cmd.split(" ")[1])-1].id);
+    }else if(cmd.startsWith("move ")){
+      assert.equal(!!action.mega,false,cmd);
+    }
+  }
+  assert.equal(fingerprint(raw),before,"Source Battle/RNG must remain unchanged");
 });

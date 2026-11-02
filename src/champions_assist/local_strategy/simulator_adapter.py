@@ -25,7 +25,10 @@ from .models import (
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 
 _MAX_BYTES = 1024 * 1024
-_P2_COMMAND = re.compile(r"(?:move [1-4]|switch [1-3])\Z")
+_P2_COMMAND = re.compile(r"(?:move [1-4](?: mega)?|switch [1-3])\Z")
+_P2_NORMAL_MOVE = re.compile(r"move [1-4]\Z")
+_P2_SCOPE_SIMPLE = "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"
+_P2_SCOPE_MEGA = "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY"
 
 @dataclass(frozen=True)
 class EngineP2CandidateSet:
@@ -384,11 +387,23 @@ class LocalSimulatorWorker:
         commands = body.get("commands")
         token = body.get("request_sha256")
         battle_sha = body.get("battle_sha256")
+        scope = body.get("scope")
+        # A Mega scope must carry both a regular and a Mega variant for
+        # *every* advertised move. Never allow a worker to relabel a normal
+        # response, omit the regular move, or forge additional Mega options.
+        if isinstance(commands, list) and all(isinstance(c, str) for c in commands):
+            ordinary_moves = {c for c in commands if _P2_NORMAL_MOVE.fullmatch(c)}
+            mega_moves = {c[:-5] for c in commands if c.endswith(" mega")}
+        else:
+            ordinary_moves, mega_moves = set(), set()
         if (body.get("source") != "FULL_REPLAY_SYNTHETIC"
                 or body.get("hypothesis_id") != hypothesis_id
                 or body.get("branch_input_sha256") != payload["branch_input_sha256"]
                 or body.get("status") != "ENGINE_CHECKED_SIMPLE_CHOICES"
-                or body.get("scope") != "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"
+                or scope not in (_P2_SCOPE_SIMPLE, _P2_SCOPE_MEGA)
+                or (scope == _P2_SCOPE_MEGA and
+                    (not mega_moves or mega_moves != ordinary_moves))
+                or (scope == _P2_SCOPE_SIMPLE and bool(mega_moves))
                 or body.get("exhaustive_legal_choices_verified") is not False
                 or not isinstance(commands, list) or not 1 <= len(commands) <= 24
                 or any(not isinstance(choice, str) or not _P2_COMMAND.fullmatch(choice)
@@ -400,7 +415,7 @@ class LocalSimulatorWorker:
         return EngineP2CandidateSet(
             "ENGINE_CHECKED_SIMPLE_CHOICES", str(body.get("reason") or ""),
             tuple(commands), battle_sha, token,
-            "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY",
+            scope,
             False,
         )
 

@@ -17,6 +17,18 @@ A synthetic simulation may return PARTIAL, **never CONFIRMED**.
   branch payload (hypothesis, candidate action and both Showdown choices) and
   action ID. Node checks the payload SHA and echoes these fields; Python
   rejects stale, swapped, duplicated, malformed, late or dead-worker replies.
+- `ENUMERATE_P2` uses the same complete synthetic Battle and an
+  engine-issued `p2.activeRequest`. The fixed Showdown engine may return
+  both `move N` and `move N mega` for ordinary single Mega requests,
+  each tested on its own detached Battle/RNG clone. The Python
+  `enumerate_p2_from_replay` receiver explicitly admits two scopes:
+  `PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY` (no Mega) and
+  `PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY` (normal/Mega move pairs).
+  It requires the command-to-scope grammar, same branch nonce and hashes,
+  known hypothesis, and `exhaustive_legal_choices_verified=false`.
+  Unknown modifiers and inconsistent pairs fail closed. This is an opt-in
+  synthetic-replay API, **not** a live-game recommendation or completeness
+  guarantee; see `docs/ISSUE_141_SINGLE_MEGA_REQUEST_SLICE.md`.
 - As of the latest review, `assets` must be the actual match-preloaded
   `FrozenMatchAssets`. All four on-disk preload SHA hashes must match
   the frozen window and in-memory source bytes; the six registered members
@@ -61,5 +73,6 @@ product engineering task, not blocked by full game-parity proof**.
 This branch intentionally does not ship a new unverified runtime
 or add a silent developer Node dependency to production packaging.
 
-Tests: `node --test local_simulator/test_worker.cjs` and
-`python -m unittest tests.test_issue_140_foundation -v`.
+Tests: `node --test local_simulator/test_worker.cjs local_simulator/test_p2_engine_choices.cjs`,
+`python -m unittest tests.test_issue_140_foundation tests.test_issue_141_engine_p2_transport -v`,
+and (with a built, exact-SHA upstream simulator) `node --test local_simulator/test_real_pinned_showdown.cjs`.

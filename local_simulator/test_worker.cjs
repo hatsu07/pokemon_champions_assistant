@@ -75,7 +75,9 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       "active:[{moves:[{id:'tackle',pp:10,disabled:false}],trapped:false}]};"+
       "const p2={id:'p2',pokemon:opp,active:[opp[0]],activeRequest:r,requestState:'move',"+
       "choice:{cantUndo:false,actions:[],error:''},choose(x){if(x!=='move 1'&&x!=='switch 2')return false;"+
-      "this.choice.actions=[{choice:x[0]==='m'?'move':'switch'}];return true},"+
+      "this.choice.actions=[x[0]==='m'?"+
+      "{choice:'move',moveSlot:0,moveid:'tackle',mega:false}:"+
+      "{choice:'switch',target:{position:1}}];return true},"+
       "isChoiceDone(){return this.choice.actions.length===1}};"+
       "return {format:{mod:'champions'},gameType:'singles',activePerHalf:1,"+
       "requestState:'move',turn:1,field:{weather:''},sides:[p1,p2],"+
