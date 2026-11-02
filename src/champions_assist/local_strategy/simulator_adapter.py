@@ -25,8 +25,8 @@ from .models import (
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 
 _MAX_BYTES = 1024 * 1024
-_P2_COMMAND = re.compile(r"(?:move [1-4](?: mega)?|switch [1-3])\\Z")
-_P2_NORMAL_MOVE = re.compile(r"move [1-4]\\Z")
+_P2_COMMAND = re.compile(r"(?:move [1-4](?: mega)?|switch [1-3])\Z")
+_P2_NORMAL_MOVE = re.compile(r"move [1-4]\Z")
 _P2_SCOPE_SIMPLE = "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"
 _P2_SCOPE_MEGA = "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY"
 
