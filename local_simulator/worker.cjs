@@ -112,6 +112,34 @@ function summary(b) {
     })))
   };
 }
+function matchesP1BattleRoster(b, expected, activeName) {
+  // Check the exact simulator instances *after* Battle.fromJSON, before
+  // makeChoices. A Python-side slot number is not evidence of Battle order.
+  if (!Array.isArray(expected) || expected.length !== 3 ||
+      !expected.every(x=>x && typeof x.name==="string" && x.name &&
+        typeof x.species_id==="string" && x.species_id &&
+        Array.isArray(x.moves) && x.moves.length>0 &&
+        x.moves.every(m=>typeof m==="string" && !!m)) ||
+      !b || !Array.isArray(b.sides) || !b.sides[0] ||
+      !Array.isArray(b.sides[0].pokemon) ||
+      b.sides[0].pokemon.length !== expected.length) return false;
+  const side=b.sides[0];
+  for (let i=0; i<expected.length; i++) {
+    const p=side.pokemon[i], e=expected[i];
+    if (!p || !p.species || p.species.id !== e.species_id ||
+        !Array.isArray(p.moveSlots) ||
+        p.moveSlots.length !== e.moves.length ||
+        !p.moveSlots.every((m,j)=>m && m.id===e.moves[j])) return false;
+  }
+  if (typeof activeName!=="string") return false;
+  if (activeName) {
+    const ix=expected.findIndex(x=>x.name===activeName);
+    if (ix<0 || !Array.isArray(side.active) || !side.active[0] ||
+        side.active[0]!==side.pokemon[ix]) return false;
+  }
+  return true;
+}
+
 function handle(req) {
   if (!req || typeof req !== "object" || req.protocol !== VERSION ||
       typeof req.request_id !== "string" || typeof req.op !== "string" ||
@@ -140,6 +168,8 @@ function handle(req) {
       typeof data.hypothesis_id !== "string" ||
       typeof data.candidate_action_id !== "string" ||
       !/^[a-f0-9]{64}$/.test(data.candidate_action_id) ||
+      !Array.isArray(data.expected_p1_roster) ||
+      typeof data.expected_p1_active !== "string" ||
       typeof data.branch_input_sha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(data.branch_input_sha256) ||
       data.branch_input_sha256 !== fingerprint(Object.fromEntries(
@@ -161,6 +191,10 @@ function handle(req) {
     }
     if (!["move", "switch", "teampreview"].includes(b.requestState)) {
       reply(req, "UNSUPPORTED", "UNKNOWN_DECISION_WINDOW");
+      return;
+    }
+    if (!matchesP1BattleRoster(b,data.expected_p1_roster,data.expected_p1_active)) {
+      reply(req, "UNSUPPORTED", "P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
       return;
     }
     b.makeChoices(data.p1_choice, data.p2_choice);
