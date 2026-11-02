@@ -88,6 +88,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     fs.writeFileSync(path.join(root,"package.json"),"{}");
     fs.writeFileSync(path.join(root,"LICENSE"),"test-only");
     fs.copyFileSync(path.join(__dirname,"p2_engine_choices.cjs"), path.join(tmp,"p2_engine_choices.cjs"));
+    fs.copyFileSync(path.join(__dirname,"pinned_replay_readout.cjs"), path.join(tmp,"pinned_replay_readout.cjs"));
     const engineFileSha={
       "dist/sim/index.js":sha(path.join(root,"dist","sim","index.js")),
       "dist/sim/helper.js":sha(path.join(root,"dist","sim","helper.js")),
@@ -103,6 +104,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       engine_file_sha256:engineFileSha,
       worker_sha256:sha(workerPath),
       p2_engine_choices_sha256:sha(path.join(tmp,"p2_engine_choices.cjs")),
+      pinned_replay_readout_sha256:sha(path.join(tmp,"pinned_replay_readout.cjs")),
       node_exe_sha256:sha(process.execPath),
       node_license_sha256:sha(path.join(tmp,"NODE_LICENSE.txt")),
       third_party_notices_sha256:sha(path.join(tmp,"THIRD_PARTY_NOTICES.txt"))};
@@ -145,6 +147,10 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     p2Payload.branch_input_sha256=hash(p2Payload);
     const p2Request={...req,op:"ENUMERATE_P2",branch_request_id:"1".repeat(32),
       payload:p2Payload};
+    const readoutRequest={...req,op:"READOUT_REPLAY",branch_request_id:"2".repeat(32),
+      payload:p2Payload};
+    const partialRequest={...readoutRequest,branch_request_id:"3".repeat(32),
+      payload:{...p2Payload,source:"PARTIAL_OBSERVED"}};
     // The nonce and branch hash are valid for the wrong roster/moves,
     // so only semantic inspection after Battle.fromJSON can reject these.
     // Mutated choice is NOT covered by the submitted SHA.
@@ -160,9 +166,16 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
         if(code!==0)return reject(new Error("worker exited "+code+" "+errors));
         try{resolve(data.trim().split("\n").map(JSON.parse))}catch(e){reject(e)}
       });
-      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive,p2Request].map(JSON.stringify).join("\n")+"\n");
+      child.stdin.end([req,wrong,mismatchedParty,mismatchedMoves,mismatchedActive,p2Request,readoutRequest,partialRequest].map(JSON.stringify).join("\n")+"\n");
     });
-    assert.equal(output.length,6);
+    assert.equal(output.length,8);
+    // Old mock lacks complete 3v3 p2 state and engine boosts. It must
+    // never be silently promoted into a successful complete readout.
+    assert.equal(output[6].op,"READOUT_REPLAY");
+    assert.equal(output[6].ok,false);
+    assert.equal(output[6].capability_status,"UNSUPPORTED");
+    assert.equal(output[7].ok,false);
+    assert.equal(output[7].reason,"INCOMPLETE_OR_REAL_OBSERVATION");
     assert.equal(output[5].op,"ENUMERATE_P2");
     assert.equal(output[5].capability_status,"PARTIAL");
     assert.equal(output[5].ok,true);
