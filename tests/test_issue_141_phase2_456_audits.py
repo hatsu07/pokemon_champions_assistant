@@ -1,0 +1,248 @@
+"""Phase 2④/⑤/⑥ offline contract tests — synthetic, NOT game validity."""
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import sqlite3
+import unittest
+from unittest.mock import patch
+
+from champions_assist.local_strategy.prep18_audit import stage_prep18
+from champions_assist.local_strategy.shadow_comparison_store import (
+    BoundGPTAdvice, append_shadow_comparison, build_shadow_comparison,
+    read_shadow_comparisons,
+)
+from champions_assist.local_strategy.shadow_quality_gate import (
+    GoldenExpectation, audit_shadow_quality,
+)
+from champions_assist.local_strategy.observed_full_grid_diagnostic import (
+    ObservedFullGridDiagnostic,
+)
+from champions_assist.prep import PrepMatchup, PrepResult
+from champions_assist.preload import FrozenMatchAssets
+from champions_assist.local_strategy.models import fingerprint
+from tests.test_issue_140_foundation import frozen
+from tests.test_issue_141_selection import make_assets, OWN, OPP
+
+
+def assessment(*, switch_safe=False, ko_confirmed=False, missed=None):
+    selected=OWN[:3]
+    items=[]
+    for own in selected:
+        for op in OPP:
+            if own == selected[0]:
+                parts=(
+                    "ACT=move:mv", "KO=confirmed" if ko_confirmed else "KO=not_guaranteed",
+                    "DPS=mv", "PRI=none", "S=conditional",
+                    "OUR=mv", "OPP=unknown_opponent_hit",
+                    "SAFE=safe" if switch_safe else "SAFE=unsafe",
+                    "PROC=unverified", "LOCK=unknown", "MEGA=recheck")
+            else:
+                parts=("S=conditional", "OUR=mv", "OPP=unknown_opponent_hit",
+                       "PRI=unknown", "SAFE=unsafe", "PROC=unverified")
+            if missed == (own,op):
+                parts=parts[:-1]
+            items.append(PrepMatchup(own,op,"|".join(parts)))
+    return PrepResult("COMPLETE",tuple(items),
+                      preserve=selected[0],stopper=selected[1],
+                      closer=selected[2])
+
+
+def local_diag(s):
+    return ObservedFullGridDiagnostic(
+        "SYNTHETIC_TURN_DIAGNOSTIC_ONLY",
+        "UNVERIFIED_REAL_BATTLE_MAPPING_RNG_AND_OPPONENT_POLICY",
+        match_id=s.window.match_id,
+        decision_window_id=s.window.decision_window_id,
+        state_revision=s.window.state_revision,
+        observed_snapshot_sha256=s.snapshot_sha256,
+        evaluated_branch_count=8)
+
+
+def compared(s=None, *, local=True, elapsed=120, remaining=150,
+             gpt_status="GPT_ADVICE"):
+    snap=s or frozen()
+    gpt=BoundGPTAdvice(
+        snap.snapshot_sha256,gpt_status,
+        snap.verified_action_ids[0] if gpt_status=="GPT_ADVICE" else "",
+        "offline-synthetic-case",23)
+    return build_shadow_comparison(
+        snap,snap,gpt,local_diag(snap) if local else None,
+        local_elapsed_ms=elapsed,remaining_ms_at_capture=remaining,
+        recorded_at="2026-11-03T10:30:00+09:00")
+
+
+class Prep18AuditTests(unittest.TestCase):
+    def test_exact_six_matrix_fetch_and_eighteen_conditionals(self):
+        assets=make_assets()
+        with patch.object(FrozenMatchAssets,"matrix_rows_for",autospec=True,
+                          side_effect=lambda instance,names:tuple(
+                              instance.matrix_index[n] for n in names)) as rows:
+            out=stage_prep18(assets,OWN[:3],OWN[0],OPP)
+            rows.assert_called_once_with(assets,OPP)
+        self.assertEqual(out.status,"MATRIX_18_CONDITIONAL_ONLY")
+        self.assertEqual(len(out.lead_six),6)
+        self.assertEqual(len(out.bench_twelve),12)
+        self.assertEqual(
+            [(c.own,c.opponent) for c in out.lead_six],
+            [(OWN[0],x) for x in OPP])
+        self.assertEqual(len({(c.own,c.opponent)
+                              for c in out.lead_six+out.bench_twelve}),18)
+        self.assertEqual(out.assessed_pairs,0)
+        self.assertTrue(any(c.explicit_processor for c in out.lead_six))
+        self.assertTrue(all(c.safe_hard_switch=="UNVERIFIED"
+                            and c.immediate_ko=="UNKNOWN"
+                            and c.opponent_max_hit=="UNKNOWN"
+                            for c in out.lead_six+out.bench_twelve))
+        self.assertFalse(out.tactics_verified)
+        self.assertEqual(out.ranking_status,"NO_RANKING")
+
+    def test_external_all_eighteen_actually_assessed_only_structural_pass(self):
+        out=stage_prep18(make_assets(),OWN[:3],OWN[0],OPP,
+                         reviewed_assessment=assessment())
+        self.assertEqual(out.status,"ASSESSED_18_CONDITIONAL_ONLY",out.reason)
+        self.assertEqual(out.assessed_pairs,18)
+        self.assertEqual((out.preserve,out.stopper,out.closer),OWN[:3])
+        self.assertEqual(sum(bool(x.reviewed_eval_code)
+                             for x in out.lead_six+out.bench_twelve),18)
+        self.assertEqual(out.safe_switches_certified,0)
+        self.assertEqual(out.damage_claims_certified,0)
+        self.assertFalse(out.tactics_verified)
+
+    def test_missing_pair_invalid_action_wrong_roles_and_unsupported_claims(self):
+        for assess in (
+            replace(assessment(),matchups_18=assessment().matchups_18[:-1]),
+            replace(assessment(),stopper="NOT_SELECTED"),
+            assessment(switch_safe=True),
+            assessment(ko_confirmed=True),
+            assessment(missed=(OWN[1],OPP[0])),
+        ):
+            with self.subTest(assess=assess):
+                out=stage_prep18(make_assets(),OWN[:3],OWN[0],OPP,
+                                 reviewed_assessment=assess)
+                self.assertEqual(out.status,"NO_PREP18")
+                self.assertEqual(out.assessed_pairs,0)
+        self.assertEqual(stage_prep18(
+            make_assets(provisional=True),OWN[:3],OWN[0],OPP).status,
+            "NO_PREP18")
+        self.assertEqual(stage_prep18(
+            make_assets(),OWN[:3],OWN[0],OPP[:-1]+("NOT_FOUND",)).status,
+            "NO_PREP18")
+
+
+class ShadowSameRevisionStoreTests(unittest.TestCase):
+    def test_atomic_sqlite_capture_idempotence_and_no_overwrite(self):
+        snap=frozen()
+        record=compared(snap)
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"shadow.sqlite"
+            self.assertEqual(append_shadow_comparison(db,record),"RECORDED")
+            self.assertEqual(append_shadow_comparison(db,record),"ALREADY_RECORDED")
+            rows=read_shadow_comparisons(db)
+            self.assertEqual(rows,(record,))
+            self.assertEqual(rows[0].local_status,"MODEL_DIAGNOSTIC")
+            self.assertEqual(rows[0].same_action_comparison,
+                             "NO_VERIFIED_LOCAL_ACTION")
+            self.assertEqual(rows[0].hypothetical_branch_count,8)
+            self.assertFalse(any(
+                getattr(rows[0],field,None) for field in ("raw_ocr","image","token")))
+            with self.assertRaisesRegex(ValueError,"CONFLICTING_SAME_WINDOW_RECORD"):
+                append_shadow_comparison(db,replace(record,local_elapsed_ms=999))
+            self.assertEqual(read_shadow_comparisons(db),(record,))
+
+    def test_stale_gpt_and_local_window_rejected_before_db(self):
+        snap=frozen()
+        changed=frozen(decision_window_id="new-window")
+        advice=BoundGPTAdvice(snap.snapshot_sha256,"GPT_ADVICE",
+                              snap.verified_action_ids[0])
+        with self.assertRaisesRegex(ValueError,"STALE_OR_UNBOUND"):
+            build_shadow_comparison(snap,changed,advice,local_diag(snap),
+                                   local_elapsed_ms=3,remaining_ms_at_capture=100)
+        with self.assertRaisesRegex(ValueError,"GPT_OR_TIMING_UNBOUND"):
+            build_shadow_comparison(snap,snap,replace(advice,snapshot_sha256="0"*64),
+                                   local_diag(snap),
+                                   local_elapsed_ms=3,remaining_ms_at_capture=100)
+        with self.assertRaisesRegex(ValueError,"LOCAL_DIAGNOSTIC"):
+            build_shadow_comparison(snap,snap,advice,
+                                   replace(local_diag(snap),ready_for_engine=True),
+                                   local_elapsed_ms=3,remaining_ms_at_capture=100)
+        with self.assertRaisesRegex(ValueError,"LOCAL_DIAGNOSTIC"):
+            build_shadow_comparison(snap,snap,advice,
+                                   replace(local_diag(snap),observed_snapshot_sha256="0"*64),
+                                   local_elapsed_ms=3,remaining_ms_at_capture=100)
+
+    def test_never_certify_unverified_gpt_move_or_local_pseudo_advice(self):
+        s=frozen()
+        gpt=BoundGPTAdvice(s.snapshot_sha256,"GPT_ADVICE","unregistered",elapsed_ms=13)
+        row=build_shadow_comparison(s,s,gpt,None,local_elapsed_ms=12,
+                                    remaining_ms_at_capture=0,
+                                    recorded_at="2026-11-03T10:30:00+09:00")
+        self.assertFalse(row.gpt_action_verified_in_window)
+        self.assertFalse(row.input_deadline_met)
+        self.assertEqual(row.local_status,"NO_RANKING")
+        with self.assertRaisesRegex(ValueError,"ABSTAINED_GPT_HAS_ACTION"):
+            build_shadow_comparison(s,s,replace(gpt,status="GPT_ABSTAIN"),
+                                    None,local_elapsed_ms=1,
+                                    remaining_ms_at_capture=3)
+
+
+class ShadowQualityGateTests(unittest.TestCase):
+    kinds=("immediate_ko","choice_lock_pp","mega_form","priority_speed",
+           "processor_vs_safe_switch","setup","endgame_1v1","stale_revision")
+
+    def cases(self, *, diagnostic=True):
+        rows=[]
+        oracles=[]
+        for i,kind in enumerate(self.kinds):
+            s=frozen(state_revision=i+1,decision_window_id="golden-"+str(i))
+            row=compared(s,local=diagnostic,elapsed=10+i*10,
+                         remaining=5 if i%2==0 else 0)
+            rows.append(row)
+            oracles.append(GoldenExpectation(
+                "synthetic-"+kind,kind,row.match_id,row.decision_window_id,
+                row.state_revision,row.snapshot_sha256,row.local_status))
+        return tuple(rows),tuple(oracles)
+
+    def test_eight_synthetic_goldens_are_not_live_quality_acceptance(self):
+        rows,oracles=self.cases()
+        result=audit_shadow_quality(rows,oracles)
+        self.assertEqual(result.status,"SYNTHETIC_DIAGNOSTICS_AUDITED")
+        self.assertEqual(result.sample_count,8)
+        self.assertEqual(len(result.golden_covered),8)
+        self.assertEqual(result.model_diagnostic_count,8)
+        self.assertEqual(result.actionable_count,0)
+        self.assertEqual(result.actionable_applicability_rate,0.0)
+        self.assertEqual(result.model_diagnostic_coverage_rate,1.0)
+        self.assertEqual(result.deadline_met_rate,0.5)
+        self.assertEqual((result.p50_ms,result.p95_ms,result.p99_ms),(40,80,80))
+        self.assertEqual(result.game_safety_result,"UNVERIFIED")
+        self.assertEqual(result.real_game_latency_result,"UNVERIFIED")
+        self.assertFalse(result.pass_phase2_quality_gate)
+
+    def test_all_abstention_is_never_successful_actionability(self):
+        rows,oracles=self.cases(diagnostic=False)
+        result=audit_shadow_quality(rows,oracles)
+        self.assertEqual(result.status,"SYNTHETIC_DIAGNOSTICS_AUDITED")
+        self.assertEqual(result.abstention_rate,1.0)
+        self.assertEqual(result.actionable_applicability_rate,0.0)
+        self.assertEqual(result.actionable_count,0)
+        self.assertFalse(result.pass_phase2_quality_gate)
+
+    def test_missing_wrong_shas_duplicate_revisions_and_mismatched_goldens(self):
+        rows,oracles=self.cases()
+        r=audit_shadow_quality(rows,oracles[:-1])
+        self.assertEqual(r.status,"INCOMPLETE_GOLDEN_COVERAGE")
+        self.assertIn("stale_revision",r.missing_goldens)
+        wrong=replace(oracles[0],snapshot_sha256="0"*64)
+        r=audit_shadow_quality(rows,(wrong,*oracles[1:]))
+        self.assertEqual(r.status,"GOLDEN_MISMATCH")
+        self.assertTrue(r.golden_mismatches)
+        self.assertFalse(r.pass_phase2_quality_gate)
+        r=audit_shadow_quality((*rows,rows[0]),oracles)
+        self.assertEqual(r.status,"INVALID_EVIDENCE")
+        self.assertEqual(audit_shadow_quality((),()).status,"INVALID_EVIDENCE")
+
+
+if __name__=="__main__":
+    unittest.main()
