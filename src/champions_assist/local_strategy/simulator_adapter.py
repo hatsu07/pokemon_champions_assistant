@@ -12,6 +12,7 @@ import queue
 import subprocess
 import threading
 import time
+from uuid import uuid4
 from typing import Any, Mapping
 
 from .models import (
@@ -130,7 +131,12 @@ class LocalSimulatorWorker:
                         or resp.get("request_id") != request.get("request_id")
                         or resp.get("identity") != request.get("identity")
                         or resp.get("protocol") != PROTOCOL_VERSION
-                        or resp.get("op") != request.get("op")):
+                        or resp.get("op") != request.get("op")
+                        or (request.get("op") == "SIMULATE" and (
+                            resp.get("branch_request_id") != request.get("branch_request_id")
+                            or resp.get("hypothesis_id") != request["payload"]["hypothesis_id"]
+                            or resp.get("branch_input_sha256") != request["payload"]["branch_input_sha256"]
+                            or resp.get("candidate_action_id") != request["payload"]["candidate_action_id"]))):
                     mismatches += 1
                     if mismatches > 32:
                         self._failed = True
@@ -140,23 +146,35 @@ class LocalSimulatorWorker:
 
     def simulate(self, snapshot: FrozenBattleState, battle_json: Mapping[str, Any],
                  own_choice: str, opponent_choice: str,
-                 *, hypothesis_id: str = "") -> SimulationResult:
+                 *, hypothesis_id: str = "",
+                 candidate_action_id: str = "") -> SimulationResult:
         """Only FULL_REPLAY_SYNTHETIC states. Always PARTIAL or UNSUPPORTED.
 
         No request or result is written to the evidence ledger.  Unknown
         real-game intermediate states cannot be reconstructed here.
         """
         window = snapshot.window
+        # Never silently bind a branch to a nonexistent hypothesis or a
+        # Showdown choice that has no explicit local action identity.
+        if not candidate_action_id or candidate_action_id not in snapshot.verified_action_ids:
+            raise WorkerUnavailable("branch candidate is not an allowed action")
+        hypothesis_ids = {h.hypothesis_id for h in snapshot.hypotheses}
+        if (hypothesis_id not in hypothesis_ids if hypothesis_ids else bool(hypothesis_id)):
+            raise WorkerUnavailable("branch hypothesis is not registered")
         if window.simulator_sha != self._sha:
             raise WorkerUnavailable("engine SHA changed within match")
         payload = {"source": "FULL_REPLAY_SYNTHETIC",
                    "battle": dict(battle_json), "p1_choice": own_choice,
                    "p2_choice": opponent_choice,
-                   "hypothesis_id": hypothesis_id}
+                   "hypothesis_id": hypothesis_id,
+                   "candidate_action_id": candidate_action_id}
         snap_sha = snapshot.snapshot_sha256
         payload["branch_input_sha256"] = fingerprint(payload)
+        # Never reuse a branch token, even for identical replay inputs.
+        branch_request_id = uuid4().hex
         request = {"protocol": PROTOCOL_VERSION, "op": "SIMULATE",
-                   "request_id": window.request_id, "identity": window.identity(),
+                   "request_id": window.request_id, "branch_request_id": branch_request_id,
+                   "identity": window.identity(),
                    "snapshot_sha256": snap_sha, "payload": payload}
         reply = self._exchange(request, window.deadline_monotonic)
         try:
@@ -168,9 +186,12 @@ class LocalSimulatorWorker:
         if status == CapabilityStatus.CONFIRMED:
             status = CapabilityStatus.UNKNOWN
         return SimulationResult.from_worker(
-            window.request_id, window.identity(), snap_sha, hypothesis_id,
-            status, reply.get("payload") or {},
-            str(reply.get("reason") or ""))
+            reply["request_id"], reply["identity"], reply["snapshot_sha256"],
+            reply["hypothesis_id"], status, reply.get("payload") or {},
+            str(reply.get("reason") or ""),
+            branch_request_id=reply["branch_request_id"],
+            branch_input_sha256=reply["branch_input_sha256"],
+            candidate_action_id=reply["candidate_action_id"])
 
     def close(self) -> None:
         self._failed = True
