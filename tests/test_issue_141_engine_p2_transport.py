@@ -40,6 +40,15 @@ REPLY = (
 )
 
 
+# Synthetic wire only: no claim of Mega legality in the actual game.
+MEGA_REPLY = (
+    REPLY.replace("'commands':['move 1','switch 2']",
+                  "'commands':['move 1','move 1 mega','switch 2']")
+    .replace("'scope':'PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY'",
+             "'scope':'PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY'")
+)
+
+
 class EngineP2WorkerTransportTests(unittest.TestCase):
     def test_valid_synthetic_echo_is_partial_and_nonexhaustive(self):
         tmp, worker=WorkerTests().make_fake_worker(REPLY)
@@ -55,6 +64,79 @@ class EngineP2WorkerTransportTests(unittest.TestCase):
             self.assertEqual(result.commands, ("move 1","switch 2"))
             self.assertEqual(result.request_sha256, "f"*64)
             self.assertFalse(result.exhaustive_legal_choices_verified)
+        finally:
+            worker.close()
+            tmp.cleanup()
+
+    def test_valid_mega_echo_preserves_scope_and_original_evidence(self):
+        tmp, worker=WorkerTests().make_fake_worker(MEGA_REPLY)
+        try:
+            worker.start()
+            s=frozen()
+            s=replace(s, window=replace(s.window,
+                deadline_monotonic=time.monotonic()+3))
+            result=worker.enumerate_p2_from_replay(
+                s, {"fixture":"complete-synthetic","rng":[1,2,3,4]},
+                assets=VERIFIED_ASSETS)
+            self.assertEqual(result.status, "ENGINE_CHECKED_SIMPLE_CHOICES")
+            self.assertEqual(result.commands,
+                ("move 1","move 1 mega","switch 2"))
+            self.assertEqual(result.scope,
+                "PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY")
+            self.assertEqual(result.request_sha256,"f"*64)
+            self.assertFalse(result.exhaustive_legal_choices_verified)
+        finally:
+            worker.close()
+            tmp.cleanup()
+
+    def test_mega_scope_and_command_grammar_cannot_be_forged(self):
+        for forged in (
+            # Neither scope can be applied to the other command grammar.
+            MEGA_REPLY.replace(
+                "'scope':'PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY'",
+                "'scope':'PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY'"),
+            REPLY.replace(
+                "'scope':'PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY'",
+                "'scope':'PINNED_SHOWDOWN_SINGLE_MEGA_SINGLES_ONLY'"),
+            MEGA_REPLY.replace("move 1 mega", "move 1 megax"),
+            MEGA_REPLY.replace("move 1 mega", "move 1 mega mega"),
+            MEGA_REPLY.replace("'move 1','move 1 mega','switch 2'",
+                               "'move 1 mega','switch 2'"),
+            MEGA_REPLY.replace("'move 1','move 1 mega','switch 2'",
+                               "'move 1','move 1 mega','move 2','switch 2'"),
+            MEGA_REPLY.replace("'move 1 mega','switch 2'",
+                               "'move 1 mega','move 1 mega','switch 2'"),
+            MEGA_REPLY.replace(
+                "'exhaustive_legal_choices_verified':False",
+                "'exhaustive_legal_choices_verified':True"),
+            MEGA_REPLY.replace("'battle_sha256':h(p['battle'])",
+                               "'battle_sha256':'0'*64"),
+        ):
+            tmp, worker=WorkerTests().make_fake_worker(forged)
+            try:
+                worker.start()
+                s=frozen()
+                s=replace(s, window=replace(s.window,
+                    deadline_monotonic=time.monotonic()+3))
+                with self.assertRaises(WorkerUnavailable):
+                    worker.enumerate_p2_from_replay(
+                        s, {"fixture":"complete-synthetic","rng":[1,2,3,4]},
+                        assets=VERIFIED_ASSETS)
+            finally:
+                worker.close()
+                tmp.cleanup()
+
+    def test_mega_requires_registered_opponent_hypothesis(self):
+        tmp, worker=WorkerTests().make_fake_worker(MEGA_REPLY)
+        try:
+            worker.start()
+            s=frozen()
+            s=replace(s, window=replace(s.window,
+                deadline_monotonic=time.monotonic()+3))
+            with self.assertRaises(WorkerUnavailable):
+                worker.enumerate_p2_from_replay(
+                    s, {"fixture":"complete-synthetic"},
+                    hypothesis_id="unregistered", assets=VERIFIED_ASSETS)
         finally:
             worker.close()
             tmp.cleanup()
@@ -80,7 +162,7 @@ class EngineP2WorkerTransportTests(unittest.TestCase):
     def test_unverified_command_and_false_exhaustiveness_both_block(self):
         for replacement in (
             REPLY.replace("'move 1','switch 2'",
-                          "'move 1 mega','switch 2'"),
+                          "'move 1 megax','switch 2'"),
             REPLY.replace(
                 "'exhaustive_legal_choices_verified':False",
                 "'exhaustive_legal_choices_verified':True"),
