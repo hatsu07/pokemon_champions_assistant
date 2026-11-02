@@ -48,7 +48,7 @@ jobs:
       - name: Python contract and failure tests
         run: python -m unittest tests.test_issue_140_foundation tests.test_issue_141_selection tests.test_issue_141_one_turn tests.test_issue_141_shadow_runner tests.test_issue_141_opponent_evidence_gate tests.test_issue_141_joint_set_intake tests.test_issue_141_opponent_request tests.test_verify_merge_ready -v
       - name: Node protocol tests (unbundled, no real Showdown)
-        run: node --test local_simulator/test_worker.cjs
+        run: node --test local_simulator/test_worker.cjs local_simulator/test_p2_engine_choices.cjs
       - name: Explicit limits
         run: |
           echo "CI covers isolated contracts only; no real-game compatibility." >> "$GITHUB_STEP_SUMMARY"
