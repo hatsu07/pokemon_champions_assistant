@@ -140,6 +140,9 @@ class OpponentActionFrontierTests(unittest.TestCase):
         # fabricated "0/maxhp" opponent faint (which production never emits).
         snapshot=_current()
         state=snapshot.state
+        state.setdefault("observed_hp", {})
+        state["battle_evidence"].setdefault(
+            "fainted", {"own": {}, "opponent": {}})
         state["battle_evidence"]["hp_by_pokemon"]["opponent"].clear()
         def apply(*reads):
             nonlocal state
@@ -209,6 +212,8 @@ class OpponentActionFrontierTests(unittest.TestCase):
                 details(state)
                 state["battle_evidence"]["hp_by_pokemon"]["opponent"]["カイリュー"]=raw
                 if flag is not None:
+                    state["battle_evidence"].setdefault(
+                        "fainted", {"own": {}, "opponent": {}})
                     state["battle_evidence"]["fainted"]["opponent"]["カイリュー"]=flag
             with self.subTest(raw=raw,flag=flag):
                 result=stage_observed_opponent_action_frontier(
