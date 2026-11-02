@@ -92,8 +92,6 @@ function condition(obs, ctx = context()) {
      originHash);
  if(!["",null].includes(f.opponent_status.value)&&known(obs,"opponent_status"))
    return deny("opponent status duration/history not reconstructable here",originHash);
- const plan=combined.inspect(obs,ctx);
- if(plan.error)return deny(plan.error,originHash);
  // A legacy scalar PP is not tied to any specific move or point in time.
  // Only an atomic move-scoped reading from the SAME current-frame evidence
  // as the move request, active opponent, HP and boosts can condition a Battle.
@@ -127,6 +125,10 @@ function condition(obs, ctx = context()) {
    if(ppReading.remaining_pp===0)
      return deny("zero PP continuation requires unmodeled move availability",originHash);
  }
+ // Bind atomic PP before checking other current-state fields so stale PP
+ // is never masked by a separate invalid synthetic hazard baseline.
+ const plan=combined.inspect(obs,ctx);
+ if(plan.error)return deny(plan.error,originHash);
  // A confirmed consumed item and a confirmed current empty item jointly
  // constrain a *hypothetical* source held item. This is not proof that the
  // Showdown item-use event, HP restoration, or lastItem history occurred.
