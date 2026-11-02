@@ -1,5 +1,11 @@
 # Issue #139 / Phase 0 — Pokémon Showdown Champions 技術PoC
 
+## PR #172マージ後：Gate A/Bの実ゲーム証拠の不足を直接判定
+
+[Gate A/B観測証拠のトリアージ](./GATE_A_B_EVIDENCE_TRIAGE.md)、`phase0_targeted_evidence_triage.cjs`、`test_phase0_targeted_evidence_triage.cjs` を追加。この固定カメックス条件では、**16乱数の位置別4件が不一致でも、両計算方式の整数ダメージ集合は共に `{21,22,23,24,25}` で等しい**。未知乱数の単発実測からは方式を識別できず、追加の専用対戦を要求しない (`NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE`)。Gate Bは現在の同一試合・個体・時点・証拠IDに加えて、設置技の相手側指定、天候/地形/壁の残りターンなどの**値の整合**を検査する。独立した実機証拠を新たに生成せず、入力を真正と保証しない。ローカル入力の生データをGitHub/CIへ送らず、出力にも値やIDを含めない。
+
+[Phase 0採否評価書](./PHASE0_ADOPTION_ASSESSMENT.md)にPR #169〜#172の限定合成成果・未検証軸を明記。**Gate A UNKNOWN / Gate B UNSUPPORTED / Phase 1 NO_GOを維持**。マスター・LIVE・Phase 1 Draftを変更しない。
+
 ## 消費済みきのみの条件付き仮説（PR #170）
 
 [CONSUMED_BERRY_CONDITIONAL_BRANCHES.md](./CONSUMED_BERRY_CONDITIONAL_BRANCHES.md) は、現在の道具なしと既知のきのみ消費を独立の証拠で確認した場合に限り、Champions固定持ち物マスターの「対戦中1回」きのみ所持候補を選別し、現在道具なしの合成局面へ条件付き変換する。**きのみの発動・回復量や消費ログの復元ではない**。非消費品・不明な道具・履歴不足は拒否する。Gate A=UNKNOWN、Gate B=UNSUPPORTED、Phase 1 NO_GO、LIVE不変。
