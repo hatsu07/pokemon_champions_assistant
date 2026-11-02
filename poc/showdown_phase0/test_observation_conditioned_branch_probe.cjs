@@ -334,7 +334,7 @@ test("a known consumed item plus an unrepresented effect history remains unsuppo
  obs.facts.effect_remaining_turns=known({encore:2});
  const r=condition(obs,ctx);
  assert.equal(r.status,"UNSUPPORTED");
- assert.match(r.reason,/known hidden-history field/);
+ assert.match(r.reason,/effect duration/);
 });
 test("known terrain, hazards and changed types fail closed rather than contradict the Battle",()=>{
  const obs=withHPAndBoosts();
@@ -521,7 +521,7 @@ test("Mega with field and Knock Off with field compose independently",()=>{
 test("stale and contradictory four-mechanism histories fail closed",()=>{
  for(const change of [
   obs=>{obs.facts.opponent_removed_item.value.turn_epoch=5;},
-  obs=>{obs.facts.opponent_removed_item.value.item_id="sitrusberry";},
+  obs=>{obs.facts.opponent_removed_item.value.item_id="leftovers";},
   obs=>{obs.evidence.find(e=>e.id==="observed-past").match_id="another-match";},
   obs=>{obs.evidence.find(e=>e.id==="observed-past").active_instance_id="another-mon";},
   obs=>{obs.facts.opponent_consumed_item=known("sitrusberry");},
