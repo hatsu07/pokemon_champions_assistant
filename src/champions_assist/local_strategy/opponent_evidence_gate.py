@@ -84,7 +84,11 @@ def check_observed_opponent_hypotheses(
         state = snapshot.state
         if not isinstance(state, dict):
             raise ValueError("invalid state")
-        memory = state.get("battle_evidence") or {}
+        # Missing evidence is distinct from explicitly stored corrupt data.
+        # Using `or {}` here would turn [] / "" / 0 / False / None into a
+        # plausible empty memory and could promote an unevaluated opponent set.
+        memory = (state["battle_evidence"]
+                  if "battle_evidence" in state else {})
         if not isinstance(memory, dict):
             raise ValueError("invalid battle evidence")
         known: dict[str, dict[str, Any]] = {}
