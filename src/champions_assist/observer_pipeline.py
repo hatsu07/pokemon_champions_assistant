@@ -231,6 +231,50 @@ class ObserverPipeline:
             staged_latest_parsed[roi_name] = parsed
             pending_events.extend(parsed.events)
 
+        if self.linked_local_ocr_bridge is not None:
+            # A stable name ROI is normally skipped by the change detector.
+            # HP/PP can change many seconds later: re-OCR the name from THIS
+            # same frame instead of trusting the old name across a switch.
+            # Keep the fresh read inside the frame's persisted raw ROI record.
+            fields = self.linked_local_ocr_bridge.roi_fields
+            for side, name_field in (
+                ("own", "own_active_name"),
+                ("opponent", "opponent_active_name"),
+            ):
+                hp_fields = (
+                    ("own_hp_fraction", "own_pp_move1", "own_pp_move2",
+                     "own_pp_move3", "own_pp_move4")
+                    if side == "own" else ("opponent_hp_percent",)
+                )
+                if not any(
+                    field in hp_fields
+                    and raw_rois.get(roi, {}).get("changed") is True
+                    and bool(raw_rois.get(roi, {}).get("text"))
+                    for roi, field in fields.items()
+                ):
+                    continue
+                name_roi = next(
+                    (roi for roi, field in fields.items()
+                     if field == name_field), None
+                )
+                if name_roi is None or name_roi not in raw_rois:
+                    # Missing explicit name region: the linked reducer will
+                    # refuse the HP/PP rather than use a past-frame name.
+                    continue
+                name_entry = raw_rois[name_roi]
+                if name_entry.get("changed") or "text" in name_entry:
+                    continue
+                crop = self.roi_config.crop(name_roi, frame.image)
+                if crop is None:
+                    continue
+                reading = self.ocr_engine.read(crop, roi_name=name_roi)
+                name_entry.update({
+                    "text": reading.text,
+                    "confidence": reading.confidence,
+                    "engine": reading.engine,
+                    "actor_refresh_same_frame": True,
+                })
+
         stored = self.store.append_raw_observation(
             self.session.match_id,
             raw_observation_id,
