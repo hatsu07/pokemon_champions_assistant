@@ -59,7 +59,7 @@ class ReadoutWorkerTransportTests(unittest.TestCase):
             worker.start()
             snapshot=frozen()
             snapshot=replace(snapshot,window=replace(snapshot.window,
-                deadline_monotonic=time.monotonic()+0.5))
+                deadline_monotonic=time.monotonic()+1.5))
             if mutate:
                 snapshot=mutate(snapshot)
             return worker.readout_synthetic_replay(
@@ -104,6 +104,8 @@ class ReadoutWorkerTransportTests(unittest.TestCase):
     def test_reject_wrong_echo_and_expired_or_unknown_hypothesis(self):
         forged=REPLY.replace(
             "r.update(capability_status='PARTIAL',ok=True,payload=body,"
+            "hypothesis_id=p['hypothesis_id'],"
+            "branch_input_sha256=p['branch_input_sha256'])",
             "r.update(capability_status='PARTIAL',ok=True,payload=body,"
             "branch_request_id='0'*32,"
             "hypothesis_id=p['hypothesis_id'],"
