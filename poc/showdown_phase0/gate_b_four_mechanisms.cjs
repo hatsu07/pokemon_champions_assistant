@@ -45,7 +45,7 @@ function inspect(obs,ctx){
    rawHazards.side==="p2"&&Array.isArray(rawHazards.effects)?rawHazards.effects:null;
  if(has("action_history"))return deny("other action history cannot be reconstructed");
  if(has("pending_choice")||has("unresolved_queue"))
-   return deny("unresolved action or pending choice is not reconstructable");
+   return deny("queued unresolved action or pending choice is not reconstructable");
  if(!Array.isArray(hazards))return deny("hazards require an explicit list");
  const effects=has("effect_remaining_turns")?f.effect_remaining_turns.value:null;
  const expectedEffects=[...(weather!==""?["weather"]:[]),...(terrain!==""?["terrain"]:[])];
@@ -72,7 +72,7 @@ function inspect(obs,ctx){
      return deny("only single opponent-side Stealth Rock is modeled");
    if(!frameFor(["active_opponent","opponent_hp_exact","opponent_boosts",
        "hazards","weather","terrain"]))
-     return deny("hazard side lacks matching current-frame evidence");
+     return deny("hazards side lacks matching current-frame evidence");
  }
  // Unverified change histories must not slip into the created Battle.
  if(choice){
