@@ -5,7 +5,7 @@ Combined observational conditioning of (1) choice-lock, (2) Knock Off removal vs
 Always Gate A=UNKNOWN, Gate B=UNSUPPORTED, adoption=NO_GO. No LIVE integration, trusted winrate, real-game battle restoration or past action/RNG replay is claimed.
 
 ## Evidence contract
-- Evidence record has id, kind, match_id, turn_epoch, state_revision. IDs and metadata are supplied observations, not device attestation.
+- Evidence record has id, kind, match_id, turn_epoch, state_revision and, for past-to-current identity, active_instance_id. IDs and metadata are supplied observations, not device attestation. Stable active identity must match across historical removal/Mega evidence and the current request frame.
 - Currently observable request/active/HP/boosts and each conditioned current mechanic must be linked to the same request-frame ID. Historical removal/Mega events require their own event evidence, same match_id, at or before the current turn/revision.
 - New opponent_removed_item observation is distinct from opponent_consumed_item, and is UNKNOWN by default.
 - Incompatible current item/lock/removal, wrong form/ability/stone, future event, missing durations, unmodeled hazards/field effects, ambiguous active side and pending choice are UNSUPPORTED.
