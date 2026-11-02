@@ -43,23 +43,36 @@ test("no game damage observation and no private data gives NO_GO, not a match",(
  assert.deepEqual([r.gate_A,r.gate_B,r.phase1],
    [GATES.gate_A,GATES.gate_B,GATES.phase1]);
  assert.equal(r.classification,"INSUFFICIENT_INDEPENDENT_GAME_EVIDENCE");
+ assert.equal(r.fixture_identifiability,"NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE");
+ assert.equal(r.combined_only_integer_delta_count,0);
+ assert.equal(r.sequential_only_integer_delta_count,0);
+ assert.equal(r.reviewed_roll_position_difference_count,4);
+ assert.equal(r.single_unknown_roll_hit_can_discriminate,false);
  assert.equal(r.resolves_champions_rounding,false);
  assert.equal(r.live_use_permitted,false);
 });
-test("all sixteen unknown RNG rolls, including overlap, are examined without device claims",()=>{
+test("four RNG POSITION differences do not imply a distinguishable unknown-roll damage",()=>{
  const rows=secondaryComparison().rows;
  assert.equal(rows.length,16);
- assert.equal(rows.filter(x=>x.discriminating).length,4);
- const both=new Set(rows.map(x=>x.combined)),sep=new Set(rows.map(x=>x.sequential));
- for(const delta of new Set([...both,...sep,1000])){
+ assert.deepEqual(rows.filter(x=>x.discriminating).map(x=>x.roll_pct),[86,90,91,98]);
+ assert.ok(rows.filter(x=>x.discriminating).every(x=>x.combined!==x.sequential));
+ const combined=new Set(rows.map(x=>x.combined)),separate=new Set(rows.map(x=>x.sequential));
+ assert.deepEqual([...combined].sort((a,b)=>a-b),[21,22,23,24,25]);
+ assert.deepEqual([...separate].sort((a,b)=>a-b),[21,22,23,24,25]);
+ assert.deepEqual([...combined].filter(x=>!separate.has(x)),[]);
+ assert.deepEqual([...separate].filter(x=>!combined.has(x)),[]);
+ for(const delta of [...combined,20,26]){
   const d=damage();d.after_hp=d.before_hp-delta;
-  if(d.after_hp<0)continue;
   const r=triageRoundingDamage(d);
-  const expected=both.has(delta)&&sep.has(delta)?"INCONCLUSIVE_INTEGER_OVERLAP":
-    both.has(delta)?"POTENTIAL_COMBINED_ONLY_UNDER_DECLARED_FIXTURE":
-    sep.has(delta)?"POTENTIAL_SEPARATE_ONLY_UNDER_DECLARED_FIXTURE":
-    "OUTSIDE_BOTH_REVIEWED_METHODS_RECHECK_CONDITIONS";
-  assert.equal(r.classification,expected);
+  assert.equal(r.classification,combined.has(delta)?
+   "NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE":
+   "OUTSIDE_BOTH_REVIEWED_METHODS_RECHECK_CONDITIONS");
+  assert.equal(r.fixture_identifiability,"NOT_IDENTIFIABLE_WITH_UNKNOWN_RNG_FOR_THIS_FIXTURE");
+  assert.equal(r.reviewed_roll_position_difference_count,4);
+  assert.equal(r.combined_only_integer_delta_count,0);
+  assert.equal(r.sequential_only_integer_delta_count,0);
+  assert.equal(r.single_unknown_roll_hit_can_discriminate,false);
+  assert.equal(r.discriminates_reviewed_two_method_sets,false);
   assert.equal(r.unknown_roll_handled_as_all_sixteen,true);
   assert.equal(r.resolves_champions_rounding,false);
   assert.equal(r.full_damage_formula_verified,false);
@@ -123,6 +136,81 @@ test("stale field and partially known screens/terrain require current evidence",
  assert.equal(triagePartialBoard(guessed).statuses.opponent_hp_exact,
    "INFERRED_NOT_CURRENT_GAME_EVIDENCE");
 });
+test("same evidence ID cannot certify wrong-side or stale empty hazards",()=>{
+ for(const alter of [
+  x=>{x.facts.hazards.value.side="p1";},
+  x=>{x.facts.hazards.value.turn_epoch=3;},
+  x=>{x.facts.hazards.value.state_revision=20;},
+  x=>{x.facts.hazards.value.effects=["spikes"];},
+  x=>{x.facts.hazards.value.effects=["stealthrock","stealthrock"];},
+  x=>{x.facts.hazards.value=["stealthrock"];},
+  x=>{x.facts.hazards.value=[];}
+ ]){
+  const obs=board();alter(obs);
+  const original=JSON.stringify(obs);
+  const out=triagePartialBoard(obs);
+  assert.equal(out.observation_readiness,"INVALID_CURRENT_STATE_EVIDENCE");
+  assert.equal(out.statuses.hazards,"INVALID_CURRENT_STATE_EVIDENCE");
+  assert.ok(out.invalid_current_state_fields.includes("hazards"));
+  assert.ok(out.missing_or_unbound_current_fields.includes("hazards"));
+  assert.equal(JSON.stringify(obs),original);
+  assert.equal(out.full_battle_restored,false);
+  assert.ok(!JSON.stringify(out).includes("PRIVATE_TEST_ONLY_MATCH"));
+ }
+ const valid=board();
+ valid.facts.hazards.value.effects=["stealthrock"];
+ const out=triagePartialBoard(valid);
+ assert.equal(out.observation_readiness,"CURRENT_FACTS_LINKED_BUT_HIDDEN_BATTLE_UNRECOVERED");
+ assert.deepEqual(out.invalid_current_state_fields,[]);
+});
+test("current Rain, Electric Terrain and Reflect durations match #172 narrow contract",()=>{
+ const valid=board(),evidence=valid.facts.request_state.evidence_ids;
+ const known=value=>({source:"GAME_OBSERVED",value,evidence_ids:evidence});
+ valid.facts.weather=known("raindance");
+ valid.facts.terrain=known("electricterrain");
+ valid.facts.effect_remaining_turns=known({weather:3,terrain:2});
+ valid.facts.screens=known(["reflect"]);
+ valid.facts.screen_remaining_turns=known({reflect:3});
+ const positive=triagePartialBoard(valid);
+ assert.equal(positive.observation_readiness,
+   "CURRENT_FACTS_LINKED_BUT_HIDDEN_BATTLE_UNRECOVERED");
+ assert.deepEqual(positive.invalid_current_state_fields,[]);
+ const mutations=[
+  {field:"effect_remaining_turns",change:o=>{o.facts.effect_remaining_turns.value.weather=0;}},
+  {field:"effect_remaining_turns",change:o=>{o.facts.effect_remaining_turns.value.terrain=9;}},
+  {field:"effect_remaining_turns",change:o=>{o.facts.effect_remaining_turns.value={weather:3};}},
+  {field:"effect_remaining_turns",change:o=>{o.facts.effect_remaining_turns.value={weather:3,terrain:"2"};}},
+  {field:"screen_remaining_turns",change:o=>{o.facts.screen_remaining_turns.value={reflect:0};}},
+  {field:"screen_remaining_turns",change:o=>{o.facts.screen_remaining_turns.value=["3"];}},
+  {field:"screen_remaining_turns",change:o=>{o.facts.screen_remaining_turns.value={lightscreen:3};}},
+  {field:"screens",change:o=>{o.facts.screens.value=["reflect","reflect"];}},
+  {field:"screens",change:o=>{o.facts.screens.value=["unsupported"];}},
+  {field:"weather",change:o=>{o.facts.weather.value="sandstorm";}},
+  {field:"terrain",change:o=>{o.facts.terrain.value="grassyterrain";}}
+ ];
+ for(const {field,change} of mutations){
+  const obs=structuredClone(valid);change(obs);
+  const result=triagePartialBoard(obs);
+  assert.equal(result.observation_readiness,"INVALID_CURRENT_STATE_EVIDENCE");
+  assert.equal(result.statuses[field],"INVALID_CURRENT_STATE_EVIDENCE");
+  assert.ok(result.invalid_current_state_fields.includes(field));
+ }
+ for(const field of ["effect_remaining_turns","screen_remaining_turns"]){
+  const obs=structuredClone(valid);
+  obs.facts[field]={source:"UNKNOWN"};
+  const r=triagePartialBoard(obs);
+  assert.equal(r.observation_readiness,"INSUFFICIENT_CURRENT_OBSERVATION");
+  assert.ok(r.missing_or_unbound_current_fields.includes(field));
+ }
+ const noActive=board();
+ noActive.facts.effect_remaining_turns=known({weather:3});
+ noActive.facts.screen_remaining_turns=known({reflect:3});
+ const contradiction=triagePartialBoard(noActive);
+ assert.equal(contradiction.observation_readiness,"INVALID_CURRENT_STATE_EVIDENCE");
+ assert.deepEqual(contradiction.invalid_current_state_fields.sort(),
+  ["effect_remaining_turns","screen_remaining_turns"].sort());
+});
+
 test("history is not replayed or promoted even with linked current-frame evidence",()=>{
  const obs=board();
  const id=obs.evidence[0].id;
