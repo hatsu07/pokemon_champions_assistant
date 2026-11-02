@@ -13,7 +13,21 @@ is accepted as an independent authenticity certificate.
 
 The bridge supports only explicit ROI→known field mappings:
 battle_message, own/opponent name, own exact HP fraction, opponent HP
-percentage, or one of the four own PP slots. The existing sample OCR
+percentage, or one of the four own PP slots.
+
+When a mapped HP/PP ROI changes, the observer **re-OCRs its paired
+name ROI from that same frame** even if the name ROI pixels did not
+change. The new text/confidence and the name ROI's current-frame SHA
+are persisted with an `actor_refresh_same_frame` marker; old name
+OCR is not carried forward. The linked reducer accepts an HP/PP record
+only if the name ROI was unchanged *and freshly re-read* on that same
+frame with sufficient confidence. If the name ROI changes in the same
+frame (possible switch animation), or the name is missing/unclear, HP
+and PP are held as candidates; a subsequent stable same-actor frame
+is required before committing them. The legacy two-second actor-name
+attestation is never extended or used as an implicit exception here.
+The extra OCR is performed only for the explicitly enabled bridge,
+only on relevant changed HP/PP frames, and prior to the raw SQLite insert. The existing sample OCR
 field parser parses numbers, and existing `apply_local_ocr` handles
 actor evidence, stale switch HUD, ambiguity, confidence, and updates.
 No independent battle-text mechanics parser is introduced. Unknown OCR,
