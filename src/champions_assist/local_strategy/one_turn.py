@@ -13,8 +13,11 @@ from time import monotonic
 import json
 from typing import Any
 
-from .legal_actions import generate_candidates
-from .models import CapabilityStatus, FrozenBattleState, LegalStatus, SimulationResult
+from .legal_actions import generate_candidates, showdown_choice_for_candidate
+from .models import (
+    CapabilityStatus, FrozenBattleState, LegalStatus, PROTOCOL_VERSION,
+    SimulationResult, fingerprint,
+)
 from .simulator_adapter import _verified_roster_binding, WorkerUnavailable
 
 
@@ -123,6 +126,12 @@ def compare_shadow_turn(snapshot: FrozenBattleState, assets: Any,
         action_id: {} for action_id in actions
     }
     p2_order: dict[tuple[str, str], tuple[str, ...]] = {}
+    # Labels alone are NOT scenario evidence. Compare actual submitted
+    # p2_choice and exact full starting Battle JSON (including its RNG state)
+    # across the actions. All choices within one opponent hypothesis must
+    # start from the same Battle snapshot.
+    scenario_input: dict[tuple[str, str], tuple[str, str]] = {}
+    initial_battle_by_hypothesis: dict[str, str] = {}
     used_branch_requests = set()
     for branch in branches:
         result = branch.result
@@ -135,8 +144,52 @@ def compare_shadow_turn(snapshot: FrozenBattleState, assets: Any,
         try:
             bound = json.loads(result.identity_json)
             payload = json.loads(result.payload_json)
+            submitted = json.loads(result.submitted_request_json)
         except (ValueError, TypeError):
             return ShadowTurnRanking("NO_RANKING", "INVALID_BRANCH_PAYLOAD")
+        if (not isinstance(submitted, dict)
+                or submitted.get("protocol") != PROTOCOL_VERSION
+                or submitted.get("op") != "SIMULATE"
+                or submitted.get("request_id") != snapshot.window.request_id
+                or submitted.get("snapshot_sha256") != snapshot.snapshot_sha256
+                or submitted.get("identity") != snapshot.window.identity()
+                or submitted.get("branch_request_id") != result.branch_request_id
+                or not isinstance(submitted.get("payload"), dict)):
+            return ShadowTurnRanking("NO_RANKING", "MISSING_OR_UNBOUND_SUBMISSION")
+        request = submitted["payload"]
+        if (request.get("source") != "FULL_REPLAY_SYNTHETIC"
+                or request.get("hypothesis_id") != branch.hypothesis_id
+                or request.get("candidate_action_id") != branch.candidate_action_id
+                or request.get("expected_p1_roster") != roster
+                or request.get("expected_p1_active") != snapshot.window.active_pokemon
+                or not isinstance(request.get("p2_choice"), str)
+                or not request["p2_choice"]
+                or not isinstance(request.get("battle"), dict)
+                or not isinstance(request.get("branch_input_sha256"), str)
+                or request["branch_input_sha256"] != result.branch_input_sha256
+                or request["branch_input_sha256"] != fingerprint({
+                    key: value for key, value in request.items()
+                    if key != "branch_input_sha256"
+                })):
+            return ShadowTurnRanking("NO_RANKING", "SUBMITTED_BRANCH_HASH_OR_INPUT_MISMATCH")
+        try:
+            expected_p1_choice = showdown_choice_for_candidate(
+                actions[branch.candidate_action_id], snapshot, assets)
+        except (ValueError, TypeError, KeyError):
+            return ShadowTurnRanking("NO_RANKING", "ACTION_SLOT_NOT_BOUND")
+        if request.get("p1_choice") != expected_p1_choice:
+            return ShadowTurnRanking("NO_RANKING", "ACTION_SLOT_NOT_BOUND")
+        starting_battle_sha = fingerprint(request["battle"])
+        compared_scenario = (request["p2_choice"], starting_battle_sha)
+        if (key in scenario_input
+                and scenario_input[key] != compared_scenario):
+            return ShadowTurnRanking("NO_RANKING", "SCENARIO_INPUT_MISMATCH")
+        if (branch.hypothesis_id in initial_battle_by_hypothesis
+                and initial_battle_by_hypothesis[branch.hypothesis_id]
+                    != starting_battle_sha):
+            return ShadowTurnRanking("NO_RANKING", "SCENARIO_INPUT_MISMATCH")
+        scenario_input[key] = compared_scenario
+        initial_battle_by_hypothesis[branch.hypothesis_id] = starting_battle_sha
         if (result.capability_status != CapabilityStatus.PARTIAL
                 or result.request_id != snapshot.window.request_id
                 or result.snapshot_sha256 != snapshot.snapshot_sha256
