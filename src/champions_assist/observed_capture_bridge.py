@@ -15,7 +15,7 @@ from typing import Any, Mapping
 from .calibrated_screen_fields import FieldRegion, parse_field_text
 from .capture import Frame
 from .capture_provenance import FrameCaptureReceipt, matches_original_frame
-from .live_state_updates import apply_local_ocr
+from .live_state_updates import apply_local_ocr, _flat, _names
 from .local_event_worker import LocalFieldRead
 from .ocr import image_digest
 from .roi import RoiConfiguration
@@ -139,6 +139,13 @@ class LinkedObserverState:
                 name_item = raw_rois.get(name_roi) if name_roi else None
                 name_conf = (name_item.get("confidence")
                              if isinstance(name_item, dict) else None)
+                known_own, known_opponent = _names(self.assets, self.state)
+                known = known_own if own else known_opponent
+                current_actor = self.state.get(
+                    "our_active" if own else "opponent_active")
+                # An OCR read of arbitrary text does NOT attest a Pokémon.
+                # It must uniquely resolve to the already current actor,
+                # even if an earlier <2-second name attestation exists.
                 name_fresh = (
                     isinstance(name_item, dict)
                     and name_item.get("changed") is False
@@ -147,6 +154,8 @@ class LinkedObserverState:
                     and bool(name_item["text"])
                     and type(name_conf) in (float, int)
                     and name_conf >= 0.72
+                    and known.get(_flat(name_item["text"])) == current_actor
+                    and bool(current_actor)
                 )
                 if not name_fresh:
                     preflight_audit.append({
