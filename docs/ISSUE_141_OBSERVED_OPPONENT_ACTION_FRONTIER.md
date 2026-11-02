@@ -23,6 +23,14 @@ For each sourced opponent three, the read-only frontier includes:
   set, tagged whether an exact move was previously observed. A revealed
   move must occur in every accepted joint set, or the existing opponent
   evidence gate rejects the whole batch.
+- Raw opponent OCR HP is preserved without inventing simulator exact
+  HP: `73%` stays `raw_hp_percent="73%"` with `hp=None,maxhp=None`.
+  A literal opponent `"0"` is accepted as an observed faint **only**
+  when `battle_evidence.fainted.opponent[that_actor] is True`; the
+  resulting member has `hp=0,maxhp=None,fainted=True`. Unflagged zero,
+  invalid percentages and positive HP contradicting an explicit FAINT
+  refuse the entire staging operation. A percent is never multiplied
+  by guessed max HP. `"0%"` alone is not proof of a faint.
 - The other two members of the same recorded three as conditional switch
   **display names**. A bench member with directly observed zero HP is
   excluded. Unknown bench HP does **not** become an assertion of a
@@ -72,6 +80,16 @@ co-recorded joint opponents, full-batch rejection, no source/unknown
 case, stale/edited stage-② input, observed KO bench exclusion, source
 evidence and deterministic fingerprints, and absence of executable
 commands. Registered in Linux isolated and Windows desktop jobs.
+A true production-format regression calls the existing
+`apply_local_ocr` reducer with opponent `73%`, then an explicit faint
+message (producing `"0"` plus the same actor's FAINT flag), then the
+opponent's switch and newly observed opponent `91%`. It freezes that
+state through stage ②, keeps the two percentages raw (never exact),
+and suppresses only the knocked-out member's conditional switch name.
+Additional tests reject forged `"0"` without a same-actor flag,
+contradictory FAINT/nonzero HP, malformed percentages and untrusted
+zero flags.
+
 No raw gameplay frames, user accounts or image bytes are added.
 
 This change does **not** modify the real observer/LM/GPT/GUI decision
