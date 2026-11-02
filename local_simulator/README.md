@@ -17,6 +17,17 @@ A synthetic simulation may return PARTIAL, **never CONFIRMED**.
   branch payload (hypothesis, candidate action and both Showdown choices) and
   action ID. Node checks the payload SHA and echoes these fields; Python
   rejects stale, swapped, duplicated, malformed, late or dead-worker replies.
+- As of the latest review, `assets` must be the actual match-preloaded
+  `FrozenMatchAssets`. All four on-disk preload SHA hashes must match
+  the frozen window and in-memory source bytes; the six registered members
+  must be derived from the frozen team CSV. The selected three require
+  explicit frozen `showdown_species_id` and `showdown_move1_id` etc.
+  These IDs are **not** guessed from Japanese display names, and current
+  team masters without those mappings will fail closed. Python sends an
+  exact p1 roster/active binding; Node compares it against deserialized
+  Showdown `Battle.sides[0].pokemon[].species.id`,
+  `moveSlots[].id`, order and `active[0]` **before** applying choices.
+  Mismatch returns `UNSUPPORTED / P1_ROSTER_OR_MOVE_SLOT_MISMATCH`.
 - `simulate(...,candidate_action_id=...,assets=...)` requires frozen team
   assets and a currently LEGAL candidate. The caller's `p1_choice` must
   exactly match the move slot resolved from the team; for switch windows,
