@@ -46,13 +46,17 @@ def accept_result(submitted: FrozenBattleState, current: FrozenBattleState,
             or result.snapshot_sha256 != submitted.snapshot_sha256
             or reported_identity != current.window.identity()):
         return DecisionOutcome("NO_RECOMMENDATION", "STALE_OR_UNBOUND_WORKER_RESPONSE")
-    if result.hypothesis_id and result.hypothesis_id not in {
-            h.hypothesis_id for h in submitted.hypotheses}:
-        return DecisionOutcome("NO_RECOMMENDATION", "UNBOUND_HYPOTHESIS")
+    if result.hypothesis_id not in {h.hypothesis_id for h in submitted.hypotheses}:
+        if result.hypothesis_id or submitted.hypotheses:
+            return DecisionOutcome("NO_RECOMMENDATION", "UNBOUND_HYPOTHESIS")
     if result.capability_status != CapabilityStatus.CONFIRMED:
         return DecisionOutcome("NO_RECOMMENDATION", "CALCULATION_NOT_VERIFIED")
     if candidate is None:
         return DecisionOutcome("NO_RECOMMENDATION", "NO_CANDIDATE")
+    if (not result.branch_request_id or not result.branch_input_sha256
+            or len(result.branch_input_sha256) != 64
+            or result.candidate_action_id != candidate.action_id):
+        return DecisionOutcome("NO_RECOMMENDATION", "UNBOUND_BRANCH_OR_ACTION")
     checked = revalidate_candidate(candidate, current, assets)
     if checked.legal_status != LegalStatus.LEGAL:
         return DecisionOutcome("NO_RECOMMENDATION",
