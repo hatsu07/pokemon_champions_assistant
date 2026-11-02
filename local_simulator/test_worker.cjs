@@ -206,6 +206,37 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     assert.equal(rejectedHelper.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
     fs.writeFileSync(p2Helper,originalHelper);
 
+    // The helper can be SHA-valid yet crash when required. Engine module
+    // success alone must not authorize HELLO or a later P2 operation.
+    fs.writeFileSync(p2Helper,"throw Error('SYNTHETIC_INIT_FAILURE');\n");
+    manifest.p2_engine_choices_sha256=sha(p2Helper);
+    fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
+    const failedInitialization=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("incomplete worker startup crashed: "+code+" "+stderr));
+        try{resolve(stdout.trim().split("\n").map(JSON.parse))}
+        catch(e){reject(e)}
+      });
+      proc.stdin.end([base,p2Request].map(JSON.stringify).join("\n")+"\n");
+    });
+    assert.equal(failedInitialization.length,2);
+    for(const item of failedInitialization){
+      assert.equal(item.capability_status,"UNSUPPORTED");
+      assert.equal(item.reason,"SHOWDOWN_LOAD_FAILED");
+      assert.equal(item.ok,false);
+    }
+    fs.writeFileSync(p2Helper,originalHelper);
+    manifest.p2_engine_choices_sha256=sha(p2Helper);
+    fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
+
     // Manifest entrypoint and pinned source SHA remain unchanged, but a
     // secondary runtime JS dependency has been changed after staging.
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),
