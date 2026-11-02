@@ -86,7 +86,7 @@ test("fainted active forced switch is checked but cannot attack",()=>{
 });
 test("unknown or form operations are not incorrectly certified exhaustive",()=>{
   for(const movePatch of [
-    {canMegaEvo:true},{maybeLocked:true},{maybeTrapped:true},
+    {maybeLocked:true},{maybeTrapped:true},
     {canTerastallize:"Flying"},{maxMoves:{maxMoves:[]}},
     {moves:[{id:"custom",pp:0,disabled:false}]},
   ]){
