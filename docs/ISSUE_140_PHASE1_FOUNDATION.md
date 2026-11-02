@@ -32,6 +32,22 @@ Parent: #138. **2026-11-02 user decision / PR #174:** fixed Showdown Champions i
   of choices/opponent hypothesis/battle/action, and `candidate_action_id`.
   Node validates and echoes all branch fields. Python rejects an old/wrong
   response even if the window request ID and snapshot SHA still match.
+- Latest review P1: `simulate()` now requires an actual `FrozenMatchAssets`
+  object with all four original preloaded file SHA256 values matching the
+  decision window; it recomputes in-memory text hashes, re-parses the frozen
+  six-member team CSV, and refuses a changed team index or alternate team.
+  The registered team must explicitly provide verified `showdown_species_id`
+  and `showdown_move{1..4}_id` mappings for the selected three. Missing
+  translations are **UNSUPPORTED**, never guessed from a different game.
+  The exact frozen selected-three `showdown_party_order` is bound to the
+  same branch. Node checks the **actual `Battle.fromJSON` p1 Pokémon order,
+  species IDs, move slot IDs, and active Pokémon** before `makeChoices`.
+  Roster/move mismatch is `UNSUPPORTED` even with a valid branch SHA.
+  Synthetic positive and negative tests cover alternate assets, swapped
+  moves, reordered party and wrong active identity. This is a fail-closed
+  foundation; existing user CSVs lacking Showdown mappings do not yet
+  satisfy the new simulator preconditions. An independently validated
+  Champions→Showdown ID mapping is a separate engineering task.
 - Review P1 follow-up: Python derives a candidate's exact move index from
   frozen team assets and revalidates the LEGAL candidate before SIMULATE;
   caller-provided `p1_choice` must equal that binding. Switches require an
