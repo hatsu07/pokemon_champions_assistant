@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 const crypto = require("node:crypto");
+const {enumerateEngineP2} = require("./p2_engine_choices.cjs");
 
 const VERSION = "issue140.v1";
 const PIN = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
@@ -63,6 +64,7 @@ function tryLoadEngine() {
         manifest.showdown_entry_sha256 !== fileHash(file) ||
         !matchesVerifiedInventory(root,manifest.engine_file_sha256) ||
         manifest.worker_sha256 !== fileHash(__filename) ||
+        manifest.p2_engine_choices_sha256 !== fileHash(path.join(__dirname,"p2_engine_choices.cjs")) ||
         manifest.node_exe_sha256 !== fileHash(process.execPath) ||
         manifest.node_license_sha256 !== fileHash(nodeLicensePath) ||
         manifest.third_party_notices_sha256 !== fileHash(noticePath)) {
@@ -153,7 +155,7 @@ function handle(req) {
           {engine_sha: PIN}, !!Battle);
     return;
   }
-  if (req.op !== "SIMULATE") {
+  if (!["SIMULATE","ENUMERATE_P2"].includes(req.op)) {
     reply(req, "UNSUPPORTED", "UNKNOWN_OPERATION");
     return;
   }
@@ -162,6 +164,48 @@ function handle(req) {
     return;
   }
   const data = req.payload || {};
+  if (req.op === "ENUMERATE_P2") {
+    // A separate read-only protocol operation. It returns only options
+    // checked on independent engine clones, not LIVE tactical advice.
+    if (data.source !== "FULL_REPLAY_SYNTHETIC" ||
+        typeof req.branch_request_id !== "string" ||
+        !/^[a-f0-9]{32}$/.test(req.branch_request_id) ||
+        typeof data.hypothesis_id !== "string" ||
+        typeof data.branch_input_sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(data.branch_input_sha256) ||
+        data.branch_input_sha256 !== fingerprint(Object.fromEntries(
+          Object.entries(data).filter(([k]) => k !== "branch_input_sha256"))) ||
+        !data.battle || typeof data.battle !== "object" ||
+        Array.isArray(data.battle) ||
+        !Array.isArray(data.expected_p1_roster) ||
+        typeof data.expected_p1_active !== "string" ||
+        !req.identity.match_id || !req.identity.decision_window_id ||
+        !req.identity.team_sha256 || req.identity.simulator_sha !== PIN ||
+        !req.identity.allowed_action_digest || !req.snapshot_sha256) {
+      reply(req,"UNSUPPORTED","INCOMPLETE_OR_REAL_OBSERVATION");
+      return;
+    }
+    try {
+      const b=Battle.fromJSON(data.battle);
+      if (!matchesP1BattleRoster(b,data.expected_p1_roster,data.expected_p1_active)) {
+        reply(req,"UNSUPPORTED","P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
+        return;
+      }
+      const result=enumerateEngineP2(Battle,data.battle);
+      if (result.status!=="ENGINE_CHECKED_SIMPLE_CHOICES") {
+        reply(req,"UNSUPPORTED",result.reason);
+        return;
+      }
+      reply(req,"PARTIAL","SYNTHETIC_P2_SIMPLE_ENGINE_CHECKED_NOT_CHAMPIONS_VERIFIED",{
+        ...result,source:"FULL_REPLAY_SYNTHETIC",
+        hypothesis_id:data.hypothesis_id,
+        branch_input_sha256:data.branch_input_sha256
+      },true);
+    } catch (_err) {
+      reply(req,"UNKNOWN","ENGINE_P2_UNAVAILABLE_OR_INVALID");
+    }
+    return;
+  }
   if (data.source !== "FULL_REPLAY_SYNTHETIC" ||
       typeof req.branch_request_id !== "string" ||
       !/^[a-f0-9]{32}$/.test(req.branch_request_id) ||
