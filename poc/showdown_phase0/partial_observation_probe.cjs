@@ -63,7 +63,8 @@ if (GAP_FIELDS.some(k => !LEGACY_GAP_MAP[k]) ||
 const RESTORE_GAPS = [...new Set([...Object.values(LEGACY_GAP_MAP).flat(),
   "opponent_selected", "opponent_hp_exact", "opponent_boosts",
   "opponent_mega_state", "opponent_current_type", "screen_remaining_turns",
-  "effect_remaining_turns", "choice_lock", "opponent_nature"])];
+  "effect_remaining_turns", "choice_lock", "opponent_nature",
+  "opponent_removed_item"])];
 
 function unknown() { return {source: "UNKNOWN"}; }
 function synthetic(value, id) { return {source: "SYNTHETIC", value, evidence_ids: [id]}; }
@@ -453,7 +454,7 @@ function applyEvent(obs, candidates, event, ctx, index) {
       update("choice_lock", "", true);
       for (const field of ["opponent_revealed_moves", "opponent_remaining_pp",
         "opponent_ability", "opponent_item", "opponent_consumed_item",
-        "opponent_mega_state", "opponent_mega_history", "opponent_current_type",
+        "opponent_removed_item", "opponent_mega_state", "opponent_mega_history", "opponent_current_type",
         "opponent_hp_exact", "opponent_status", "opponent_boosts",
         "opponent_ap", "opponent_nature"]) obs.facts[field] = unknown();
       for (const c of kept) {
@@ -463,7 +464,7 @@ function applyEvent(obs, candidates, event, ctx, index) {
         c.model.opponent_form = structuredClone(obs.facts.opponent_form);
         c.model.choice_lock = structuredClone(obs.facts.choice_lock);
         for (const key of ["initial_item", "opponent_moves", "opponent_remaining_pp", "opponent_ability",
-          "opponent_item", "opponent_mega_state", "opponent_hp_exact",
+          "opponent_item", "opponent_removed_item", "opponent_mega_state", "opponent_hp_exact",
           "opponent_boosts", "opponent_status", "opponent_nature", "opponent_ap"])
           c.model[key] = unknown();
       }
