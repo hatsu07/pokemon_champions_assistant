@@ -105,3 +105,42 @@ def revalidate_candidate(candidate: CandidateAction, snapshot: FrozenBattleState
     if candidate.window_id != snapshot.window.decision_window_id:
         return _with_status(result, LegalStatus.ILLEGAL, "STALE_WINDOW")
     return result
+
+
+def showdown_choice_for_candidate(candidate: CandidateAction,
+                                   snapshot: FrozenBattleState,
+                                   assets: Any) -> str:
+    """Resolve a *validated* action to the exact current Showdown slot.
+
+    Never trust a caller-provided "move N"/"switch N" label as its proof.
+    The Pokemon roster's Showdown party order must be frozen separately for
+    switch windows; the user's selected-three list is NOT a party index.
+    """
+    checked = revalidate_candidate(candidate, snapshot, assets)
+    if checked.legal_status != LegalStatus.LEGAL:
+        raise ValueError("candidate not positively legal in current input window")
+    if candidate.kind == ActionKind.MOVE:
+        from ..match_replay import _member_for
+        member = _member_for(snapshot.window.active_pokemon, assets)
+        if not member:
+            raise ValueError("registered active member missing")
+        slots = [member.get(f"move{index}", "") for index in range(1, 5)]
+        matches = [i for i, move in enumerate(slots, 1) if move == candidate.move]
+        if len(matches) != 1:
+            raise ValueError("move slot not uniquely matched to frozen team")
+        return f"move {matches[0]}"
+    if candidate.kind == ActionKind.SWITCH:
+        state = snapshot.state
+        order = state.get("showdown_party_order")
+        selected = state.get("selected_three")
+        if (not isinstance(order, list) or not isinstance(selected, list)
+                or len(order) != len(selected)
+                or len(set(map(str, order))) != len(order)
+                or set(order) != set(selected)):
+            raise ValueError("Showdown party slot order unverified")
+        matches = [i for i, pokemon in enumerate(order, 1)
+                   if pokemon == candidate.switch_target]
+        if len(matches) != 1:
+            raise ValueError("switch target slot not uniquely bound")
+        return f"switch {matches[0]}"
+    raise ValueError("future pivot choice cannot be simulated in current window")
