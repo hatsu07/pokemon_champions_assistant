@@ -46,7 +46,11 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
   // Fake engine is for wire validation ONLY: not Pokémon mechanics or game evidence.
   const fs=require("node:fs"),os=require("node:os"),crypto=require("node:crypto");
   const tmp=fs.mkdtempSync(path.join(os.tmpdir(),"phase1-test-staged-"));
-  const workerPath=path.join(__dirname,"worker.cjs");
+  // Execute the worker from the *staged* package next to the helper.
+  // Running the repository source would verify/require its own sibling and
+  // miss corruption of the packaged helper entirely.
+  const workerPath=path.join(tmp,"worker.cjs");
+  fs.copyFileSync(path.join(__dirname,"worker.cjs"),workerPath);
   const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
   const sha=file=>crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   const stable=value=>{
