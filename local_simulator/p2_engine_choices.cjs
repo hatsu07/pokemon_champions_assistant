@@ -17,14 +17,16 @@ function digest(value) {
 }
 function reject(reason) {return {status:"NO_CHOICES",reason,commands:[],exhaustive_legal_choices_verified:false};}
 function condition(raw) {
-  if (raw==="0 fnt") return 0;
+  // "0 fnt" has no encoded maximum HP. Its zero HP must still match the
+  // deserialized Pokemon; compare maxhp when the request carries a number.
+  if (raw==="0 fnt") return {hp:0,maxhp:null};
   if (typeof raw!=="string") return null;
   const m=/^([0-9]{1,9})\/([0-9]{1,9})(?: ([a-z]+))?$/.exec(raw);
   if (!m) return null;
-  const hp=Number(m[1]),max=Number(m[2]),status=m[3];
-  if (max<1 || hp>max || (status==="fnt" && hp!==0) ||
+  const hp=Number(m[1]),maxhp=Number(m[2]),status=m[3];
+  if (maxhp<1 || hp>maxhp || (status==="fnt" && hp!==0) ||
       (hp===0 && status && status!=="fnt")) return null;
-  return hp;
+  return {hp,maxhp};
 }
 const COMPLEX = [
   "maybeDisabled","maybeLocked","maybeTrapped",
@@ -72,14 +74,20 @@ function requestCommands(b) {
         !actual || typeof actual.fainted!=="boolean") {
       return reject("ENGINE_P2_ROSTER_INVALID");
     }
-    const hp=condition(p.condition);
-    if (hp===null || (hp===0)!==actual.fainted ||
+    const health=condition(p.condition);
+    if (health===null ||
+        !Number.isSafeInteger(actual.hp) || actual.hp<0 ||
+        !Number.isSafeInteger(actual.maxhp) || actual.maxhp<1 ||
+        actual.hp>actual.maxhp ||
+        health.hp!==actual.hp ||
+        (health.maxhp!==null && health.maxhp!==actual.maxhp) ||
+        (actual.hp===0)!==actual.fainted ||
         p.active!==(actual===side.active[0]) ||
         !!p.commanding || !!p.reviving || !!p.terastallized) {
       return reject("ENGINE_P2_ROSTER_INVALID");
     }
-    if (p.active) active.push({slot:i+1,hp,actual});
-    else if (hp>0) bench.push(i+1);
+    if (p.active) active.push({slot:i+1,hp:health.hp,actual});
+    else if (health.hp>0) bench.push(i+1);
   }
   if (active.length!==1) return reject("ENGINE_P2_ROSTER_INVALID");
   let commands=[];
