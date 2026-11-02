@@ -149,6 +149,11 @@ def stage_linked_observer_calculation_scenarios(
             or linked_observer.last_capture_seq < 0):
         return ObservedScenarioBatch("NO_SCENARIOS",
                                      "LINKED_CAPTURE_MATCH_OR_ASSETS_UNAVAILABLE")
+    if (linked_observer.required_window_revision is None
+            or snapshot.window.state_revision
+            != linked_observer.required_window_revision):
+        return ObservedScenarioBatch("NO_SCENARIOS",
+                                     "LINKED_WINDOW_REVISION_NOT_ACKNOWLEDGED")
     state = snapshot.state
     try:
         if (state.get("match_id") != linked_observer.match_id
