@@ -31,7 +31,7 @@ def current():
 def make_branch(snapshot, action, opponent_choice, *, ours=(100, 100, 100),
                 theirs=(60, 100, 100), nonce="", hypothesis="", corrupt=False,
                 actual_p2="", initial_battle=None, branch_sha="",
-                actual_p1=""):
+                actual_p1="", label_override=""):
     own = [{"species": species, "hp": hp, "fainted": hp == 0}
            for species, hp in zip(OWN_SPECIES, ours)]
     opp = [{"species": species, "hp": hp, "fainted": hp == 0}
@@ -84,7 +84,7 @@ def make_branch(snapshot, action, opponent_choice, *, ours=(100, 100, 100),
         candidate_action_id=action if not corrupt else "unbound",
         submitted_request=submitted,
     )
-    return BranchObservation(action, hypothesis, opponent_choice, result)
+    return BranchObservation(action, hypothesis, label_override or p2, result)
 
 
 class Phase2TurnTests(unittest.TestCase):
@@ -177,9 +177,18 @@ class Phase2TurnTests(unittest.TestCase):
         a = make_branch(s, EARTH, "attack", actual_p2="move 1",
                         theirs=(10, 100, 100))
         b = make_branch(s, CLAW, "attack", actual_p2="switch 2",
+                        label_override="move 1",
                         theirs=(80, 100, 100))
         self.assertEqual(self.score(s, (a, b)).reason,
-                         "SCENARIO_INPUT_MISMATCH")
+                         "OPPONENT_CHOICE_NOT_SUBMITTED")
+
+    def test_switch_name_cannot_mask_actual_attack_command(self):
+        s = current()
+        a = make_branch(s, EARTH, "attack")
+        b = make_branch(s, CLAW, "switch",
+                        actual_p2="move 1", label_override="switch")
+        self.assertEqual(self.score(s, (a, b)).reason,
+                         "OPPONENT_CHOICE_NOT_SUBMITTED")
 
     def test_same_label_but_different_original_battle_or_rng_is_rejected(self):
         s = current()
