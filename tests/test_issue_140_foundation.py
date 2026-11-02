@@ -36,6 +36,15 @@ class FakeAssets:
 
 
 ASSETS = FakeAssets()
+
+class FakeAssetsWrongMove:
+    own_team = (
+        {"name": "ガブリアス", "move1": "ドラゴンクロー",
+         "move2": "じしん", "move3": "いわなだれ", "move4": "つるぎのまい"},
+        *FakeAssets.own_team[1:],
+    )
+    move_class_index = FakeAssets.move_class_index
+
 MEMBERS = tuple(m["name"] for m in ASSETS.own_team)
 
 
@@ -86,7 +95,7 @@ def successful_result(s: FrozenBattleState) -> SimulationResult:
         CapabilityStatus.CONFIRMED, {"test": "synthetic-contract-only"},
         branch_request_id="test-only-branch-nonce",
         branch_input_sha256="a"*64,
-        candidate_action_id=move_id("じしん"))
+        candidate_action_id=move_id("じしん"), assets=ASSETS)
 
 
 class ContractTests(unittest.TestCase):
@@ -328,8 +337,73 @@ class WorkerTests(unittest.TestCase):
             s = frozen()
             result = w.simulate(s, {"synthetic": True},
                                 "move 1", "move 1",
-                                candidate_action_id=move_id("じしん"))
+                                candidate_action_id=move_id("じしん"), assets=ASSETS)
             self.assertEqual(result.capability_status, CapabilityStatus.PARTIAL)
+        finally:
+            w.close()
+            tmp.cleanup()
+
+    def test_candidate_id_must_match_actual_move_slot_and_verified_assets(self):
+        s=frozen()
+        tmp,w=self.make_fake_worker("import sys\nfor line in sys.stdin: pass\n")
+        try:
+            for choice in ("move 2", "move 3", "switch 2", "move 1 mega"):
+                with self.assertRaises(WorkerUnavailable):
+                    w.simulate(s, {"synthetic":True},choice,"move 1",
+                               candidate_action_id=move_id("じしん"),assets=ASSETS)
+            with self.assertRaises(WorkerUnavailable):
+                w.simulate(s, {"synthetic":True},"move 1","move 1",
+                           candidate_action_id=move_id("じしん"))
+            with self.assertRaises(WorkerUnavailable):
+                w.simulate(s, {"synthetic":True},"move 1","move 1",
+                           candidate_action_id=move_id("じしん"),
+                           assets=FakeAssetsWrongMove())
+        finally:
+            w.close()
+            tmp.cleanup()
+
+    def test_switch_target_maps_only_from_exact_frozen_party_order(self):
+        s=frozen(window_kind=WindowKind.FAINT_REPLACEMENT,visual_ui="PARTY_MENU",
+                 verified=(switch_id("アシレーヌ"),),active="",awaiting=True)
+        candidate=next(x for x in generate_candidates(s,ASSETS)
+                       if x.switch_target=="アシレーヌ")
+        from champions_assist.local_strategy.legal_actions import showdown_choice_for_candidate
+        with self.assertRaises(ValueError):
+            showdown_choice_for_candidate(candidate,s,ASSETS)
+        state=s.state
+        state["showdown_party_order"]=["ガブリアス","アシレーヌ","ミミッキュ"]
+        s2=replace(s,observed_state_json=json.dumps(state))
+        self.assertEqual(showdown_choice_for_candidate(candidate,s2,ASSETS),"switch 2")
+        state["showdown_party_order"]=["ミミッキュ","アシレーヌ","unknown"]
+        s3=replace(s,observed_state_json=json.dumps(state))
+        with self.assertRaises(ValueError):
+            showdown_choice_for_candidate(candidate,s3,ASSETS)
+
+    def test_stalled_stdin_write_cannot_block_gui_thread_past_deadline(self):
+        # HELLO is answered, then child stays alive without reading stdin.
+        code = (
+            "import sys,json,time\n"
+            "line=sys.stdin.readline()\n"
+            "r=json.loads(line)\n"
+            "r.update(capability_status='PARTIAL',ok=True,payload={})\n"
+            "print(json.dumps(r),flush=True)\n"
+            "time.sleep(10)\n"
+        )
+        tmp,w=self.make_fake_worker(code)
+        try:
+            w.start(timeout_seconds=1.5)
+            s=frozen()
+            s=replace(s,window=replace(s.window,
+                      deadline_monotonic=time.monotonic()+0.45))
+            before=time.monotonic()
+            with self.assertRaisesRegex(WorkerUnavailable,
+                                        "stdin write timed out|worker timed out"):
+                w.simulate(s,{"synthetic": "Z"*850_000},"move 1","move 1",
+                           candidate_action_id=move_id("じしん"),assets=ASSETS)
+            self.assertLess(time.monotonic()-before, 2.0)
+            self.assertTrue(w._failed)
+            self.assertIsNotNone(w._proc)
+            w._proc.wait(timeout=2)
         finally:
             w.close()
             tmp.cleanup()
@@ -357,9 +431,9 @@ class WorkerTests(unittest.TestCase):
             worker.start(timeout_seconds=2)
             s = frozen()
             one = worker.simulate(s, {"synthetic": True}, "move 1", "move 1",
-                                  candidate_action_id=move_id("じしん"))
+                                  candidate_action_id=move_id("じしん"), assets=ASSETS)
             two = worker.simulate(s, {"synthetic": True}, "move 1", "move 2",
-                                  candidate_action_id=move_id("じしん"))
+                                  candidate_action_id=move_id("じしん"), assets=ASSETS)
             self.assertEqual(one.capability_status, CapabilityStatus.PARTIAL)
             self.assertEqual(two.capability_status, CapabilityStatus.PARTIAL)
             self.assertNotEqual(one.branch_request_id, two.branch_request_id)
@@ -393,7 +467,7 @@ class WorkerTests(unittest.TestCase):
                   deadline_monotonic=time.monotonic()+0.3))
             with self.assertRaises(WorkerUnavailable):
                 worker.simulate(s, {"synthetic":True}, "move 1", "move 1",
-                                candidate_action_id=move_id("じしん"))
+                                candidate_action_id=move_id("じしん"), assets=ASSETS)
         finally:
             worker.close()
             tmp.cleanup()
@@ -407,7 +481,7 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaises(WorkerUnavailable):
                 worker.simulate(frozen(), {"synthetic": True},
                                 "move 1", "move 1", hypothesis_id="unbound",
-                                candidate_action_id=move_id("じしん"))
+                                candidate_action_id=move_id("じしん"), assets=ASSETS)
         finally:
             worker.close()
             tmp.cleanup()
@@ -446,7 +520,7 @@ class WorkerTests(unittest.TestCase):
             w.start(timeout_seconds=1)
             with self.assertRaises(WorkerUnavailable):
                 w.simulate(frozen(), {"synthetic": True}, "move 1", "move 1",
-                           candidate_action_id=move_id("じしん"))
+                           candidate_action_id=move_id("じしん"), assets=ASSETS)
             with self.assertRaises(WorkerUnavailable):
                 w.start()
         finally:
