@@ -6,6 +6,8 @@ freeze all four masters/rules/engine before creating a match-scoped instance.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+import re
 import json
 import hashlib
 from pathlib import Path
@@ -23,6 +25,19 @@ from .models import (
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 
 _MAX_BYTES = 1024 * 1024
+_P2_COMMAND = re.compile(r"(?:move [1-4]|switch [1-3])\\Z")
+
+@dataclass(frozen=True)
+class EngineP2CandidateSet:
+    status: str
+    reason: str
+    commands: tuple[str, ...] = ()
+    battle_sha256: str = ""
+    request_sha256: str = ""
+    scope: str = ""
+    # Intentionally not a certificate of exhaustive real-game legality.
+    exhaustive_legal_choices_verified: bool = False
+
 
 def _verified_roster_binding(snapshot: FrozenBattleState, assets: Any) -> list[dict[str, Any]]:
     """Tie Showdown's p1 order and moves to the actual match-preloaded bytes.
@@ -241,11 +256,12 @@ class LocalSimulatorWorker:
                         or resp.get("identity") != request.get("identity")
                         or resp.get("protocol") != PROTOCOL_VERSION
                         or resp.get("op") != request.get("op")
-                        or (request.get("op") == "SIMULATE" and (
+                        or (request.get("op") in ("SIMULATE", "ENUMERATE_P2") and (
                             resp.get("branch_request_id") != request.get("branch_request_id")
                             or resp.get("hypothesis_id") != request["payload"]["hypothesis_id"]
                             or resp.get("branch_input_sha256") != request["payload"]["branch_input_sha256"]
-                            or resp.get("candidate_action_id") != request["payload"]["candidate_action_id"]))):
+                            or (request.get("op") == "SIMULATE" and
+                                resp.get("candidate_action_id") != request["payload"]["candidate_action_id"])))):
                     mismatches += 1
                     if mismatches > 32:
                         self._failed = True
@@ -318,6 +334,75 @@ class LocalSimulatorWorker:
             # Capture the actual request only *after* _exchange has matched
             # the worker echo to this branch nonce, hash and action.
             submitted_request=request)
+
+    def enumerate_p2_from_replay(
+        self, snapshot: FrozenBattleState, battle_json: Mapping[str, Any],
+        *, hypothesis_id: str = "", assets: Any = None,
+    ) -> EngineP2CandidateSet:
+        """Only for full synthetic/replay Battle bytes, never partial game OCR.
+
+        The worker takes its request from the engine's own p2.activeRequest.
+        This wrapper verifies echo identity and returned candidate structure,
+        but never claims exhaustive Champions/legal choice coverage.
+        """
+        window = snapshot.window
+        if window.simulator_sha != self._sha:
+            raise WorkerUnavailable("engine SHA changed within match")
+        roster = _verified_roster_binding(snapshot, assets)
+        from .models import joint_hypothesis_ids
+        try:
+            known = joint_hypothesis_ids(snapshot.hypotheses)
+        except ValueError as exc:
+            raise WorkerUnavailable("invalid opponent joint hypothesis IDs") from exc
+        if hypothesis_id not in known:
+            raise WorkerUnavailable("opponent hypothesis is not registered")
+        if not isinstance(battle_json, Mapping):
+            raise WorkerUnavailable("full synthetic Battle JSON mapping required")
+        battle = dict(battle_json)
+        nonce = uuid4().hex
+        payload = {
+            "source": "FULL_REPLAY_SYNTHETIC", "battle": battle,
+            "expected_p1_roster": roster,
+            "expected_p1_active": window.active_pokemon,
+            "hypothesis_id": hypothesis_id,
+        }
+        payload["branch_input_sha256"] = fingerprint(payload)
+        request = {
+            "protocol": PROTOCOL_VERSION, "op": "ENUMERATE_P2",
+            "request_id": window.request_id,
+            "branch_request_id": nonce,
+            "identity": window.identity(),
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "payload": payload,
+        }
+        response = self._exchange(request, window.deadline_monotonic)
+        if response.get("capability_status") != "PARTIAL" or response.get("ok") is not True:
+            return EngineP2CandidateSet("NO_CHOICES", str(response.get("reason") or "ENGINE_P2_UNSUPPORTED"))
+        body = response.get("payload")
+        if not isinstance(body, dict):
+            raise WorkerUnavailable("invalid P2 engine choice payload")
+        commands = body.get("commands")
+        token = body.get("request_sha256")
+        battle_sha = body.get("battle_sha256")
+        if (body.get("source") != "FULL_REPLAY_SYNTHETIC"
+                or body.get("hypothesis_id") != hypothesis_id
+                or body.get("branch_input_sha256") != payload["branch_input_sha256"]
+                or body.get("status") != "ENGINE_CHECKED_SIMPLE_CHOICES"
+                or body.get("scope") != "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY"
+                or body.get("exhaustive_legal_choices_verified") is not False
+                or not isinstance(commands, list) or not 1 <= len(commands) <= 24
+                or any(not isinstance(choice, str) or not _P2_COMMAND.fullmatch(choice)
+                       for choice in commands)
+                or len(set(commands)) != len(commands)
+                or battle_sha != fingerprint(battle)
+                or not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{64}", token)):
+            raise WorkerUnavailable("P2 engine evidence not verifiably bound")
+        return EngineP2CandidateSet(
+            "ENGINE_CHECKED_SIMPLE_CHOICES", str(body.get("reason") or ""),
+            tuple(commands), battle_sha, token,
+            "PINNED_SHOWDOWN_SIMPLE_SINGLES_ONLY",
+            False,
+        )
 
     def close(self) -> None:
         self._failed = True
