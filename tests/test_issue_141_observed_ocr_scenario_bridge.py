@@ -9,6 +9,7 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 from champions_assist.battle_evidence import empty_battle_evidence
 from champions_assist.capture import Frame
@@ -23,6 +24,7 @@ from champions_assist.vision import DetectedUI, TemplateUiClassifier
 from champions_assist.local_strategy.models import canonical_json
 from champions_assist.local_strategy.observed_calculation_scenarios import (
     stage_observed_calculation_scenarios,
+    stage_linked_observer_calculation_scenarios,
 )
 from tests.test_phase_4 import roi_config, synthetic_image, write_masters
 from tests.test_issue_140_foundation import VERIFIED_ASSETS, frozen
@@ -162,6 +164,55 @@ class ObserverToReducerTests(unittest.TestCase):
 
 
 class CalculationScenarioTests(unittest.TestCase):
+    def test_observer_to_scenario_requires_exact_staged_current_snapshot(self):
+        base=frozen()
+        state=base.state
+        state["match_id"]=base.window.match_id
+        state["observed_hp"]={}
+        bridge=LinkedObserverState(
+            match_id=base.window.match_id,assets=VERIFIED_ASSETS,
+            initial_state=state,
+            roi_fields={"ROI_BATTLE_LOG":"battle_message"},
+        )
+        img=synthetic_image(DetectedUI.ACTION_RESOLUTION,log_code=21)
+        frame=Frame("observed-frame-1",1,100,img,source="SYNTHETIC_TEST")
+        fake_session=SimpleNamespace(
+            match_id=base.window.match_id,current_window=None,
+            game_turn_seq="4",observation_seq=0,tactical_state_version=2)
+        receipt=capture_frame_receipt(
+            frame,fake_session,
+            f"{base.window.match_id}:frame:1:{frame.frame_id}")
+        observed=bridge.ingest(
+            frame,receipt,{
+                "ROI_BATTLE_LOG":{
+                    "text":"ガブリアスはじしんをつかった!",
+                    "confidence":.99,
+                    "roi_rgb_sha256":image_digest(
+                        roi_config().crop("ROI_BATTLE_LOG",img)),
+                },
+            },roi_config())
+        self.assertEqual(observed.status,"LINKED_CANDIDATE_STATE",
+                         observed.audit)
+        linked=replace(
+            base,observed_state_json=canonical_json(bridge.state))
+        staged=stage_linked_observer_calculation_scenarios(
+            bridge,linked,VERIFIED_ASSETS)
+        self.assertEqual(staged.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",
+                         staged.reason)
+        self.assertEqual(staged.snapshot_sha256,linked.snapshot_sha256)
+        self.assertEqual(json.loads(staged.scenarios[0].observed_constraints_json)
+                         ["own"][0]["observed_moves_display"],["じしん"])
+        stale=stage_linked_observer_calculation_scenarios(
+            bridge,base,VERIFIED_ASSETS)
+        self.assertEqual(stale.reason,"LINKED_OBSERVATION_CHANGED_OR_STALE")
+        wrong=stage_linked_observer_calculation_scenarios(
+            bridge,linked,object())
+        self.assertEqual(wrong.status,"NO_SCENARIOS")
+        different=replace(
+            linked,window=replace(linked.window,match_id="other-match"))
+        self.assertEqual(stage_linked_observer_calculation_scenarios(
+            bridge,different,VERIFIED_ASSETS).status,"NO_SCENARIOS")
+
     def test_visible_own_ids_are_staged_but_never_fabricate_battle_rng(self):
         snapshot=with_state(frozen(),edits=details)
         original=snapshot.observed_state_json
