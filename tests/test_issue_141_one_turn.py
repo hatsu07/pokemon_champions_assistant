@@ -6,7 +6,7 @@ import json
 import unittest
 
 from champions_assist.local_strategy.models import (
-    CapabilityStatus, SimulationResult, action_digest,
+    CapabilityStatus, SimulationResult, fingerprint, PROTOCOL_VERSION,
 )
 from champions_assist.local_strategy.one_turn import (
     BranchObservation, compare_shadow_turn,
@@ -29,19 +29,60 @@ def current():
 
 
 def make_branch(snapshot, action, opponent_choice, *, ours=(100, 100, 100),
-                theirs=(60, 100, 100), nonce="", hypothesis="", corrupt=False):
+                theirs=(60, 100, 100), nonce="", hypothesis="", corrupt=False,
+                actual_p2="", initial_battle=None, branch_sha="",
+                actual_p1=""):
     own = [{"species": species, "hp": hp, "fainted": hp == 0}
            for species, hp in zip(OWN_SPECIES, ours)]
     opp = [{"species": species, "hp": hp, "fainted": hp == 0}
            for species, hp in zip(OTHER_SPECIES, theirs)]
+    # Original submitted request, not synthesized by the comparison function.
+    # This fixture exercises the Phase 1 adapter's new provenance contract;
+    # the real worker stores this only after checking its echoed branch ID.
+    roster = [
+        {"name": "ガブリアス", "species_id": "garchomp",
+         "moves": ["earthquake", "dragonclaw", "rockslide", "swordsdance"]},
+        {"name": "アシレーヌ", "species_id": "primarina", "moves": ["moonblast"]},
+        {"name": "ミミッキュ", "species_id": "mimikyu", "moves": ["playrough"]},
+    ]
+    if initial_battle is None:
+        initial_battle = {"state": "full-synthetic-only",
+                          "rng": {"seed": [1, 2, 3, 4]},
+                          "turn": 5}
+    p2 = actual_p2 or {"attack": "move 1", "switch": "switch 2"}.get(
+        opponent_choice, opponent_choice)
+    action_choice = actual_p1 or ("move 1" if action == EARTH else "move 2")
+    payload = {
+        "source": "FULL_REPLAY_SYNTHETIC",
+        "battle": initial_battle,
+        "p1_choice": action_choice,
+        "p2_choice": p2,
+        "hypothesis_id": hypothesis,
+        "candidate_action_id": action,
+        "expected_p1_roster": roster,
+        "expected_p1_active": snapshot.window.active_pokemon,
+    }
+    payload["branch_input_sha256"] = fingerprint(payload)
+    if branch_sha:
+        payload["branch_input_sha256"] = branch_sha
+    branch_id = nonce or f"branch-{action[:8]}-{opponent_choice}"
+    submitted = {
+        "protocol": PROTOCOL_VERSION, "op": "SIMULATE",
+        "request_id": snapshot.window.request_id,
+        "snapshot_sha256": snapshot.snapshot_sha256,
+        "identity": snapshot.window.identity(),
+        "branch_request_id": branch_id,
+        "payload": payload,
+    }
     result = SimulationResult.from_worker(
         snapshot.window.request_id,
         snapshot.window.identity(), snapshot.snapshot_sha256, hypothesis,
         CapabilityStatus.PARTIAL,
         {"next": {"side_hp": [own, opp]}, "synthetic_only": True},
-        branch_request_id=nonce or f"branch-{action[:8]}-{opponent_choice}",
-        branch_input_sha256="a"*64,
+        branch_request_id=branch_id,
+        branch_input_sha256=payload["branch_input_sha256"],
         candidate_action_id=action if not corrupt else "unbound",
+        submitted_request=submitted,
     )
     return BranchObservation(action, hypothesis, opponent_choice, result)
 
@@ -130,6 +171,67 @@ class Phase2TurnTests(unittest.TestCase):
                         payload_json=json.dumps(hp_payload)))
         self.assertEqual(self.score(s,(a,changed)).reason,
                          "MALFORMED_OR_CONTRADICTORY_HP")
+
+    def test_same_label_but_different_submitted_p2_choice_is_rejected(self):
+        s = current()
+        a = make_branch(s, EARTH, "attack", actual_p2="move 1",
+                        theirs=(10, 100, 100))
+        b = make_branch(s, CLAW, "attack", actual_p2="switch 2",
+                        theirs=(80, 100, 100))
+        self.assertEqual(self.score(s, (a, b)).reason,
+                         "SCENARIO_INPUT_MISMATCH")
+
+    def test_same_label_but_different_original_battle_or_rng_is_rejected(self):
+        s = current()
+        a = make_branch(s, EARTH, "attack")
+        for altered in (
+            {"state": "other-full-synthetic", "rng": {"seed": [1,2,3,4]}, "turn": 5},
+            {"state": "full-synthetic-only", "rng": {"seed": [5,6,7,8]}, "turn": 5},
+        ):
+            with self.subTest(altered=altered):
+                b = make_branch(s, CLAW, "attack", initial_battle=altered)
+                self.assertEqual(self.score(s, (a, b)).reason,
+                                 "SCENARIO_INPUT_MISMATCH")
+
+    def test_false_64_character_digest_or_missing_submitted_request_rejected(self):
+        s = current()
+        a = make_branch(s, EARTH, "attack")
+        for b in (
+            make_branch(s, CLAW, "attack", branch_sha="0"*64),
+            replace(make_branch(s, CLAW, "attack"), result=replace(
+                make_branch(s, CLAW, "attack").result,
+                submitted_request_json="")),
+            replace(make_branch(s, CLAW, "attack"), result=replace(
+                make_branch(s, CLAW, "attack").result,
+                branch_input_sha256="b"*64)),
+        ):
+            with self.subTest(result=b.result):
+                self.assertEqual(self.score(s, (a, b)).status, "NO_RANKING")
+
+    def test_nonce_and_p1_choice_bound_to_actual_submission(self):
+        s = current()
+        a = make_branch(s, EARTH, "attack")
+        b = make_branch(s, CLAW, "attack")
+        # A different actor or a new nonce may not reuse an earlier worker
+        # result, even when the hash is otherwise a valid digest.
+        changed_nonce = replace(b, result=replace(
+            b.result, branch_request_id="different-branch-id"))
+        self.assertEqual(self.score(s, (a, changed_nonce)).reason,
+                         "MISSING_OR_UNBOUND_SUBMISSION")
+        incorrect_move = make_branch(s, CLAW, "attack", actual_p1="move 1")
+        self.assertEqual(self.score(s, (a, incorrect_move)).reason,
+                         "ACTION_SLOT_NOT_BOUND")
+
+    def test_hypothesis_cannot_use_different_initial_rng_across_choices(self):
+        s = current()
+        a = make_branch(s, EARTH, "attack")
+        b = make_branch(s, EARTH, "switch", initial_battle={
+            "state": "full-synthetic-only", "rng": {"seed": [0,0,0,0]}, "turn": 5
+        })
+        c = make_branch(s, CLAW, "attack")
+        d = make_branch(s, CLAW, "switch")
+        self.assertEqual(self.score(s, (a, b, c, d)).reason,
+                         "SCENARIO_INPUT_MISMATCH")
 
     def test_no_unknown_success_on_expiry_or_fake_assets(self):
         s = current()
