@@ -178,6 +178,30 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       assert.equal(output[index].capability_status,"UNSUPPORTED");
       assert.equal(output[index].reason,"P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
     }
+    // Corrupt the P2 helper with an executable throw. The worker must
+    // reject its SHA before ever executing that altered JavaScript.
+    const p2Helper=path.join(tmp,"p2_engine_choices.cjs");
+    const originalHelper=fs.readFileSync(p2Helper,"utf8");
+    fs.appendFileSync(p2Helper,"\\nthrow Error('UNVERIFIED_HELPER_WAS_EXECUTED');\\n");
+    const rejectedHelper=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("altered helper executed or worker crashed: "+code+" "+stderr));
+        try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
+      });
+      proc.stdin.end(JSON.stringify(base)+"\\n");
+    });
+    assert.equal(rejectedHelper.capability_status,"UNSUPPORTED");
+    assert.equal(rejectedHelper.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
+    fs.writeFileSync(p2Helper,originalHelper);
+
     // Manifest entrypoint and pinned source SHA remain unchanged, but a
     // secondary runtime JS dependency has been changed after staging.
     fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),
