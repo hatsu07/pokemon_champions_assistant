@@ -149,10 +149,14 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     p2Payload.branch_input_sha256=hash(p2Payload);
     const p2Request={...req,op:"ENUMERATE_P2",branch_request_id:"1".repeat(32),
       payload:p2Payload};
+    const readoutPayload={...p2Payload,battle_json:JSON.stringify(p2Payload.battle)};
+    delete readoutPayload.battle;
+    readoutPayload.branch_input_sha256=hash(Object.fromEntries(
+      Object.entries(readoutPayload).filter(([key])=>key!=="branch_input_sha256")));
     const readoutRequest={...req,op:"READOUT_REPLAY",branch_request_id:"2".repeat(32),
-      payload:p2Payload};
+      payload:readoutPayload};
     const partialRequest={...readoutRequest,branch_request_id:"3".repeat(32),
-      payload:{...p2Payload,source:"PARTIAL_OBSERVED"}};
+      payload:{...readoutPayload,source:"PARTIAL_OBSERVED"}};
     // The nonce and branch hash are valid for the wrong roster/moves,
     // so only semantic inspection after Battle.fromJSON can reject these.
     // Mutated choice is NOT covered by the submitted SHA.
@@ -177,7 +181,7 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     assert.equal(output[6].ok,true);
     assert.equal(output[6].capability_status,"PARTIAL");
     assert.equal(output[6].branch_request_id,readoutRequest.branch_request_id);
-    assert.equal(output[6].branch_input_sha256,p2Payload.branch_input_sha256);
+    assert.equal(output[6].branch_input_sha256,readoutPayload.branch_input_sha256);
     assert.equal(output[6].payload.readout.status,"SYNTHETIC_ENGINE_REPLAY_READOUT");
     assert.equal(output[6].payload.readout.ready_for_engine,false);
     assert.equal(output[6].payload.readout.members.length,6);
