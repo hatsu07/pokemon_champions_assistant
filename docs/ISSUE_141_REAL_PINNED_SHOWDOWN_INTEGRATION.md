@@ -26,9 +26,14 @@ For ordinary singles decisions, `enumerateEngineP2` retrieves actual
 request-derived choices and validates each on a separate copy, with no source
 mutation. For a controlled **synthetically induced** faint state (not a natural
 game KO), the actual Showdown `makeRequest('switch')` generates the
-replacement request which is then validated. A tampered complex
-Mega-choice flag must still return `NO_CHOICES`. No fixture is labeled
-"actual Champions battle".
+replacement request with `noCancel: true`, which the helper now permits
+**only on a single forced-switch request** and verifies each switch target
+via independent `Side.choose()` calls. A normal move request with that flag
+still fails closed. The simulator's `toJSON()` intentionally omits
+`activeRequest`; `Battle.fromJSON()` regenerates it from engine state.
+Therefore direct edits to the transient `activeRequest` must **never** be
+misrepresented as serialized Battle fixtures or validated negative cases.
+No fixture is labeled "actual Champions battle".
 
 ## CI and acceptance
 
