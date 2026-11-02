@@ -13,6 +13,8 @@ from champions_assist.capture_provenance import (
     capture_frame_receipt, matches_original_frame,
 )
 from champions_assist.fsm import MatchController
+from champions_assist.live_state_updates import apply_local_ocr
+from tests.test_live_state_updates import assets as local_assets, read as local_read, state as local_state
 from champions_assist.observation_events import TextObservationParser
 from champions_assist.observer_pipeline import ObserverPipeline
 from champions_assist.ocr import MappingOcrEngine, image_digest
@@ -141,6 +143,86 @@ class FrameReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"duplicate raw frame"):
             self.pipeline.process_frame(reused)
         self.assertEqual(self._raw(),[original])
+
+    def _claimed_receipt(self, frame_id, seq):
+        copied=Frame(frame_id,seq,seq*100,
+                     self.frame.image.copy(),source="SYNTHETIC_TEST")
+        return capture_frame_receipt(
+            copied,self.session,f"{self.session.match_id}:frame:{seq}:{frame_id}")
+
+    def test_accepted_local_ocr_fields_link_only_explicit_claimed_frames(self):
+        receipts={
+            f"frame-{seq}":self._claimed_receipt(f"frame-{seq}",seq)
+            for seq in (1,2,3)
+        }
+        initial=local_state()
+        initial["match_id"]=self.session.match_id
+        result,audit=apply_local_ocr(initial,(
+            local_read("opponent_active_name","ガブリアス",1),
+            local_read("opponent_hp_percent","73%",1,
+                       {"percent_displayed":73}),
+            local_read("battle_message","相手のガブリアスはじしんをつかった!",2),
+            local_read("battle_message","マスカーニャはまひになった",3),
+        ),local_assets(),capture_receipts=receipts)
+        self.assertEqual(result["battle_evidence"]["hp_by_pokemon"]["opponent"]["ガブリアス"],"73%")
+        self.assertEqual(result["battle_evidence"]["moves_by_pokemon"]["opponent"]["ガブリアス"],["じしん"])
+        self.assertEqual(result["battle_evidence"]["status_by_pokemon"]["own"]["マスカーニャ"],"まひ")
+        applied=[row for row in audit if row.get("status")=="APPLIED"]
+        self.assertEqual(len(applied),4,audit)
+        provenance=result["battle_evidence"]["update_provenance"]
+        for kind,side,actor,field,fid in (
+            ("HP","opponent","ガブリアス","hp_by_pokemon","frame-1"),
+            ("MOVE","opponent","ガブリアス","moves_by_pokemon","frame-2"),
+            ("STATUS","own","マスカーニャ","status_by_pokemon","frame-3"),
+        ):
+            row=next(p for p in provenance if p["kind"]==kind)
+            self.assertEqual((row["side"],row["actor"],row["field"],row["frame_id"]),
+                             (side,actor,field,fid))
+            self.assertGreaterEqual(row["after_revision"],row["before_revision"])
+            link=row["claimed_frame_link"]
+            self.assertEqual(link["image_rgb_sha256"],receipts[fid].image_rgb_sha256)
+            self.assertEqual(link["raw_observation_id"],receipts[fid].raw_observation_id)
+            self.assertEqual((link["actor"],link["field"]),(actor,field))
+            for k in ("capture_origin_authenticated","actor_identity_authenticated",
+                      "capture_timestamp_authenticated","roi_digest_verified",
+                      "current_window_binding_verified","ready_for_engine"):
+                self.assertIs(link[k],False)
+
+    def test_missing_mismatched_frame_receipt_never_applies_ocr_update(self):
+        from dataclasses import replace
+        event=local_read("battle_message","相手のガブリアスはじしんをつかった!",1)
+        origin=self._claimed_receipt("frame-1",1)
+        for claims in (
+            {},
+            {"frame-1":replace(origin,match_id="previous-match")},
+            {"frame-1":replace(origin,frame_id="different")},
+            {"frame-1":replace(origin,image_rgb_sha256="sha256:"+"0"*63)},
+            {"frame-1":replace(origin,raw_observation_id="wrong-window")},
+        ):
+            with self.subTest(claims=repr(claims)):
+                initial=local_state()
+                initial["match_id"]=self.session.match_id
+                output,audit=apply_local_ocr(initial,(event,),local_assets(),
+                                             capture_receipts=claims)
+                self.assertNotIn("ガブリアス",output["battle_evidence"]["moves_by_pokemon"]["opponent"])
+                self.assertEqual(audit[0]["reason"],"FRAME_RECEIPT_UNAVAILABLE_OR_MISMATCH")
+                self.assertEqual(output["_live_state_revision"],0)
+        initial=local_state()  # missing match identity cannot bind receipt
+        output,audit=apply_local_ocr(initial,(event,),local_assets(),
+                                     capture_receipts={"frame-1":origin})
+        self.assertEqual(audit[0]["reason"],"FRAME_RECEIPT_UNAVAILABLE_OR_MISMATCH")
+        self.assertEqual(output["_live_state_revision"],0)
+
+    def test_unlinked_legacy_local_ocr_remains_unverified_and_supported(self):
+        initial=local_state()
+        output,audit=apply_local_ocr(initial,(
+            local_read("battle_message","相手のガブリアスはじしんをつかった!",1),
+        ),local_assets())
+        self.assertEqual(audit[0]["status"],"APPLIED")
+        origin=output["battle_evidence"]["update_provenance"][0]
+        self.assertNotIn("claimed_frame_link",origin)
+        self.assertEqual((origin["actor"],origin["field"]),
+                         ("ガブリアス","moves_by_pokemon"))
 
     def test_frame_digest_is_not_a_claim_of_observation_authenticity(self):
         # A made-up source label cannot produce a trusted game observation.
