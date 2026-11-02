@@ -18,6 +18,11 @@ import unittest
 
 from champions_assist.local_strategy.models import canonical_json
 from champions_assist.local_strategy.simulator_adapter import LocalSimulatorWorker
+from champions_assist.local_strategy.observed_synthetic_replay_bridge import (
+    ExplicitSyntheticBattleBranch, compare_observed_to_synthetic_replays,
+)
+from tests.test_issue_141_joint_set_intake import record
+from tests.test_issue_141_observed_id_bridge import with_state
 from tests.test_issue_140_foundation import VERIFIED_ASSETS, frozen
 
 PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1"
@@ -137,6 +142,52 @@ class RealPinnedReadoutPythonE2E(unittest.TestCase):
                                     outputs[1].branch_request_id)
                 self.assertNotEqual(outputs[0].battle_sha256,
                                     outputs[1].battle_sha256)
+
+    def test_actual_pinned_worker_full_sourced_batch_matches_only_visible_constraints(self):
+        """Real Battle/worker/Python joined to Stage②, without game attestation."""
+        fixture=os.environ.get("READOUT_E2E_FIXTURE_PATH","")
+        upstream=os.environ.get("SHOWDOWN_PINNED_BUILD_ROOT","")
+        self.assertTrue(fixture and upstream)
+        battle=json.loads(Path(fixture).read_text(encoding="utf-8"))
+        # The actual engine fixture's p2.active is Dragonite (slot 1).
+        # These display identities are USER-CLAIMED, not authenticated by
+        # Showdown or OCR. No exact p2 HP is fabricated in the observation.
+        snap=with_state(frozen(),edits=lambda s:s.update(
+            opponent_active="カイリュー",
+            opponent_six=["カイリュー","サーフゴー","ドドゲザン",
+                          "ウルガモス","ミミッキュ","ロトム"]))
+        snap=replace(snap,window=replace(
+            snap.window,deadline_monotonic=time.monotonic()+30))
+        sources=(
+            record("Joint-1"),
+            record("Joint-2",source_ref="synthetic://second-joint"),
+        )
+        entries=tuple(ExplicitSyntheticBattleBranch(
+            c.candidate_id,battle,("カイリュー","サーフゴー","ドドゲザン"))
+            for c in sources)
+        with tempfile.TemporaryDirectory() as tmp:
+            target=make_ci_test_runtime(Path(upstream),Path(tmp))
+            with LocalSimulatorWorker(
+                node_executable=shutil.which("node"),
+                worker_script=str(REPO / "local_simulator/worker.cjs"),
+                showdown_root=str(target),simulator_sha=PIN,
+            ) as worker:
+                out=compare_observed_to_synthetic_replays(
+                    snap,VERIFIED_ASSETS,joint_candidates=sources,
+                    complete_branches=entries,worker=worker)
+        self.assertEqual(
+            out.status,"SYNTHETIC_REPLAYS_MATCH_OBSERVED_CONSTRAINTS_ONLY",
+            out.reason)
+        self.assertEqual(out.hypothesis_ids,("Joint-1","Joint-2"))
+        self.assertEqual(len(out.battle_sha256),2)
+        self.assertTrue(all(v==out.battle_sha256[0]
+                            for v in out.battle_sha256))
+        self.assertIn("p1:1.species_id",out.checked_fields[0])
+        self.assertEqual(out.ranking_status,"NO_RANKING")
+        self.assertFalse(out.game_battle_authenticated)
+        self.assertFalse(out.opponent_mapping_authenticated)
+        self.assertFalse(out.full_state_reconstructed)
+        self.assertFalse(out.ready_for_engine)
 
 
 if __name__=="__main__":
