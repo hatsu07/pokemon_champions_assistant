@@ -223,6 +223,10 @@ class SimulationResult:
     branch_request_id: str = ""
     branch_input_sha256: str = ""
     candidate_action_id: str = ""
+    # Locally captured exact SIMULATE request, attached only after the
+    # adapter checked the worker echo. Never reconstructed from result tags.
+    # Omitted by historical/synthetic callers until they provide a request.
+    submitted_request_json: str = ""
 
     @classmethod
     def from_worker(cls, request_id: str, identity: Mapping[str, Any],
@@ -230,10 +234,13 @@ class SimulationResult:
                     status: CapabilityStatus, payload: Mapping[str, Any],
                     reason: str = "", *, branch_request_id: str = "",
                     branch_input_sha256: str = "",
-                    candidate_action_id: str = "") -> "SimulationResult":
+                    candidate_action_id: str = "",
+                    submitted_request: Mapping[str, Any] | None = None) -> "SimulationResult":
         return cls(request_id, canonical_json(dict(identity)), snapshot_sha256,
                    hypothesis_id, status, canonical_json(dict(payload)), reason,
-                   branch_request_id, branch_input_sha256, candidate_action_id)
+                   branch_request_id, branch_input_sha256, candidate_action_id,
+                   (canonical_json(dict(submitted_request))
+                    if submitted_request is not None else ""))
 
 def window_from_preload(assets: Any, *, match_id: str,
                         decision_window_id: str, window_kind: WindowKind,

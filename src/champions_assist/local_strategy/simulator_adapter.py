@@ -314,7 +314,10 @@ class LocalSimulatorWorker:
             str(reply.get("reason") or ""),
             branch_request_id=reply["branch_request_id"],
             branch_input_sha256=reply["branch_input_sha256"],
-            candidate_action_id=reply["candidate_action_id"])
+            candidate_action_id=reply["candidate_action_id"],
+            # Capture the actual request only *after* _exchange has matched
+            # the worker echo to this branch nonce, hash and action.
+            submitted_request=request)
 
     def close(self) -> None:
         self._failed = True
