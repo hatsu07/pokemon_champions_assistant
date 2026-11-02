@@ -19,6 +19,7 @@ from .models import (
     SimulationResult, fingerprint, joint_hypothesis_ids,
 )
 from .simulator_adapter import _verified_roster_binding, WorkerUnavailable
+from .opponent_evidence_gate import check_observed_opponent_hypotheses
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,9 @@ def compare_shadow_turn(snapshot: FrozenBattleState, assets: Any,
         expected_hypotheses = set(joint_hypothesis_ids(snapshot.hypotheses))
     except ValueError:
         return ShadowTurnRanking("NO_RANKING", "DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+    evidence_gate = check_observed_opponent_hypotheses(snapshot)
+    if evidence_gate.status != "CLEAR":
+        return ShadowTurnRanking("NO_RANKING", evidence_gate.reason)
     scenarios: dict[str, dict[tuple[str, str], tuple[int, ...]]] = {
         action_id: {} for action_id in actions
     }
