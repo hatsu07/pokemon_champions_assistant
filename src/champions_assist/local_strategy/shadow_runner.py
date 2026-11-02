@@ -88,6 +88,8 @@ def run_shadow_turn(
     except (WorkerUnavailable, ValueError, TypeError, KeyError, AttributeError) as exc:
         return _blocked("ACTION_OR_ROSTER_UNVERIFIED:" + str(exc)[:100])
     hypotheses = {h.hypothesis_id for h in snapshot.hypotheses} or {""}
+    if any(not isinstance(s, ReplayOpponentScenario) for s in scenarios):
+        return _blocked("UNVERIFIED_REPLAY_OR_P2_CHOICE_SET")
     if (not scenarios or len(scenarios) != len(hypotheses)
             or {s.hypothesis_id for s in scenarios} != hypotheses
             or len({s.hypothesis_id for s in scenarios}) != len(scenarios)):
@@ -100,10 +102,10 @@ def run_shadow_turn(
                 or not isinstance(scenario.battle_json, str)
                 or not isinstance(scenario.p2_choices, tuple)
                 or not 1 <= len(scenario.p2_choices) <= MAX_P2_CHOICES_PER_HYPOTHESIS
-                or len(set(scenario.p2_choices)) != len(scenario.p2_choices)
                 or any(not isinstance(c, str) or not c or c != c.strip()
                        or len(c) > 80 or "\n" in c or "\r" in c
-                       for c in scenario.p2_choices)):
+                       for c in scenario.p2_choices)
+                or len(set(scenario.p2_choices)) != len(scenario.p2_choices)):
             return _blocked("UNVERIFIED_REPLAY_OR_P2_CHOICE_SET")
         try:
             battle = loads(scenario.battle_json)
