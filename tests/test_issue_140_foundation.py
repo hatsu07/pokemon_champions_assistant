@@ -395,6 +395,19 @@ class WorkerTests(unittest.TestCase):
                                 "move 1", "move 1",
                                 candidate_action_id=move_id("じしん"), assets=VERIFIED_ASSETS)
             self.assertEqual(result.capability_status, CapabilityStatus.PARTIAL)
+            submitted = json.loads(result.submitted_request_json)
+            self.assertEqual(submitted["op"], "SIMULATE")
+            self.assertEqual(submitted["branch_request_id"], result.branch_request_id)
+            self.assertEqual(submitted["payload"]["p1_choice"], "move 1")
+            self.assertEqual(submitted["payload"]["p2_choice"], "move 1")
+            self.assertEqual(submitted["payload"]["candidate_action_id"],
+                             result.candidate_action_id)
+            self.assertEqual(submitted["payload"]["branch_input_sha256"],
+                             result.branch_input_sha256)
+            self.assertEqual(fingerprint({
+                k: v for k, v in submitted["payload"].items()
+                if k != "branch_input_sha256"
+            }), result.branch_input_sha256)
         finally:
             w.close()
             tmp.cleanup()
