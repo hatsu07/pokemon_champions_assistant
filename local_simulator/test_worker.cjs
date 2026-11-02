@@ -64,11 +64,24 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       "exports.Battle={fromJSON(data){return {format:{mod:'champions'},"+
       "requestState:'move',turn:1,field:{weather:''},sides:[{pokemon:[]},{pokemon:[]}],"+
       "makeChoices(){this.turn++},toJSON(){return data}}}};");
+    fs.mkdirSync(path.join(root,"node_modules","testdep"),{recursive:true});
+    fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),"// verified-test-dependency");
+    fs.writeFileSync(path.join(root,"dist","sim","helper.js"),"// verified-test-helper");
+    fs.writeFileSync(path.join(root,"package.json"),"{}");
+    fs.writeFileSync(path.join(root,"LICENSE"),"test-only");
+    const engineFileSha={
+      "dist/sim/index.js":sha(path.join(root,"dist","sim","index.js")),
+      "dist/sim/helper.js":sha(path.join(root,"dist","sim","helper.js")),
+      "node_modules/testdep/index.js":sha(path.join(root,"node_modules","testdep","index.js")),
+      "package.json":sha(path.join(root,"package.json")),
+      "LICENSE":sha(path.join(root,"LICENSE"))
+    };
     fs.writeFileSync(path.join(tmp,"NODE_LICENSE.txt"),"test-only");
     fs.writeFileSync(path.join(tmp,"THIRD_PARTY_NOTICES.txt"),"test-only");
     const manifest={scope:"ISSUE_140_SYNTHETIC_ONLY",engine_sha:PIN,
       production_enabled:false,
       showdown_entry_sha256:sha(path.join(root,"dist","sim","index.js")),
+      engine_file_sha256:engineFileSha,
       worker_sha256:sha(workerPath),node_exe_sha256:sha(process.execPath),
       node_license_sha256:sha(path.join(tmp,"NODE_LICENSE.txt")),
       third_party_notices_sha256:sha(path.join(tmp,"THIRD_PARTY_NOTICES.txt"))};
@@ -109,5 +122,26 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
     assert.equal(output[1].capability_status,"UNSUPPORTED");
     assert.equal(output[1].ok,false);
     assert.equal(output[1].branch_request_id,"c".repeat(32));
+    // Manifest entrypoint and pinned source SHA remain unchanged, but a
+    // secondary runtime JS dependency has been changed after staging.
+    fs.writeFileSync(path.join(root,"node_modules","testdep","index.js"),
+                     "// malicious or accidental dependency modification");
+    const corrupt=await new Promise((resolve,reject)=>{
+      const proc=spawn(process.execPath,[workerPath],{
+        env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+        stdio:["pipe","pipe","pipe"]
+      });
+      let stdout="",stderr="";
+      proc.stdout.on("data",x=>stdout+=x);
+      proc.stderr.on("data",x=>stderr+=x);
+      proc.on("error",reject);
+      proc.on("exit",code=>{
+        if(code!==0)return reject(new Error("worker exit "+code+" "+stderr));
+        try{resolve(JSON.parse(stdout.trim()))}catch(e){reject(e)}
+      });
+      proc.stdin.end(JSON.stringify(base)+"\n");
+    });
+    assert.equal(corrupt.capability_status,"UNSUPPORTED");
+    assert.equal(corrupt.reason,"RUNTIME_MANIFEST_SHA_MISMATCH");
   }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 });
