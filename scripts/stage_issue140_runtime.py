@@ -54,8 +54,10 @@ def stage(*, showdown_root: Path, node_exe: Path, node_license: Path,
           output: Path) -> dict:
     """Copy only already-present inputs, with deterministic source checks."""
     worker_helper = worker_script.with_name("p2_engine_choices.cjs")
+    readout_helper = worker_script.with_name("pinned_replay_readout.cjs")
     for p in (showdown_root, node_exe, node_license,
               third_party_notices, worker_script, worker_helper,
+              readout_helper,
               verified_build_manifest):
         if not p.exists():
             raise FileNotFoundError(str(p))
@@ -110,6 +112,7 @@ def stage(*, showdown_root: Path, node_exe: Path, node_license: Path,
         shutil.copy2(third_party_notices, target / "THIRD_PARTY_NOTICES.txt")
         shutil.copy2(worker_script, target / "worker.cjs")
         shutil.copy2(worker_helper, target / "p2_engine_choices.cjs")
+        shutil.copy2(readout_helper, target / "pinned_replay_readout.cjs")
         engine = target / "showdown"
         engine.mkdir()
         for folder in ("dist", "node_modules"):
@@ -129,6 +132,8 @@ def stage(*, showdown_root: Path, node_exe: Path, node_license: Path,
             "worker_sha256": _digest(target / "worker.cjs"),
             "p2_engine_choices_sha256": _digest(
                 target / "p2_engine_choices.cjs"),
+            "pinned_replay_readout_sha256": _digest(
+                target / "pinned_replay_readout.cjs"),
             "showdown_entry_sha256": _digest(engine / "dist/sim/index.js"),
             "engine_file_sha256": reference["engine_file_sha256"],
             "node_license_sha256": _digest(target / "NODE_LICENSE.txt"),
