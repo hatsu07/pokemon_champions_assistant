@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from champions_assist.local_strategy.models import (
     CapabilityStatus, Hypothesis, PROTOCOL_VERSION, SimulationResult,
@@ -168,6 +170,79 @@ class Phase2ShadowRunnerTests(unittest.TestCase):
                 result=self.run_plan(worker=w)
                 self.assertEqual(result.status, "NO_RANKING")
                 self.assertEqual(result.best_action_id, "")
+
+    def test_malformed_worker_returns_never_raise_or_publish_ranking(self):
+        class MalformedWorker:
+            def __init__(self, value):
+                self.value = value
+                self.calls = 0
+
+            def simulate(self, *args, **kwargs):
+                self.calls += 1
+                return self.value
+
+        # None/dict/partial attribute object and structurally incomplete
+        # SimulationResult all previously leaked AttributeError or TypeError.
+        legitimate = FakePhase1Worker().simulate(
+            current(), {"state": "synthetic"}, "move 1", "move 1",
+            hypothesis_id="", candidate_action_id=EARTH,
+            assets=VERIFIED_ASSETS)
+        for malformed in (
+            None,
+            {},
+            {"capability_status": "PARTIAL"},
+            SimpleNamespace(capability_status=CapabilityStatus.PARTIAL),
+            replace(legitimate, submitted_request_json=""),
+            replace(legitimate, identity_json=None),
+            replace(legitimate, branch_input_sha256="g"*64),
+            replace(legitimate, branch_request_id=""),
+        ):
+            with self.subTest(malformed=type(malformed).__name__):
+                worker = MalformedWorker(malformed)
+                outcome = self.run_plan(worker=worker)
+                self.assertEqual(outcome.status, "NO_RANKING")
+                self.assertEqual(outcome.reason, "WORKER_BRANCH_UNAVAILABLE")
+                self.assertEqual(outcome.best_action_id, "")
+                self.assertEqual(worker.calls, 1)
+
+    def test_worker_runtime_error_and_snapshot_provider_exception_fail_closed(self):
+        class CrashingWorker:
+            def simulate(self, *args, **kwargs):
+                raise RuntimeError("synthetic external worker failure")
+
+        outcome = self.run_plan(worker=CrashingWorker())
+        self.assertEqual(outcome.reason, "WORKER_BRANCH_UNAVAILABLE")
+        self.assertEqual(outcome.status, "NO_RANKING")
+
+        for interrupt_at in (1, 5):
+            called = 0
+            def current_snapshot():
+                nonlocal called
+                called += 1
+                if called == interrupt_at:
+                    raise RuntimeError("state store switched sessions")
+                return current_state
+
+            current_state = current()
+            worker = FakePhase1Worker()
+            with self.subTest(interrupt_at=interrupt_at):
+                outcome = self.run_plan(
+                    snapshot=current_state, worker=worker,
+                    current_snapshot=current_snapshot)
+                self.assertEqual(outcome.status, "NO_RANKING")
+                self.assertEqual(outcome.reason, "CURRENT_SNAPSHOT_UNAVAILABLE")
+                self.assertEqual(outcome.best_action_id, "")
+                self.assertEqual(len(worker.calls), interrupt_at-1)
+
+    def test_downstream_unexpected_branch_payload_parser_error_stays_isolated(self):
+        with patch(
+            "champions_assist.local_strategy.shadow_runner.compare_shadow_turn",
+            side_effect=AttributeError("malformed optional result field"),
+        ):
+            result = self.run_plan(worker=FakePhase1Worker())
+        self.assertEqual(result.status, "NO_RANKING")
+        self.assertEqual(result.reason, "COMPARISON_UNAVAILABLE")
+        self.assertEqual(result.best_action_id, "")
 
     def test_worker_mutating_passed_battle_copy_does_not_change_next_branch(self):
         worker = FakePhase1Worker(mutate_input=True)
