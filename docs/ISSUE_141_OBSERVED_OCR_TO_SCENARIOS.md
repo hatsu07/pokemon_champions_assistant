@@ -42,8 +42,21 @@ roster gates; when the switch is not trustworthy, no side's stale
 name/HP is promoted. After the transition, the new name needs a
 separate stable frame before HP/PP attribution. Both own and opponent
 switches and 3.5-second same-name refresh are covered by synthetic tests.
-The extra OCR is performed only for the explicitly enabled bridge,
-only on relevant changed HP/PP frames, and prior to the raw SQLite insert. The existing sample OCR
+The extra OCR is performed only for the explicitly enabled bridge
+and before the raw SQLite insert. A rejected switch/ambiguous HP/PP
+measurement now remains **pending by mapped ROI**, rather than being
+forgotten when the image stops changing. While pending, the observer
+re-OCRs the CURRENT frame's HP/PP pixels even with `changed=false`,
+then re-OCRs the paired name ROI from that same frame. The raw SQLite
+receipt records both fresh image-bound reads and `hud_retry_same_frame`.
+A name ROI still changing during landing, an explicit same-frame
+SWITCH, unreadable digits, low confidence or an actor mismatch keeps
+the ROI pending. A retry is cleared only when the existing reducer
+accepts every re-read record in that side/kind group. No rejected
+text or stale pixel buffer is replayed; separate pending own/opponent
+HP and own PP fields cannot be attributed to the wrong side. Both
+sides' unchanged landing HP and an unchanged landing PP are exercised
+by synthetic end-to-end tests. The existing sample OCR
 field parser parses numbers, and existing `apply_local_ocr` handles
 actor evidence, stale switch HUD, ambiguity, confidence, and updates.
 No independent battle-text mechanics parser is introduced. Unknown OCR,
