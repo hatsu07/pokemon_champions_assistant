@@ -111,6 +111,16 @@ def run_shadow_turn(
     if action_digest(snapshot.verified_action_ids) != window.allowed_action_digest:
         return _blocked("ALLOWED_ACTION_DIGEST_CHANGED")
     try:
+        hypotheses = set(joint_hypothesis_ids(snapshot.hypotheses))
+    except ValueError:
+        return _blocked("DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
+    # No known opponent observation may contradict or be omitted by any
+    # joint set in a current-window Showdown branch. Do not filter just the
+    # losing hypothesis: the whole provisional ranking becomes unavailable.
+    evidence_gate = check_observed_opponent_hypotheses(snapshot)
+    if evidence_gate.status != "CLEAR":
+        return _blocked(evidence_gate.reason)
+    try:
         _verified_roster_binding(snapshot, assets)
         candidates = generate_candidates(snapshot, assets)
         eligible = [candidate for candidate in candidates
@@ -124,16 +134,6 @@ def run_shadow_turn(
                    for candidate in eligible}
     except (WorkerUnavailable, ValueError, TypeError, KeyError, AttributeError) as exc:
         return _blocked("ACTION_OR_ROSTER_UNVERIFIED:" + str(exc)[:100])
-    try:
-        hypotheses = set(joint_hypothesis_ids(snapshot.hypotheses))
-    except ValueError:
-        return _blocked("DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
-    # No known opponent observation may contradict or be omitted by any
-    # joint set in a current-window Showdown branch. Do not filter just the
-    # losing hypothesis: the whole provisional ranking becomes unavailable.
-    evidence_gate = check_observed_opponent_hypotheses(snapshot)
-    if evidence_gate.status != "CLEAR":
-        return _blocked(evidence_gate.reason)
     if any(not isinstance(s, ReplayOpponentScenario) for s in scenarios):
         return _blocked("UNVERIFIED_REPLAY_OR_P2_CHOICE_SET")
     if (not scenarios or len(scenarios) != len(hypotheses)
