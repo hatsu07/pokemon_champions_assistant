@@ -4,7 +4,7 @@
 
 ## Trusted source and model input
 
-The current `battle_evidence.py` updates the frozen `state["battle_evidence"]` from observed UI events, retaining per-opponent `moves_by_pokemon`, `item_by_pokemon`, `ability_by_pokemon`, `form_by_pokemon`. These are literal game-visible strings, not automatically matched English Showdown IDs. The known active opponent is `state["opponent_active"]`.
+The current `battle_evidence.py` updates the frozen `state["battle_evidence"]` from observed UI events, retaining per-opponent `moves_by_pokemon`, `item_by_pokemon`, `ability_by_pokemon`, `form_by_pokemon`, `current_type`, `status_by_pokemon`. These are literal game-visible strings, not automatically matched English Showdown IDs. The known active opponent is `state["opponent_active"]`.
 
 A `Hypothesis.assumptions_json` may include an **explicit joint** schema, illustrated below with *synthetic names only*:
 
@@ -15,7 +15,9 @@ A `Hypothesis.assumptions_json` may include an **explicit joint** schema, illust
       "moves": ["観測された技", "追加の仮定技"],
       "item": "観測された持ち物",
       "ability": "観測された特性",
-      "form": "観測されたフォルム"
+      "form": "観測されたフォルム",
+      "current_type": "観測された現在タイプ",
+      "status": "観測された状態異常"
     }
   }
 }
@@ -27,13 +29,13 @@ All values are compared **literally** with game-visible strings. The gate does n
 
 - `local_strategy/opponent_evidence_gate.py::check_observed_opponent_hypotheses(snapshot)` reads only the current `FrozenBattleState`; no I/O, Web, statistics, screenshots or mutating evidence.
 - `shadow_runner.run_shadow_turn` invokes the check **before any worker calls**. `one_turn.compare_shadow_turn` independently invokes it to protect direct invocation.
-- The check processes **every registered joint hypothesis**. If even one set is missing evidence or contradicts any observed move/item/ability/form, the entire calculation returns `NO_RANKING` with a stable reason (`JOINT_ASSUMPTIONS_UNBOUND`, `JOINT_ASSUMPTIONS_CONTRADICT_OBSERVATION`, `INVALID_OBSERVED_OPPONENT_EVIDENCE`, etc.). Never silently drop a losing hypothesis from a comparison grid.
+- The check processes **every registered joint hypothesis**. If even one set is missing evidence or contradicts any observed move/item/ability/form/type/status, the entire calculation returns `NO_RANKING` with a stable reason (`JOINT_ASSUMPTIONS_UNBOUND`, `JOINT_ASSUMPTIONS_CONTRADICT_OBSERVATION`, `INVALID_OBSERVED_OPPONENT_EVIDENCE`, etc.). Never silently drop a losing hypothesis from a comparison grid.
 - The unique joint hypothesis-ID gate from PR #176 is preserved. This evidence gate does not certify the initial Battle JSON, the simulated p2 choice legality, the opponent's unknown moves, or Showdown/Champions mechanical parity.
 - No change to the production LIVE/GPT path, Windows GUI, automatic input control, local file loading during a match, or the existing four-master preloader.
 
 ## Synthetic regression
 
-`tests/test_issue_141_opponent_evidence_gate.py`: empty evidence; two consistent joint sets; conflicting revealed item, move, ability, form; missing item/member/legacy unstructured hypothesis; an observed actor with no joint sets; malformed observed move list; independent `compare_shadow_turn` call; blocker before all worker calls, and no invented moves from marginal adoption data. CI on Linux isolated and Windows desktop.
+`tests/test_issue_141_opponent_evidence_gate.py`: empty evidence; two consistent joint sets; conflicting revealed item, move, ability, form, current type and status; missing item/member/legacy unstructured hypothesis; an observed actor with no joint sets; malformed observed move list; independent `compare_shadow_turn` call; blocker before all worker calls, and no invented moves from marginal adoption data. CI on Linux isolated and Windows desktop.
 
 ## Still required
 
