@@ -125,3 +125,50 @@ def stage_observed_calculation_scenarios(
         stage.match_id, stage.decision_window_id, stage.state_revision,
         stage.snapshot_sha256, scenarios,
     )
+
+
+def stage_linked_observer_calculation_scenarios(
+    linked_observer: Any, snapshot: FrozenBattleState,
+    assets: Any, *,
+    joint_candidates: tuple[SourcedJointSetCandidate, ...] = (),
+) -> ObservedScenarioBatch:
+    """Join stage ① with stage ② only for the EXACT frozen OCR state.
+
+    The window owner must independently freeze the current match state with
+    its real current actor, screen, revision and legal actions. We never
+    construct a guessed DecisionWindow or equate the OCR reducer revision
+    with the FSM tactical revision. Matching JSON bytes and proven same
+    in-process source identity are mandatory, but neither is a proof of
+    real-game OCR/source authenticity.
+    """
+    from ..observed_capture_bridge import LinkedObserverState
+    if (not isinstance(linked_observer, LinkedObserverState)
+            or not isinstance(snapshot, FrozenBattleState)
+            or linked_observer.assets is not assets
+            or snapshot.window.match_id != linked_observer.match_id
+            or linked_observer.last_capture_seq < 0):
+        return ObservedScenarioBatch("NO_SCENARIOS",
+                                     "LINKED_CAPTURE_MATCH_OR_ASSETS_UNAVAILABLE")
+    state = snapshot.state
+    try:
+        if (state.get("match_id") != linked_observer.match_id
+                or canonical_json(state) != canonical_json(linked_observer.state)
+                or state.get("our_active") != snapshot.window.active_pokemon):
+            return ObservedScenarioBatch("NO_SCENARIOS",
+                                         "LINKED_OBSERVATION_CHANGED_OR_STALE")
+        provenance = state.get("battle_evidence", {}).get("update_provenance", [])
+        if (not isinstance(provenance, list) or not any(
+                isinstance(p, dict)
+                and isinstance(p.get("claimed_frame_link"), dict)
+                and p["claimed_frame_link"].get("match_id") == linked_observer.match_id
+                and p["claimed_frame_link"].get("raw_observation_id")
+                in linked_observer.linked_raw_observation_ids
+                and p["claimed_frame_link"].get("ready_for_engine") is False
+                for p in provenance)):
+            return ObservedScenarioBatch("NO_SCENARIOS",
+                                         "NO_EXPLICIT_LINKED_OCR_FACT")
+    except (TypeError, ValueError, AttributeError):
+        return ObservedScenarioBatch("NO_SCENARIOS",
+                                     "INVALID_LINKED_OBSERVATION_STATE")
+    return stage_observed_calculation_scenarios(
+        snapshot, assets, joint_candidates=joint_candidates)
