@@ -8,6 +8,7 @@ on:
       - 'tests/test_issue_140_foundation.py'
       - 'tests/test_issue_141_selection.py'
       - 'tests/test_issue_141_one_turn.py'
+      - 'tests/test_issue_141_shadow_runner.py'
       - 'tests/test_verify_merge_ready.py'
       - 'scripts/verify_merge_ready.py'
       - '.github/workflows/showdown-phase1-foundation.yml'
