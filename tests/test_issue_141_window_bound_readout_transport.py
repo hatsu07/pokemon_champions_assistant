@@ -45,7 +45,9 @@ REPLY = (
     "'branch_input_sha256':p['branch_input_sha256'],"
     "'transport_scope':'VERIFIED_LOCAL_PROCESS_SYNTHETIC_ONLY',"
     "'readout':readout,'full_state_reconstructed':False,'ready_for_engine':False}\n"
-    "  r.update(capability_status='PARTIAL',ok=True,payload=body)\n"
+    "  r.update(capability_status='PARTIAL',ok=True,payload=body,"
+    "hypothesis_id=p['hypothesis_id'],"
+    "branch_input_sha256=p['branch_input_sha256'])\n"
     " print(json.dumps(r,ensure_ascii=False),flush=True)\n"
 )
 
@@ -101,9 +103,11 @@ class ReadoutWorkerTransportTests(unittest.TestCase):
 
     def test_reject_wrong_echo_and_expired_or_unknown_hypothesis(self):
         forged=REPLY.replace(
-            "r.update(capability_status='PARTIAL',ok=True,payload=body)",
             "r.update(capability_status='PARTIAL',ok=True,payload=body,"
-            "branch_request_id='0'*32)")
+            "r.update(capability_status='PARTIAL',ok=True,payload=body,"
+            "branch_request_id='0'*32,"
+            "hypothesis_id=p['hypothesis_id'],"
+            "branch_input_sha256=p['branch_input_sha256'])")
         with self.assertRaises(WorkerUnavailable):
             self.exchange(forged)
         with self.assertRaises(WorkerUnavailable):
