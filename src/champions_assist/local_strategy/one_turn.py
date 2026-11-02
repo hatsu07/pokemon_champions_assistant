@@ -16,7 +16,7 @@ from typing import Any
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 from .models import (
     CapabilityStatus, FrozenBattleState, LegalStatus, PROTOCOL_VERSION,
-    SimulationResult, fingerprint,
+    SimulationResult, fingerprint, joint_hypothesis_ids,
 )
 from .simulator_adapter import _verified_roster_binding, WorkerUnavailable
 
@@ -121,7 +121,12 @@ def compare_shadow_turn(snapshot: FrozenBattleState, assets: Any,
         return ShadowTurnRanking("NO_RANKING", "NO_POSITIVELY_LEGAL_ACTIONS")
     if not branches:
         return ShadowTurnRanking("NO_RANKING", "NO_SIMULATED_BRANCHES")
-    expected_hypotheses = {h.hypothesis_id for h in snapshot.hypotheses} or {""}
+    # Do not collapse distinct joint conditions carrying duplicate IDs.
+    # The comparator is public and may be called without the orchestrator.
+    try:
+        expected_hypotheses = set(joint_hypothesis_ids(snapshot.hypotheses))
+    except ValueError:
+        return ShadowTurnRanking("NO_RANKING", "DUPLICATE_OR_INVALID_HYPOTHESIS_ID")
     scenarios: dict[str, dict[tuple[str, str], tuple[int, ...]]] = {
         action_id: {} for action_id in actions
     }
