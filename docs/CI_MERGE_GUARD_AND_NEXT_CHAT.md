@@ -15,13 +15,24 @@ masterへのマージ後、別の`.github/workflows/windows-development-release.
 `.github/workflows/windows-development-release-cleanup.yml`が毎日、**14日以上かつ新しい3件以外**のコミットタグ付き開発プレリリースと対応タグのみ整理。stable Release・一般タグ・Draftを消さない。詳細は`docs/WINDOWS_DEVELOPMENT_RELEASES.md`。WSLの`scripts/prune_actions_artifacts.sh`は過去Actions Artifactsの履歴整理専用。
 ユーザーが実際に利用するゲーム映像による検証・画面分類精度・正式MSIは別工程。BlueStacksは必須前提ではない。
 
+## Phase 1 統合ブランチ専用の厳格ゲート（2026-11-02 / Issue #140）
+
+2026-11-02のユーザー判断とマージ済みPR #174により、`integration/issue-138-showdown-local-engine` を**唯一の追加許可ベース**として扱う。これ以外の無許可ベースは`scripts/verify_merge_ready.py`で拒否する。**GitHub Releasesの自動配布は引き続きmaster専用**であり、統合ブランチ宛PRのマージがmaster配布を開始することはない。
+
+- 統合ブランチ宛のReady PRは、最新`head.sha`に対し**Windows workflow全体＋`desktop-windows-validation`**、および**`.github/workflows/showdown-phase1-foundation.yml`全体＋`phase1-isolated-foundation`**の双方が`completed/success`の場合だけマージ候補にできる。どちらかが未実行・古い・失敗・Skip・Cancelなら禁止。
+- PRのDraftは依然マージ不可。PR #144の開発が進んでも、明示的なレビューとCI結果を確認する前にマージしてはならない。
+- 科学的なGate A=`UNKNOWN`／Gate B=`UNSUPPORTED` は**開発を止める条件ではない**（PR #174）。ただし計算互換性を実機確認済みと報告しない。
+- `tests/test_verify_merge_ready.py`の統合ブランチ用正例・負例、および`tests/test_issue_140_foundation.py`の合法性/分岐応答/旧revision排除を厳格な最低条件として継続。
+
+以降の「master宛て」という旧要件は、**masterへの通常PRとmasterからのRelease**について引き続き正しく、上記の明示的な例外と矛盾しないように解釈する。
+
 ## 手動・AIエージェントによる例外なしマージ判定
 
 1. 開発は作業ブランチ + Draft PRで行い、変更をすべてコミットし最新HEADを確定したあとReadyへ切り替える。
 2. PR HEAD、CI workflow_run.head_sha、実際にcheckout/buildしたSHAが完全一致することを確認。古い成功は使わない。
 3. **PR最新HEADに対する最新Windows workflow run全体** とjob desktop-windows-validation がともに status=completed、conclusion=success を確認する。PRではZIP公開は行わない。全必須ジョブがSuccess以外ならマージしない。
 4. Failure、Skipped、Pending、Cancelled、Timeout、Unknown、部分成功ではマージしない。Actions Artifacts上限に左右されるPR配布ステップは現行CIから廃止済み。
-5. PRがReady、master宛て、コンフリクトなし、未解決の重要なレビュー指摘なしであることを確認。必要な統合・修正を行ったら再度最新HEADのCIを通す。
+5. PRがReady、master宛て（Phase 1用の明示例外：`integration/issue-138-showdown-local-engine`宛て）、コンフリクトなし、未解決の重要なレビュー指摘なしであることを確認。統合宛てでは上記のPhase 1 Linux CIも必須。必要な統合・修正を行ったら再度最新HEADのCIを通す。
 6. 以上を満たした場合のみマージし、後からPR.merged=trueとmasterの更新を実際に検証する。ユーザーは有料ブランチ保護を不要と指定済み。
 
 ## 読み取り専用の事前検査
