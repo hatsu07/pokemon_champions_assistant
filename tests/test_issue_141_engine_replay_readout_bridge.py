@@ -43,7 +43,10 @@ def converted(p):
         "opponent_slot_mapping_authenticated":False,
         "unverified":["CHAMPIONS_SHOWDOWN_PARITY_NOT_VERIFIED"],
     }
-    return ClaimedEngineReadoutCase(p.hypothesis_id,data,tuple(display))
+    return ClaimedEngineReadoutCase(
+        p.hypothesis_id,data,tuple(display),
+        p.match_id,p.decision_window_id,p.state_revision,
+        p.snapshot_sha256,p.battle_sha256)
 
 
 class ClaimedEngineReadoutAdapterTests(unittest.TestCase):
@@ -133,6 +136,12 @@ class ClaimedEngineReadoutAdapterTests(unittest.TestCase):
             s,VERIFIED_ASSETS,joint_candidates=sourced(),
             readouts=(a,)).reason,"COMPLETE_SOURCED_ENGINE_READOUT_BATCH_REQUIRED")
         self.assertEqual(self.audit(s,a,replace(b,hypothesis_id="Joint-1")).reason,
+                         "READOUT_HYPOTHESIS_OR_DISPLAY_BINDING_INVALID")
+        self.assertEqual(self.audit(s,replace(a,battle_sha256="a"*64),b).reason,
+                         "UNTRUSTED_OR_MALFORMED_ENGINE_READOUT")
+        self.assertEqual(self.audit(s,replace(a,state_revision=1),b).reason,
+                         "READOUT_HYPOTHESIS_OR_DISPLAY_BINDING_INVALID")
+        self.assertEqual(self.audit(s,replace(a,match_id="other"),b).reason,
                          "READOUT_HYPOTHESIS_OR_DISPLAY_BINDING_INVALID")
         self.assertEqual(self.audit(s,a,b,sets=()).status,
                          "NO_REPLAY_PROJECTION_MATCH")
