@@ -137,11 +137,18 @@ class ObserverPipeline:
         recent_frame_limit: int = 120,
         hp_calibrations: tuple[HpBarCalibration, ...] = (),
         icon_calibrations: tuple[IconCalibration, ...] = (),
+        linked_local_ocr_bridge: Any | None = None,
     ) -> None:
         if session.store is not store:
             raise ValueError("observer pipeline and session must use the same BattleStore")
         if recent_frame_limit < 1:
             raise ValueError("recent_frame_limit must be positive")
+        if linked_local_ocr_bridge is not None and (
+                getattr(linked_local_ocr_bridge, "match_id", None) != session.match_id
+                or getattr(linked_local_ocr_bridge, "assets", None) is not session.assets):
+            raise ValueError("local OCR bridge must use current match and frozen assets")
+        self.linked_local_ocr_bridge = linked_local_ocr_bridge
+        self.last_linked_ocr_result = None
         self.session = session
         self.store = store
         self.roi_config = roi_config
@@ -277,6 +284,13 @@ class ObserverPipeline:
                         quality="CONFIRMED" if actions.completeness == "COMPLETE" else "CANDIDATE",
                     )
             self.session.present_ui(_FSM_UI[stable], actions, now_ms=effective_now, actual_ui_remaining_ms=actual_ui_remaining_ms)
+
+        # This is a deliberately opt-in OBSERVER->LOCAL_OCR path. It receives
+        # only the just-persisted frame receipt and ROI text and updates a
+        # detached state, never the production GPT/LIVE tactical state.
+        if self.linked_local_ocr_bridge is not None:
+            self.last_linked_ocr_result = self.linked_local_ocr_bridge.ingest(
+                frame, receipt, raw_rois, self.roi_config)
 
         return FrameObservation(
             frame_id=frame.frame_id,
