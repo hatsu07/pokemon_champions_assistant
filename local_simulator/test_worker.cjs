@@ -110,14 +110,17 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       ...payload,p2_choice:"move 2"}};
     const reordered={...payload,battle:{team:[
       payload.battle.team[0],payload.battle.team[2],payload.battle.team[1]],activeIndex:0}};
-    reordered.branch_input_sha256=hash(reordered);
+    reordered.branch_input_sha256=hash(Object.fromEntries(
+      Object.entries(reordered).filter(([key])=>key!=="branch_input_sha256")));
     const mismatchedParty={...req,branch_request_id:"d".repeat(32),payload:reordered};
     const wrongMoves={...payload,battle:{team:payload.battle.team.map((x,i)=>({
       ...x,moves:i===0?["dragonclaw","earthquake"]:x.moves}))}};
-    wrongMoves.branch_input_sha256=hash(wrongMoves);
+    wrongMoves.branch_input_sha256=hash(Object.fromEntries(
+      Object.entries(wrongMoves).filter(([key])=>key!=="branch_input_sha256")));
     const mismatchedMoves={...req,branch_request_id:"e".repeat(32),payload:wrongMoves};
     const wrongActive={...payload,battle:{...payload.battle,activeIndex:1}};
-    wrongActive.branch_input_sha256=hash(wrongActive);
+    wrongActive.branch_input_sha256=hash(Object.fromEntries(
+      Object.entries(wrongActive).filter(([key])=>key!=="branch_input_sha256")));
     const mismatchedActive={...req,branch_request_id:"f".repeat(32),payload:wrongActive};
     // The nonce and branch hash are valid for the wrong roster/moves,
     // so only semantic inspection after Battle.fromJSON can reject these.
