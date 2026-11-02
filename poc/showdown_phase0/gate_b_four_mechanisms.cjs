@@ -38,6 +38,8 @@ function inspect(obs,ctx){
  const choice=has("choice_lock")?f.choice_lock.value:null;
  const removed=has("opponent_removed_item")?f.opponent_removed_item.value:null;
  const mega=has("opponent_mega_history")?f.opponent_mega_history.value:null;
+ if(has("opponent_removed_item")&&!removed)
+   return deny("known item-removal evidence cannot be empty");
  const weather=f.weather.value,terrain=f.terrain.value,rawHazards=f.hazards.value;
  // An old list alone cannot prove which side contains the hazard.
  const hazards=Array.isArray(rawHazards)?rawHazards:
