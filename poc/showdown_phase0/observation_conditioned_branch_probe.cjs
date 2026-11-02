@@ -273,6 +273,7 @@ function condition(obs, ctx = context()) {
    conditioned_terrain:battle.field.terrain,
    conditioned_terrain_turns:plan.terrain?battle.field.terrainState.duration:null,
    conditioned_hazards:plan.hazards,
+   hazard_observation_scope:plan.hazardObservationScope,
    removed_item_observation:plan.removed?.item_id||null,
    history_scope:"CONDITIONED_CURRENT_STATE_ONLY_NO_PRIOR_EVENT_OR_RNG_REPLAY",
    consumed_item_observation:consumedKnown?consumedId:null,
@@ -296,13 +297,16 @@ function condition(obs, ctx = context()) {
   live_recommendation_permitted:false,
   admitted_evidence_fields:["opponent_hp_exact","opponent_boosts","screens",
     ...(screens.length?["screen_remaining_turns"]:[]),
-    "opponent_current_type","terrain","hazards",
+    "opponent_current_type","terrain",
+    ...(plan.hazardObservationScope==="CURRENT_OPPONENT_SIDE_AND_REVISION"?["hazards"]:[]),
     ...(consumedKnown?["opponent_item","opponent_consumed_item"]:[]),
     ...(ppKnown?["opponent_revealed_moves","opponent_remaining_pp"]:[]),
     ...plan.admitted],
   unrecovered_hidden_fields:[
     // A single revealed move never proves the opponent has no other moves.
     "opponent_unrevealed_moves",
+    ...(plan.hazardObservationScope==="SYNTHETIC_BASELINE_ONLY_NOT_CURRENT_GAME_EVIDENCE"?
+      ["current_hazard_absence_unverified_for_game"]:[]),
     ...(ppKnown?[]:["opponent_revealed_moves","opponent_remaining_pp"]),
     ...(consumedKnown||plan.removed?[]:["opponent_item"]),
     ...(plan.mega?[]:["opponent_ability"]),"opponent_ap",
