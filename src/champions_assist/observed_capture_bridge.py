@@ -68,6 +68,14 @@ class LinkedObserverState:
         self.roi_fields = dict(roi_fields)
         self.last_capture_seq = -1
         self._seen_frames: set[str] = set()
+        self.required_window_revision: int | None = None
+
+    def record_authoritative_revision(self, revision: int) -> None:
+        # A fresh, authoritative state owner must explicitly acknowledge
+        # that the OCR candidate was observed and invalidate older windows.
+        if type(revision) is not int or revision < 0:
+            raise ValueError("INVALID_AUTHORITATIVE_REVISION")
+        self.required_window_revision = revision
 
     @property
     def linked_raw_observation_ids(self) -> frozenset[str]:
