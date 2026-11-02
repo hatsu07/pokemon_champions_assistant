@@ -196,8 +196,8 @@ function handle(req) {
         !/^[a-f0-9]{64}$/.test(data.branch_input_sha256) ||
         data.branch_input_sha256 !== fingerprint(Object.fromEntries(
           Object.entries(data).filter(([k])=>k!=="branch_input_sha256"))) ||
-        !data.battle || typeof data.battle !== "object" ||
-        Array.isArray(data.battle) ||
+        typeof data.battle_json !== "string" ||
+        !data.battle_json || Buffer.byteLength(data.battle_json,"utf8") > MAX ||
         !Array.isArray(data.expected_p1_roster) ||
         typeof data.expected_p1_active !== "string" ||
         !req.identity.match_id || !req.identity.decision_window_id ||
@@ -209,12 +209,19 @@ function handle(req) {
     try {
       // Verifies actual p1 identities against the rehydrated pinned Battle;
       // never infer a p2 display name or trust the requested roster alone.
-      const b=Battle.fromJSON(JSON.parse(JSON.stringify(data.battle)));
+      // Use the exact UTF-8 text already hashed by Python, not a re-render
+      // of a parsed object with JavaScript numeric/key normalization.
+      const parsed=JSON.parse(data.battle_json);
+      if (!parsed || typeof parsed!=="object" || Array.isArray(parsed)) {
+        reply(req,"UNSUPPORTED","INCOMPLETE_OR_REAL_OBSERVATION");
+        return;
+      }
+      const b=Battle.fromJSON(parsed);
       if (!matchesP1BattleRoster(b,data.expected_p1_roster,data.expected_p1_active)) {
         reply(req,"UNSUPPORTED","P1_ROSTER_OR_MOVE_SLOT_MISMATCH");
         return;
       }
-      const result=extractPinnedReplayReadout(Battle,data.battle);
+      const result=extractPinnedReplayReadout(Battle,data.battle_json);
       if (result.status!=="SYNTHETIC_ENGINE_REPLAY_READOUT") {
         reply(req,"UNSUPPORTED",result.reason);
         return;
