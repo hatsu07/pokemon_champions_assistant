@@ -19,6 +19,8 @@ _SCALARS = (
     ("item_by_pokemon", "item"),
     ("ability_by_pokemon", "ability"),
     ("form_by_pokemon", "form"),
+    ("current_type", "current_type"),
+    ("status_by_pokemon", "status"),
 )
 _UNKNOWN = {"", "UNKNOWN", "NONE", "?"}
 
@@ -60,7 +62,9 @@ def check_observed_opponent_hypotheses(
           "moves": ["<exact revealed move name>", ...],
           "item": "<exact revealed held item>",
           "ability": "<exact revealed ability>",
-          "form": "<exact revealed form>"
+          "form": "<exact revealed form>",
+          "current_type": "<exact revealed current type>",
+          "status": "<exact revealed status>"
         }
       }}
 
