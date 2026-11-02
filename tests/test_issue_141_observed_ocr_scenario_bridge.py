@@ -104,6 +104,98 @@ class ObserverToReducerTests(unittest.TestCase):
         self.assertFalse(link["ready_for_engine"])
         self.assertNotEqual(x.raw_observation_id,y.raw_observation_id)
 
+    def test_stable_name_reocr_allows_hp_after_two_seconds(self):
+        self.pipeline.process_frame(self.f1)
+        late=Frame("same-actor-hp-after-3s",2,3500,
+                   self.f2.image.copy(),source="SYNTHETIC_TEST")
+        self.pipeline.process_frame(late)
+        result=self.pipeline.last_linked_ocr_result
+        self.assertEqual(result.status,"LINKED_CANDIDATE_STATE", result.audit)
+        self.assertNotIn("ACTOR_HUD_NOT_ATTESTED",
+                         {row.get("reason") for row in result.audit})
+        self.assertEqual(self.bridge.state["battle_evidence"]["hp_by_pokemon"]
+                         ["own"]["Own1"],"35/100")
+        rows=self.store.export_match(self.session.match_id)["raw_observations"]
+        name=rows[1]["payload"]["rois"]["ROI_UI_CONTROLS"]
+        self.assertFalse(name["changed"])
+        self.assertTrue(name["actor_refresh_same_frame"])
+        self.assertEqual(name["text"],"Own1")
+        self.assertEqual(name["roi_rgb_sha256"],
+                         image_digest(roi_config().crop("ROI_UI_CONTROLS",late.image)))
+
+    def test_switch_frame_hud_cannot_be_attributed_to_new_actor(self):
+        self.pipeline.process_frame(self.f1)
+        late=Frame("late-own1",2,3500,self.f2.image.copy(),
+                   source="SYNTHETIC_TEST")
+        self.pipeline.process_frame(late)
+        switch_image=synthetic_image(DetectedUI.COMMAND_MENU,
+                                     controls_code=70,log_code=48)
+        stable_image=synthetic_image(DetectedUI.COMMAND_MENU,
+                                     controls_code=70,log_code=66)
+        self.pipeline.ocr_engine=MappingOcrEngine.for_images([
+            ("ROI_UI_CONTROLS",roi_config().crop("ROI_UI_CONTROLS",switch_image),
+             OcrRead("Own2",.99,"SYNTHETIC_OCR")),
+            ("ROI_BATTLE_LOG",roi_config().crop("ROI_BATTLE_LOG",switch_image),
+             OcrRead("84/100",.99,"SYNTHETIC_OCR")),
+            ("ROI_BATTLE_LOG",roi_config().crop("ROI_BATTLE_LOG",stable_image),
+             OcrRead("20/100",.99,"SYNTHETIC_OCR")),
+        ])
+        switched=Frame("switch-transition",3,3600,switch_image,
+                       source="SYNTHETIC_TEST")
+        self.pipeline.process_frame(switched)
+        self.assertEqual(self.bridge.state["our_active"],"Own2")
+        self.assertNotIn("Own2",self.bridge.state["battle_evidence"]
+                         ["hp_by_pokemon"]["own"])
+        self.assertIn("SAME_FRAME_STABLE_ACTOR_NAME_REQUIRED",
+                      {a.get("reason") for a in
+                       self.pipeline.last_linked_ocr_result.audit})
+        after=Frame("stable-new-actor",4,3700,stable_image,
+                    source="SYNTHETIC_TEST")
+        self.pipeline.process_frame(after)
+        self.assertEqual(self.bridge.state["battle_evidence"]["hp_by_pokemon"]
+                         ["own"]["Own1"],"35/100")
+        self.assertEqual(self.bridge.state["battle_evidence"]["hp_by_pokemon"]
+                         ["own"]["Own2"],"20/100")
+        self.assertEqual(self.pipeline.last_linked_ocr_result.status,
+                         "LINKED_CANDIDATE_STATE")
+
+    def test_pp_after_two_seconds_uses_same_frame_name(self):
+        bridge=LinkedObserverState(
+            match_id=self.session.match_id,assets=self.session.assets,
+            initial_state=self.bridge.state,
+            roi_fields={"ROI_UI_CONTROLS":"own_active_name",
+                        "ROI_PARTY_CARDS":"own_pp_move1"},
+        )
+        first=synthetic_image(DetectedUI.COMMAND_MENU,controls_code=15,
+                               party_code=0)
+        changed=synthetic_image(DetectedUI.COMMAND_MENU,controls_code=15,
+                                 party_code=35)
+        engine=MappingOcrEngine.for_images([
+            ("ROI_UI_CONTROLS",roi_config().crop("ROI_UI_CONTROLS",first),
+             OcrRead("Own1",.99,"SYNTHETIC_OCR")),
+            ("ROI_PARTY_CARDS",roi_config().crop("ROI_PARTY_CARDS",changed),
+             OcrRead("6/10",.99,"SYNTHETIC_OCR")),
+        ])
+        pipeline=ObserverPipeline(
+            session=self.session,store=self.store,roi_config=roi_config(),
+            ui_classifier=TemplateUiClassifier({},threshold=.99),
+            ocr_engine=engine,text_parser=TextObservationParser(()),
+            ocr_roi_names=("ROI_UI_CONTROLS","ROI_PARTY_CARDS"),
+            linked_local_ocr_bridge=bridge,
+        )
+        pipeline.process_frame(Frame("name-pp",1,100,first,
+                                    source="SYNTHETIC_TEST"))
+        pipeline.process_frame(Frame("late-pp",2,3500,changed,
+                                    source="SYNTHETIC_TEST"))
+        self.assertEqual(pipeline.last_linked_ocr_result.status,
+                         "LINKED_CANDIDATE_STATE",
+                         pipeline.last_linked_ocr_result.audit)
+        self.assertEqual(bridge.state["battle_evidence"]["pp_by_pokemon"]
+                         ["own"]["Own1"]["Own1-m1"],6)
+        self.assertTrue(self.store.export_match(self.session.match_id)
+                        ["raw_observations"][1]["payload"]["rois"]
+                        ["ROI_UI_CONTROLS"]["actor_refresh_same_frame"])
+
     def test_stale_or_pixel_modified_frame_does_not_change_detached_state(self):
         self.pipeline.process_frame(self.f1)
         self.pipeline.process_frame(self.f2)
