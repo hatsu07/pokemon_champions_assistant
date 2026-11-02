@@ -255,9 +255,26 @@ function assertObservation(obs, ctx) {
       (typeof f.opponent_boosts.value !== "object" ||
        Object.values(f.opponent_boosts.value).some(x => !Number.isInteger(x) || x < -6 || x > 6)))
     throw Error("invalid observed boost");
-  if (present("opponent_remaining_pp") &&
-      (!Number.isInteger(f.opponent_remaining_pp.value) || f.opponent_remaining_pp.value < 0))
-    throw Error("invalid observed PP");
+  if (present("opponent_remaining_pp")) {
+    const pp = f.opponent_remaining_pp.value;
+    const atomic = pp !== null && typeof pp === "object" && !Array.isArray(pp);
+    if (atomic) {
+      // This shape binds the PP to one move AND one capture revision. Legacy
+      // unbound numeric PP remains valid for older partial-observation cases,
+      // but must never be used for conditional Battle PP reconstruction.
+      if (Object.keys(pp).sort().join(",") !==
+            "move_id,remaining_pp,state_revision,turn_epoch" ||
+          !Number.isInteger(pp.remaining_pp) || pp.remaining_pp < 0 ||
+          !Number.isInteger(pp.turn_epoch) || pp.turn_epoch < 0 ||
+          !Number.isInteger(pp.state_revision) || pp.state_revision < 0 ||
+          typeof pp.move_id !== "string" || !moveKey(pp.move_id) ||
+          !ctx.allowed.availableMoves.has(moveKey(pp.move_id)) ||
+          entry && !entry.learned.has(moveKey(pp.move_id)))
+        throw Error("invalid atomic observed PP move/revision");
+    } else if (!Number.isInteger(pp) || pp < 0) {
+      throw Error("invalid observed PP");
+    }
+  }
   if (present("opponent_hp_exact") &&
       (!Number.isInteger(f.opponent_hp_exact.value) || f.opponent_hp_exact.value < 0))
     throw Error("invalid exact HP");
