@@ -11,7 +11,17 @@ four-master p1 roster, active name, registered hypothesis ID (or a freshly
 revalidated entire co-occurring joint-opponent batch when supplied),
 complete independently supplied **synthetic** Battle JSON, a unique
 branch nonce, original match/window/revision/snapshot identity, and a
-canonical **full-Battle input SHA**.
+canonical **full-Battle input SHA**. To eliminate cross-runtime
+serialization mismatches, Python serializes the full Battle **exactly
+once** as UTF-8 JSON text (`battle_json`) and SHA-256 hashes those
+exact transmitted bytes. The worker passes that unchanged text to the
+pinned extractor, which parses an independent clone for engine replay
+and hashes the **same original text**, rather than using
+`JSON.stringify` to generate a different representation. JSON
+`3.0` and object keys `"10"`/`"2"` therefore stay
+byte-bound to what Python submitted even when JavaScript semantically
+normalizes them. Distinct serializations may have distinct SHA values
+without being mistaken for new game observations.
 
 The worker verifies its pinned engine, its own code and the independent
 `pinned_replay_readout.cjs` helper against the offline runtime manifest
@@ -53,13 +63,23 @@ is obtained. No result is adopted by LIVE/GPT/GUI or `run_shadow_turn`.
 
 - Local/isolated Node worker tests: real manifest hash pin for the
   additional helper, startup fail-closed on tampering, partial/unsupported
-  `READOUT_REPLAY` rejection, unique branch hash/nonce transport.
+  `READOUT_REPLAY` rejection, unique branch hash/nonce transport;
+  Node helper compares the exact text hash for `3.0` and numeric keys,
+  and never replaces the hash with a parsed-object reserialization.
 - Python fake-process tests: response payload and exact submitted
   Battle hash checks, arbitrary certification flags/source changes,
   stale echo rejection, unregistered opponent hypothesis refusal.
 - Existing pinned Showdown real-engine fixture proves the underlying
-  six-member extractor and hidden RNG fork handling. CI still pins
-  exact upstream Showdown SHA.
+  six-member extractor and hidden RNG fork handling. The real-engine
+  workflow also exports a complete synthetic pinned 3v3 `Battle.toJSON`
+  with exact frozen test-team move slots, builds a **test-only**
+  manifest-pinned local worker runtime, and drives the full
+  `LocalSimulatorWorker.readout_synthetic_replay` Python call. It
+  verifies actual six-member readout, original request/nonce,
+  strict non-runnable flags and exact transmitted SHA, including
+  the numerically equivalent `turn: 3.0` variation. The temporary
+  CI inventory is not a separately reviewed production build manifest.
+  CI still pins exact upstream Showdown SHA.
 - Native Windows offline app tests continue to run; no production
   worker bundling or UI changes have been made.
 
