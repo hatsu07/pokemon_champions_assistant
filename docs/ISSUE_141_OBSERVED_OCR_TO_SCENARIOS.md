@@ -21,7 +21,12 @@ unvalidated ROI, unsupported field names and duplicate/old captures do
 not produce a confirmed game observation.
 
 The bridge's `state` is **detached** from the production GPT/LIVE state.
-Its optional mode is disabled by default. Observed revisions and evidence
+Its optional mode is disabled by default. If a local OCR candidate
+actually changes the detached state, the observer writes only its source
+receipt ID and local OCR revision as a CANDIDATE into the authoritative FSM
+evidence ledger, **incrementing the tactical revision and staling any
+in-flight result**, rather than writing unverified HP/actor fields as
+confirmed FSM facts. Observed revisions and evidence
 are recorded with the actual frame receipt; source/time/actor authenticity
 and current-window verification flags remain **false**. In particular,
 this feature **does not** equate an unrelated FSM window version with
@@ -68,7 +73,9 @@ bounded assumptions and real-game reconciliation. Do not rename
 only when the caller supplies a `FrozenBattleState` whose complete
 observed-state JSON is **identical** to the current detached OCR reducer
 state. It additionally requires the same match, the same frozen asset
-object, the same active actor and at least one accepted OCR provenance
+object, the same active actor, **an acknowledged current authoritative FSM
+tactical revision** (which prevents treating a new OCR update as an old
+decision window), and at least one accepted OCR provenance
 record tied to an in-process receipt recorded by the linked observer.
 A stale or unlinked snapshot returns `NO_SCENARIOS`; no new decision
 window is invented and no timestamp is treated as authoritative.
