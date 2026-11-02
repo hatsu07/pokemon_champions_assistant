@@ -15,9 +15,11 @@ from champions_assist.capture_provenance import (
 from champions_assist.fsm import MatchController
 from champions_assist.live_state_updates import apply_local_ocr
 from tests.test_live_state_updates import assets as local_assets, read as local_read, state as local_state
-from champions_assist.observation_events import TextObservationParser
+from champions_assist.observation_events import (
+    TextObservationParser, EventPattern, EventCertainty, ObservedEventKind,
+)
 from champions_assist.observer_pipeline import ObserverPipeline
-from champions_assist.ocr import MappingOcrEngine, image_digest
+from champions_assist.ocr import MappingOcrEngine, OcrRead, image_digest
 from champions_assist.store import BattleStore
 from champions_assist.vision import DetectedUI, TemplateUiClassifier
 from tests.test_phase_4 import roi_config, synthetic_image, write_masters
@@ -143,6 +145,107 @@ class FrameReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"duplicate raw frame"):
             self.pipeline.process_frame(reused)
         self.assertEqual(self._raw(),[original])
+
+    def _other_pipeline(self, *, image=None, text="WEATHER sun"):
+        if image is None:
+            image = self.frame.image
+        crop = roi_config().crop("ROI_BATTLE_LOG", image)
+        ocr = MappingOcrEngine.for_images([
+            ("ROI_BATTLE_LOG", crop, OcrRead(text, .99, "SYNTHETIC_OCR")),
+        ])
+        parser = TextObservationParser((
+            EventPattern("weather", r"^WEATHER sun$",
+                         ObservedEventKind.WEATHER_SET, EventCertainty.CONFIRMED,
+                         facts={"weather": "sun"}),
+        ))
+        pipe = ObserverPipeline(
+            session=self.session, store=self.store, roi_config=roi_config(),
+            ui_classifier=TemplateUiClassifier({}, threshold=.99),
+            ocr_engine=ocr, text_parser=parser,
+            ocr_roi_names=("ROI_BATTLE_LOG", "ROI_UI_CONTROLS"),
+            stable_frames=2,
+        )
+        return pipe
+
+    def test_duplicate_from_other_pipeline_cannot_poison_roi_or_episode_cache(self):
+        # First observer saved this frame into the SQLite ledger.
+        self.pipeline.process_frame(self.frame)
+        old_record = self._raw()[0]
+        image = synthetic_image(DetectedUI.ACTION_RESOLUTION, log_code=183)
+        restarted = self._other_pipeline(image=image)
+        conflict = Frame(self.frame.frame_id, 1, 101, image.copy(),
+                         source="SYNTHETIC_TEST")
+        with self.assertRaisesRegex(ValueError, "duplicate raw frame"):
+            restarted.process_frame(conflict)
+        # A rejected frame may be OCR'd into *temporary* caches but must
+        # never commit its ROI or episode state.
+        self.assertEqual(restarted.change_detector._previous, {})
+        self.assertEqual(restarted.episodes._active_signatures, {})
+        self.assertEqual(restarted._latest_parsed_rois, {})
+        self.assertEqual(self._raw(), [old_record])
+        # The NEXT new-ID frame has identical bytes. It must still count as
+        # changed and generate the event, not be hidden by failed work.
+        legitimate = Frame("legitimate-next", 2, 102, image.copy(),
+                           source="SYNTHETIC_TEST")
+        fresh = restarted.process_frame(legitimate)
+        self.assertEqual(len(fresh.events), 1)
+        self.assertEqual(fresh.events[0].kind, ObservedEventKind.WEATHER_SET)
+        self.assertTrue(self._raw()[1]["payload"]["rois"]["ROI_BATTLE_LOG"]["changed"])
+        self.assertEqual(self.session.state_facts["weather"], "sun")
+
+    def test_raw_reanalysis_collision_must_not_apply_an_unstored_event(self):
+        self.pipeline.process_frame(self.frame)
+        late=self._other_pipeline()
+        # Reuse the mapping OCR, but keep the original pipeline's replay
+        # receipt and parser state.
+        self.pipeline.ocr_engine=late.ocr_engine
+        first=self.pipeline.reanalyze_buffered_frame(
+            self.frame.frame_id, parser=late.text_parser)
+        self.assertEqual(len(first), 1)
+        raw_before=self._raw()
+        events_before=self.store.events(self.session.match_id)
+        facts_before=self.session.state_facts
+        revision_before=self.session.tactical_state_version
+        self.pipeline._reanalysis_seq=0  # simulates a counter reset/restart
+        alternative=TextObservationParser((
+            EventPattern("different-pattern", r"^WEATHER sun$",
+                         ObservedEventKind.WEATHER_SET,
+                         EventCertainty.CONFIRMED, facts={"weather": "rain"}),
+        ))
+        with self.assertRaisesRegex(ValueError, "duplicate raw reanalysis"):
+            self.pipeline.reanalyze_buffered_frame(
+                self.frame.frame_id, parser=alternative)
+        self.assertEqual(self._raw(), raw_before)
+        self.assertEqual(self.store.events(self.session.match_id), events_before)
+        self.assertEqual(self.session.state_facts, facts_before)
+        self.assertEqual(self.session.tactical_state_version, revision_before)
+
+    def test_raw_reanalysis_distinguishes_two_frames_with_same_capture_seq(self):
+        frame_b = Frame("separate-frame", 1, 100,
+                        self.frame.image.copy(),source="SYNTHETIC_TEST")
+        second = self._other_pipeline()
+        self.pipeline.process_frame(self.frame)
+        second.process_frame(frame_b)
+        first_late=self._other_pipeline()
+        self.pipeline.ocr_engine=first_late.ocr_engine
+        first=self.pipeline.reanalyze_buffered_frame(
+            self.frame.frame_id, parser=first_late.text_parser)
+        other=second.reanalyze_buffered_frame(
+            frame_b.frame_id, parser=first_late.text_parser)
+        self.assertEqual(len(first),1)
+        self.assertEqual(len(other),1)
+        records=self._raw()
+        self.assertEqual(len(records),4)
+        replays=[record for record in records
+                 if record["payload"].get("kind")=="OCR_REANALYSIS"]
+        self.assertEqual(len(replays),2)
+        self.assertNotEqual(replays[0]["observation_id"],
+                            replays[1]["observation_id"])
+        self.assertEqual({r["payload"]["original_frame_id"] for r in replays},
+                         {self.frame.frame_id,frame_b.frame_id})
+        self.assertTrue(all(r["payload"]["original_raw_observation_id"]
+                            in {o["observation_id"] for o in records[:2]}
+                            for r in replays))
 
     def _claimed_receipt(self, frame_id, seq):
         copied=Frame(frame_id,seq,seq*100,
