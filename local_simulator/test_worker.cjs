@@ -40,3 +40,74 @@ test("unknown protocol fails closed", async () => {
   const out = await run([{...base,protocol:"bad"}]);
   assert.equal(out[0].capability_status, "UNKNOWN");
 });
+
+
+test("staged fake engine enforces branch hash and echoes exact independent branch IDs", async () => {
+  // Fake engine is for wire validation ONLY: not Pokémon mechanics or game evidence.
+  const fs=require("node:fs"),os=require("node:os"),crypto=require("node:crypto");
+  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),"phase1-test-staged-"));
+  const workerPath=path.join(__dirname,"worker.cjs");
+  const PIN="ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
+  const sha=file=>crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  const stable=value=>{
+    if(Array.isArray(value))return "["+value.map(stable).join(",")+"]";
+    if(value&&typeof value==="object")return "{"+
+      Object.keys(value).sort().map(k=>JSON.stringify(k)+":"+stable(value[k])).join(",")+"}";
+    return JSON.stringify(value);
+  };
+  const hash=value=>crypto.createHash("sha256").update(stable(value)).digest("hex");
+  try{
+    const root=path.join(tmp,"showdown");
+    fs.mkdirSync(path.join(root,"dist","sim"),{recursive:true});
+    fs.writeFileSync(path.join(root,".champions-source-sha"),PIN+"\n");
+    fs.writeFileSync(path.join(root,"dist","sim","index.js"),
+      "exports.Battle={fromJSON(data){return {format:{mod:'champions'},"+
+      "requestState:'move',turn:1,field:{weather:''},sides:[{pokemon:[]},{pokemon:[]}],"+
+      "makeChoices(){this.turn++},toJSON(){return data}}}};");
+    fs.writeFileSync(path.join(tmp,"NODE_LICENSE.txt"),"test-only");
+    fs.writeFileSync(path.join(tmp,"THIRD_PARTY_NOTICES.txt"),"test-only");
+    const manifest={scope:"ISSUE_140_SYNTHETIC_ONLY",engine_sha:PIN,
+      production_enabled:false,
+      showdown_entry_sha256:sha(path.join(root,"dist","sim","index.js")),
+      worker_sha256:sha(workerPath),node_exe_sha256:sha(process.execPath),
+      node_license_sha256:sha(path.join(tmp,"NODE_LICENSE.txt")),
+      third_party_notices_sha256:sha(path.join(tmp,"THIRD_PARTY_NOTICES.txt"))};
+    fs.writeFileSync(path.join(tmp,"manifest.json"),JSON.stringify(manifest));
+    const baseIdentity={match_id:"synthetic",decision_window_id:"one",
+      team_sha256:"team",simulator_sha:PIN,allowed_action_digest:"digest"};
+    const payload={source:"FULL_REPLAY_SYNTHETIC",battle:{state:"dummy"},
+      p1_choice:"move 1",p2_choice:"move 1",hypothesis_id:"H1",
+      candidate_action_id:"a".repeat(64)};
+    payload.branch_input_sha256=hash(payload);
+    const req={protocol:"issue140.v1",op:"SIMULATE",request_id:"same-window",
+      snapshot_sha256:"same-snapshot",branch_request_id:"b".repeat(32),
+      identity:baseIdentity,payload};
+    const wrong={...req,branch_request_id:"c".repeat(32),payload:{
+      ...payload,p2_choice:"move 2"}};
+    // Mutated choice is NOT covered by the submitted SHA.
+    const child=spawn(process.execPath,[workerPath],{
+      env:{...process.env,SHOWDOWN_ROOT:root,SHOWDOWN_EXPECTED_SHA:PIN},
+      stdio:["pipe","pipe","pipe"]});
+    const output=await new Promise((resolve,reject)=>{
+      let data="",errors="";
+      child.stdout.on("data",chunk=>data+=chunk);
+      child.stderr.on("data",chunk=>errors+=chunk);
+      child.on("error",reject);
+      child.on("exit",code=>{
+        if(code!==0)return reject(new Error("worker exited "+code+" "+errors));
+        try{resolve(data.trim().split("\n").map(JSON.parse))}catch(e){reject(e)}
+      });
+      child.stdin.end([req,wrong].map(JSON.stringify).join("\n")+"\n");
+    });
+    assert.equal(output.length,2);
+    assert.equal(output[0].capability_status,"PARTIAL");
+    assert.equal(output[0].ok,true);
+    assert.equal(output[0].branch_request_id,"b".repeat(32));
+    assert.equal(output[0].hypothesis_id,"H1");
+    assert.equal(output[0].branch_input_sha256,payload.branch_input_sha256);
+    assert.equal(output[0].candidate_action_id,"a".repeat(64));
+    assert.equal(output[1].capability_status,"UNSUPPORTED");
+    assert.equal(output[1].ok,false);
+    assert.equal(output[1].branch_request_id,"c".repeat(32));
+  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
+});
