@@ -7,6 +7,7 @@ freeze all four masters/rules/engine before creating a match-scoped instance.
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import queue
 import subprocess
@@ -22,6 +23,75 @@ from .models import (
 from .legal_actions import generate_candidates, showdown_choice_for_candidate
 
 _MAX_BYTES = 1024 * 1024
+
+def _verified_roster_binding(snapshot: FrozenBattleState, assets: Any) -> list[dict[str, Any]]:
+    """Tie Showdown's p1 order and moves to the actual match-preloaded bytes.
+
+    The Champions CSV does not universally contain simulator IDs. Refuse
+    simulation until each selected member's *explicit, verified* Showdown IDs
+    are present; Japanese move names must never be guessed/romanized here.
+    """
+    from ..preload import FrozenMatchAssets, REQUIRED_MASTER_FILES, _parse_team
+
+    w = snapshot.window
+    if not isinstance(assets, FrozenMatchAssets):
+        raise WorkerUnavailable("match-preloaded FrozenMatchAssets required")
+    try:
+        expected = tuple((key, assets.sha256[key]) for key in REQUIRED_MASTER_FILES)
+        if (expected != w.four_master_sha256
+                or expected[-1][1] != w.team_sha256
+                or any(len(digest) != 64 for _, digest in expected)):
+            raise WorkerUnavailable("frozen master or team SHA differs from decision window")
+        for name, digest in expected:
+            body = assets.contents[name]
+            if hashlib.sha256(body.encode("utf-8-sig")).hexdigest() != digest:
+                raise WorkerUnavailable("preloaded master bytes do not match SHA manifest")
+        # CSV index must be derived from the very same frozen team bytes.
+        parsed = _parse_team(assets.contents[REQUIRED_MASTER_FILES[3]])
+        if parsed != assets.own_team:
+            raise WorkerUnavailable("preloaded team rows differ from frozen CSV")
+        state = snapshot.state
+        selected, order = state.get("selected_three"), state.get("showdown_party_order")
+        if (not isinstance(selected, list) or len(selected) != 3
+                or not isinstance(order, list) or len(order) != 3
+                or not all(isinstance(name, str) and name for name in order)
+                or len(set(order)) != 3 or set(order) != set(selected)):
+            raise WorkerUnavailable("current Showdown selected-three order not proven")
+        registered = {row["name"]: row for row in parsed}
+        if len(registered) != len(parsed):
+            raise WorkerUnavailable("ambiguous registered team member names")
+        roster = []
+        for name in order:
+            row = registered.get(name)
+            if row is None:
+                raise WorkerUnavailable("selected member not in frozen registered team")
+            species_id = row.get("showdown_species_id", "")
+            moves = []
+            if (not isinstance(species_id, str)
+                    or not species_id.isascii() or not species_id.isalnum()
+                    or species_id != species_id.lower()):
+                raise WorkerUnavailable("verified Showdown species ID mapping missing")
+            for index in range(1, 5):
+                move = row.get(f"move{index}", "")
+                move_id = row.get(f"showdown_move{index}_id", "")
+                if move:
+                    if (not isinstance(move_id, str) or not move_id.isascii()
+                            or not move_id.isalnum() or move_id != move_id.lower()):
+                        raise WorkerUnavailable("verified Showdown move ID mapping missing")
+                    moves.append(move_id)
+                elif move_id:
+                    raise WorkerUnavailable("unexpected mapped move in empty slot")
+            if len(set(moves)) != len(moves) or not moves:
+                raise WorkerUnavailable("ambiguous Showdown move slots")
+            roster.append({"name": name, "species_id": species_id, "moves": moves})
+        if (w.active_pokemon and w.active_pokemon not in order):
+            raise WorkerUnavailable("active Pokémon not in frozen Showdown team")
+        return roster
+    except WorkerUnavailable:
+        raise
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise WorkerUnavailable("invalid or incomplete preloaded Showdown binding") from exc
+
 
 
 class WorkerUnavailable(RuntimeError):
@@ -191,8 +261,7 @@ class LocalSimulatorWorker:
         # Showdown choice that has no explicit local action identity.
         if not candidate_action_id or candidate_action_id not in snapshot.verified_action_ids:
             raise WorkerUnavailable("branch candidate is not an allowed action")
-        if assets is None:
-            raise WorkerUnavailable("frozen team asset validation required")
+        expected_roster = _verified_roster_binding(snapshot, assets)
         matching = [a for a in generate_candidates(snapshot, assets)
                     if a.action_id == candidate_action_id]
         if len(matching) != 1:
@@ -213,7 +282,9 @@ class LocalSimulatorWorker:
                    "battle": dict(battle_json), "p1_choice": own_choice,
                    "p2_choice": opponent_choice,
                    "hypothesis_id": hypothesis_id,
-                   "candidate_action_id": candidate_action_id}
+                   "candidate_action_id": candidate_action_id,
+                   "expected_p1_roster": expected_roster,
+                   "expected_p1_active": window.active_pokemon}
         snap_sha = snapshot.snapshot_sha256
         payload["branch_input_sha256"] = fingerprint(payload)
         # Never reuse a branch token, even for identical replay inputs.
