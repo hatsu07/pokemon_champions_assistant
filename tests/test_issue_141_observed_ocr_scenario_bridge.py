@@ -569,13 +569,18 @@ class CalculationScenarioTests(unittest.TestCase):
             self.assertFalse(c.runnable)
             self.assertIsNone(c.battle_json)
 
-    def test_ambiguous_hp_and_bad_joint_records_fail_closed(self):
+    def test_percent_hp_keeps_raw_not_exact_and_bad_joint_records_fail_closed(self):
         def percent(state):
             details(state)
             state["battle_evidence"]["hp_by_pokemon"]["opponent"]["カイリュー"]="73%"
         s=with_state(frozen(),edits=percent)
-        self.assertEqual(stage_observed_calculation_scenarios(
-            s,VERIFIED_ASSETS).status,"NO_SCENARIOS")
+        out=stage_observed_calculation_scenarios(s,VERIFIED_ASSETS)
+        self.assertEqual(out.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",out.reason)
+        observed=json.loads(out.scenarios[0].observed_constraints_json)
+        self.assertEqual(observed["opponent_active"]["raw_hp_percent"],"73%")
+        self.assertIsNone(observed["opponent_active"]["hp"])
+        self.assertIsNone(observed["opponent_active"]["maxhp"])
+        self.assertFalse(out.ready_for_engine)
         good=with_state(frozen(),edits=details)
         bad=record(source="MARGINAL_STATS")
         out=stage_observed_calculation_scenarios(
