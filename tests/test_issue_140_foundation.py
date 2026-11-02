@@ -424,9 +424,11 @@ class WorkerTests(unittest.TestCase):
         candidate=next(x for x in generate_candidates(s,ASSETS)
                        if x.switch_target=="アシレーヌ")
         from champions_assist.local_strategy.legal_actions import showdown_choice_for_candidate
-        with self.assertRaises(ValueError):
-            showdown_choice_for_candidate(candidate,s,ASSETS)
         state=s.state
+        state.pop("showdown_party_order")
+        missing=replace(s,observed_state_json=json.dumps(state))
+        with self.assertRaises(ValueError):
+            showdown_choice_for_candidate(candidate,missing,ASSETS)
         state["showdown_party_order"]=["ガブリアス","アシレーヌ","ミミッキュ"]
         s2=replace(s,observed_state_json=json.dumps(state))
         self.assertEqual(showdown_choice_for_candidate(candidate,s2,ASSETS),"switch 2")
@@ -434,6 +436,95 @@ class WorkerTests(unittest.TestCase):
         s3=replace(s,observed_state_json=json.dumps(state))
         with self.assertRaises(ValueError):
             showdown_choice_for_candidate(candidate,s3,ASSETS)
+
+    def test_preload_sha_and_registered_roster_must_match_current_window(self):
+        s = frozen()
+        tmp,w = self.make_fake_worker("import sys\nfor line in sys.stdin: pass\n")
+        try:
+            bad_member = dict(VERIFIED_ASSETS.own_team[0])
+            bad_member["move1"],bad_member["move2"] = (
+                bad_member["move2"],bad_member["move1"])
+            changed_index = replace(
+                VERIFIED_ASSETS,
+                own_team=(bad_member,*VERIFIED_ASSETS.own_team[1:]))
+            with self.assertRaisesRegex(WorkerUnavailable,"team rows differ"):
+                w.simulate(s,{"synthetic":True},"move 2","move 1",
+                           candidate_action_id=move_id("じしん"),
+                           assets=changed_index)
+            # A completely self-consistent *different* preloaded CSV cannot
+            # borrow the prior match's SHA merely by matching its move ID.
+            records=list(csv.DictReader(io.StringIO(
+                VERIFIED_ASSETS.contents[REQUIRED_MASTER_FILES[3]])))
+            records[0]["move1"],records[0]["move2"]=(
+                records[0]["move2"],records[0]["move1"])
+            records[0]["showdown_move1_id"],records[0]["showdown_move2_id"]=(
+                records[0]["showdown_move2_id"],records[0]["showdown_move1_id"])
+            output=io.StringIO()
+            writer=csv.DictWriter(output,fieldnames=records[0].keys())
+            writer.writeheader();writer.writerows(records)
+            contents=dict(VERIFIED_ASSETS.contents)
+            contents[REQUIRED_MASTER_FILES[3]]=output.getvalue()
+            shas=dict(VERIFIED_ASSETS.sha256)
+            shas[REQUIRED_MASTER_FILES[3]]=hashlib.sha256(
+                output.getvalue().encode("utf-8")).hexdigest()
+            new_assets=replace(VERIFIED_ASSETS,
+                               contents=MappingProxyType(contents),
+                               sha256=MappingProxyType(shas),
+                               own_team=_parse_team(output.getvalue()))
+            with self.assertRaisesRegex(WorkerUnavailable,"SHA differs"):
+                w.simulate(s,{"synthetic":True},"move 2","move 1",
+                           candidate_action_id=move_id("じしん"),
+                           assets=new_assets)
+            # Updated bytes with an old SHA also fail even when the
+            # selected members in the in-memory index look identical.
+            stale=replace(VERIFIED_ASSETS,
+                          contents=MappingProxyType(contents))
+            with self.assertRaisesRegex(WorkerUnavailable,"bytes do not match"):
+                w.simulate(s,{"synthetic":True},"move 1","move 1",
+                           candidate_action_id=move_id("じしん"),assets=stale)
+            for key in REQUIRED_MASTER_FILES:
+                stale_shas=dict(VERIFIED_ASSETS.sha256)
+                stale_shas[key]="0"*64
+                with self.assertRaisesRegex(WorkerUnavailable,"SHA differs"):
+                    w.simulate(s,{"synthetic":True},"move 1","move 1",
+                               candidate_action_id=move_id("じしん"),
+                               assets=replace(VERIFIED_ASSETS,
+                                              sha256=MappingProxyType(stale_shas)))
+        finally:
+            w.close()
+            tmp.cleanup()
+
+    def test_showdown_species_or_move_mapping_missing_is_not_guessed(self):
+        s=frozen()
+        tmp,w=self.make_fake_worker("import sys\nfor line in sys.stdin: pass\n")
+        try:
+            rows=list(csv.DictReader(io.StringIO(
+                VERIFIED_ASSETS.contents[REQUIRED_MASTER_FILES[3]])))
+            for field in ("showdown_species_id","showdown_move1_id"):
+                mod=[dict(row) for row in rows]
+                mod[0][field]=""
+                output=io.StringIO()
+                writer=csv.DictWriter(output,fieldnames=rows[0].keys())
+                writer.writeheader();writer.writerows(mod)
+                content=dict(VERIFIED_ASSETS.contents)
+                content[REQUIRED_MASTER_FILES[3]]=output.getvalue()
+                shas=dict(VERIFIED_ASSETS.sha256)
+                shas[REQUIRED_MASTER_FILES[3]]=hashlib.sha256(
+                    output.getvalue().encode("utf-8")).hexdigest()
+                asset=replace(VERIFIED_ASSETS,
+                              contents=MappingProxyType(content),
+                              sha256=MappingProxyType(shas),
+                              own_team=_parse_team(output.getvalue()))
+                bound=replace(s,window=replace(s.window,
+                    team_sha256=shas[REQUIRED_MASTER_FILES[3]],
+                    four_master_sha256=tuple((name,shas[name])
+                                            for name in REQUIRED_MASTER_FILES)))
+                with self.assertRaisesRegex(WorkerUnavailable,"ID mapping missing"):
+                    w.simulate(bound,{"synthetic":True},"move 1","move 1",
+                               candidate_action_id=move_id("じしん"),assets=asset)
+        finally:
+            w.close()
+            tmp.cleanup()
 
     def test_stalled_stdin_write_cannot_block_gui_thread_past_deadline(self):
         # HELLO is answered, then child stays alive without reading stdin.
