@@ -333,9 +333,14 @@ test("real pinned engine: same visible observations do not determine RNG",()=>{
   const a=fixture(),rawA=a.toJSON();
   const packetA=syntheticProjection(a);
   const alt=clone(a);
-  const originalSeed=alt.prng.seed.slice();
-  alt.prng.seed[0]=(alt.prng.seed[0]+1) % 65536;
-  assert.notDeepEqual(alt.prng.seed,originalSeed);
+  // Pinned Showdown's PRNG API exposes getSeed()/setSeed(); unlike older
+  // versions it does not expose a mutable prng.seed array.
+  const originalSeed=alt.prng.getSeed();
+  assert.match(originalSeed,/^[0-9]+,[0-9]+,[0-9]+,[0-9]+$/);
+  const components=originalSeed.split(",").map(Number);
+  components[0]=(components[0]+1) % 65536;
+  alt.prng.setSeed(components.join(","));
+  assert.notEqual(alt.prng.getSeed(),originalSeed);
   const rawB=alt.toJSON();
   assert.notEqual(sha256(rawA),sha256(rawB),
     "Hidden RNG fork should have a different full serialized state");
