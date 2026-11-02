@@ -3,7 +3,8 @@ const {test}=require("node:test");
 const assert=require("node:assert/strict");
 const {condition,BOOSTS}=require("./observation_conditioned_branch_probe.cjs");
 const {context}=require("./six_team_selection_probe.cjs");
-const {projectObservation,syntheticTruth}=require("./partial_observation_probe.cjs");
+const {projectObservation,syntheticTruth,makeCandidates}=require("./partial_observation_probe.cjs");
+const combined=require("./gate_b_four_mechanisms.cjs");
 const {fingerprint}=require("./state_compare.cjs");
 let ctx,base;
 function setup(){
@@ -471,6 +472,28 @@ test("current choice lock conditions actual item and volatile without recreating
  assert.equal(result.candidates[0].conditioned_choice_lock,"earthquake");
  assert.ok(result.admitted_evidence_fields.includes("choice_lock"));
  assert.equal(result.gate_B,"UNSUPPORTED");
+});
+test("Choice lock disappears from actual synthetic Battle when locked user switches out",()=>{
+ const obs=withHPAndBoosts({hp:70});
+ bindCurrentFrame(obs);
+ obs.facts.opponent_item=known("choicescarf");
+ obs.facts.choice_lock=known({
+  move_id:"earthquake",item_id:"choicescarf",turn_epoch:4,state_revision:42});
+ const plan=combined.inspect(obs,ctx);
+ assert.equal(plan.error,undefined);
+ const baseObs=structuredClone(obs);
+ baseObs.facts.opponent_hp_exact={source:"UNKNOWN"};
+ baseObs.facts.opponent_boosts={source:"UNKNOWN"};
+ const selected=makeCandidates(baseObs,ctx).candidates;
+ assert.deepEqual(selected.map(c=>c.id),["C"]);
+ const battle=selected[0].battle,locked=battle.p2.active[0];
+ assert.equal(combined.apply(battle,locked,plan),null);
+ assert.equal(locked.volatiles.choicelock.move,"earthquake");
+ battle.makeChoices("move 1","switch 2");
+ assert.equal(battle.p2.active[0]!==locked,true,"active opponent must change");
+ assert.equal(Boolean(locked.volatiles.choicelock),false,
+  "switching out must clear old active Choice lock");
+ assert.equal(locked.item,"choicescarf","switch must not remove the held Choice item");
 });
 test("observed Knock Off removal conditions empty current item but never a Berry event",()=>{
  const obs=removedScarf(),hash=fingerprint(obs);
