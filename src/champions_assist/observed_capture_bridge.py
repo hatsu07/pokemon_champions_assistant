@@ -69,6 +69,10 @@ class LinkedObserverState:
         self.last_capture_seq = -1
         self._seen_frames: set[str] = set()
 
+    @property
+    def linked_raw_observation_ids(self) -> frozenset[str]:
+        return frozenset(self._seen_frames)
+
     def ingest(self, frame: Frame, receipt: FrameCaptureReceipt,
                raw_rois: Mapping[str, Any],
                roi_config: RoiConfiguration) -> ObservedLinkResult:
@@ -117,9 +121,14 @@ class LinkedObserverState:
                 text=text, status="CANDIDATE",
                 display_id=receipt.raw_observation_id,
             ))
-        proposed, audit = apply_local_ocr(
-            self.state, tuple(records), self.assets,
-            capture_receipts={frame.frame_id: receipt})
+        try:
+            proposed, audit = apply_local_ocr(
+                self.state, tuple(records), self.assets,
+                capture_receipts={frame.frame_id: receipt})
+        except (ValueError, KeyError, TypeError, AttributeError):
+            # The isolated opt-in reducer must never crash a working capture
+            # pipeline or mutate the detached state on malformed inputs.
+            return blocked("DETACHED_OCR_REDUCER_REFUSED_INPUT")
         # Even an OCR event marked APPLIED by the bounded reducer is not
         # verified gameplay. The provenance carries false authenticity flags.
         if proposed.get("match_id") != self.match_id:
