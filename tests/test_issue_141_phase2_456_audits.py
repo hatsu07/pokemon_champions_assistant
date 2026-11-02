@@ -16,13 +16,20 @@ from champions_assist.local_strategy.shadow_comparison_store import (
 from champions_assist.local_strategy.shadow_quality_gate import (
     GoldenExpectation, audit_shadow_quality,
 )
+from champions_assist.local_strategy.offline_shadow_capture import (
+    capture_offline_same_window,
+)
+from tests.test_issue_141_observed_full_grid_diagnostic import FullGridFakeWorker
+from tests.test_issue_141_observed_synthetic_replay_bridge import cases
+from tests.test_issue_141_replay_projection_audit import snapshot, sourced
+from tests.test_issue_141_observed_id_bridge import with_state
 from champions_assist.local_strategy.observed_full_grid_diagnostic import (
     ObservedFullGridDiagnostic,
 )
 from champions_assist.prep import PrepMatchup, PrepResult
 from champions_assist.preload import FrozenMatchAssets
 from champions_assist.local_strategy.models import fingerprint
-from tests.test_issue_140_foundation import frozen
+from tests.test_issue_140_foundation import frozen, VERIFIED_ASSETS
 from tests.test_issue_141_selection import make_assets, OWN, OPP
 
 
@@ -150,6 +157,60 @@ class ShadowSameRevisionStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"CONFLICTING_SAME_WINDOW_RECORD"):
                 append_shadow_comparison(db,replace(record,local_elapsed_ms=999))
             self.assertEqual(read_shadow_comparisons(db),(record,))
+
+    def test_real_offline_invoke_captures_elapsed_and_abstention_reason(self):
+        snap=snapshot()
+        advice=BoundGPTAdvice(snap.snapshot_sha256,"GPT_ABSTAIN",
+                              reason="synthetic-only")
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"pair.sqlite"
+            worker=FullGridFakeWorker()
+            result=capture_offline_same_window(
+                db,snap,VERIFIED_ASSETS,gpt=advice,
+                joint_candidates=sourced(),complete_branches=cases(),
+                worker=worker,preserve="ガブリアス",stopper="ミミッキュ",
+                current_snapshot=lambda:snap)
+            self.assertEqual(result.store_status,"RECORDED")
+            self.assertEqual(result.record.local_status,"MODEL_DIAGNOSTIC")
+            self.assertEqual(len(worker.simulator.calls),4)
+            self.assertEqual(read_shadow_comparisons(db),(result.record,))
+            self.assertFalse(result.record.gpt_action_verified_in_window)
+            self.assertEqual(result.record.same_action_comparison,
+                             "NO_VERIFIED_LOCAL_ACTION")
+            # A failing worker must be logged with its concrete reason,
+            # not silently omitted or promoted to a local choice.
+            failed=replace(snap,window=replace(
+                snap.window,decision_window_id="new-offline-window"))
+            bad_advice=BoundGPTAdvice(failed.snapshot_sha256,"GPT_ABSTAIN")
+            worker2=FullGridFakeWorker(refuse_id="Joint-2")
+            decline=capture_offline_same_window(
+                db,failed,VERIFIED_ASSETS,gpt=bad_advice,
+                joint_candidates=sourced(),complete_branches=cases(),
+                worker=worker2,preserve="ガブリアス",stopper="ミミッキュ",
+                current_snapshot=lambda:failed)
+            self.assertEqual(decline.record.local_status,"NO_RANKING")
+            self.assertIn("LOCAL_ABSTAIN",decline.record.local_reason)
+            self.assertEqual(decline.record.hypothetical_branch_count,0)
+            self.assertEqual(len(read_shadow_comparisons(db)),2)
+            stale=with_state(snap,field="later_observation",value=True)
+            with self.assertRaisesRegex(ValueError,"STALE_WINDOW_BEFORE"):
+                capture_offline_same_window(
+                    db,snap,VERIFIED_ASSETS,gpt=advice,
+                    joint_candidates=sourced(),complete_branches=cases(),
+                    worker=FullGridFakeWorker(),preserve="ガブリアス",
+                    stopper="ミミッキュ",current_snapshot=lambda:stale)
+
+    def test_reject_forged_verified_local_record_at_sqlite_boundary(self):
+        row=compared()
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"state.sqlite"
+            for fake in (replace(row,local_status="LOCAL_VERIFIED"),
+                         replace(row,local_status="NO_RANKING",
+                                 hypothetical_branch_count=1),
+                         replace(row,snapshot_sha256="broken")):
+                with self.assertRaisesRegex(ValueError,"INVALID_NONACTIONABLE"):
+                    append_shadow_comparison(db,fake)
+            self.assertFalse(db.is_file())
 
     def test_stale_gpt_and_local_window_rejected_before_db(self):
         snap=frozen()

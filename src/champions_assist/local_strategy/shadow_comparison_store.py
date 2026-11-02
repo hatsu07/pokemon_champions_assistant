@@ -90,6 +90,7 @@ def build_shadow_comparison(
     gpt: BoundGPTAdvice, local: ObservedFullGridDiagnostic | None,
     *, local_elapsed_ms: int, remaining_ms_at_capture: int,
     recorded_at: str | None = None,
+    local_refusal_reason: str = "",
 ) -> ShadowComparisonRecord:
     """Reject stale ABA state, fabricated verified local advice and missing SHA.
 
@@ -113,12 +114,17 @@ def build_shadow_comparison(
             or not _valid_time(remaining_ms_at_capture)
             or not isinstance(gpt.action_id, str)
             or not isinstance(gpt.reason, str)
-            or len(gpt.reason) > 256):
+            or len(gpt.reason) > 256
+            or len(gpt.action_id) > 128):
         raise ValueError("GPT_OR_TIMING_UNBOUND")
     if gpt.status != "GPT_ADVICE" and gpt.action_id:
         raise ValueError("ABSTAINED_GPT_HAS_ACTION")
     if gpt.status == "GPT_ADVICE" and not gpt.action_id:
         raise ValueError("GPT_ADVICE_MISSING_ACTION")
+    if (not isinstance(local_refusal_reason, str)
+            or len(local_refusal_reason) > 256
+            or (local is not None and local_refusal_reason)):
+        raise ValueError("INVALID_LOCAL_REFUSAL_REASON")
     if local is not None and (
             not isinstance(local, ObservedFullGridDiagnostic)
             or local.ranking_status != "NO_RANKING"
@@ -159,9 +165,10 @@ def build_shadow_comparison(
         fingerprint(list(map(list, submitted.window.four_master_sha256))),
         fingerprint(submitted.observed_state_json),
         submitted.window.allowed_action_digest,
-        gpt.status, gpt.action_id[:128], verified, gpt.reason,
+        gpt.status, gpt.action_id, verified, gpt.reason,
         gpt.elapsed_ms, local_status,
-        ((local.reason if local else "NO_LOCAL_DIAGNOSTIC")[:256]),
+        (local.reason if local else
+         (local_refusal_reason or "NO_LOCAL_DIAGNOSTIC")),
         local_elapsed_ms,
         (local.evaluated_branch_count if local_status == "MODEL_DIAGNOSTIC" else 0),
         comparison, remaining_ms_at_capture > 0, stamp)
@@ -181,6 +188,25 @@ def append_shadow_comparison(
     path = Path(database_path)
     if not path.parent.is_dir():
         raise ValueError("DATABASE_DIRECTORY_MISSING")
+    if (record.local_status not in _LOCAL_STATUSES
+            or record.gpt_status not in _GPT_STATUSES
+            or record.same_action_comparison not in (
+                "NO_VERIFIED_LOCAL_ACTION", "LOCAL_ABSTAINED")
+            or record.gpt_action_verified_in_window not in (True, False)
+            or record.input_deadline_met not in (True, False)
+            or any(not _valid_time(v) for v in (
+                record.gpt_elapsed_ms, record.local_elapsed_ms))
+            or len(record.snapshot_sha256) != 64
+            or len(record.team_sha256) != 64
+            or len(record.evidence_sha256) != 64
+            or len(record.master_manifest_sha256) != 64
+            or len(record.allowed_action_digest) != 64
+            or record.hypothetical_branch_count < 0
+            or (record.local_status == "NO_RANKING"
+                and record.hypothetical_branch_count != 0)
+            or (record.local_status == "MODEL_DIAGNOSTIC"
+                and record.same_action_comparison != "NO_VERIFIED_LOCAL_ACTION")):
+        raise ValueError("INVALID_NONACTIONABLE_SHADOW_RECORD")
     cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
     values = tuple(getattr(record, name) for name in cols)
     with sqlite3.connect(path, timeout=3.0) as db:

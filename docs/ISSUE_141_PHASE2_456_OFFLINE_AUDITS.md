@@ -53,8 +53,17 @@ approved production timing contract is required before runtime wiring.
   overwriting**. Read-only retrieval is separate.
 - No secrets, screenshots, raw OCR, full opponent sets, private model
   reasoning or production GPT action changes are stored.
-- Explicit opt-in invocation only. This is not yet a running LOCAL_SHADOW
-  observer registered with the Windows GUI or production event callbacks.
+- `offline_shadow_capture.capture_offline_same_window` is an explicit,
+  opt-in demonstration of the whole trace: it invokes the synthetic
+  diagnostic, measures elapsed milliseconds using the local monotonic
+  clock, rechecks the original snapshot revision and writes one SQLite
+  record only after the full calculation. If the worker abstains, the
+  bound failure reason is logged as `NO_RANKING`; no successful prefix is
+  promoted. Direct, forged `LOCAL_VERIFIED` records are refused by the
+  SQLite write boundary itself.
+- This is not yet a running LOCAL_SHADOW observer registered with the
+  Windows GUI or production event callbacks. Offline computation time is
+  not actual presentation latency in the GUI.
 
 ## ⑥ Quality and deadline metrics without false certification
 
