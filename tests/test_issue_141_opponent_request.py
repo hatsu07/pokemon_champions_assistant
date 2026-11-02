@@ -122,6 +122,66 @@ class OpponentRequestChoiceTests(unittest.TestCase):
         self.assertEqual(enumerate_simple_p2_request(s,envelope(s,r)).reason,
                          "P2_SINGLES_ROSTER_UNVERIFIED")
 
+    def test_fainted_hp_contradictions_and_long_numeric_inputs_fail_closed(self):
+        s = current()
+        # An explicitly fainted bench with nonzero HP must never become
+        # "switch 2" even if another bench Pokémon is fully fainted.
+        variants = (
+            (request(force=True, members=[
+                {"active": True, "condition": "0 fnt"},
+                {"active": False, "condition": "1/100 fnt"},
+                {"active": False, "condition": "0 fnt"},
+            ]), "P2_SINGLES_ROSTER_UNVERIFIED"),
+            (request(members=[
+                {"active": True, "condition": "0 fnt"},
+                {"active": False, "condition": "58/100"},
+                {"active": False, "condition": "0 fnt"},
+            ]), "P2_SINGLES_ROSTER_UNVERIFIED"),
+            (request(members=[
+                {"active": True, "condition": "0/100 fnt"},
+                {"active": False, "condition": "58/100"},
+                {"active": False, "condition": "0 fnt"},
+            ]), "P2_SINGLES_ROSTER_UNVERIFIED"),
+            (request(members=[
+                {"active": True, "condition": "0/100 par"},
+                {"active": False, "condition": "58/100"},
+                {"active": False, "condition": "0 fnt"},
+            ]), "P2_SINGLES_ROSTER_UNVERIFIED"),
+            (request(members=[
+                {"active": True, "condition": "100/100"},
+                {"active": False, "condition": "9" * 5000 + "/100"},
+                {"active": False, "condition": "0 fnt"},
+            ]), "P2_SINGLES_ROSTER_UNVERIFIED"),
+            (request(members=[
+                {"active": True, "condition": "100/100"},
+                {"active": False, "condition": "1/" + "9" * 5000},
+                {"active": False, "condition": "0 fnt"},
+            ]), "P2_SINGLES_ROSTER_UNVERIFIED"),
+        )
+        for bad, reason in variants:
+            with self.subTest(condition=[m["condition"]
+                                         for m in bad["side"]["pokemon"]]):
+                # This call is intentionally not wrapped in a try block:
+                # even huge HP tokens must return, never raise ValueError.
+                outcome = enumerate_simple_p2_request(s, envelope(s, bad))
+                self.assertEqual(outcome.status, "NO_CHOICES")
+                self.assertEqual(outcome.commands, ())
+                self.assertEqual(outcome.reason, reason)
+                self.assertFalse(outcome.exhaustive_legal_choices_verified)
+
+    def test_fainted_active_remains_eligible_for_forced_replacement_only(self):
+        s = current()
+        bench = [
+            {"active": True, "condition": "0 fnt"},
+            {"active": False, "condition": "58/100 par"},
+            {"active": False, "condition": "0 fnt"},
+        ]
+        r = enumerate_simple_p2_request(
+            s, envelope(s, request(force=True, members=bench)))
+        self.assertEqual(r.status, "PROVISIONAL_REQUEST_OPTIONS")
+        self.assertEqual(r.commands, ("switch 2",))
+        self.assertFalse(r.exhaustive_legal_choices_verified)
+
     def test_malformed_or_ambiguous_moves_fail_entire_response(self):
         s=current()
         variants=(
