@@ -43,7 +43,7 @@ jobs:
       - name: Install Python project for existing validator imports
         run: python -m pip install -e .
       - name: Python contract and failure tests
-        run: python -m unittest tests.test_issue_140_foundation tests.test_issue_141_selection tests.test_issue_141_one_turn tests.test_verify_merge_ready -v
+        run: python -m unittest tests.test_issue_140_foundation tests.test_issue_141_selection tests.test_issue_141_one_turn tests.test_issue_141_shadow_runner tests.test_verify_merge_ready -v
       - name: Node protocol tests (unbundled, no real Showdown)
         run: node --test local_simulator/test_worker.cjs
       - name: Explicit limits
