@@ -13,6 +13,7 @@ import unicodedata
 
 from .terminology import japanese_name
 from .battle_evidence import _visual_stages
+from .capture_provenance import linked_local_ocr_origin
 
 _CONFIDENCE_MIN = 0.72
 _STATS = {"こうげき":"A","ぼうぎょ":"B","とくこう":"C",
@@ -243,7 +244,8 @@ def _ensure(evidence: dict):
     evidence.setdefault("last_move_by_pokemon",{"own":{},"opponent":{}})
 
 
-def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
+def apply_local_ocr(state: dict, records, assets, *,
+                    capture_receipts=None) -> tuple[dict, list[dict]]:
     """Fold bounded OCR results into a detached match state.
 
     Returns state, audit. Uncertain events are candidates, never overwritten
@@ -303,6 +305,25 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         observed_at=float(getattr(rec,"timestamp",0))
         if ref in seen_set or not text:
             continue
+        # The local OCR reader is a separate capture/worker path from
+        # ObserverPipeline. Never join records on a guessed frame identifier:
+        # optional explicit receipts must reference this exact match/frame.
+        matched_receipt = None
+        if capture_receipts is not None:
+            match_id = updated.get("match_id")
+            claimed = (capture_receipts.get(ref[0])
+                       if isinstance(capture_receipts, dict) else None)
+            matched_receipt = linked_local_ocr_origin(
+                claimed, match_id=match_id, frame_id=ref[0],
+                kind="PENDING", side="unknown", actor=None, field="unresolved",
+                before_revision=int(updated.get("_live_state_revision", 0)),
+                after_revision=int(updated.get("_live_state_revision", 0)))
+            if matched_receipt is None:
+                audit.append({"kind":"UNBOUND_OCR","status":"CANDIDATE",
+                              "reason":"FRAME_RECEIPT_UNAVAILABLE_OR_MISMATCH",
+                              "frame_id":ref[0]})
+                continue
+        before_revision = updated.get("_live_state_revision",0)
         seen.append(ref)
         seen_set.add(ref)
         if len(seen)>60:
@@ -577,7 +598,40 @@ def apply_local_ocr(state: dict, records, assets) -> tuple[dict, list[dict]]:
         audit.append({"kind":kind,"status":"APPLIED","side":side or "",
                       "frame_id":ref[0],"revision":updated.get("_live_state_revision",0)})
         provenance=evidence["update_provenance"]
-        provenance.append({"kind":kind,"source":getattr(rec,"source","LOCAL_OCR"),
-                           "frame_id":ref[0],"confidence":conf})
+        field_by_kind = {
+            "ACTIVE":"active_pokemon", "SWITCH":"active_pokemon",
+            "HP":"hp_by_pokemon", "PP":"pp_by_pokemon",
+            "MOVE":"moves_by_pokemon", "STATUS":"status_by_pokemon",
+            "STATUS_CLEAR":"status_by_pokemon", "BOOST":"boosts",
+            "FAINT":"hp_by_pokemon", "TYPE":"current_type",
+            "MEGA":"form_by_pokemon", "ABILITY":"ability_by_pokemon",
+            "ABILITY_CHANGED_UNKNOWN":"ability_state_by_pokemon",
+            "ITEM_SPENT":"item_state_by_pokemon",
+            "ITEM_EXCHANGED":"item_state_by_pokemon",
+            "TEMP_START":"temporary_effects", "TEMP_END":"temporary_effects",
+            "WEATHER":"battlefield.weather","TERRAIN":"battlefield.terrain",
+            "SIDE_EFFECT":"battlefield.effects_by_side",
+        }
+        resolved_actor = (name if isinstance(name,str) and name else
+                          (updated.get("our_active" if side=="own" else "opponent_active")
+                           if side in ("own","opponent") else None))
+        record_provenance = {
+            "kind":kind,"source":getattr(rec,"source","LOCAL_OCR"),
+            "frame_id":ref[0],"confidence":conf,
+            "side":side,"actor":resolved_actor,
+            "field":field_by_kind.get(kind,"UNMAPPED"),
+            "before_revision":before_revision,
+            "after_revision":updated.get("_live_state_revision",0),
+        }
+        if matched_receipt is not None:
+            joined = linked_local_ocr_origin(
+                capture_receipts[ref[0]], match_id=updated["match_id"],
+                frame_id=ref[0],kind=kind,side=side,
+                actor=resolved_actor,field=field_by_kind.get(kind,"UNMAPPED"),
+                before_revision=before_revision,
+                after_revision=updated.get("_live_state_revision",0))
+            if joined is not None:
+                record_provenance["claimed_frame_link"] = joined
+        provenance.append(record_provenance)
         del provenance[:-50]
     return updated,audit
