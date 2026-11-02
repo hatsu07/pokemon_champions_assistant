@@ -14,7 +14,8 @@ const HISTORY=["opponent_mega_history","opponent_removed_item",
 const SOURCE=new Set(["UNKNOWN","INFERRED","SYNTHETIC","GAME_OBSERVED"]);
 const isObject=x=>!!x&&typeof x==="object"&&!Array.isArray(x);
 function validRef(e){
- return isObject(e)&&typeof e.id==="string"&&!!e.id&&
+ return isObject(e)&&["GAME_FRAME","GAME_LOG"].includes(e.kind)&&
+   typeof e.id==="string"&&!!e.id&&
    typeof e.match_id==="string"&&!!e.match_id&&
    typeof e.active_instance_id==="string"&&!!e.active_instance_id&&
    Number.isInteger(e.turn_epoch)&&e.turn_epoch>=0&&
