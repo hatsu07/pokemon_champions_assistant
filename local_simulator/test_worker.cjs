@@ -64,7 +64,9 @@ test("staged fake engine enforces branch hash and echoes exact independent branc
       "exports.Battle={fromJSON(data){const pokemon=data.team.map(x=>({"+
       "species:{id:x.species_id},moveSlots:x.moves.map(id=>({id})),hp:100,fainted:false,status:''}));"+
       "const p1={pokemon,active:[pokemon[data.activeIndex ?? 0]]};"+
-      "const opp=[{fainted:false,switchFlag:false},{fainted:false,switchFlag:false},{fainted:true,switchFlag:false}];"+
+      "const opp=[{species:{id:'dragonite'},hp:100,status:'',fainted:false,switchFlag:false},"+
+      "{species:{id:'gholdengo'},hp:60,status:'',fainted:false,switchFlag:false},"+
+      "{species:{id:'kingambit'},hp:0,status:'',fainted:true,switchFlag:false}];"+
       "const r={side:{id:'p2',pokemon:opp.map((p,i)=>({condition:i===2?'0 fnt':i===1?'60/100':'100/100',active:i===0}))},"+
       "active:[{moves:[{id:'tackle',pp:10,disabled:false}],trapped:false}]};"+
       "const p2={id:'p2',pokemon:opp,active:[opp[0]],activeRequest:r,requestState:'move',"+
