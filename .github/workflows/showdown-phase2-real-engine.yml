@@ -10,6 +10,7 @@ on:
       - 'src/champions_assist/local_strategy/engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_window_bound_readout_transport.py'
+      - 'tests/test_issue_141_observed_safe_branch_gate.py'
       - '.github/workflows/showdown-phase2-real-engine.yml'
   workflow_dispatch:
 
