@@ -29,6 +29,15 @@ A synthetic simulation may return PARTIAL, **never CONFIRMED**.
   Unknown modifiers and inconsistent pairs fail closed. This is an opt-in
   synthetic-replay API, **not** a live-game recommendation or completeness
   guarantee; see `docs/ISSUE_141_SINGLE_MEGA_REQUEST_SLICE.md`.
+- The bounded pinned-engine PP/lock extension additionally supports
+  `PINNED_SHOWDOWN_HARDLOCK_OR_STRUGGLE_SINGLES_ONLY` for a **verified
+  PP-less one-slot** hard `getLockedMove()` or all-PP-exhausted
+  `struggle` request. Its command grammar is `move 1`, optionally
+  followed by regular bench switches; it does not claim arbitrary locks,
+  depleted-PP-but-not-Struggle, or other ways of disabling every move.
+  Standard Choice-item/Encore disabled slots and single PP-depleted slots
+  remain subject to exact per-command checks. See
+  `docs/ISSUE_141_LOCK_PP_STRUGGLE_SLICE.md`.
 - As of the latest review, `assets` must be the actual match-preloaded
   `FrozenMatchAssets`. All four on-disk preload SHA hashes must match
   the frozen window and in-memory source bytes; the six registered members
