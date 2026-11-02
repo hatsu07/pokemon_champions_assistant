@@ -27,7 +27,7 @@ from champions_assist.local_strategy.observed_calculation_scenarios import (
 from tests.test_phase_4 import roi_config, synthetic_image, write_masters
 from tests.test_issue_140_foundation import VERIFIED_ASSETS, frozen
 from tests.test_issue_141_observed_id_bridge import with_state, details
-from tests.test_issue_141_joint_set_intake import record
+from tests.test_issue_141_joint_set_intake import record, members
 
 
 class ObserverToReducerTests(unittest.TestCase):
@@ -48,6 +48,7 @@ class ObserverToReducerTests(unittest.TestCase):
                 "selected_three":["Own1","Own2","Own3"],
                 "opponent_six":list(("Opp1","Opp2","Opp3","Opp4","Opp5","Opp6")),
                 "battle_evidence":empty_battle_evidence(),
+                "observed_hp":{},
                 "_live_state_revision":0,
             },
             roi_fields={"ROI_UI_CONTROLS":"own_active_name",
@@ -188,8 +189,12 @@ class CalculationScenarioTests(unittest.TestCase):
 
     def test_sourced_joint_scenarios_preserve_individual_hypotheses(self):
         snapshot=with_state(frozen(),edits=details)
-        a=record()
-        b=record("Joint-2",source_ref="synthetic://other")
+        party=members()
+        party["カイリュー"].update({
+            "current_type":"ひこう", "status":"やけど",
+        })
+        a=record(party=party)
+        b=record("Joint-2",source_ref="synthetic://other",party=party)
         out=stage_observed_calculation_scenarios(
             snapshot,VERIFIED_ASSETS,joint_candidates=(a,b))
         self.assertEqual(out.status,"PARTIAL_SCENARIOS_NOT_RUNNABLE",out.reason)
