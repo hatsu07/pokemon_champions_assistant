@@ -119,7 +119,15 @@ test("replay hash and synthetic scope must be explicit and exact",()=>{
     const result=run(x);
     assert.equal(result.status,"NO_OBSERVATION_MATCH");
   }
-  assert.equal(run({}, {turn:99}).status,"NO_OBSERVATION_MATCH");
+  // The fake engine deliberately ignores raw input, so mutate the
+  // reconstructed engine turn to test the visible turn equality separately.
+  assert.equal(run({}, {}, b=>{b.turn=99}).status,"NO_OBSERVATION_MATCH");
+  // A caller altering the raw replay without rebinding its original SHA
+  // must also be rejected at the cryptographic boundary.
+  const {battle,packet,Battle}=fixture();
+  battle.turn=99;
+  assert.equal(auditSyntheticObservedReplay(Battle,battle,packet).reason,
+    "REPLAY_SHA_MISMATCH");
 });
 test("malformed data, unknown fields, duplication and ambiguous HP are rejected",()=>{
   const edits=[
