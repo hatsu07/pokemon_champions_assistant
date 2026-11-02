@@ -1,0 +1,28 @@
+# Issue #141 — Local shadow branch runner (PR follow-up to #175)
+
+The user-approved engineering assumption is fixed Pokémon Showdown Champions (PR #174). Scientific A=UNKNOWN / B=UNSUPPORTED remains a separate evidence status, not a requirement to stop engineering. This branch is **not** a game-device strategy release.
+
+## What this slice adds
+
+`local_strategy/shadow_runner.py` connects the Phase 1 `LocalSimulatorWorker.simulate()` to the Phase 2 `compare_shadow_turn()` evaluator, without changing the GPT/LIVE selection/recommendation path.
+
+- Input: one **actual** match-frozen `FrozenBattleState` and `FrozenMatchAssets`, a match-scoped already-running worker, an explicit `ReplayOpponentScenario` per registered *joint* hypothesis, and preserve/stopper roles.
+- Every scenario requires a complete serialized **synthetic Showdown Battle JSON including any RNG state** and a unique list of real Showdown opponent command strings (`p2_choices`). No separate marginal adoption-rate products, no screen-based guessing of an unseen set, no retroactive midbattle reconstruction.
+- Validate 4 frozen master hashes and exact registered team/Showdown IDs using Phase 1's roster gate, current positive legality using the shared replay validator, the allowed-action digest, the entire joint hypothesis set, scenario provenance and a finite branch budget. We do **not** treat an OCR-only snapshot as a `FULL_REPLAY_SYNTHETIC` state.
+- Form a complete action × hypothesis × opponent-command grid (max 240 branches), reusing the **same** canonical starting Battle bytes for every action and p2 command within each hypothesis.
+- Send each branch serially with `worker.simulate`, binding the exact current `candidate_action_id` and matching Showdown p1 slot; maintain a copy of the starting Battle on every call. The worker already attaches the verified submitted request and rejects invalid/past-due IPC.
+- If any simulation is unavailable, unsupported, late or the current input revision changes, return `NO_RANKING`; **never select from a favorable subset** of the grid.
+- Full coverage then passes to `compare_shadow_turn`, which revalidates each original request payload SHA, nonce, actual opponent command, Battle/RNG initial state and 3v3 HP results. Ordinal-only provisional output; no fabricated certainty, damage, probabilities or safe receiving claims.
+
+## Tested (synthetic-only)
+
+`tests/test_issue_141_shadow_runner.py`: 2 × 2 complete branch grid, multiple joint hypotheses with different full states, missing/duplicate/unregistered hypothesis, incomplete/duplicate/unconfirmed p2 choices, bad replay JSON, worker failure/status, wrong echoed nonce, mutated shared Battle, reserve deadline, mid-grid revision change, and no current positively legal action. Tested in isolated Linux and native Windows CI; no real Showdown engine in these fixtures.
+
+## Remaining blockers for a usable local recommendation
+
+1. Build complete Showdown Battle and **joint opponent scenario/command candidates** from the current observed evidence, using verified Champions-specific data rather than inferring from SV; report unsupported unknowns.
+2. Connect a real pinned Showdown Node binary/runtime and verified Champions↔Showdown species/move mapping (the current registered team CSV may lack IDs). Synthetic worker branches alone do not prove realistic advice.
+3. Extend the evaluation contract beyond one turn to protect immediate losses, priority/speed, lock/PP/mega effects, ability to actually finish the last 1v1, and multi-turn win routes.
+4. Build 18-pair PREP and three role assessments, then shadow-run at identical window/revision with GPT; record safe differences and P50/P95/P99. Connect a Windows GUI/release bundle and Android mirrored-screen E2E later.
+
+**No game screen, WSL2 or VS Code/Codex required to review/test this isolated PR.** A mirrored Android game screen (preferably annotated test captures) and the Windows native machine **will** be needed for later end-to-end image→observation→strategy→display and timing validation. WSL2/VS Code/Codex is an optional development workflow, not a hidden required dependency for this Python-only runner. No autonomous game inputs or PR merge in this slice.
