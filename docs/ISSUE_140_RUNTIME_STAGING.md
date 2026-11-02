@@ -1,6 +1,8 @@
 # Issue 140 — offline Windows runtime staging, not production adoption
 
-After Phase 0 approval, reproduce the pinned checkout (no upstream auto-follow),
+By explicit 2026-11-02 user decision (PR #174), the fixed Showdown engine is
+the development assumption; waiting for proof of all game mechanics is no longer
+required to build Phase 1. Reproduce the pinned checkout (no upstream auto-follow),
 build the Champions-capable simulator in an isolated Docker environment, and
 assemble the full Node binary and dependency license inventory.
 
@@ -27,7 +29,9 @@ audit before integrating it into PyInstaller. The protocol supports explicit
 local startup using the staged `node.exe`, `worker.cjs`, and `showdown/`
 paths but does not provide live gameplay recommendations.
 
-**Missing**: proven Champions calculation equivalence, arbitrary observed
-midbattle reconstruction, Windows installer/runtime smoke, actual device E2E
-and permission to switch GPT production advice. These remain Phase 0/2/3
-gates, not achievements of this scaffold.
+**Still missing in this particular scaffold**: bundled Windows runtime with
+real Node binary and complete dependency notices/SBOM, Windows installer/runtime
+smoke, actual device E2E and tactical GUI integration. Game calculation parity
+(Gate A UNKNOWN) and arbitrary observed midbattle reconstruction
+(Gate B UNSUPPORTED) remain recorded risks but are **not** implementation
+start/merge blockers under PR #174. No finished local strategy is claimed.
