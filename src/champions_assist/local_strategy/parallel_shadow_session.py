@@ -13,7 +13,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from time import monotonic
 from typing import Any, Callable
 
@@ -25,7 +25,7 @@ from .observed_full_grid_diagnostic import (
 )
 from .shadow_comparison_store import (
     BoundGPTAdvice, ShadowComparisonRecord, append_shadow_comparison,
-    build_shadow_comparison,
+    build_shadow_comparison, revoke_shadow_comparison,
 )
 
 
@@ -79,10 +79,18 @@ class ParallelShadowSession:
         self._local_future: Future | None = None
         self._joined = False
         self._closed = False
+        # Nonblocking UI invalidation is linearized against a successful
+        # finished receipt by _lock; disk activity never holds that lock.
+        self._revoked = Event()
+        self._persisted = False
+        self._cleanup_future: Future | None = None
 
     def _current(self) -> FrozenBattleState:
+        if self._revoked.is_set():
+            raise ValueError("REVOKED_SHADOW_WINDOW")
         current = self.current_snapshot()
-        if (not isinstance(current, FrozenBattleState)
+        if (self._revoked.is_set()
+                or not isinstance(current, FrozenBattleState)
                 or current.window.identity() != self.snapshot.window.identity()
                 or current.snapshot_sha256 != self.snapshot.snapshot_sha256):
             raise ValueError("STALE_PARALLEL_SHADOW_WINDOW")
@@ -147,7 +155,37 @@ class ParallelShadowSession:
             local = self._local_future
             return self._pool.submit(self._finish, local, gpt)
 
+    def _active_at_commit(self) -> bool:
+        """Transactional fence. A cancellation after the fence is purged by
+        close()'s serialized off-UI cleanup, never accepted as evidence.
+        """
+        if self._revoked.is_set():
+            return False
+        try:
+            self._current()
+        except (ValueError, TypeError, AttributeError):
+            return False
+        return not self._revoked.is_set()
+
+    def _revoke_unfinished(self) -> str:
+        """Runs AFTER an in-flight _finish on the same one-worker executor."""
+        try:
+            return revoke_shadow_comparison(
+                self.database_path,
+                match_id=self.snapshot.window.match_id,
+                decision_window_id=self.snapshot.window.decision_window_id,
+                state_revision=self.snapshot.window.state_revision,
+                snapshot_sha256=self.snapshot.snapshot_sha256)
+        except (ValueError, OSError, TypeError):
+            return "REVOKE_STORAGE_FAILED"
+
+    @property
+    def cleanup_future(self) -> Future | None:
+        """Off-path cleanup receipt, useful to postmatch tests and diagnostics."""
+        return self._cleanup_future
+
     def _finish(self, local: Future, gpt: BoundGPTAdvice) -> ParallelShadowResult:
+        written = False
         try:
             self._current()
             if not isinstance(gpt, BoundGPTAdvice):
@@ -165,18 +203,45 @@ class ParallelShadowSession:
                 self.snapshot, current, gpt, diagnostic,
                 local_elapsed_ms=elapsed, remaining_ms_at_capture=remaining,
                 local_refusal_reason=refusal)
-            # Final revision read rejects superseded state before persistence.
             self._current()
-            status = append_shadow_comparison(self.database_path, record)
+            status = append_shadow_comparison(
+                self.database_path, record,
+                active_at_commit=self._active_at_commit)
+            written = status in ("RECORDED", "ALREADY_RECORDED")
+            # Only this fast in-memory lock establishes whether the record
+            # finished *before* user OFF / a new revision. Never hold it
+            # across the SQLite transaction or block the Qt thread for IO.
+            self._current()
+            with self._lock:
+                if self._closed or self._revoked.is_set():
+                    return ParallelShadowResult("REFUSED", "REVOKED_DURING_WRITE")
+                self._persisted = True
             return ParallelShadowResult(status, "NONACTIONABLE_DIAGNOSTIC", record)
         except (ValueError, TypeError, AttributeError, OSError):
+            if written:
+                self._revoke_unfinished()
             return ParallelShadowResult("REFUSED", "STALE_OR_UNVERIFIED_WINDOW")
         except Exception:
+            if written:
+                self._revoke_unfinished()
             return ParallelShadowResult("REFUSED", "OFFPATH_STORAGE_FAILURE")
 
     def close(self) -> None:
+        # Set the event without any disk-lock acquisition: UI OFF/revision
+        # changes never wait for a sqlite BEGIN IMMEDIATE (up to 3 seconds).
+        self._revoked.set()
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
             if self._pool is not None:
-                self._pool.shutdown(wait=False, cancel_futures=True)
+                if self._joined and not self._persisted:
+                    # Even if close races *after* the last precommit check,
+                    # this task is enqueued behind the running _finish and
+                    # removes that exact stale row before cleanup completes.
+                    self._cleanup_future = self._pool.submit(
+                        self._revoke_unfinished)
+                # Do not cancel the queued cleanup. _finish sees revoked,
+                # skips/rolls back, and the serialized revocation finishes.
+                self._pool.shutdown(wait=False, cancel_futures=False)
 
