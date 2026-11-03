@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import sqlite3
 from tempfile import TemporaryDirectory
 from threading import Event
 from time import monotonic
@@ -242,6 +243,91 @@ class ParallelShadowSessionTests(unittest.TestCase):
                               ("NO_ROW","REVOKED"))
                 self.assertEqual(read_shadow_comparisons(db), ())
 
+
+    def test_review_p2_3_locked_database_cleanup_fails_but_audit_rejects_row(self):
+        """Real SQLite write-lock > timeout leaves raw data, NEVER finalized.
+
+        An in-flight GPT+LOCAL row can commit BEFORE user OFF, while _finish
+        is blocked waiting to return. Both cleanup attempts then encounter
+        SQLite OperationalError('database is locked'). Once released, raw
+        rows must remain explicitly untrusted in the postmatch report.
+        """
+        from scripts.report_phase2_shadow_software import (
+            stage1_software_shadow_report,
+        )
+        from tests.test_issue_141_gui_timing_trace_audit import scene
+        entered, resume = Event(), Event()
+        with TemporaryDirectory() as directory:
+            db = Path(directory) / "private" / "shadow.sqlite"
+            bridge = UiShadowDispatcher(db)
+            self.assertEqual(bridge.prepare_storage(), "READY")
+            self.assertEqual(bridge.start(
+                make_assets(), enabled=True, match_id="capture-race",
+                request_id="req-1", turn_epoch=1, state_revision=4,
+                screen_label="TURN_ACTION",
+                observed_state={
+                    "our_active":"A", "opponent_active":"O1",
+                    "selected_three":["A","B","C"]},
+                deadline_monotonic=monotonic()+60),
+                "RUNNING_UNVERIFIED")
+            session = bridge.session
+
+            def committed_then_suspended(path, record, **kwargs):
+                status = real_append(path, record, **kwargs)
+                entered.set()
+                if not resume.wait(timeout=15):
+                    raise AssertionError("COMMITTED_CANCEL_BARRIER_TIMEOUT")
+                return status
+
+            with patch(
+                "champions_assist.local_strategy.parallel_shadow_session."
+                "append_shadow_comparison",
+                side_effect=committed_then_suspended):
+                self.assertEqual(bridge.attach_gpt(
+                    request_id="req-1", turn_epoch=1, state_revision=4,
+                    status="ADVICE", advice_present=True, elapsed_ms=30,
+                    fresh=True, reported_screen="MOVE_MENU"),
+                    "JOIN_SUBMITTED_NONACTIONABLE")
+                done = bridge.last_future
+                self.assertTrue(entered.wait(timeout=10))
+                # Own a genuine write transaction while invalidation and
+                # both cleanup attempts run in the independent worker.
+                with sqlite3.connect(db, timeout=0.2) as locked:
+                    locked.execute("BEGIN IMMEDIATE")
+                    try:
+                        since = monotonic()
+                        self.assertTrue(bridge.invalidate_if_changed(
+                            turn_epoch=1, state_revision=5, phase="BATTLE"))
+                        self.assertLess(monotonic()-since, 1.0)
+                        resume.set()
+                        result = done.result(timeout=15)
+                        self.assertEqual(result.status, "REFUSED")
+                        self.assertEqual(
+                            session.cleanup_future.result(timeout=15),
+                            "REVOKE_STORAGE_FAILED")
+                    finally:
+                        locked.rollback()
+                        resume.set()
+                raw = read_shadow_comparisons(db)
+                self.assertEqual(len(raw), 1,
+                                 "Mock must genuinely reproduce stale data")
+                self.assertEqual(
+                    read_shadow_comparisons(db, finalized_only=True), ())
+                gui = scene(turns=1)
+                for event in gui["timing_observations"]["events"]:
+                    event["match_id"]="capture-race"
+                    event["state_revision"]=4
+                report = stage1_software_shadow_report(
+                    raw, gui, acceptance_database_path=db)
+                self.assertEqual(report["sqlite_window_count"], 1)
+                self.assertEqual(report["sqlite_finalized_window_count"], 0)
+                self.assertEqual(
+                    report["sqlite_unfinalized_or_revoked_count"], 1)
+                self.assertEqual(report["qt_gpt_pair_matched"], 0)
+                self.assertEqual(report["status"], "SOFTWARE_EVIDENCE_PARTIAL")
+                self.assertFalse(report["phase2_accepted"])
+                bridge.invalidate()
+
     def test_review_p2_2_off_after_completed_write_preserves_history(self):
         """A commit accepted while enabled must not be erased by later OFF."""
         snap = frozen()
@@ -258,6 +344,8 @@ class ParallelShadowSessionTests(unittest.TestCase):
             session.close()
             self.assertIsNone(session.cleanup_future)
             self.assertEqual(len(read_shadow_comparisons(db)), 1)
+            self.assertEqual(
+                len(read_shadow_comparisons(db, finalized_only=True)), 1)
 
 
 if __name__ == "__main__":
