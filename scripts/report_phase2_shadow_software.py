@@ -11,6 +11,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import re
+import sqlite3
 from typing import Any
 
 from champions_assist.local_strategy.shadow_comparison_store import (
@@ -27,8 +28,22 @@ _SHADOW_ID = re.compile(r"shadow-(\d+)-(\d+)-(req-[0-9]+)\Z")
 def stage1_software_shadow_report(
     rows: tuple[ShadowComparisonRecord, ...],
     gui_export: dict[str, Any] | None = None,
+    *, acceptance_database_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    quality = audit_shadow_quality(rows, ())
+    # A raw SQLite row is not proof of completed persistence. Cancelled
+    # windows can remain if SQLite was locked during asynchronous revocation.
+    # Only the independent, post-commit finalization table authorizes an
+    # offline software comparison. No path => no authenticated receipt.
+    finalized: tuple[ShadowComparisonRecord, ...] = ()
+    if acceptance_database_path is not None:
+        try:
+            finalized = read_shadow_comparisons(
+                acceptance_database_path, finalized_only=True)
+        except (sqlite3.Error, OSError, ValueError):
+            finalized = ()
+    finalized_set = set(finalized)
+    accepted_rows = tuple(row for row in rows if row in finalized_set)
+    quality = audit_shadow_quality(accepted_rows, ())
     gui_status = "NOT_SUPPLIED"
     joined = 0
     complete_render_turns = 0
@@ -96,8 +111,9 @@ def stage1_software_shadow_report(
         # enough: it can be monotonic with zero completed render chains.
         if (gui_status == "GUI_MONOTONIC_TIMING_ONLY"
                 and missing_render_turns == 0
-                and complete_render_turns >= len(rows)):
-            for row in rows:
+                and len(accepted_rows) == len(rows)
+                and complete_render_turns >= len(accepted_rows)):
+            for row in accepted_rows:
                 match = _SHADOW_ID.fullmatch(row.decision_window_id)
                 if match is None or row.gpt_status != "GPT_UNVERIFIED":
                     continue
@@ -114,6 +130,8 @@ def stage1_software_shadow_report(
                    else "SOFTWARE_EVIDENCE_PARTIAL"),
         "reason": "GAME_LEGALITY_TACTICS_AND_DISPLAY_PAINT_NOT_ATTESTED",
         "sqlite_window_count": len(rows),
+        "sqlite_finalized_window_count": len(accepted_rows),
+        "sqlite_unfinalized_or_revoked_count": len(rows)-len(accepted_rows),
         "qt_gpt_pair_matched": joined,
         "qt_gpt_pair_unmatched": max(0, len(rows)-joined),
         "gui_timing_status": gui_status,
@@ -144,8 +162,9 @@ def main() -> int:
             if not 0 < len(raw) <= 3_000_000:
                 raise ValueError("GUI_EXPORT_SIZE_INVALID")
             gui = json.loads(raw.decode("utf-8"))
-        result = stage1_software_shadow_report(rows, gui)
-    except (ValueError, TypeError, OSError, UnicodeError,
+        result = stage1_software_shadow_report(
+            rows, gui, acceptance_database_path=arguments.shadow_sqlite)
+    except (sqlite3.Error, ValueError, TypeError, OSError, UnicodeError,
             json.JSONDecodeError, KeyError):
         result = {
             "status": "INVALID_STAGE1_SOFTWARE_EVIDENCE",
