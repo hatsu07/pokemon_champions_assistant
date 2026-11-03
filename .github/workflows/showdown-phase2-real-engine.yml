@@ -8,6 +8,12 @@ on:
     paths:
       - 'local_simulator/**'
       - 'src/champions_assist/local_strategy/champions_master_key_candidates.py'
+      - 'masters/Pokemon_Champions_MC_team_2026-10-03.csv'
+      - 'masters/Pokemon_Champions_MC_move_master.csv'
+      - 'masters/Pokemon_Champions_MC_pokemon_learnsets_linked.csv'
+      - 'masters/Pokemon_Champions_MC_usable_pokemon.csv'
+      - 'src/champions_assist/preload.py'
+      - 'src/champions_assist/local_strategy/roster_mapping_readiness.py'
       - 'scripts/report_phase2_champions_key_candidates.py'
       - 'src/champions_assist/local_strategy/engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_engine_replay_readout_bridge.py'

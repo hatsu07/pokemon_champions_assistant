@@ -14,7 +14,18 @@ and builds the actual simulator, the test generates fresh source candidates
 using the existing Python pre-match CLI, then verifies these source bytes
 against the original team, moves, learnsets and usable Pokémon masters.
 
-Only after the source SHA and complete 6 × 4 roster slots pass does the
+**P2 review hardening:** Source SHA alone does not bind a supplied JSON
+member/move key to those file contents. Before consulting the Dex, the audit
+**re-runs the canonical Champions Python candidate extractor against the
+exact checked-out four-master source bytes** and compares the entire six
+members, four move slots, names, form labels and keys to the supplied JSON.
+Conflicting or fabricated values (even with all source SHA unchanged) are
+rejected before any Dex read; duplicate base-species IDs are also refused.
+All four source master paths plus the Python preload, candidate and roster
+binding implementation are in the real pinned workflow's PR trigger list.
+
+Only after the source SHA, canonical source re-derivation and complete 6 × 4
+roster slots pass does the
 inspector query the **actual pinned Champions Dex** for existence and exact
 IDs of each base species and move. Missing entries are reported; the pinned
 test fails if all thirty source candidates do not exist. It does *not*

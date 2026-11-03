@@ -10,6 +10,8 @@
  */
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
+const cp = require("node:child_process");
 
 const PINNED_UPSTREAM_SHA = "ccfaa20f32af363569cd21a9d501b2bc1ded26b1";
 const ID = /^[a-z0-9]+$/;
@@ -24,6 +26,31 @@ const SOURCES = Object.freeze({
 
 function sha256(buf) {
   return crypto.createHash("sha256").update(buf).digest("hex");
+}
+
+function canonicalRosterFromFrozenSources(repoRoot) {
+  // Rerun the *source-reading* Python candidate auditor against the exact
+  // repository checkout. A fabricated JSON containing the four correct
+  // source SHA values is NOT proof that its 6/24 IDs came from those bytes.
+  // This is off-match metadata testing, never a LIVE worker subprocess.
+  try {
+    const env = {
+      ...process.env,
+      PYTHONPATH: [path.join(repoRoot, "src"), repoRoot,
+                   process.env.PYTHONPATH || ""].join(path.delimiter),
+    };
+    const json = cp.execFileSync(
+      "python",
+      ["scripts/report_phase2_champions_key_candidates.py",
+       "--masters-dir", "masters"],
+      {cwd: repoRoot, env, encoding: "utf8",
+       timeout: 20_000, maxBuffer: 500_000});
+    const result = JSON.parse(json);
+    return result && result.status === "CHAMPIONS_KEY_CANDIDATES_ONLY"
+      ? result : null;
+  } catch {
+    return null;
+  }
 }
 
 function refusal(reason) {
@@ -91,7 +118,40 @@ function auditPinnedChampionsRosterKeys(report, repoRoot, dex) {
     return refusal("SOURCE_MASTER_NOT_READABLE");
   }
 
+  // Independently derive the canonical candidate mapping from frozen
+  // Champions CSV bytes. Never trust only matching file SHA labels on a
+  // caller-supplied JSON report. Check *every* name, slot and key before
+  // the first Dex lookup.
+  const canonical = canonicalRosterFromFrozenSources(repoRoot);
+  if (!canonical
+      || canonical.team_sha256 !== report.team_sha256
+      || JSON.stringify(canonical.source_sha256)
+         !== JSON.stringify(report.source_sha256)
+      || JSON.stringify(canonical.members)
+         !== JSON.stringify(report.members)
+      || canonical.candidate_species_keys !== report.candidate_species_keys
+      || canonical.candidate_move_keys !== report.candidate_move_keys
+      || canonical.expected_move_slots !== report.expected_move_slots
+      || JSON.stringify(canonical.unmapped_slots)
+         !== JSON.stringify(report.unmapped_slots)
+      || JSON.stringify(canonical.unverified_forms)
+         !== JSON.stringify(report.unverified_forms)) {
+    return refusal("CANDIDATES_NOT_DERIVED_FROM_FROZEN_CHAMPIONS_SOURCES");
+  }
+  // A second hash check after the independent source derivation closes
+  // the obvious edited-input/TOCTOU window before the Dex readout.
+  try {
+    for (const [kind, relative] of Object.entries(SOURCES)) {
+      if (sha256(fs.readFileSync(path.join(repoRoot, relative)))
+          !== sourceEntries.get(kind)) {
+        return refusal("SOURCE_CHANGED_DURING_CANDIDATE_DERIVATION");
+      }
+    }
+  } catch {
+    return refusal("SOURCE_MASTER_NOT_READABLE");
+  }
   const candidateMembers = new Set();
+  const uniqueSpeciesIds = new Set();
   const missingSpecies = [];
   const missingMoves = [];
   const forms = [];
@@ -108,10 +168,13 @@ function auditPinnedChampionsRosterKeys(report, repoRoot, dex) {
         || member.species_source_status !== "IN_CHAMPIONS_USABLE_AND_LEARNSETS") {
       return refusal("INCOMPLETE_OR_AMBIGUOUS_REGISTERED_SIX");
     }
+    if (uniqueSpeciesIds.has(member.proposed_base_key)) {
+      return refusal("DUPLICATED_BASE_SPECIES_ID");
+    }
     candidateMembers.add(member.registered_name);
+    uniqueSpeciesIds.add(member.proposed_base_key);
     if (member.form_target) {
-      if (member.form_status !== "FORM_NOT_ENGINE_ATTESTED"
-          && member.form_status !== "FORM_NOT_CONSISTENT_WITH_CHAMPIONS_MASTERS") {
+      if (member.form_status !== "FORM_NOT_ENGINE_ATTESTED") {
         return refusal("INCONSISTENT_FORM_CLAIM");
       }
       forms.push(member.registered_name);
