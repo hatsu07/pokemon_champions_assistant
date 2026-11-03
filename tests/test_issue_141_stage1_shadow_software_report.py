@@ -83,6 +83,47 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
                                 "SOFTWARE_QT_PAIR_COMPLETE_NOT_GAME_CERTIFIED")
             self.assertEqual(mismatched["qt_gpt_pair_matched"],0)
 
+
+    def test_review_p2_1_received_gpt_is_not_rendered(self):
+        """A handled GPT response is NOT an ACTION_GUI_RENDERED display."""
+        with TemporaryDirectory() as d:
+            rows=receipt(Path(d)/"private"/"shadow.sqlite")
+            for kind in ("missing", "wrong_request", "old_revision", "old_turn"):
+                with self.subTest(kind=kind):
+                    gui=gui_for_one()
+                    events=gui["timing_observations"]["events"]
+                    render=next(e for e in events if e["event"]=="ACTION_GUI_RENDERED")
+                    if kind == "missing":
+                        events.remove(render)
+                    elif kind == "wrong_request":
+                        render["request_id"]="req-unrelated"
+                    elif kind == "old_revision":
+                        render["state_revision"]=3
+                    else:
+                        render["turn_epoch"]=2
+                    report=stage1_software_shadow_report(rows,gui)
+                    self.assertEqual(report["qt_gpt_pair_matched"],0)
+                    self.assertEqual(report["qt_gpt_pair_unmatched"],1)
+                    self.assertEqual(report["status"],"SOFTWARE_EVIDENCE_PARTIAL")
+                    self.assertFalse(report["phase2_accepted"])
+                    if kind=="missing":
+                        self.assertEqual(report["gui_complete_render_turns"],0)
+                        self.assertEqual(
+                            report["gui_missing_or_unmatched_turns"],1)
+
+    def test_review_p2_1_cancelled_same_request_is_not_render_proof(self):
+        with TemporaryDirectory() as d:
+            rows=receipt(Path(d)/"private"/"shadow.sqlite")
+            gui=gui_for_one()
+            events=gui["timing_observations"]["events"]
+            events.append({
+                "event":"AI_REQUEST_LOGICALLY_CANCELLED",
+                "at_ms":events[-1]["at_ms"]+1,
+                "request_id":"req-1","turn_epoch":1,"reason":"NEW_TURN"})
+            report=stage1_software_shadow_report(rows,gui)
+            self.assertEqual(report["qt_gpt_pair_matched"],0)
+            self.assertEqual(report["status"],"SOFTWARE_EVIDENCE_PARTIAL")
+
     def test_cli_saved_evidence_never_emits_phase2_true(self):
         with TemporaryDirectory() as d:
             path=Path(d)/"private"/"shadow.sqlite"
