@@ -523,6 +523,10 @@ def read_shadow_comparisons(
     path = Path(database_path)
     if not path.is_file():
         return ()
+    if finalized_only and pending_shadow_lease_count(path):
+        # A committed finalized receipt is NOT yet auditable while the
+        # finalizing future is still in progress or revocation is unresolved.
+        return ()
     uri = "file:" + str(path.resolve()).replace("?", "%3F").replace("#", "%23") + "?mode=ro"
     # Same close guarantee on the read-only path. Otherwise Windows cannot
     # remove a database after a diagnostic read even when the SELECT ended.
@@ -557,6 +561,10 @@ def read_shadow_comparisons(
         for row in records)
     if accepted is None:
         return results
+    if pending_shadow_lease_count(path):
+        # Check again after the read in case an in-flight writer started
+        # while opening SQLite. Avoid accepting mixed-window snapshots.
+        return ()
     return tuple(
         record for record in results
         if accepted.get((record.match_id, record.decision_window_id,
