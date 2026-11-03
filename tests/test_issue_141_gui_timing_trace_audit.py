@@ -173,6 +173,97 @@ class GuiTimingTraceAuditTests(unittest.TestCase):
                 self.assertEqual(got.status, "GUI_TRACE_REFUSED")
                 self.assertFalse(got.phase2_accepted)
 
+    def test_postmatch_switch_cancel_none_turn_both_directions(self):
+        # An existing result-screen/ocr-result worker can be retired before
+        # the other postmatch request. Real cancellation uses the OLD request
+        # id with _active_turn_epoch=None. Do not let this poison valid turns.
+        for old_start, new_start, old_job, new_job in (
+            ("RESULT_SCREEN_GPT_REQUEST", "OCR_MATCH_RESULT_TEXT_AI_SENT",
+             "result_screen", "result"),
+            ("OCR_MATCH_RESULT_TEXT_AI_SENT", "RESULT_SCREEN_GPT_REQUEST",
+             "result", "result_screen"),
+        ):
+            for old_epoch in (None, 1):
+                with self.subTest(old_job=old_job, old_epoch=old_epoch):
+                    trace = scene(turns=1)
+                    events = trace["timing_observations"]["events"]
+                    events.extend((
+                        {"event": old_start, "at_ms": 4000,
+                         "request_id": "req-old-result",
+                         "match_id": "capture-actual-opaque",
+                         "turn_epoch": 1},
+                        {"event": "AI_REQUEST_LOGICALLY_CANCELLED",
+                         "at_ms": 4100, "request_id": "req-old-result",
+                         "turn_epoch": old_epoch,
+                         "reason": "RESULT_SCREEN_VERIFICATION"},
+                        {"event": new_start, "at_ms": 4200,
+                         "request_id": "req-new-result",
+                         "match_id": "capture-actual-opaque",
+                         "turn_epoch": 1},
+                        {"event": "NON_TURN_RESULT_AI_COMPLETED",
+                         "at_ms": 4300, "request_id": "req-new-result",
+                         "match_id": "capture-actual-opaque",
+                         "turn_epoch": 1, "active_job": new_job,
+                         "status": "MATCH_END"},
+                    ))
+                    result = audit_gui_timing_export(trace)
+                    self.assertEqual(
+                        result.status, "GUI_MONOTONIC_TIMING_ONLY",
+                        result.reason)
+                    self.assertEqual(result.complete_gpt_display_turns, 1)
+                    self.assertEqual(result.p99_gpt_screen_ms, 3000)
+                    self.assertFalse(result.phase2_accepted)
+
+    def test_postmatch_cancelled_completion_duplicate_and_wrong_identity_fail(self):
+        for alteration in ("old_completed", "duplicate_cancel",
+                           "wrong_match", "wrong_job", "missing_reason"):
+            with self.subTest(alteration=alteration):
+                trace = scene(turns=1)
+                events = trace["timing_observations"]["events"]
+                start = {
+                    "event": "OCR_MATCH_RESULT_TEXT_AI_SENT",
+                    "at_ms": 4000, "request_id": "req-post",
+                    "match_id": "capture-actual-opaque", "turn_epoch": 1,
+                }
+                cancelled = {
+                    "event": "AI_REQUEST_LOGICALLY_CANCELLED",
+                    "at_ms": 4100, "request_id": "req-post",
+                    "turn_epoch": None,
+                    "reason": "RESULT_SCREEN_VERIFICATION",
+                }
+                events.append(start)
+                if alteration == "wrong_match":
+                    cancelled["match_id"] = "another-match"
+                elif alteration == "wrong_job":
+                    cancelled["active_job"] = "result_screen"
+                elif alteration == "missing_reason":
+                    cancelled.pop("reason")
+                events.append(cancelled)
+                if alteration == "old_completed":
+                    events.append({
+                        "event": "NON_TURN_RESULT_AI_COMPLETED",
+                        "at_ms": 4200, "request_id": "req-post",
+                        "match_id": "capture-actual-opaque",
+                        "turn_epoch": 1, "active_job": "result",
+                        "status": "MATCH_END",
+                    })
+                elif alteration == "duplicate_cancel":
+                    events.append({**cancelled, "at_ms": 4200})
+                got = audit_gui_timing_export(trace)
+                self.assertEqual(got.status, "GUI_TRACE_REFUSED")
+                self.assertFalse(got.phase2_accepted)
+
+    def test_unbound_none_epoch_cancel_remains_rejected(self):
+        trace = scene(turns=1)
+        trace["timing_observations"]["events"].append({
+            "event": "AI_REQUEST_LOGICALLY_CANCELLED",
+            "at_ms": 4100, "request_id": "req-not-registered",
+            "turn_epoch": None, "reason": "RESULT_SCREEN_VERIFICATION",
+        })
+        report = audit_gui_timing_export(trace)
+        self.assertEqual(report.status, "GUI_TRACE_REFUSED")
+        self.assertEqual(report.reason, "INVALID_GUI_TURN_EPOCH")
+
     def test_postmatch_emitters_never_use_turn_action_result_event(self):
         path = (Path(__file__).resolve().parents[1] / "src" /
                 "champions_assist" / "match_replay_dialog.py")

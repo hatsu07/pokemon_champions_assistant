@@ -137,6 +137,18 @@ unbound, repeated or cross-job completion. A stray `AI_RESULT_DISPLAYED`
 with no valid turn dispatch still causes refusal. Full-match regression
 fixtures cover selection → turn action → result-screen / text-only result
 verification, as well as unbound/stale turn-result negative cases.
+A postmatch verification worker may itself be retired in favor of
+another postmatch verifier (`result_screen → result` or reverse). The
+real GUI emits `AI_REQUEST_LOGICALLY_CANCELLED` with the retired request ID
+and an optional `turn_epoch=None`, since no battle action epoch belongs
+to the postmatch job. The offline audit now recognizes cancellation **only**
+when the ID matches a previously registered postmatch start event (which
+binds the match and job); it records that request as canceled and rejects
+any later `NON_TURN_RESULT_AI_COMPLETED` for that request, repeated
+cancellation, or inconsistent identity. An unregistered cancel and all
+unmatched battle-turn results still fail closed. This never treats a
+canceled result as a new tactical observation.
+
 These are **telemetry-only** distinctions and have no effect on game
 result decisions or live advice.
 

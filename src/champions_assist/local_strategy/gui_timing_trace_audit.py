@@ -92,6 +92,7 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
     # cannot be silently skipped as "non-turn".
     postmatch_requests: dict[str, tuple[str, int, str]] = {}
     postmatch_completed: set[str] = set()
+    postmatch_cancelled: set[str] = set()
     current_turn_request: dict[int, str] = {}
     cancelled_requests: set[str] = set()
     last_ms = -1
@@ -125,6 +126,31 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
             postmatch_requests[request] = (
                 match, turn, postmatch_start_jobs[name])
             continue
+        if name == "AI_REQUEST_LOGICALLY_CANCELLED" and (
+                isinstance(request, str) and request in postmatch_requests):
+            # The real GUI's retired result-screen / OCR-result worker
+            # emits turn_epoch=None (or an old active turn epoch); the
+            # identity is the unique postmatch request ID, whose start
+            # already binds the game, turn and job. Never reinterpret this
+            # as a battle-turn cancellation, nor forgive unbound cancels.
+            bound_match, _, bound_job = postmatch_requests[request]
+            cancel_turn = event.get("turn_epoch")
+            if (request in postmatch_cancelled
+                    or request in postmatch_completed
+                    or (cancel_turn is not None
+                        and (type(cancel_turn) is not int
+                             or cancel_turn < 0))
+                    or (known_match is not None
+                        and known_match != bound_match)
+                    or (event.get("match_id") is not None
+                        and event["match_id"] != bound_match)
+                    or (event.get("active_job") is not None
+                        and event["active_job"] != bound_job)
+                    or not isinstance(event.get("reason"), str)
+                    or not event["reason"]):
+                return _refuse("INVALID_POSTMATCH_CANCELLED_REQUEST")
+            postmatch_cancelled.add(request)
+            continue
         if name == "NON_TURN_RESULT_AI_COMPLETED":
             match = event.get("match_id")
             turn = event.get("turn_epoch")
@@ -134,6 +160,7 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
                     or type(turn) is not int
                     or (match, turn, event.get("active_job")) != started
                     or request in postmatch_completed
+                    or request in postmatch_cancelled
                     or not isinstance(event.get("status"), str)):
                 return _refuse("UNBOUND_OR_DUPLICATED_POSTMATCH_RESULT")
             postmatch_completed.add(request)
