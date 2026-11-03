@@ -45,6 +45,7 @@ from .capture_settings import CapturePreviewService
 from .app_config import CaptureConfiguration
 from .background_training_capture import BackgroundTrainingCapture
 from .screen_dataset import new_session_id
+from .local_strategy.ui_shadow_dispatcher import UiShadowDispatcher
 
 
 def prep_budget_before_battle(selection_started_at: float | None, *,
@@ -424,6 +425,8 @@ class MatchReplayDialog(QDialog):
         self.lookup_source=None
         self.live_assets_status="UNCONFIGURED"
         self.store_root=Path(store_root) if store_root else default_app_root()
+        self._shadow_dispatcher=UiShadowDispatcher(
+            self.store_root/"phase2-shadow"/"comparison-v2.sqlite")
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
@@ -653,6 +656,17 @@ class MatchReplayDialog(QDialog):
         row.addWidget(self.auto_button)
         row.addWidget(self.stop_button)
         panel.addLayout(row)
+        self.shadow_capture_check=QCheckBox(
+            "LOCAL_SHADOWをON（既存GPTを変更せず、同一局面診断を記録）")
+        self.shadow_capture_check.setObjectName("localShadowOptIn")
+        self.shadow_capture_check.setChecked(False)
+        self.shadow_capture_check.toggled.connect(
+            lambda enabled: (
+                None if enabled else self._shadow_dispatcher.invalidate()))
+        panel.addWidget(self.shadow_capture_check)
+        panel.addWidget(QLabel(
+            "試験機能：未確認の技・PP・HP・Battle/RNGは補完せず棄権。"
+            "入力操作・GPT提案は変更しません。"))
         self.training_capture_check=QCheckBox(
             "学習データ収集をON（対戦画面の未ラベルJPEGをローカル保存・最大2GB）"
         )
@@ -1294,6 +1308,7 @@ class MatchReplayDialog(QDialog):
         self._capture_next()
 
     def _stop_auto(self):
+        self._shadow_dispatcher.invalidate()
         self._trace_event("AUTO_STOP_REQUESTED",
                           active_job=self._active_job or "NONE",
                           active_thread=self._thread is not None,
@@ -1720,6 +1735,23 @@ class MatchReplayDialog(QDialog):
                 max(0,int((monotonic()-self._turn_screen_seen_at)*1000))
                 if self._turn_screen_seen_at is not None
                 and screen_label in _URGENT_SCREENS else 0))
+        if (screen_label in _URGENT_SCREENS and
+                self.shadow_capture_check.isChecked()):
+            try:
+                shadow_status=self._shadow_dispatcher.start(
+                    self.assets, enabled=True, match_id=self.match_id or "",
+                    request_id=request_id, turn_epoch=turn_epoch,
+                    state_revision=revision, screen_label=screen_label,
+                    observed_state=self.state,
+                    deadline_monotonic=turn_deadline)
+                self._trace_event("LOCAL_SHADOW_DISPATCH",
+                                  status=shadow_status, request_id=request_id,
+                                  state_revision=revision,
+                                  game_battle_authenticated=False)
+            except Exception:
+                # Shadow must never interfere with the real GPT thread.
+                self._shadow_dispatcher.invalidate()
+                self._trace_event("LOCAL_SHADOW_DISPATCH",status="REFUSED")
         self._set_ai_status(
             f"AI処理を起動中 #{self._ai_request_attempts}（画像 {planned_image_count} 枚・送信は未確認）")
         request_report={
@@ -2530,6 +2562,29 @@ class MatchReplayDialog(QDialog):
             # An unclassified fallback frame was verified by vision. End PREP
             # without accepting any later stale PREP response.
             self._interrupt_prep()
+        if self._shadow_dispatcher.session is not None:
+            try:
+                elapsed=report.get("queue_elapsed_ms",0)
+                shadow_status=self._shadow_dispatcher.attach_gpt(
+                    request_id=self._active_request_id or "",
+                    turn_epoch=self._turn_epoch,
+                    state_revision=(self.state or {}).get(
+                        "_live_state_revision",0),
+                    status=report.get("status","UNKNOWN"),
+                    advice_present=bool(report.get("recommendation")),
+                    elapsed_ms=int(elapsed) if isinstance(
+                        elapsed,(int,float)) else 0,
+                    fresh=(not superseded and not self._turn_event_after_action
+                           and not self._cancel_event.is_set()))
+                self._trace_event(
+                    "LOCAL_SHADOW_PAIR_RESULT",
+                    status=shadow_status,
+                    request_id=self._active_request_id or "",
+                    state_revision=self._active_state_revision)
+            except Exception:
+                self._shadow_dispatcher.invalidate()
+                self._trace_event(
+                    "LOCAL_SHADOW_PAIR_RESULT",status="REFUSED")
         ledger=getattr(self,"_ocr_sent_ledger",None)
         if self._active_job=="batch" and ledger is not None:
             if report["status"] in ("ERROR","DEADLINE_EXCEEDED",
@@ -3287,6 +3342,10 @@ class MatchReplayDialog(QDialog):
     def _refresh_live_status(self):
         """GUI-only update. Never captures or sends an AI request."""
         state=self.state or {}
+        self._shadow_dispatcher.invalidate_if_changed(
+            turn_epoch=self._turn_epoch,
+            state_revision=state.get("_live_state_revision",0),
+            phase=state.get("phase","UNKNOWN"))
         phase=state.get("phase","NOT_STARTED")
         prep=state.get("prep") or {}
         prep_status=state.get("prep_status","NOT_STARTED")
