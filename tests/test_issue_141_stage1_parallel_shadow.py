@@ -1,6 +1,7 @@
 """Stage-1 opt-in concurrent Shadow control-plane tests, not real gameplay."""
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 import sqlite3
@@ -292,7 +293,7 @@ class ParallelShadowSessionTests(unittest.TestCase):
                 self.assertTrue(entered.wait(timeout=10))
                 # Own a genuine write transaction while invalidation and
                 # both cleanup attempts run in the independent worker.
-                with sqlite3.connect(db, timeout=0.2) as locked:
+                with closing(sqlite3.connect(db, timeout=0.2)) as locked, locked:
                     locked.execute("BEGIN IMMEDIATE")
                     try:
                         since = monotonic()
