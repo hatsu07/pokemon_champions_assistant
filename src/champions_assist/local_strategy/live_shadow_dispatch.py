@@ -9,7 +9,8 @@ engine request is available. No GPT outputs, raw OCR, or frames are stored.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha256
+from math import isfinite
+import re
 from threading import Lock
 from time import monotonic
 from typing import Any, Mapping
@@ -18,6 +19,8 @@ from ..preload import FrozenMatchAssets, REQUIRED_MASTER_FILES
 from .models import (
     DecisionWindow, FrozenBattleState, WindowKind, action_digest,
 )
+
+_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,96}\\Z")
 
 
 @dataclass(frozen=True)
@@ -71,14 +74,20 @@ def capture_gpt_dispatch_window(
         return CapturedShadowWindow("REFUSED", "FOUR_FROZEN_MASTERS_REQUIRED")
     if (not isinstance(observed_state, Mapping) or screen_label not in
             ("TURN_ACTION", "SWITCH_SELECTION")
-            or not isinstance(match_id, str) or not match_id
-            or not isinstance(request_id, str) or not request_id
-            or type(turn_epoch) is not int or turn_epoch < 0
-            or type(state_revision) is not int or state_revision < 0
+            or not isinstance(match_id, str)
+            or _IDENTIFIER.fullmatch(match_id) is None
+            or not isinstance(request_id, str)
+            or _IDENTIFIER.fullmatch(request_id) is None
+            or type(turn_epoch) is not int or not 0 <= turn_epoch <= 1_000_000
+            or type(state_revision) is not int or not 0 <= state_revision <= 1_000_000
             or not isinstance(deadline_monotonic, (float, int))
-            or isinstance(deadline_monotonic, bool)):
+            or isinstance(deadline_monotonic, bool)
+            or not isfinite(deadline_monotonic)):
         return CapturedShadowWindow("REFUSED", "MALFORMED_DISPATCH_WINDOW")
     current = monotonic() if now is None else now
+    if (not isinstance(current, (int, float))
+            or isinstance(current, bool) or not isfinite(current)):
+        return CapturedShadowWindow("REFUSED", "INVALID_CAPTURE_CLOCK")
     if current >= deadline_monotonic:
         return CapturedShadowWindow("REFUSED", "INPUT_DEADLINE_ALREADY_PASSED")
     manifest = tuple((key, assets.sha256.get(key, ""))
@@ -92,10 +101,13 @@ def capture_gpt_dispatch_window(
     selected = observed_state.get("selected_three")
     if (our_active is not None and not isinstance(our_active, str)
             or opponent_active is not None and not isinstance(opponent_active, str)
+            or isinstance(our_active, str) and len(our_active) > 128
+            or isinstance(opponent_active, str) and len(opponent_active) > 128
             or selected is not None and
             (not isinstance(selected, (tuple, list))
              or len(selected) != 3
-             or any(not isinstance(x, str) for x in selected))):
+             or any(not isinstance(x, str) or len(x) > 128
+                    for x in selected))):
         return CapturedShadowWindow("REFUSED", "OBSERVED_STATE_TYPE_INVALID")
     try:
         # Deliberately do not treat a 6-class classifier label as confirmed
