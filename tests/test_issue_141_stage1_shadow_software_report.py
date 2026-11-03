@@ -57,7 +57,8 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
         with TemporaryDirectory() as d:
             path=Path(d)/"private"/"shadow.sqlite"
             rows=receipt(path)
-            report=stage1_software_shadow_report(rows,gui_for_one())
+            report=stage1_software_shadow_report(
+                rows, gui_for_one(), acceptance_database_path=path)
             self.assertEqual(report["status"],
                              "SOFTWARE_QT_PAIR_COMPLETE_NOT_GAME_CERTIFIED",
                              report)
@@ -73,12 +74,15 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
 
     def test_no_gui_and_wrong_revision_are_incomplete(self):
         with TemporaryDirectory() as d:
-            rows=receipt(Path(d)/"private"/"shadow.sqlite")
-            no_gui=stage1_software_shadow_report(rows)
+            path=Path(d)/"private"/"shadow.sqlite"
+            rows=receipt(path)
+            no_gui=stage1_software_shadow_report(
+                rows, acceptance_database_path=path)
             self.assertEqual(no_gui["qt_gpt_pair_unmatched"],1)
             bad=gui_for_one()
             bad["timing_observations"]["events"][1]["state_revision"]=5
-            mismatched=stage1_software_shadow_report(rows,bad)
+            mismatched=stage1_software_shadow_report(
+                rows, bad, acceptance_database_path=path)
             self.assertNotEqual(mismatched["status"],
                                 "SOFTWARE_QT_PAIR_COMPLETE_NOT_GAME_CERTIFIED")
             self.assertEqual(mismatched["qt_gpt_pair_matched"],0)
@@ -87,7 +91,8 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
     def test_review_p2_1_received_gpt_is_not_rendered(self):
         """A handled GPT response is NOT an ACTION_GUI_RENDERED display."""
         with TemporaryDirectory() as d:
-            rows=receipt(Path(d)/"private"/"shadow.sqlite")
+            path=Path(d)/"private"/"shadow.sqlite"
+            rows=receipt(path)
             for kind in ("missing", "wrong_request", "old_revision", "old_turn"):
                 with self.subTest(kind=kind):
                     gui=gui_for_one()
@@ -101,7 +106,8 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
                         render["state_revision"]=3
                     else:
                         render["turn_epoch"]=2
-                    report=stage1_software_shadow_report(rows,gui)
+                    report=stage1_software_shadow_report(
+                        rows, gui, acceptance_database_path=path)
                     self.assertEqual(report["qt_gpt_pair_matched"],0)
                     self.assertEqual(report["qt_gpt_pair_unmatched"],1)
                     self.assertEqual(report["status"],"SOFTWARE_EVIDENCE_PARTIAL")
@@ -113,7 +119,8 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
 
     def test_review_p2_1_cancelled_same_request_is_not_render_proof(self):
         with TemporaryDirectory() as d:
-            rows=receipt(Path(d)/"private"/"shadow.sqlite")
+            path=Path(d)/"private"/"shadow.sqlite"
+            rows=receipt(path)
             gui=gui_for_one()
             events=gui["timing_observations"]["events"]
             events.append({
