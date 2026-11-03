@@ -12,11 +12,10 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_REPOSITORY -ne 'hatsu07/pokemon_champions_assistant' -or
     $env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or
     $env:GITHUB_ACTOR -ne 'hatsu07' -or
-    $env:BRANCH_TEST_RELEASE -ne 'true' -or
     $env:GITHUB_REF -eq 'refs/heads/master' -or
     $env:GITHUB_REF -ne "refs/heads/$env:GITHUB_REF_NAME" -or
     [string]::IsNullOrWhiteSpace($env:GITHUB_REF_NAME)) {
-    throw 'Branch test publication requires an explicitly opted-in owner workflow_dispatch on a non-master branch.'
+    throw 'Branch test publication requires owner workflow_dispatch on an explicitly selected non-master branch.'
 }
 if (-not $env:GH_TOKEN) { throw 'GH_TOKEN required.' }
 if ($env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$') {
