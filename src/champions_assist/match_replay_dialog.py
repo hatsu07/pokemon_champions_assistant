@@ -3499,6 +3499,11 @@ class MatchReplayDialog(QDialog):
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"):
             self._trace_event("ACTION_GUI_RENDERED",
                 status=report.get("status"),
+                # Opaque source-window identity for OFFLINE trace comparison.
+                # No raw OCR/prompt, local simulator or IO is introduced here.
+                match_id=self.match_id or "",
+                request_id=self._active_request_id or "",
+                decision_window_id=f"turn-{self._turn_epoch}",
                 target_own=state.get("our_active",""),
                 target_opponent=state.get("opponent_active",""),
                 turn_epoch=self._turn_epoch,

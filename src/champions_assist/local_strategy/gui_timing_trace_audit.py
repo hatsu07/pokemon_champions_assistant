@@ -1,0 +1,157 @@
+"""#141⑥ OFF-MATCH audit of actual Qt GUI *clock trace*, never game truth.
+
+The real MatchReplayDialog already exports local monotonic timing events.
+This pure analyzer binds first observed turn screen -> dispatched GPT request
+-> non-superseded result -> GUI rendered recommendation by exact opaque
+match/request/window/revision. It measures actual callback event intervals,
+NOT a video-verified game clock, legal Champions action, or LOCAL_SHADOW
+display. No live callback invokes this function.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import ceil
+from typing import Any
+
+SCHEMA = "champions-local-ui-timing-candidates-v1"
+SOURCE = "UNVERIFIED_LOCAL_GUI_MONOTONIC_CLOCK"
+_URGENT = frozenset({"TURN_ACTION", "SWITCH_SELECTION"})
+_DISPLAYED = frozenset({"ADVICE", "PROVISIONAL_ADVICE"})
+
+
+@dataclass(frozen=True)
+class GuiTurnTraceAudit:
+    status: str
+    reason: str
+    observed_turns: int = 0
+    complete_gpt_display_turns: int = 0
+    late_gpt_display_turns: int = 0
+    missing_or_unmatched_turns: int = 0
+    p50_gpt_screen_ms: int | None = None
+    p95_gpt_screen_ms: int | None = None
+    p99_gpt_screen_ms: int | None = None
+    # Only the captured Qt callbacks are measured. The game turn clock and
+    # whether an action is legal remain beyond the trace's authority.
+    actual_device_video_aligned: bool = False
+    local_shadow_ui_display_verified: bool = False
+    actionable_champions_advice_verified: bool = False
+    phase2_accepted: bool = False
+
+
+def _refuse(reason: str) -> GuiTurnTraceAudit:
+    return GuiTurnTraceAudit("GUI_TRACE_REFUSED", reason)
+
+
+def _pct(values: list[int], p: float) -> int:
+    ordered = sorted(values)
+    return ordered[max(0, ceil(len(ordered) * p) - 1)]
+
+
+def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
+    """Never use inferred timestamps or material from GPT response text.
+
+    Multiple dispatched requests per turn (OCR re-evaluation) are expected;
+    only an exact same-window result/render chain is counted. Multiple rendered
+    recommendations in one turn are refused, not interpreted as a valid first
+    choice. Event identities and source labels can be user-edited; independent
+    video review is therefore still mandatory.
+    """
+    if not isinstance(export, dict):
+        return _refuse("GUI_EXPORT_OBJECT_REQUIRED")
+    packet = export.get("timing_observations", export)
+    if (not isinstance(packet, dict)
+            or packet.get("schema") != SCHEMA
+            or packet.get("source") != SOURCE
+            or packet.get("automatically_certified") is not False):
+        return _refuse("UNATTESTED_GUI_TIMING_EXPORT_REQUIRED")
+    events = packet.get("events")
+    if (not isinstance(events, list) or not 1 <= len(events) <= 3000):
+        return _refuse("MISSING_OR_OVERSIZED_GUI_EVENTS")
+    allowed = frozenset({
+        "TURN_SCREEN_OBSERVED", "AI_REQUEST_DISPATCH",
+        "AI_RESULT_DISPLAYED", "ACTION_GUI_RENDERED"})
+    turns: dict[int, int] = {}
+    dispatches: dict[str, tuple[str, int, int, str, int]] = {}
+    replies: dict[str, tuple[str, int, int, str, int, bool]] = {}
+    displays: dict[int, int] = {}
+    last_ms = -1
+    known_match: str | None = None
+    for event in events:
+        if not isinstance(event, dict) or type(event.get("at_ms")) is not int:
+            return _refuse("INVALID_GUI_EVENT_TIME_OR_TYPE")
+        now = event["at_ms"]
+        if now < last_ms or now < 0:
+            return _refuse("NONMONOTONIC_GUI_EVENT_TIMES")
+        last_ms = now
+        name = event.get("event")
+        if not isinstance(name, str):
+            return _refuse("INVALID_GUI_EVENT_NAME")
+        if name not in allowed:
+            continue
+        turn = event.get("turn_epoch")
+        if type(turn) is not int or turn <= 0:
+            return _refuse("INVALID_GUI_TURN_EPOCH")
+        if name == "TURN_SCREEN_OBSERVED":
+            if event.get("screen_label") not in _URGENT or turn in turns:
+                return _refuse("DUPLICATE_OR_UNSUPPORTED_TURN_SCREEN")
+            turns[turn] = now
+            continue
+        if turn not in turns or now < turns[turn]:
+            return _refuse("GUI_EVENT_WITHOUT_OBSERVED_TURN")
+        request = event.get("request_id")
+        match = event.get("match_id")
+        rev = event.get("state_revision")
+        window = event.get("decision_window_id")
+        if (not isinstance(request, str) or not 1 <= len(request) <= 128
+                or not isinstance(match, str) or not 1 <= len(match) <= 128
+                or type(rev) is not int or rev < 0
+                or (name != "AI_RESULT_DISPLAYED"
+                    and window != "turn-" + str(turn))):
+            return _refuse("MISSING_EXACT_GUI_WINDOW_REQUEST_ID")
+        if known_match is None:
+            known_match = match
+        elif known_match != match:
+            return _refuse("MULTIPLE_MATCHES_IN_ONE_GUI_TIMING_EXPORT")
+        if name == "AI_REQUEST_DISPATCH":
+            if request in dispatches or event.get("screen_label") not in _URGENT:
+                return _refuse("DUPLICATED_OR_NONURGENT_GPT_DISPATCH")
+            dispatches[request] = (match, turn, rev, window, now)
+        elif name == "AI_RESULT_DISPLAYED":
+            dispatched = dispatches.get(request)
+            if (dispatched is None
+                    or dispatched[:3] != (match, turn, rev)
+                    or now < dispatched[4]
+                    or request in replies):
+                return _refuse("UNMATCHED_OR_DUPLICATED_GPT_RESULT")
+            status = event.get("status")
+            if not isinstance(status, str):
+                return _refuse("INVALID_GPT_RESULT_STATUS")
+            replies[request] = (
+                match, turn, rev, status, now,
+                event.get("recommendation_present") is True)
+        else:  # ACTION_GUI_RENDERED
+            dispatched = dispatches.get(request)
+            replied = replies.get(request)
+            if (dispatched is None or replied is None
+                    or dispatched[:4] != (match, turn, rev, window)
+                    or replied[:3] != (match, turn, rev)
+                    or now < replied[4]
+                    or event.get("status") not in _DISPLAYED
+                    or replied[3] != event.get("status")
+                    or not replied[5]
+                    or event.get("recommendation_present") is not True
+                    or turn in displays):
+                return _refuse("UNMATCHED_OR_DUPLICATED_GPT_GUI_RENDER")
+            displays[turn] = now - turns[turn]
+    if not turns:
+        return _refuse("NO_ACTUAL_QT_TURN_SCREEN_EVENTS")
+    durations = list(displays.values())
+    overdue = sum(t > 45_000 for t in durations)
+    return GuiTurnTraceAudit(
+        "GUI_MONOTONIC_TIMING_ONLY",
+        "QT_CALLBACK_TIMESTAMPS_NOT_INDEPENDENT_GAME_VIDEO",
+        len(turns), len(displays), overdue, len(turns) - len(displays),
+        _pct(durations, .50) if durations else None,
+        _pct(durations, .95) if durations else None,
+        _pct(durations, .99) if durations else None,
+    )

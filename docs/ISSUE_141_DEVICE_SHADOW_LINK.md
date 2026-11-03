@@ -68,3 +68,38 @@ This evidence-linking PR is a prerequisite to collecting real proof,
 required user-controlled Android→Windows mirror/real battle capture and
 independent tactical adjudication are still missing. Keep #141 OPEN and
 Phase 3 #142 blocked.
+
+## Optional real Windows GUI clock trace (non-LIVE audit)
+
+The existing desktop **対戦テスト結果を保存** JSON export includes
+`timing_observations.events` collected using an actual GUI monotonic clock.
+Before the export is produced, the emitting GUI now adds the *opaque*
+`match_id`, `request_id` and `decision_window_id` to
+`ACTION_GUI_RENDERED`. These are source-event identifiers, not an action or
+a screenshot.
+
+A separate, pure, off-match reader checks an exact chain:
+`TURN_SCREEN_OBSERVED` → `AI_REQUEST_DISPATCH` →
+`AI_RESULT_DISPLAYED` → `ACTION_GUI_RENDERED`, all in the same
+match, turn, request and state revision, in chronological order.
+It reports actual Qt callback display delays relative to the first observed
+turn screen, plus 45-second late/missing turn counts and P50/P95/P99:
+
+```bash
+python scripts/audit_phase2_gui_timing_export.py path/to/exported-match.json
+```
+
+Missing/unbound request IDs, a stale revision, a different match, an invalid
+clock, a duplicate rendered advice, and `TEST_ONLY` results are refused,
+rather than treated as a timely actionable move. OCR revision retries with
+a new request ID are supported without treating any old reply as the result.
+The exported JSON is manually saved by the user **after** a session, so
+this audit runs no code during time-limited gameplay.
+
+**Important:** `GUI_MONOTONIC_TIMING_ONLY` does **not** authenticate video
+frames, game turn deadlines, correctness/legal Pokémon Champions actions,
+or a LOCAL_SHADOW GUI display. Qt callback times do not replace device-video
+alignment, independent Golden reviews, or live GPT/LOCAL noninterference.
+The local Shadow model remains nonactionable and this diagnostic always
+returns `phase2_accepted=false`. Existing older GUI exports without the
+new request/window fields must be re-collected, not inferred as valid.
