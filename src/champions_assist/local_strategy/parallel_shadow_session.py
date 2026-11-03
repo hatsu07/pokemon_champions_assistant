@@ -13,6 +13,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+import sqlite3
 from threading import Event, Lock
 from time import monotonic
 from typing import Any, Callable
@@ -26,6 +27,7 @@ from .observed_full_grid_diagnostic import (
 from .shadow_comparison_store import (
     BoundGPTAdvice, ShadowComparisonRecord, append_shadow_comparison,
     build_shadow_comparison, revoke_shadow_comparison,
+    finalize_shadow_comparison,
 )
 
 
@@ -168,16 +170,28 @@ class ParallelShadowSession:
         return not self._revoked.is_set()
 
     def _revoke_unfinished(self) -> str:
-        """Runs AFTER an in-flight _finish on the same one-worker executor."""
-        try:
-            return revoke_shadow_comparison(
-                self.database_path,
-                match_id=self.snapshot.window.match_id,
-                decision_window_id=self.snapshot.window.decision_window_id,
-                state_revision=self.snapshot.window.state_revision,
-                snapshot_sha256=self.snapshot.snapshot_sha256)
-        except (ValueError, OSError, TypeError):
-            return "REVOKE_STORAGE_FAILED"
+        """Off-UI exact-key deletion. SQLite locks must return a status.
+
+        A failed cleanup can leave a raw SQLite row, but NO FINALIZATION
+        receipt is ever written for an invalidated in-flight session, so
+        the software quality report excludes that row even after restart.
+        """
+        for attempt in range(2):
+            try:
+                return revoke_shadow_comparison(
+                    self.database_path,
+                    match_id=self.snapshot.window.match_id,
+                    decision_window_id=self.snapshot.window.decision_window_id,
+                    state_revision=self.snapshot.window.state_revision,
+                    snapshot_sha256=self.snapshot.snapshot_sha256)
+            except sqlite3.OperationalError:
+                # A busy SQLite writer is not an OSError. Retry once on
+                # this dedicated worker, never on the Qt event loop.
+                if attempt == 0:
+                    continue
+            except (sqlite3.Error, ValueError, OSError, TypeError):
+                break
+        return "REVOKE_STORAGE_FAILED"
 
     @property
     def cleanup_future(self) -> Future | None:
@@ -217,16 +231,21 @@ class ParallelShadowSession:
                 if not revoked:
                     self._persisted = True
             if revoked:
-                # A future may complete BEFORE the queued cleanup job;
-                # proactively remove any row so future.result() cannot be
-                # interpreted as successful old-window evidence.
+                # Cleanup errors cannot make an invalidated row auditable.
                 self._revoke_unfinished()
                 return ParallelShadowResult("REFUSED", "REVOKED_DURING_WRITE")
+            # Only the worker can create this *second*, durable receipt,
+            # after the in-memory acceptance linearization succeeded.
+            # If finalization is interrupted by a crash/lock, its absence
+            # makes the raw row fail-closed in post-match reports.
+            finalized = finalize_shadow_comparison(self.database_path, record)
+            if finalized not in ("FINALIZED", "ALREADY_FINALIZED"):
+                return ParallelShadowResult("REFUSED", "FINALIZATION_NOT_COMMITTED")
             return ParallelShadowResult(status, "NONACTIONABLE_DIAGNOSTIC", record)
-        except (ValueError, TypeError, AttributeError, OSError):
+        except (sqlite3.Error, ValueError, TypeError, AttributeError, OSError):
             if written:
                 self._revoke_unfinished()
-            return ParallelShadowResult("REFUSED", "STALE_OR_UNVERIFIED_WINDOW")
+            return ParallelShadowResult("REFUSED", "STALE_OR_STORAGE_FAILURE")
         except Exception:
             if written:
                 self._revoke_unfinished()
