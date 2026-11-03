@@ -1,11 +1,18 @@
 name: Windows DEVELOPMENT GitHub Release
 
-# Trusted master only: never publish code from a pull_request with write token.
-# PR validation is handled by windows-validation-artifact.yml.
+# Automatic publication remains trusted-master-only. Manual owner-authorized
+# branch builds publish a separately named BRANCH_TEST_ONLY prerelease.
+# Never publish from pull_request events; PR CI remains independent.
 on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      branch_test_release:
+        description: 'For non-master branches only: explicitly authorize a BRANCH_TEST_ONLY prerelease'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: windows-development-release-maintenance
@@ -18,7 +25,17 @@ permissions:
 
 jobs:
   windows-development-release:
-    if: github.repository == 'hatsu07/pokemon_champions_assistant' && github.ref == 'refs/heads/master'
+    if: >-
+      github.repository == 'hatsu07/pokemon_champions_assistant' &&
+      (
+        github.ref == 'refs/heads/master' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          startsWith(github.ref, 'refs/heads/') &&
+          inputs.branch_test_release == true &&
+          github.actor == 'hatsu07'
+        )
+      )
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -26,13 +43,31 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Verify trusted master revision
+      - name: Verify checked-out revision equals requested event commit
         shell: pwsh
         run: |
           $sha = (git rev-parse HEAD).Trim()
-          if ($sha -ne $env:GITHUB_SHA) { throw "Checked-out SHA does not match triggered master commit" }
-          Write-Host "Publishing DEVELOPMENT builds from master commit $sha"
+          if ($LASTEXITCODE -ne 0 -or $sha -ne $env:GITHUB_SHA) {
+            throw "Checked-out SHA does not match triggered event commit"
+          }
+          if ($env:GITHUB_REF -ne "refs/heads/$env:GITHUB_REF_NAME") {
+            throw "Only a selected branch ref may be built"
+          }
+          Write-Host "Building Windows ZIPs from ref=$env:GITHUB_REF sha=$sha"
+      - name: Verify explicit manual branch-test publication consent
+        if: github.ref != 'refs/heads/master'
+        shell: pwsh
+        env:
+          BRANCH_TEST_RELEASE: ${{ inputs.branch_test_release }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or
+              $env:BRANCH_TEST_RELEASE -ne 'true' -or
+              $env:GITHUB_ACTOR -ne 'hatsu07') {
+            throw 'Non-master branch publication requires manual owner opt-in'
+          }
+          Write-Host "BRANCH_TEST_ONLY selected: $env:GITHUB_REF_NAME"
       - name: Verify master derives from a successful PR
+        if: github.ref == 'refs/heads/master'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -233,12 +268,15 @@ jobs:
         shell: pwsh
         run: |
           $built = (git rev-parse HEAD).Trim()
+          $kind = if ($env:GITHUB_REF -eq 'refs/heads/master') { 'DEVELOPMENT_ONLY' } else { 'BRANCH_TEST_ONLY' }
+          $collectorKind = if ($env:GITHUB_REF -eq 'refs/heads/master') { 'SCREEN_DATASET_COLLECTOR_DEVELOPMENT' } else { 'SCREEN_DATASET_COLLECTOR_BRANCH_TEST' }
           @(
             "commit_sha=$built"
             "version=${{ steps.release_version.outputs.version }}"
             "workflow_run_id=${{ github.run_id }}"
             "workflow_run_attempt=${{ github.run_attempt }}"
-            "artifact_type=DEVELOPMENT_ONLY"
+            "artifact_type=$kind"
+            "source_ref=$env:GITHUB_REF"
             "screen_model_release_validated=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsAssistant\\BUILD_REVISION.txt" -Encoding UTF8
           @(
@@ -246,7 +284,8 @@ jobs:
             "version=${{ steps.release_version.outputs.version }}"
             "workflow_run_id=${{ github.run_id }}"
             "workflow_run_attempt=${{ github.run_attempt }}"
-            "artifact_type=SCREEN_DATASET_COLLECTOR_DEVELOPMENT"
+            "artifact_type=$collectorKind"
+            "source_ref=$env:GITHUB_REF"
             "screenshots_auto_saved=false"
             "network_upload=false"
           ) | Set-Content -LiteralPath ".\\dist\\PokemonChampionsScreenDataCollector\\BUILD_REVISION.txt" -Encoding UTF8
@@ -265,7 +304,7 @@ jobs:
             }
             $metadata = Get-Content $revision -Raw
             if (-not $metadata.Contains("commit_sha=$env:GITHUB_SHA")) {
-              throw "Revision metadata differs from current master: $app"
+              throw "Revision metadata differs from selected event SHA: $app"
             }
             $releaseVersion = "${{ steps.release_version.outputs.version }}"
             if (-not $metadata.Contains("version=$releaseVersion")) {
@@ -293,10 +332,19 @@ jobs:
             if ((Get-Item $zipPath).Length -ge 2GB) { throw "GitHub Release asset exceeds 2GiB limit" }
             Write-Host "Verified: $name"
           }
-      - name: Publish verified DEVELOPMENT prerelease (no Actions Artifacts)
+      - name: Publish verified master DEVELOPMENT prerelease (no Actions Artifacts)
+        if: github.ref == 'refs/heads/master'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           & ./scripts/publish_windows_development_release.ps1 -ExpectedSha $env:GITHUB_SHA -ReleaseVersion "${{ steps.release_version.outputs.version }}"
           if ($LASTEXITCODE -ne 0) { throw "Development Release publishing failed" }
+      - name: Publish manual BRANCH_TEST_ONLY prerelease (no Actions Artifacts)
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master' && inputs.branch_test_release == true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          & ./scripts/publish_windows_branch_test_release.ps1 -ExpectedSha $env:GITHUB_SHA -ReleaseVersion "${{ steps.release_version.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "Branch test Release publishing failed" }
