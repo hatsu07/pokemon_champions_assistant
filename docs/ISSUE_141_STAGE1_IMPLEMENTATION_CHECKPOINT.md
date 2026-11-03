@@ -50,7 +50,8 @@ python scripts/report_phase2_shadow_software.py --shadow-sqlite path/to/phase2-s
 
 - **P2-1 GUI表示監査の誤昇格**：`AI_RESULT_DISPLAYED` は受信イベントであり、表示の証拠にしない。`scripts/report_phase2_shadow_software.py` は `audit_gui_timing_export` の厳密な要求順序・キャンセル判定を利用し、同一 `match_id/request_id/turn_epoch/state_revision/decision_window_id` の `ACTION_GUI_RENDERED` まで存在し、未表示turnが0のときに限り `SOFTWARE_QT_PAIR_COMPLETE_NOT_GAME_CERTIFIED` とする。描画欠落・別request・旧turn/revision・キャンセルを負例に追加。
 - **P2-2 Shadow失効とSQLite書込の競合**：同一pool上のwrite taskと取消タスクを直列化し、トランザクション内のrevocation fenceを追加。UIのOFF/revision更新はSQLite完了を待たず、短いメモリlockだけで失効を宣言する。書込途中の取消が最終チェック後に割り込んでも、非同期の完全一致キー削除が直後に走り、失効行を監査成功として残さない。UI側はディスク完了待ちをしないため、`cleanup_future` を完了した後でのみオフライン監査の最終状態を確認する。正常に完了済みの過去行は後日のOFFで削除しない。
-- SQLiteのディスク障害で取消が失敗した場合、`cleanup_future` は `REVOKE_STORAGE_FAILED` を返す。失効中のin-flight記録を当たり前に有効な証拠として扱ってはならない。
+- **新規 P2-3 SQLite削除失敗のfail-closed**（再レビューで発見）：`sqlite3.OperationalError` を含むSQLite例外を確実に捕捉し、専用worker上で限定再試行。消去できなければ `cleanup_future=REVOKE_STORAGE_FAILED` とする。失効した記録が生SQLiteに残るケースも想定し、`_finish` が保存完了をメモリロック下で確定した**後だけ**、別トランザクションの `phase2_shadow_finalized_v1` に完全なレコードハッシュに紐づく受理証拠を永続化。保存途中の失効や削除失敗があっても受理証拠のない行をオフラインレポートは採用しない。未確定行数を `sqlite_unfinalized_or_revoked_count` として出力し、CLIは終了コード1を返す。一般的な `read_shadow_comparisons()` は生データ閲覧、`finalized_only=True` はソフトウェア確定記録のみを返す。UIはSQLiteを同期待機しない。
+- 実SQLiteロックを保持した状態でOFF→2回の削除失敗→ロック解放後も生行が残る負例、COMMIT直前の失効負例、および正常な確定記録・後日のOFFで過去行を保持する正例を回帰テストに追加。削除失敗した生行は監査証拠に昇格しない（削除の永久成功を保証するものではない）。
 - 固定Showdownとの静的比較では24枠中23枠一致、ミミッキュ「かげうち」のPP不一致が観測されている（2026-11-03 PR #204レビュー）。`PINNED_STATIC_FIELDS_DIFFER` は**対応範囲の不一致**であり、元データを推測で上書きしない。CI成功はエンジンとの完全互換性を意味しない。
 
 ## **合格と未達を混同しない**
