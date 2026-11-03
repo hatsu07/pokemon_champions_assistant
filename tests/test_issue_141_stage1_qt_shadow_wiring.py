@@ -110,5 +110,36 @@ class QtShadowWiringTests(unittest.TestCase):
         self.assertFalse((self.root/"phase2-shadow"/"comparison-v2.sqlite").exists())
 
 
+    def test_opt_in_selection_triggers_18_prep_draft_only(self):
+        from champions_assist.preload import FrozenMatchAssets
+        panel=self.panel
+        panel.shadow_capture_check.setChecked(True)
+        panel.state={
+            "phase":"PREP",
+            "selected_three":["マスカーニャ","アシレーヌ","ガブリアス"],
+            "lead":"マスカーニャ",
+            "opponent_six":["ガブリアス","アシレーヌ","ミミッキュ",
+                            "カバルドン","グソクムシャ","リザードン"],
+            "selection_assumed":True,
+        }
+        with patch.object(FrozenMatchAssets,"matrix_rows_for",
+                          side_effect=AssertionError("MATRIX_REFETCH_FORBIDDEN")):
+            panel._capture_shadow_prep_draft()
+        draft=panel._shadow_prep_draft
+        self.assertIsNotNone(draft)
+        self.assertEqual(draft.status,"CONDITIONAL_18_DRAFT",draft.reason)
+        self.assertEqual(draft.proposed_pairs,18)
+        self.assertFalse(draft.tactical_accuracy_verified)
+        self.assertEqual(draft.result.prep_status,"DRAFT")
+        self.assertFalse(panel._shadow_dispatcher.session is not None)
+        events=[row for row in panel._timing_trace
+                if row["event"]=="LOCAL_SHADOW_PREP_DRAFT"]
+        self.assertEqual(events[-1]["pairs"],18)
+        self.assertFalse(events[-1]["ready_for_game"])
+        panel.state["visual_unknown_opponents"]=["未判明相手6"]
+        panel._capture_shadow_prep_draft()
+        self.assertIsNone(panel._shadow_prep_draft)
+
+
 if __name__ == "__main__":
     unittest.main()
