@@ -225,22 +225,26 @@ class ParallelShadowSession:
             # Only this fast in-memory lock establishes whether the record
             # finished *before* user OFF / a new revision. Never hold it
             # across the SQLite transaction or block the Qt thread for IO.
+            # A raw append is not an accepted receipt. Do NOT mark
+            # _persisted until finalization finished and the in-memory
+            # cancellation linearization point has been reached.
             self._current()
+            finalized = finalize_shadow_comparison(
+                self.database_path, record,
+                active_at_commit=self._active_at_commit)
+            if finalized not in ("FINALIZED", "ALREADY_FINALIZED"):
+                self._revoke_unfinished()
+                return ParallelShadowResult("REFUSED", "FINALIZATION_NOT_COMMITTED")
             with self._lock:
                 revoked = self._closed or self._revoked.is_set()
                 if not revoked:
                     self._persisted = True
             if revoked:
-                # Cleanup errors cannot make an invalidated row auditable.
+                # close() has queued an exact-key revocation, because
+                # _persisted stayed False throughout finalization. The worker
+                # removes both the raw and finalized receipts off the GUI.
                 self._revoke_unfinished()
-                return ParallelShadowResult("REFUSED", "REVOKED_DURING_WRITE")
-            # Only the worker can create this *second*, durable receipt,
-            # after the in-memory acceptance linearization succeeded.
-            # If finalization is interrupted by a crash/lock, its absence
-            # makes the raw row fail-closed in post-match reports.
-            finalized = finalize_shadow_comparison(self.database_path, record)
-            if finalized not in ("FINALIZED", "ALREADY_FINALIZED"):
-                return ParallelShadowResult("REFUSED", "FINALIZATION_NOT_COMMITTED")
+                return ParallelShadowResult("REFUSED", "REVOKED_DURING_FINALIZATION")
             return ParallelShadowResult(status, "NONACTIONABLE_DIAGNOSTIC", record)
         except (sqlite3.Error, ValueError, TypeError, AttributeError, OSError):
             if written:
