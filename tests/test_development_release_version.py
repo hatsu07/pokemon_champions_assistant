@@ -159,7 +159,7 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
 
         # Manual dispatch uses the Actions "Use workflow from" branch selector.
         # PR events must never grant a write-token release job.
-        self.assertIn("  push:\\n    branches: [master]", workflow)
+        self.assertIn("  push:\n    branches: [master]", workflow)
         self.assertIn("  workflow_dispatch:", workflow)
         self.assertIn("branch_test_release:", workflow)
         self.assertIn("type: boolean", workflow)
