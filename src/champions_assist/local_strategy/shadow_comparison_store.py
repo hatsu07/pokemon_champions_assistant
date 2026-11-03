@@ -20,6 +20,7 @@ from .observed_full_grid_diagnostic import ObservedFullGridDiagnostic
 
 _SCHEMA = "issue141-shadow-same-state-v2"
 _TABLE = "phase2_shadow_same_state_v2"
+_ACCEPTED_TABLE = "phase2_shadow_finalized_v1"
 _LOCAL_STATUSES = frozenset({"NO_RANKING", "MODEL_DIAGNOSTIC"})
 _GPT_STATUSES = frozenset({"GPT_ADVICE", "GPT_ABSTAIN", "GPT_UNVERIFIED"})
 
@@ -140,6 +141,73 @@ def _ensure_schema(db: sqlite3.Connection) -> None:
         recorded_at TEXT NOT NULL,
         PRIMARY KEY(match_id, decision_window_id, state_revision)
     )""")
+
+
+def _record_fingerprint(record: ShadowComparisonRecord) -> str:
+    """Fingerprint all stored fields (not just a reused match/window ID)."""
+    fields = tuple(ShadowComparisonRecord.__dataclass_fields__)
+    return fingerprint([getattr(record, name) for name in fields])
+
+
+def _ensure_finalized_schema(db: sqlite3.Connection) -> None:
+    db.execute(f"""CREATE TABLE IF NOT EXISTS {_ACCEPTED_TABLE} (
+        match_id TEXT NOT NULL,
+        decision_window_id TEXT NOT NULL,
+        state_revision INTEGER NOT NULL,
+        snapshot_sha256 TEXT NOT NULL,
+        record_sha256 TEXT NOT NULL,
+        PRIMARY KEY(match_id, decision_window_id, state_revision)
+    )""")
+
+
+def finalize_shadow_comparison(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> str:
+    """Durable proof that _finish accepted an *already committed* row.
+
+    This runs off the GUI thread only AFTER the session's in-memory commit
+    decision, which is serialized against OFF/new revision by the short lock.
+    A row whose cleanup fails or crashes before this separate acknowledgment
+    remains in raw SQLite, but cannot be counted by the software audit.
+    """
+    if not isinstance(record, ShadowComparisonRecord):
+        raise ValueError("FINALIZED_SHADOW_RECORD_REQUIRED")
+    path = Path(database_path)
+    if not path.is_file():
+        raise ValueError("UNCOMMITTED_SHADOW_DATABASE")
+    fields = tuple(ShadowComparisonRecord.__dataclass_fields__)
+    serialized = tuple(
+        int(value) if isinstance(value, bool) else value
+        for value in (getattr(record, name) for name in fields))
+    key = (record.match_id, record.decision_window_id, record.state_revision)
+    with closing(sqlite3.connect(path, timeout=3.0)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_TABLE,)).fetchone() is None:
+            raise ValueError("SHADOW_ROW_MISSING_AT_FINALIZATION")
+        row = db.execute(
+            "SELECT " + ",".join(fields) + " FROM " + _TABLE +
+            " WHERE match_id=? AND decision_window_id=? AND state_revision=?",
+            key).fetchone()
+        if row != serialized:
+            raise ValueError("SHADOW_ROW_CHANGED_BEFORE_FINALIZATION")
+        _ensure_finalized_schema(db)
+        digest = _record_fingerprint(record)
+        old = db.execute(
+            "SELECT snapshot_sha256,record_sha256 FROM " + _ACCEPTED_TABLE +
+            " WHERE match_id=? AND decision_window_id=? AND state_revision=?",
+            key).fetchone()
+        if old is not None:
+            if old != (record.snapshot_sha256, digest):
+                raise ValueError("CONFLICTING_SHADOW_FINALIZATION")
+            return "ALREADY_FINALIZED"
+        db.execute(
+            "INSERT INTO " + _ACCEPTED_TABLE +
+            " (match_id,decision_window_id,state_revision,snapshot_sha256,"
+            "record_sha256) VALUES (?,?,?,?,?)",
+            (*key, record.snapshot_sha256, digest))
+    return "FINALIZED"
 
 
 def build_shadow_comparison(
@@ -366,17 +434,30 @@ def revoke_shadow_comparison(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                 (_TABLE,)).fetchone() is None:
             return "NO_ROW"
+        identity = (match_id, decision_window_id, state_revision,
+                    snapshot_sha256)
         deleted = db.execute(
             "DELETE FROM " + _TABLE +
             " WHERE match_id=? AND decision_window_id=? AND state_revision=?"
-            " AND snapshot_sha256=?",
-            (match_id, decision_window_id, state_revision,
-             snapshot_sha256)).rowcount
+            " AND snapshot_sha256=?", identity).rowcount
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_ACCEPTED_TABLE,)).fetchone() is not None:
+            db.execute(
+                "DELETE FROM " + _ACCEPTED_TABLE +
+                " WHERE match_id=? AND decision_window_id=? AND state_revision=?"
+                " AND snapshot_sha256=?", identity)
     return "REVOKED" if deleted else "NO_ROW"
 
 
-def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparisonRecord, ...]:
-    """Read recorded aggregate facts only. No updates or action adoption."""
+def read_shadow_comparisons(
+    database_path: str | Path, *, finalized_only: bool = False,
+) -> tuple[ShadowComparisonRecord, ...]:
+    """Read raw rows, or only separately finalized software evidence.
+
+    Raw rows are NOT accepted-stage proof: a failed cleanup may leave a
+    revoked, never-finalized window in the same SQLite file.
+    """
     path = Path(database_path)
     if not path.is_file():
         return ()
@@ -392,11 +473,30 @@ def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparison
                 (_TABLE,)).fetchone() is None:
             return ()
         cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
-        records = db.execute(
-            "SELECT " + ",".join(cols) +
-            " FROM " + _TABLE + " ORDER BY match_id,decision_window_id,state_revision"
-        ).fetchall()
-    return tuple(ShadowComparisonRecord(
+        query = ("SELECT " + ",".join(cols) + " FROM " + _TABLE +
+                 " ORDER BY match_id,decision_window_id,state_revision")
+        if finalized_only:
+            if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (_ACCEPTED_TABLE,)).fetchone() is None:
+                return ()
+            accepted = {
+                (match, window, revision): (snapshot, digest)
+                for match, window, revision, snapshot, digest in db.execute(
+                    "SELECT match_id,decision_window_id,state_revision,"
+                    "snapshot_sha256,record_sha256 FROM " + _ACCEPTED_TABLE)
+            }
+        else:
+            accepted = None
+        records = db.execute(query).fetchall()
+    results = tuple(ShadowComparisonRecord(
         *(bool(v) if name in ("gpt_action_verified_in_window", "input_deadline_met") else v
           for name, v in zip(cols, row)))
         for row in records)
+    if accepted is None:
+        return results
+    return tuple(
+        record for record in results
+        if accepted.get((record.match_id, record.decision_window_id,
+                         record.state_revision)) ==
+           (record.snapshot_sha256, _record_fingerprint(record)))
