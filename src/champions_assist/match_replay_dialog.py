@@ -2953,7 +2953,7 @@ class MatchReplayDialog(QDialog):
         self._trace_event("RESULT_SCREEN_GPT_REQUEST",images_sent=0,
                           frame_id=candidate["frame"],
                           request_id=self._active_request_id,
-                          match_id=self.match_id or "",
+                          match_id=getattr(self, "match_id", None) or "",
                           turn_epoch=self._turn_epoch,
                           ocr_candidate_count=len(evidence),
                           pending_prior_ocr=0)
@@ -2992,7 +2992,7 @@ class MatchReplayDialog(QDialog):
         self._active_request_id="req-"+str(self._ai_request_attempts)
         self._trace_event("OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0,
                           request_id=self._active_request_id,
-                          match_id=self.match_id or "",
+                          match_id=getattr(self, "match_id", None) or "",
                           turn_epoch=self._turn_epoch,
                           message_count=len(messages))
         self._thread=QThread(self)
