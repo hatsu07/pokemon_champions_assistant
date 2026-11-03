@@ -139,6 +139,12 @@ class GuiTimingTraceAuditTests(unittest.TestCase):
                         render.index("self.output.setPlainText("))
         self.assertLess(render.index("self.output.setPlainText("),
                         render.index('self._trace_event("ACTION_GUI_RENDERED"'))
+        self.assertIn('state.get("phase") == "BATTLE"', render)
+        self.assertIn('self._active_turn_epoch == self._turn_epoch', render)
+        self.assertIn('report.get("screen") in', render)
+        # The selected-team PREP banner is never a turn-action render event.
+        self.assertLess(render.index('state.get("phase") == "BATTLE"'),
+                        render.index('self._trace_event("ACTION_GUI_RENDERED"'))
 
     def test_display_past_45_seconds_is_measured_not_promoted(self):
         trace = scene(turns=1, delay=45001)

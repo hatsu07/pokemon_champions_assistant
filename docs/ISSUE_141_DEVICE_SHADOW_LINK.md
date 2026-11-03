@@ -124,6 +124,12 @@ clock, a duplicate rendered advice, and `TEST_ONLY` results are refused,
 rather than treated as a timely actionable move. OCR revision retries with
 a new request ID are supported without treating any old reply as the result.
 
+The emitting GUI also requires **battle phase, current active turn epoch,
+an actual action-menu screen and nonempty proposed action** before recording
+`ACTION_GUI_RENDERED`. In particular, a selection `PROVISIONAL_ADVICE`
+must not create an action-render event that could contaminate 45-second
+turn metrics.
+
 `ACTION_GUI_RENDERED` is now timestamped **after** both the action banner
 text and full output text have been applied using `setPlainText`. This
 measures the Qt callback's post-widget-update time, **not the OS paint

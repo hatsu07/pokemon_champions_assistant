@@ -3511,7 +3511,16 @@ class MatchReplayDialog(QDialog):
         # Qt action/output widget text has now been applied. The trace
         # timestamp is a post-setPlainText *callback* measurement; actual
         # physical screen paint and the game clock still require video proof.
-        if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"):
+        if (state.get("phase") == "BATTLE"
+                and self._active_turn_epoch == self._turn_epoch
+                and self._turn_epoch > 0
+                and report.get("screen") in
+                    ("COMMAND_MENU", "MOVE_MENU", "PARTY_MENU")
+                and report.get("status") in
+                    ("ADVICE", "PROVISIONAL_ADVICE", "TEST_ONLY")
+                and report.get("recommendation")):
+            # Selection/PREP/result-screen rendering is not a turn action.
+            # Do not export it as a turn-action display event.
             self._trace_event("ACTION_GUI_RENDERED",
                 status=report.get("status"),
                 # Opaque source-window identity for OFFLINE trace comparison.
