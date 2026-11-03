@@ -27,7 +27,7 @@ from .observed_full_grid_diagnostic import (
 from .shadow_comparison_store import (
     BoundGPTAdvice, ShadowComparisonRecord, append_shadow_comparison,
     build_shadow_comparison, revoke_shadow_comparison,
-    finalize_shadow_comparison,
+    finalize_shadow_comparison, begin_shadow_lease, finish_shadow_lease,
 )
 
 
@@ -85,6 +85,7 @@ class ParallelShadowSession:
         # finished receipt by _lock; disk activity never holds that lock.
         self._revoked = Event()
         self._persisted = False
+        self._pending_record: ShadowComparisonRecord | None = None
         self._cleanup_future: Future | None = None
 
     def _current(self) -> FrozenBattleState:
@@ -178,12 +179,17 @@ class ParallelShadowSession:
         """
         for attempt in range(2):
             try:
-                return revoke_shadow_comparison(
+                status = revoke_shadow_comparison(
                     self.database_path,
                     match_id=self.snapshot.window.match_id,
                     decision_window_id=self.snapshot.window.decision_window_id,
                     state_revision=self.snapshot.window.state_revision,
                     snapshot_sha256=self.snapshot.snapshot_sha256)
+                # Delete the durable pending barrier ONLY if the SQLite
+                # deletion was committed (or no row ever existed).
+                if self._pending_record is not None:
+                    finish_shadow_lease(self.database_path, self._pending_record)
+                return status
             except sqlite3.OperationalError:
                 # A busy SQLite writer is not an OSError. Retry once on
                 # this dedicated worker, never on the Qt event loop.
@@ -218,6 +224,11 @@ class ParallelShadowSession:
                 local_elapsed_ms=elapsed, remaining_ms_at_capture=remaining,
                 local_refusal_reason=refusal)
             self._current()
+            # A pending marker must reach durable storage BEFORE an append
+            # or finalization may leave a committed row. If cleanup cannot
+            # delete it, the postmatch audit sees the marker and rejects it.
+            begin_shadow_lease(self.database_path, record)
+            self._pending_record = record
             status = append_shadow_comparison(
                 self.database_path, record,
                 active_at_commit=self._active_at_commit)
@@ -240,11 +251,15 @@ class ParallelShadowSession:
                 if not revoked:
                     self._persisted = True
             if revoked:
-                # close() has queued an exact-key revocation, because
-                # _persisted stayed False throughout finalization. The worker
-                # removes both the raw and finalized receipts off the GUI.
+                # close() queued an exact-key revocation because _persisted
+                # stayed False throughout finalization.
                 self._revoke_unfinished()
                 return ParallelShadowResult("REFUSED", "REVOKED_DURING_FINALIZATION")
+            # The short in-memory lock is the acceptance point: a subsequent
+            # OFF retains history. If clearing the pending lease fails, do
+            # not falsely report success; a remaining lease fails audit.
+            finish_shadow_lease(self.database_path, record)
+            self._pending_record = None
             return ParallelShadowResult(status, "NONACTIONABLE_DIAGNOSTIC", record)
         except (sqlite3.Error, ValueError, TypeError, AttributeError, OSError):
             if written:
