@@ -17,6 +17,9 @@ from champions_assist.local_strategy.device_shadow_evidence_link import (
 from champions_assist.local_strategy.shadow_comparison_store import (
     read_shadow_comparisons,
 )
+from champions_assist.local_strategy.registered_team_source_binding import (
+    RegisteredSourceContext,
+)
 
 MAX_PACKET = 2_000_000
 MAX_ANNOTATIONS = 1_000_000
@@ -40,6 +43,12 @@ def main() -> int:
     parser.add_argument("--team-fingerprint", required=True)
     parser.add_argument("--frozen-team-sha256", required=True)
     parser.add_argument("--regulation", required=True)
+    parser.add_argument("--data-root", type=Path,
+                        help="Off-match registered teams/index and LIVE assets")
+    parser.add_argument("--masters-dir", type=Path,
+                        help="Current fixed Champions masters")
+    parser.add_argument("--environment-snapshot", type=Path,
+                        help="Exact archived Singles snapshot for registered LIVE assets")
     args = parser.parse_args()
     try:
         device = _json_file(args.device_packet, MAX_PACKET)
@@ -51,12 +60,19 @@ def main() -> int:
         frames = tuple(CapturedTurnLink(**r) for r in labels["frames"])
         goldens = tuple(GoldenReviewClaim(**r) for r in labels["goldens"])
         rows = read_shadow_comparisons(args.shadow_sqlite)
+        if (args.data_root is None) != (args.masters_dir is None):
+            raise ValueError("BOTH_REGISTERED_SOURCE_ROOTS_REQUIRED")
+        sources = (None if args.data_root is None else
+                   RegisteredSourceContext(
+                       args.data_root, args.masters_dir,
+                       args.environment_snapshot))
         audit = audit_offline_device_shadow_link(
             device, team_id=args.team_id,
             team_fingerprint=args.team_fingerprint,
             regulation=args.regulation,
             frozen_team_sha256=args.frozen_team_sha256,
-            shadow_rows=rows, frames=frames, golden_claims=goldens)
+            shadow_rows=rows, frames=frames, golden_claims=goldens,
+            source_context=sources)
     except (ValueError, KeyError, TypeError, OSError, sqlite3.Error):
         print(json.dumps({
             "status": "EVIDENCE_LINK_REFUSED",

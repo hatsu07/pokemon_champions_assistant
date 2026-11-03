@@ -36,6 +36,8 @@ class GuiTurnTraceAudit:
     local_shadow_ui_display_verified: bool = False
     actionable_champions_advice_verified: bool = False
     phase2_accepted: bool = False
+    # Opaque local GUI match label, not independent actual game identity.
+    source_match_id: str = ""
 
 
 def _refuse(reason: str) -> GuiTurnTraceAudit:
@@ -276,4 +278,5 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
         _pct(durations, .50) if durations else None,
         _pct(durations, .95) if durations else None,
         _pct(durations, .99) if durations else None,
+        source_match_id=known_match or "",
     )
