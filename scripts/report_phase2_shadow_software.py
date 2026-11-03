@@ -16,6 +16,7 @@ from typing import Any
 
 from champions_assist.local_strategy.shadow_comparison_store import (
     ShadowComparisonRecord, read_shadow_comparisons,
+    pending_shadow_lease_count,
 )
 from champions_assist.local_strategy.shadow_quality_gate import audit_shadow_quality
 from champions_assist.local_strategy.gui_timing_trace_audit import (
@@ -35,11 +36,18 @@ def stage1_software_shadow_report(
     # Only the independent, post-commit finalization table authorizes an
     # offline software comparison. No path => no authenticated receipt.
     finalized: tuple[ShadowComparisonRecord, ...] = ()
+    pending_leases = 0
+    storage_unreadable = False
     if acceptance_database_path is not None:
         try:
-            finalized = read_shadow_comparisons(
-                acceptance_database_path, finalized_only=True)
+            pending_leases = pending_shadow_lease_count(acceptance_database_path)
+            # A worker that is still finalizing, or whose deletion failed,
+            # MUST NOT yield auditable rows, even if it committed a receipt.
+            if pending_leases == 0:
+                finalized = read_shadow_comparisons(
+                    acceptance_database_path, finalized_only=True)
         except (sqlite3.Error, OSError, ValueError):
+            storage_unreadable = True
             finalized = ()
     finalized_set = set(finalized)
     accepted_rows = tuple(row for row in rows if row in finalized_set)
@@ -132,6 +140,8 @@ def stage1_software_shadow_report(
         "sqlite_window_count": len(rows),
         "sqlite_finalized_window_count": len(accepted_rows),
         "sqlite_unfinalized_or_revoked_count": len(rows)-len(accepted_rows),
+        "sqlite_pending_lease_count": pending_leases,
+        "sqlite_acceptance_storage_unreadable": storage_unreadable,
         "qt_gpt_pair_matched": joined,
         "qt_gpt_pair_unmatched": max(0, len(rows)-joined),
         "gui_timing_status": gui_status,
@@ -176,7 +186,9 @@ def main() -> int:
     print(json.dumps(result, ensure_ascii=False, indent=2))
     # A revoked or not-yet-finalized SQLite row is never acceptable as a
     # completed software audit. Signal that contract to CI/shell callers.
-    return 1 if result["sqlite_unfinalized_or_revoked_count"] else 0
+    return 1 if (result["sqlite_unfinalized_or_revoked_count"]
+                 or result["sqlite_pending_lease_count"]
+                 or result["sqlite_acceptance_storage_unreadable"]) else 0
 
 
 if __name__ == "__main__":
