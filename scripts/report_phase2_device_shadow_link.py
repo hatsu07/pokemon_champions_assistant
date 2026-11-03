@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import json
+import sqlite3
 from pathlib import Path
 
 from champions_assist.local_strategy.device_shadow_evidence_link import (
@@ -56,7 +57,7 @@ def main() -> int:
             regulation=args.regulation,
             frozen_team_sha256=args.frozen_team_sha256,
             shadow_rows=rows, frames=frames, golden_claims=goldens)
-    except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError):
+    except (ValueError, KeyError, TypeError, OSError, sqlite3.Error):
         print(json.dumps({
             "status": "EVIDENCE_LINK_REFUSED",
             "reason": "INVALID_OR_UNREADABLE_OFFLINE_PACKET",

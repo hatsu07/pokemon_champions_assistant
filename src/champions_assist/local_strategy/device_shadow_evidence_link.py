@@ -136,6 +136,11 @@ def audit_offline_device_shadow_link(
     durations = []
     late = 0
     for frame in links:
+        if (not isinstance(frame.match_id, str)
+                or not 1 <= len(frame.match_id) <= 120
+                or not isinstance(frame.decision_window_id, str)
+                or not 1 <= len(frame.decision_window_id) <= 128):
+            return _blocked("FRAME_NOT_BOUND_TO_EXACT_CAPTURE_AND_TURN")
         match = matches.get(frame.match_id)
         if (match is None
                 or type(frame.turn_index) is not int
@@ -176,6 +181,10 @@ def audit_offline_device_shadow_link(
         return _blocked("MISSING_OR_UNRELATED_DEVICE_TURN_FRAMES")
     row_by_window = {}
     for row in rows:
+        if (not isinstance(row.match_id, str)
+                or not isinstance(row.decision_window_id, str)
+                or type(row.state_revision) is not int):
+            return _blocked("SHADOW_SQLITE_WINDOW_OR_TEAM_MISMATCH")
         key = (row.match_id, row.decision_window_id, row.state_revision)
         frame = frame_by_window.get(key)
         if (key in row_by_window or frame is None
@@ -194,6 +203,15 @@ def audit_offline_device_shadow_link(
     covered = set()
     unsafe = 0
     for label in goldens:
+        # The annotation JSON is user-supplied. Dataclass constructors do
+        # not enforce types; reject unhashable or oversized IDs explicitly.
+        if (not isinstance(label.match_id, str)
+                or not isinstance(label.decision_window_id, str)
+                or type(label.state_revision) is not int
+                or not isinstance(label.case_id, str)
+                or not 1 <= len(label.case_id) <= 128
+                or not isinstance(label.kind, str)):
+            return _blocked("GOLDEN_NOT_BOUND_TO_EXACT_CAPTURE_AND_WINDOW")
         key = (label.match_id, label.decision_window_id,
                label.state_revision)
         frame = frame_by_window.get(key)

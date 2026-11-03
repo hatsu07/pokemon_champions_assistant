@@ -187,6 +187,33 @@ class OfflineDeviceShadowLinkTests(unittest.TestCase):
             self.assertIn("KNOWN_UNSAFE_GOLDEN_CLAIMS_PRESENT",
                           got.missing_evidence)
 
+    def test_malformed_review_ids_fail_closed_without_type_errors(self):
+        # JSON annotations do not enforce dataclass field types.
+        with TemporaryDirectory() as d:
+            packet, rows, frames, goldens = fixture(Path(d))
+            for altered in (
+                replace(frames[0], match_id=["unhashable"]),
+                replace(frames[0], decision_window_id=["unhashable"]),
+            ):
+                got = run(packet, rows, (altered,) + frames[1:], goldens)
+                self.assertEqual(got.status, "EVIDENCE_LINK_REFUSED")
+                self.assertEqual(got.reason,
+                                 "FRAME_NOT_BOUND_TO_EXACT_CAPTURE_AND_TURN")
+            for corrupted in (
+                replace(goldens[0], case_id=[]),
+                replace(goldens[0], kind=["unhashable"]),
+                replace(goldens[0], decision_window_id=["unhashable"]),
+            ):
+                got = run(packet, rows, frames, (corrupted,) + goldens[1:])
+                self.assertEqual(got.status, "EVIDENCE_LINK_REFUSED")
+                self.assertEqual(got.reason,
+                                 "GOLDEN_NOT_BOUND_TO_EXACT_CAPTURE_AND_WINDOW")
+            corrupted_rows = (replace(rows[0], match_id=[]),) + rows[1:]
+            got = run(packet, corrupted_rows, frames, goldens)
+            self.assertEqual(got.status, "EVIDENCE_LINK_REFUSED")
+            self.assertEqual(got.reason,
+                             "SHADOW_SQLITE_WINDOW_OR_TEAM_MISMATCH")
+
     def test_device_fake_or_undercount_is_not_accepted(self):
         with TemporaryDirectory() as d:
             packet, rows, frames, goldens = fixture(Path(d))
