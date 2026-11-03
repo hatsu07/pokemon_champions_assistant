@@ -29,6 +29,27 @@ all-abstention local diagnostic remains a blocker even if all eight labels
 are claimed PASS. Neither local `MODEL_DIAGNOSTIC` nor a GPT action-ID
 hash is proof of a game-legal or strategically correct recommendation.
 
+**P2 review safeguards (2026-11-03):** The v3 device packet
+`team_id` / `team_fingerprint` and Shadow SQLite `team_sha256` are
+individually checked against separately supplied command arguments, but no
+trusted registered-team roster manifest binds all three values. This audit
+**must not assert a same-team link** from a matching match/window/revision
+and snapshot label alone. It reports `team_identity_cross_bound=false`,
+`same_revision_shadow_turns=0`,
+`unverified_aligned_shadow_rows=<matching-record-count>`, and the permanent
+`TEAM_IDENTITY_NOT_CROSS_BOUND` blocker until an authoritative source is
+implemented and independently reviewed. Even a device packet claiming team A
+and SQLite rows from team B with carefully copied window SHA labels cannot
+be counted as a verified same-team pairing.
+
+The SQLite `input_deadline_met=false` for **any** matching window is
+recorded separately as `shadow_input_deadline_missed_count`, with
+`SHADOW_INPUT_DEADLINE_MISSED` in `missing_evidence`. Annotated video
+`shadow_visible_ms` and `late_shadow_displays` never erase an existing
+SQLite input-deadline failure, nor does a local elapsed-time measurement
+prove the actual video display deadline. Regression tests exercise A/B team
+cross-identity and ten (or one) false input-deadline flags.
+
 **Important: audit `status=STRUCTURALLY_LINKED_UNVERIFIED` means the
 supplied packet and database are *internally consistent*, not that their
 origins or tactical judgments are independently authenticated.**

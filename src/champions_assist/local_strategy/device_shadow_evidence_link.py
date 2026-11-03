@@ -62,7 +62,14 @@ class DeviceShadowLinkAudit:
     reason: str
     match_count: int = 0
     bound_turns: int = 0
+    # Requires team_id/fingerprint <-> registered team CSV SHA cross-binding.
+    # This audit receives no authoritative shared identity manifest, so an
+    # aligned packet/SQLite row alone must NOT increment this field.
     same_revision_shadow_turns: int = 0
+    # Same window/revision/snapshot SHA strings, but roster identity is NOT
+    # independently cross-bound between the two input sources.
+    unverified_aligned_shadow_rows: int = 0
+    team_identity_cross_bound: bool = False
     nonabstaining_diagnostic_turns: int = 0
     timed_shadow_displays: int = 0
     late_shadow_displays: int = 0
@@ -72,6 +79,7 @@ class DeviceShadowLinkAudit:
     covered_golden_kinds: tuple[str, ...] = ()
     missing_golden_kinds: tuple[str, ...] = ()
     submitted_unsafe_claim_count: int = 0
+    shadow_input_deadline_missed_count: int = 0
     missing_evidence: tuple[str, ...] = ()
     # These are NEVER implied by a hash or an external text label.
     game_capture_independently_authenticated: bool = False
@@ -230,7 +238,14 @@ def audit_offline_device_shadow_link(
             unsafe += 1
     missing = set(_GOLDENS) - covered
     nonabstaining = sum(row.local_status == "MODEL_DIAGNOSTIC" for row in rows)
+    missed_input_deadlines = sum(not row.input_deadline_met for row in rows)
     blockers = [
+        # The packet validates team_id / team_fingerprint against caller args;
+        # the SQLite rows validate team_sha256 against a SEPARATE caller arg.
+        # There is no authoritative registered-team manifest binding all
+        # three values. Even an exact snapshot SHA does NOT prove this is the
+        # same registered team (it can be supplied by both sides).
+        "TEAM_IDENTITY_NOT_CROSS_BOUND",
         "GAME_CAPTURE_TRUTH_NOT_CRYPTOGRAPHICALLY_ATTESTABLE",
         "INDEPENDENT_CHAMPIONS_MOVE_DAMAGE_LEGALITY_NOT_ADJUDICATED",
         "LOCAL_MODEL_DIAGNOSTIC_NOT_ACTIONABLE",
@@ -243,14 +258,28 @@ def audit_offline_device_shadow_link(
     if len(durations) < len(links):
         blockers.append("SHADOW_WINDOWS_DISPLAY_TIMES_NOT_RECORDED")
     if late: blockers.append("LOCAL_SHADOW_DISPLAYED_AFTER_45S")
+    if missed_input_deadlines:
+        blockers.append("SHADOW_INPUT_DEADLINE_MISSED")
     return DeviceShadowLinkAudit(
-        "STRUCTURALLY_LINKED_UNVERIFIED",
-        "EXTERNAL_DEVICE_REVIEW_PACKET_IS_NOT_INDEPENDENT_GAME_PROOF",
-        len(matches), len(links), len(rows), nonabstaining,
-        len(durations), late,
-        _percentile(durations, .50) if durations else None,
-        _percentile(durations, .95) if durations else None,
-        _percentile(durations, .99) if durations else None,
-        tuple(sorted(covered)), tuple(sorted(missing)), unsafe,
-        tuple(blockers),
+        status="STRUCTURALLY_LINKED_UNVERIFIED",
+        reason="EXTERNAL_DEVICE_REVIEW_PACKET_IS_NOT_INDEPENDENT_GAME_PROOF",
+        match_count=len(matches),
+        bound_turns=len(links),
+        same_revision_shadow_turns=0,  # Not verified SAME REGISTERED TEAM.
+        unverified_aligned_shadow_rows=len(rows),
+        team_identity_cross_bound=False,
+        nonabstaining_diagnostic_turns=nonabstaining,
+        timed_shadow_displays=len(durations),
+        late_shadow_displays=late,
+        p50_shadow_display_ms=(
+            _percentile(durations, .50) if durations else None),
+        p95_shadow_display_ms=(
+            _percentile(durations, .95) if durations else None),
+        p99_shadow_display_ms=(
+            _percentile(durations, .99) if durations else None),
+        covered_golden_kinds=tuple(sorted(covered)),
+        missing_golden_kinds=tuple(sorted(missing)),
+        submitted_unsafe_claim_count=unsafe,
+        shadow_input_deadline_missed_count=missed_input_deadlines,
+        missing_evidence=tuple(blockers),
     )

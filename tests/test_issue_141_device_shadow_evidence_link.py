@@ -102,7 +102,15 @@ class OfflineDeviceShadowLinkTests(unittest.TestCase):
                              got.reason)
             self.assertEqual(got.match_count, 5)
             self.assertEqual(got.bound_turns, 10)
-            self.assertEqual(got.same_revision_shadow_turns, 10)
+            # Same strings alone cannot verify the registered team
+            # fingerprint carried by the device packet is the team
+            # represented by the SQLite rows' team SHA.
+            self.assertEqual(got.same_revision_shadow_turns, 0)
+            self.assertEqual(got.unverified_aligned_shadow_rows, 10)
+            self.assertFalse(got.team_identity_cross_bound)
+            self.assertIn("TEAM_IDENTITY_NOT_CROSS_BOUND",
+                          got.missing_evidence)
+            self.assertEqual(got.shadow_input_deadline_missed_count, 0)
             self.assertEqual(got.nonabstaining_diagnostic_turns, 10)
             self.assertEqual(got.timed_shadow_displays, 10)
             self.assertEqual(got.late_shadow_displays, 0)
@@ -147,6 +155,51 @@ class OfflineDeviceShadowLinkTests(unittest.TestCase):
             self.assertEqual(
                 run(packet, rows, wrong_capture, goldens).reason,
                 "FRAME_NOT_BOUND_TO_EXACT_CAPTURE_AND_TURN")
+
+    def test_unrelated_team_a_packet_and_team_b_sqlite_not_cross_bound(self):
+        # Both references are caller supplied: matching each arg does not
+        # prove a common real registered team. This is the review P2-1 case.
+        with TemporaryDirectory() as d:
+            packet, rows, frames, goldens = fixture(Path(d))
+            self.assertEqual(packet["team_id"], TEAM_ID)
+            self.assertEqual(packet["team_fingerprint"], TEAM_FP)
+            different_team_sha = "b" * 64
+            team_b_rows = tuple(
+                replace(row, team_sha256=different_team_sha) for row in rows)
+            # Simulate team B records with identical user-labelled window SHA
+            # as team A's packet. The audit must not say the team is bound.
+            result = audit_offline_device_shadow_link(
+                packet, team_id=TEAM_ID, team_fingerprint=TEAM_FP,
+                regulation=REG, frozen_team_sha256=different_team_sha,
+                shadow_rows=team_b_rows, frames=frames,
+                golden_claims=goldens)
+            self.assertEqual(result.status, "STRUCTURALLY_LINKED_UNVERIFIED")
+            self.assertEqual(result.same_revision_shadow_turns, 0)
+            self.assertEqual(result.unverified_aligned_shadow_rows, 10)
+            self.assertFalse(result.team_identity_cross_bound)
+            self.assertIn("TEAM_IDENTITY_NOT_CROSS_BOUND",
+                          result.missing_evidence)
+            self.assertFalse(result.phase2_accepted)
+
+    def test_shadow_input_deadline_false_is_counted_even_if_gui_early(self):
+        # Review P2-2: user-supplied display timestamps cannot erase the
+        # independent SQLite flag that local input missed its own deadline.
+        with TemporaryDirectory() as d:
+            packet, rows, frames, goldens = fixture(Path(d))
+            all_late = tuple(replace(row, input_deadline_met=False)
+                             for row in rows)
+            got = run(packet, all_late, frames, goldens)
+            self.assertEqual(got.shadow_input_deadline_missed_count, 10)
+            self.assertEqual(got.late_shadow_displays, 0)
+            self.assertEqual(got.p95_shadow_display_ms, 2200)
+            self.assertIn("SHADOW_INPUT_DEADLINE_MISSED",
+                          got.missing_evidence)
+            self.assertFalse(got.phase2_accepted)
+            one_late = (replace(rows[0], input_deadline_met=False),) + rows[1:]
+            single = run(packet, one_late, frames, goldens)
+            self.assertEqual(single.shadow_input_deadline_missed_count, 1)
+            self.assertIn("SHADOW_INPUT_DEADLINE_MISSED",
+                          single.missing_evidence)
 
     def test_missing_duplicate_turn_and_golden_mismatch_block_all(self):
         with TemporaryDirectory() as d:
