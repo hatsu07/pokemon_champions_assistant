@@ -183,7 +183,7 @@ class GuiTimingTraceAuditTests(unittest.TestCase):
         self.assertIn('"RESULT_SCREEN_GPT_REQUEST",images_sent=0', code)
         self.assertIn('"OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0', code)
         self.assertIn('request_id=self._active_request_id,\n'
-                      '                          match_id=self.match_id or ""',
+                      '                          match_id=getattr(self, "match_id", None) or ""',
                       code)
 
     def test_cancelled_or_superseded_old_reply_is_never_a_valid_render(self):
