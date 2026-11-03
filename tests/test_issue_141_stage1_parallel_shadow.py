@@ -23,6 +23,8 @@ from champions_assist.local_strategy.observed_full_grid_diagnostic import (
 from tests.test_issue_140_foundation import frozen, VERIFIED_ASSETS
 from champions_assist.local_strategy.shadow_comparison_store import (
     append_shadow_comparison as real_append,
+    finalize_shadow_comparison as real_finalize,
+    pending_shadow_lease_count,
 )
 from champions_assist.local_strategy.ui_shadow_dispatcher import UiShadowDispatcher
 from tests.test_issue_141_selection import make_assets
@@ -314,6 +316,7 @@ class ParallelShadowSessionTests(unittest.TestCase):
                                  "Mock must genuinely reproduce stale data")
                 self.assertEqual(
                     read_shadow_comparisons(db, finalized_only=True), ())
+                self.assertEqual(pending_shadow_lease_count(db), 1)
                 gui = scene(turns=1)
                 for event in gui["timing_observations"]["events"]:
                     event["match_id"]="capture-race"
@@ -328,6 +331,100 @@ class ParallelShadowSessionTests(unittest.TestCase):
                 self.assertEqual(report["status"], "SOFTWARE_EVIDENCE_PARTIAL")
                 self.assertFalse(report["phase2_accepted"])
                 bridge.invalidate()
+
+
+    def _test_review_p2_4_cancel_during_finalization(
+        self, pause_at: str, revision_change: bool,
+    ) -> None:
+        """Event interleaving before/during/after finalization COMMIT.
+
+        UI OFF/new revision must remain nonblocking. A valid raw/finalized
+        SQLite row cannot become accepted software evidence after OFF.
+        """
+        started, resume = Event(), Event()
+        with TemporaryDirectory() as directory:
+            db = Path(directory) / "private" / "shadow.sqlite"
+            bridge = UiShadowDispatcher(db)
+            self.assertEqual(bridge.prepare_storage(), "READY")
+            self.assertEqual(bridge.start(
+                make_assets(), enabled=True, match_id="capture-finalizerace",
+                request_id="req-1", turn_epoch=1, state_revision=4,
+                screen_label="TURN_ACTION", observed_state={
+                    "our_active":"A", "opponent_active":"O1",
+                    "selected_three":["A","B","C"]},
+                deadline_monotonic=monotonic()+60),
+                "RUNNING_UNVERIFIED")
+            session = bridge.session
+
+            def blocked_finalize(database, record, **kwargs):
+                if pause_at == "before":
+                    started.set()
+                    if not resume.wait(timeout=12):
+                        raise AssertionError("FINALIZE_PREPARE_TIMEOUT")
+                if pause_at == "inside":
+                    original_fence = kwargs["active_at_commit"]
+                    calls = [0]
+                    def paused_fence():
+                        calls[0] += 1
+                        if calls[0] == 2:
+                            started.set()
+                            if not resume.wait(timeout=12):
+                                raise AssertionError("FINALIZE_TRANSACTION_TIMEOUT")
+                        return original_fence()
+                    kwargs["active_at_commit"] = paused_fence
+                value = real_finalize(database, record, **kwargs)
+                if pause_at == "after":
+                    started.set()
+                    if not resume.wait(timeout=12):
+                        raise AssertionError("FINALIZE_AFTER_COMMIT_TIMEOUT")
+                return value
+
+            with patch(
+                "champions_assist.local_strategy.parallel_shadow_session."
+                "finalize_shadow_comparison", side_effect=blocked_finalize):
+                self.assertEqual(bridge.attach_gpt(
+                    request_id="req-1",turn_epoch=1,state_revision=4,
+                    status="ADVICE",advice_present=True,elapsed_ms=25,
+                    fresh=True,reported_screen="MOVE_MENU"),
+                    "JOIN_SUBMITTED_NONACTIONABLE")
+                future = bridge.last_future
+                try:
+                    self.assertTrue(started.wait(timeout=10))
+                    self.assertEqual(
+                        pending_shadow_lease_count(db), 1,
+                        "Pending audit barrier must predate finalization")
+                    t0 = monotonic()
+                    if revision_change:
+                        self.assertTrue(bridge.invalidate_if_changed(
+                            turn_epoch=1,state_revision=5,phase="BATTLE"))
+                    else:
+                        bridge.invalidate()
+                    self.assertLess(monotonic() - t0, 1.0)
+                    self.assertIsNotNone(
+                        session.cleanup_future,
+                        "Finalization in progress is not persisted")
+                finally:
+                    resume.set()
+                result = future.result(timeout=12)
+                self.assertEqual(result.status, "REFUSED", result.reason)
+                self.assertIn(session.cleanup_future.result(timeout=12),
+                              ("REVOKED","NO_ROW"))
+                self.assertEqual(read_shadow_comparisons(db), ())
+                self.assertEqual(
+                    read_shadow_comparisons(db,finalized_only=True), ())
+                self.assertEqual(pending_shadow_lease_count(db), 0)
+
+    def test_review_p2_4_cancel_before_finalize_starts(self):
+        self._test_review_p2_4_cancel_during_finalization(
+            pause_at="before",revision_change=False)
+
+    def test_review_p2_4_cancel_inside_finalize_transaction(self):
+        self._test_review_p2_4_cancel_during_finalization(
+            pause_at="inside",revision_change=True)
+
+    def test_review_p2_4_cancel_after_finalize_commit(self):
+        self._test_review_p2_4_cancel_during_finalization(
+            pause_at="after",revision_change=True)
 
     def test_review_p2_2_off_after_completed_write_preserves_history(self):
         """A commit accepted while enabled must not be erased by later OFF."""
@@ -347,6 +444,7 @@ class ParallelShadowSessionTests(unittest.TestCase):
             self.assertEqual(len(read_shadow_comparisons(db)), 1)
             self.assertEqual(
                 len(read_shadow_comparisons(db, finalized_only=True)), 1)
+            self.assertEqual(pending_shadow_lease_count(db), 0)
 
 
 if __name__ == "__main__":
