@@ -147,5 +147,68 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
         ))
 
 
+    def test_issue_203_manual_branch_test_release_isolated_from_trusted_master(self):
+        workflow = (ROOT / ".github/workflows/windows-development-release.yml").read_text(
+            encoding="utf-8")
+        master_publisher = (ROOT / "scripts/publish_windows_development_release.ps1").read_text(
+            encoding="utf-8")
+        branch_publisher = (ROOT / "scripts/publish_windows_branch_test_release.ps1").read_text(
+            encoding="utf-8")
+        cleanup = (ROOT / "scripts/prune_development_releases.py").read_text(
+            encoding="utf-8")
+
+        # Manual dispatch uses the Actions "Use workflow from" branch selector.
+        # PR events must never grant a write-token release job.
+        self.assertIn("  push:\\n    branches: [master]", workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertIn("branch_test_release:", workflow)
+        self.assertIn("type: boolean", workflow)
+        self.assertIn("default: false", workflow)
+        self.assertNotIn("  pull_request:", workflow)
+        self.assertIn("github.actor == 'hatsu07'", workflow)
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
+        self.assertIn("startsWith(github.ref, 'refs/heads/')", workflow)
+        self.assertIn("inputs.branch_test_release == true", workflow)
+        self.assertIn("Checkout", workflow)
+        self.assertIn("github.sha", workflow)
+        self.assertIn("if: github.ref != 'refs/heads/master'", workflow)
+        self.assertIn("Verify explicit manual branch-test publication consent", workflow)
+        self.assertIn("if: github.ref == 'refs/heads/master'", workflow)
+        self.assertIn("Verify master derives from a successful PR", workflow)
+
+        # Both branches build/smoke the same two EXEs, but separate publishers
+        # and release tags ensure a manual build never reuses master releases.
+        self.assertIn("Publish verified master DEVELOPMENT prerelease", workflow)
+        self.assertIn("Publish manual BRANCH_TEST_ONLY prerelease", workflow)
+        self.assertIn("scripts/publish_windows_development_release.ps1", workflow)
+        self.assertIn("scripts/publish_windows_branch_test_release.ps1", workflow)
+        self.assertIn("BRANCH_TEST_RELEASE: ${{ inputs.branch_test_release }}", workflow)
+        self.assertIn('"source_ref=$env:GITHUB_REF"', workflow)
+        self.assertIn("'BRANCH_TEST_ONLY'", workflow)
+        self.assertIn("'SCREEN_DATASET_COLLECTOR_BRANCH_TEST'", workflow)
+        self.assertIn("Smoke desktop GUI headlessly", workflow)
+        self.assertIn("Smoke frozen persistent OCR child", workflow)
+        self.assertIn("Smoke dataset collector GUI offline", workflow)
+        self.assertIn('development-windows-$ReleaseVersion', master_publisher)
+        self.assertIn("$env:GITHUB_REF -ne 'refs/heads/master'", master_publisher)
+
+        self.assertIn("$env:GITHUB_EVENT_NAME -ne 'workflow_dispatch'", branch_publisher)
+        self.assertIn("$env:GITHUB_ACTOR -ne 'hatsu07'", branch_publisher)
+        self.assertIn("$env:BRANCH_TEST_RELEASE -ne 'true'", branch_publisher)
+        self.assertIn("$env:GITHUB_REF -eq 'refs/heads/master'", branch_publisher)
+        self.assertIn('"refs/heads/$env:GITHUB_REF_NAME"', branch_publisher)
+        self.assertIn("$checkedOut -ne $ExpectedSha", branch_publisher)
+        self.assertIn("$env:GITHUB_SHA -ne $ExpectedSha", branch_publisher)
+        self.assertIn("development-branch-windows-", branch_publisher)
+        self.assertIn("-run$env:GITHUB_RUN_ID", branch_publisher)
+        self.assertIn("$Release.target_commitish -ne $ExpectedSha", branch_publisher)
+        self.assertIn("$tagRef.object.sha -ne $ExpectedSha", branch_publisher)
+        self.assertIn("'--target', $ExpectedSha", branch_publisher)
+        self.assertIn("'--prerelease', '--latest=false'", branch_publisher)
+        self.assertIn("Branch-test release must contain exactly two ZIP assets.", branch_publisher)
+        self.assertIn("BRANCH_TEST_ONLY / DEVELOPMENT_ONLY", branch_publisher)
+        self.assertNotIn("development-branch-windows-", cleanup)
+
+
 if __name__ == "__main__":
     unittest.main()
