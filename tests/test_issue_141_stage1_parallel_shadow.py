@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
+from time import monotonic
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +19,11 @@ from champions_assist.local_strategy.observed_full_grid_diagnostic import (
     ObservedFullGridDiagnostic,
 )
 from tests.test_issue_140_foundation import frozen, VERIFIED_ASSETS
+from champions_assist.local_strategy.shadow_comparison_store import (
+    append_shadow_comparison as real_append,
+)
+from champions_assist.local_strategy.ui_shadow_dispatcher import UiShadowDispatcher
+from tests.test_issue_141_selection import make_assets
 
 
 class ParallelShadowSessionTests(unittest.TestCase):
@@ -123,6 +129,92 @@ class ParallelShadowSessionTests(unittest.TestCase):
                 self.assertFalse(db.exists())
             finally:
                 session.close()
+
+    def _test_cancel_during_write(self, *, block_after_commit: bool,
+                                  use_revision_change: bool) -> None:
+        """Event-barrier regression for P2-2; UI never waits for sqlite IO."""
+        entered, resume = Event(), Event()
+        with TemporaryDirectory() as directory:
+            db = Path(directory) / "private" / "shadow.sqlite"
+            bridge = UiShadowDispatcher(db)
+            self.assertEqual(bridge.prepare_storage(), "READY")
+            result = bridge.start(
+                make_assets(), enabled=True, match_id="capture-race",
+                request_id="req-1", turn_epoch=1, state_revision=4,
+                screen_label="TURN_ACTION",
+                observed_state={
+                    "our_active":"A", "opponent_active":"O1",
+                    "selected_three":["A","B","C"]},
+                deadline_monotonic=monotonic()+60)
+            self.assertEqual(result,"RUNNING_UNVERIFIED")
+            session = bridge.session
+
+            def suspended_append(path, record, **kwargs):
+                if block_after_commit:
+                    result = real_append(path, record, **kwargs)
+                entered.set()
+                if not resume.wait(timeout=10):
+                    raise AssertionError("REVIEW_RACE_BARRIER_TIMEOUT")
+                if not block_after_commit:
+                    return real_append(path, record, **kwargs)
+                return result
+
+            with patch(
+                "champions_assist.local_strategy.parallel_shadow_session."
+                "append_shadow_comparison",
+                side_effect=suspended_append):
+                self.assertEqual(bridge.attach_gpt(
+                    request_id="req-1", turn_epoch=1, state_revision=4,
+                    status="ADVICE", advice_present=True, elapsed_ms=25,
+                    fresh=True, reported_screen="MOVE_MENU"),
+                    "JOIN_SUBMITTED_NONACTIONABLE")
+                done = bridge.last_future
+                try:
+                    self.assertTrue(entered.wait(timeout=10))
+                    since = monotonic()
+                    if use_revision_change:
+                        self.assertTrue(bridge.invalidate_if_changed(
+                            turn_epoch=1, state_revision=5, phase="BATTLE"))
+                    else:
+                        bridge.invalidate()  # Actual UI opt-out/stop
+                    self.assertLess(monotonic()-since, 1.0,
+                                    "Qt invalidation must not wait for SQLite")
+                    self.assertIsNotNone(session.cleanup_future)
+                finally:
+                    resume.set()
+                result = done.result(timeout=10)
+                self.assertEqual(result.status, "REFUSED", result.reason)
+                self.assertEqual(
+                    session.cleanup_future.result(timeout=10),
+                    "REVOKED" if block_after_commit else "NO_ROW")
+                self.assertEqual(read_shadow_comparisons(db), (),
+                                 "Old-window success must not survive OFF")
+                bridge.invalidate()
+
+    def test_review_p2_2_off_during_precommit_write(self):
+        self._test_cancel_during_write(
+            block_after_commit=False, use_revision_change=False)
+
+    def test_review_p2_2_revision_change_after_sqlite_commit(self):
+        self._test_cancel_during_write(
+            block_after_commit=True, use_revision_change=True)
+
+    def test_review_p2_2_off_after_completed_write_preserves_history(self):
+        """A commit accepted while enabled must not be erased by later OFF."""
+        snap = frozen()
+        with TemporaryDirectory() as d:
+            db = Path(d) / "shadow.sqlite"
+            session = ParallelShadowSession(
+                snap, VERIFIED_ASSETS, database_path=db,
+                current_snapshot=lambda: snap,
+                preserve="ガブリアス", stopper="ミミッキュ", enabled=True)
+            self.assertEqual(session.start(), "RUNNING")
+            result = session.attach_gpt(BoundGPTAdvice(
+                snap.snapshot_sha256, "GPT_ABSTAIN")).result(timeout=10)
+            self.assertEqual(result.status, "RECORDED")
+            session.close()
+            self.assertIsNone(session.cleanup_future)
+            self.assertEqual(len(read_shadow_comparisons(db)), 1)
 
 
 if __name__ == "__main__":
