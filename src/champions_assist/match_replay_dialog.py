@@ -2573,6 +2573,7 @@ class MatchReplayDialog(QDialog):
                         "_live_state_revision",0),
                     status=report.get("status","UNKNOWN"),
                     advice_present=bool(report.get("recommendation")),
+                    reported_screen=report.get("screen",""),
                     elapsed_ms=int(elapsed) if isinstance(
                         elapsed,(int,float)) else 0,
                     fresh=(not superseded and not self._turn_event_after_action
