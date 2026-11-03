@@ -169,7 +169,7 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn("startsWith(github.ref, 'refs/heads/')", workflow)
         self.assertIn("inputs.branch_test_release == true", workflow)
-        self.assertIn("Checkout", workflow)
+        self.assertIn("actions/checkout@v4", workflow)
         self.assertIn("github.sha", workflow)
         self.assertIn("if: github.ref != 'refs/heads/master'", workflow)
         self.assertIn("Verify explicit manual branch-test publication consent", workflow)
