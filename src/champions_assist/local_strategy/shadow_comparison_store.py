@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+import os
 import re
 import sqlite3
 from typing import Any, Callable
@@ -141,6 +142,53 @@ def _ensure_schema(db: sqlite3.Connection) -> None:
         recorded_at TEXT NOT NULL,
         PRIMARY KEY(match_id, decision_window_id, state_revision)
     )""")
+
+
+def _pending_lease_path(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> Path:
+    """Only a hashed identity goes into this diagnostic sidecar filename."""
+    if not isinstance(record, ShadowComparisonRecord):
+        raise ValueError("SHADOW_LEASE_REQUIRES_RECORD")
+    digest = sha256((
+        record.match_id + ":" + record.decision_window_id + ":" +
+        str(record.state_revision) + ":" + record.snapshot_sha256
+    ).encode("utf-8")).hexdigest()
+    path = Path(database_path)
+    return path.with_name(path.name + ".pending-" + digest)
+
+
+def begin_shadow_lease(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> None:
+    """Durable off-UI failure barrier before the FIRST SQLite write.
+
+    A crash or failed revocation can leave a finalized row, but its lease
+    remains and makes the entire postmatch software report fail closed.
+    No OCR/GPT/action/HP values are written to this marker.
+    """
+    path = _pending_lease_path(database_path, record)
+    if not path.parent.is_dir():
+        raise ValueError("SHADOW_LEASE_DIRECTORY_MISSING")
+    descriptor = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, b"PENDING\n")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def finish_shadow_lease(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> None:
+    """Off-worker only. Clear the barrier AFTER success or confirmed revoke."""
+    _pending_lease_path(database_path, record).unlink()
+
+
+def pending_shadow_lease_count(database_path: str | Path) -> int:
+    """Fail closed on any unfinished write/revoke in the same SQLite corpus."""
+    path = Path(database_path)
+    return sum(1 for _ in path.parent.glob(path.name + ".pending-*"))
 
 
 def _record_fingerprint(record: ShadowComparisonRecord) -> str:
