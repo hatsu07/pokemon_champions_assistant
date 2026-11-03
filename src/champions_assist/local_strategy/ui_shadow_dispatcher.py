@@ -26,6 +26,7 @@ class UiShadowDispatcher:
         self.request_id: str | None = None
         self.turn_epoch: int | None = None
         self.revision: int | None = None
+        self.screen_label: str | None = None
         self.last_future: Any | None = None
 
     def prepare_storage(self) -> str:
@@ -43,6 +44,7 @@ class UiShadowDispatcher:
         self.request_id = None
         self.turn_epoch = None
         self.revision = None
+        self.screen_label = None
         if latch is not None:
             latch.invalidate()
         if session is not None:
@@ -84,6 +86,7 @@ class UiShadowDispatcher:
         self.latch, self.session = latch, session
         self.request_id, self.turn_epoch, self.revision = (
             request_id, turn_epoch, state_revision)
+        self.screen_label = screen_label
         return "RUNNING_UNVERIFIED"
 
     def invalidate_if_changed(self, *, turn_epoch: int,
@@ -99,7 +102,7 @@ class UiShadowDispatcher:
     def attach_gpt(self, *, request_id: str, turn_epoch: int,
                    state_revision: int, status: str,
                    advice_present: bool, elapsed_ms: int,
-                   fresh: bool) -> str:
+                   fresh: bool, reported_screen: str) -> str:
         """Nonblocking: returns immediately and never examines GPT free text."""
         if self.session is None:
             return "NOT_RUNNING"
@@ -112,6 +115,12 @@ class UiShadowDispatcher:
                 or elapsed_ms > 600000):
             self.invalidate()
             return "INVALID_GPT_TIMING"
+        if (self.screen_label == "TURN_ACTION"
+                and reported_screen not in ("MOVE_MENU", "COMMAND_MENU")
+                or self.screen_label == "SWITCH_SELECTION"
+                and reported_screen != "PARTY_MENU"):
+            self.invalidate()
+            return "GPT_SCREEN_NOT_SAME_DECISION"
         if status not in {"ADVICE", "PROVISIONAL_ADVICE"} or not advice_present:
             # BLOCKED/NO_ACTION/TEST_ONLY are not evidence that a GPT
             # response was actually produced. Never manufacture a GPT
