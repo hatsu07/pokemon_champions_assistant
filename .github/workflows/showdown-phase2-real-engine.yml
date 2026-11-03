@@ -15,6 +15,9 @@ on:
       - 'src/champions_assist/preload.py'
       - 'src/champions_assist/local_strategy/roster_mapping_readiness.py'
       - 'scripts/report_phase2_champions_key_candidates.py'
+      - 'scripts/report_phase2_static_move_compat.py'
+      - 'src/champions_assist/local_strategy/static_move_compatibility.py'
+      - 'tests/test_issue_141_stage1_static_compat.py'
       - 'src/champions_assist/local_strategy/engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_window_bound_readout_transport.py'
@@ -103,6 +106,20 @@ jobs:
           SHOWDOWN_PINNED_BUILD_ROOT: ${{ github.workspace }}/pinned-showdown
           CHAMPIONS_SOURCE_KEY_CANDIDATES_JSON: ${{ runner.temp }}/issue141-source-key-candidates.json
         run: node --test local_simulator/test_real_pinned_champions_roster_lookup.cjs
+      - name: Generate exact static move fields from Champions fixed masters
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}
+          CHAMPIONS_STATIC_MOVES_JSON: ${{ runner.temp }}/issue141-static-24.json
+        run: |
+          set -euo pipefail
+          python scripts/report_phase2_static_move_compat.py --masters-dir masters > "$CHAMPIONS_STATIC_MOVES_JSON"
+          python -m json.tool "$CHAMPIONS_STATIC_MOVES_JSON" > /dev/null
+      - name: Compare static fields to actual pinned Champions Dex
+        env:
+          SHOWDOWN_PINNED_BUILD_ROOT: ${{ github.workspace }}/pinned-showdown
+          CHAMPIONS_STATIC_MOVES_JSON: ${{ runner.temp }}/issue141-static-24.json
+        run: node --test local_simulator/test_real_pinned_static_move_compat.cjs
       - name: Metadata boundary and no LIVE promotion
         if: always()
         run: echo 'Dex entry existence is NOT Champions game compatibility, Mega-Z support, legality or LIVE ranking.' >> "$GITHUB_STEP_SUMMARY"
