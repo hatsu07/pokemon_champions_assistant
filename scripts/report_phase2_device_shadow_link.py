@@ -47,6 +47,8 @@ def main() -> int:
                         help="Off-match registered teams/index and LIVE assets")
     parser.add_argument("--masters-dir", type=Path,
                         help="Current fixed Champions masters")
+    parser.add_argument("--environment-snapshot", type=Path,
+                        help="Exact archived Singles snapshot for registered LIVE assets")
     args = parser.parse_args()
     try:
         device = _json_file(args.device_packet, MAX_PACKET)
@@ -61,7 +63,9 @@ def main() -> int:
         if (args.data_root is None) != (args.masters_dir is None):
             raise ValueError("BOTH_REGISTERED_SOURCE_ROOTS_REQUIRED")
         sources = (None if args.data_root is None else
-                   RegisteredSourceContext(args.data_root, args.masters_dir))
+                   RegisteredSourceContext(
+                       args.data_root, args.masters_dir,
+                       args.environment_snapshot))
         audit = audit_offline_device_shadow_link(
             device, team_id=args.team_id,
             team_fingerprint=args.team_fingerprint,

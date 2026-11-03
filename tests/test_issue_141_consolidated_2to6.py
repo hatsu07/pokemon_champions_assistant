@@ -6,9 +6,12 @@ Windows live local model display.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -33,6 +36,7 @@ from champions_assist.team_management import (
     TeamRepository, TeamDocument, regulation_scope,
 )
 from champions_assist.preload import MasterPreloader
+from champions_assist.local_strategy.shadow_comparison_store import append_shadow_comparison
 from tests.test_issue_141_device_shadow_evidence_link import fixture
 from tests.test_issue_141_gui_timing_trace_audit import scene
 
@@ -198,6 +202,82 @@ class ConsolidatedPhase2Tests(unittest.TestCase):
             self.assertFalse(report.game_capture_independently_authenticated)
             self.assertFalse(report.champions_mechanics_verified)
             self.assertFalse(report.phase2_accepted)
+
+    def test_single_cli_accepts_all_five_input_types_but_never_game_passes(self):
+        # This is the actual user-facing one-command path. All five alleged
+        # captures are synthetic bytes; CLI may not claim real battle truth.
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            record, fp, ownsha, reg, _, _ = register_and_prepare(root)
+            packet, rows, frames, goldens = fixture(root)
+            packet.update(team_id=record.team_id, team_fingerprint=fp,
+                          regulation=reg)
+            csv_sha_rows = tuple(replace(row, team_sha256=ownsha)
+                                 for row in rows)
+            db = root / "offline.sqlite"
+            for record_row in csv_sha_rows:
+                self.assertEqual(append_shadow_comparison(db, record_row),
+                                 "RECORDED")
+            packet_path = root / "device.json"
+            packet_path.write_text(json.dumps(packet), encoding="utf-8")
+            ann_path = root / "annotations.json"
+            ann_path.write_text(json.dumps({
+                "frames": [asdict(v) for v in frames],
+                "goldens": [asdict(v) for v in goldens],
+            }), encoding="utf-8")
+            gui = scene(turns=2)
+            for e in gui["timing_observations"]["events"]:
+                if e.get("match_id") == "capture-actual-opaque":
+                    e["match_id"] = "SYNTHETIC-0"
+            gui_path = root / "match-export.json"
+            gui_path.write_text(json.dumps(gui), encoding="utf-8")
+            repo_root = Path(__file__).resolve().parents[1]
+            env = dict(os.environ)
+            env["PYTHONPATH"] = os.pathsep.join((
+                str(repo_root / "src"), str(repo_root),
+                env.get("PYTHONPATH", "")))
+            env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+            result = subprocess.run([
+                sys.executable, "scripts/report_phase2_2to6.py",
+                "--device-packet", str(packet_path),
+                "--annotations", str(ann_path),
+                "--shadow-sqlite", str(db),
+                "--data-root", str(root),
+                "--masters-dir", str(MASTER),
+                "--team-id", record.team_id,
+                "--team-fingerprint", fp,
+                "--frozen-team-sha256", ownsha,
+                "--regulation", reg,
+                "--gui-export", str(gui_path),
+            ], cwd=repo_root, env=env, capture_output=True,
+               text=True, encoding="utf-8", timeout=50)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            doc = json.loads(result.stdout)
+            self.assertEqual(doc["status"], "INCOMPLETE_REAL_GAME_ACCEPTANCE")
+            self.assertEqual(doc["registered_source_binding"]["source_identity_cross_bound"], True)
+            self.assertTrue(doc["device_and_shadow"]["team_identity_cross_bound"])
+            self.assertEqual(doc["phase2_2to6"]["locally_bound_shadow_windows"], 10)
+            self.assertEqual(doc["phase2_2to6"]["gpt_gui_matched_matches"], 1)
+            self.assertEqual(doc["phase2_2to6"]["match_count"], 5)
+            self.assertFalse(doc["phase2_2to6"]["phase2_accepted"])
+            self.assertFalse(doc["device_and_shadow"]["phase2_accepted"])
+
+    def test_incomplete_input_cannot_be_misreported_as_device_pass(self):
+        from champions_assist.local_strategy.roster_mapping_readiness import (
+            RosterMappingReadiness)
+        from champions_assist.local_strategy.device_shadow_evidence_link import (
+            DeviceShadowLinkAudit)
+        report = consolidated_phase2_report(
+            roster=RosterMappingReadiness(
+                "STRUCTURAL_IDS_PRESENT_UNATTESTED", "ONLY_FORMAT",
+                worker_id_fields_structurally_complete=True,
+                inspected_members=5, checked_move_slots=24),
+            device=DeviceShadowLinkAudit(
+                "EVIDENCE_LINK_REFUSED", "CAPTURE_INVALID",
+                match_count=1),
+            expected_match_ids=("match-A",))
+        self.assertEqual(report.status, "CONSOLIDATED_AUDIT_REFUSED")
+        self.assertFalse(report.phase2_accepted)
 
     def test_aggregator_refuses_unrelated_and_duplicated_gui_matches(self):
         from champions_assist.local_strategy.roster_mapping_readiness import (

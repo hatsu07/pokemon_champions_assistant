@@ -51,6 +51,8 @@ def main() -> int:
     parser.add_argument("--gui-export", action="append", type=Path, default=[])
     parser.add_argument("--data-root", required=True, type=Path)
     parser.add_argument("--masters-dir", required=True, type=Path)
+    parser.add_argument("--environment-snapshot", type=Path,
+                        help="Exact archived Singles snapshot used to prepare these LIVE assets")
     parser.add_argument("--team-id", required=True)
     parser.add_argument("--team-fingerprint", required=True)
     parser.add_argument("--frozen-team-sha256", required=True)
@@ -67,7 +69,8 @@ def main() -> int:
         frames = tuple(CapturedTurnLink(**item) for item in labels["frames"])
         goldens = tuple(GoldenReviewClaim(**item) for item in labels["goldens"])
         rows = read_shadow_comparisons(args.shadow_sqlite)
-        context = RegisteredSourceContext(args.data_root, args.masters_dir)
+        context = RegisteredSourceContext(
+            args.data_root, args.masters_dir, args.environment_snapshot)
         bound = bind_registered_team_sources(
             context, team_id=args.team_id,
             team_fingerprint=args.team_fingerprint,

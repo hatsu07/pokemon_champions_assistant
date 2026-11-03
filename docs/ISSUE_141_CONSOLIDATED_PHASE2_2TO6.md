@@ -70,6 +70,13 @@ python scripts/report_phase2_2to6.py \
   --gui-export path/to/gui-match-B-export.json
 ```
 
+If the generated LIVE asset manifest references a Singles environment
+snapshot, supply the **exact archived input bytes** as
+`--environment-snapshot path/to/snapshot.json`. Without that source, the
+current-source fingerprint verification will fail closed rather than
+pretend the matrix/lookup are fresh. Registered CSV/index changes during
+the audit are rechecked before reporting a local source match.
+
 Repeat `--gui-export` for all captured human matches. For real evidence,
 at least five observed human matches and independent review are required
 by the existing v3 device gate. The GUI timing exporter provides local

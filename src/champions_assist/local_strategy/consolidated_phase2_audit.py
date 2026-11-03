@@ -89,13 +89,25 @@ def consolidated_phase2_report(
             "CROSS_MATCH_MISMATCH", "CROSS_MATCH_MISMATCH",
             "CROSS_MATCH_MISMATCH", "CROSS_MATCH_MISMATCH",
             missing_evidence=("UNRELATED_OR_DUPLICATED_MATCH_REPORT",))
-    fields_ok = roster.worker_id_fields_structurally_complete
+    if device.status != "STRUCTURALLY_LINKED_UNVERIFIED":
+        return ConsolidatedPhase2Report(
+            "CONSOLIDATED_AUDIT_REFUSED", "INVALID_DEVICE_LINK",
+            "INVALID_DEVICE_LINK", "INVALID_DEVICE_LINK",
+            "INVALID_DEVICE_LINK", "INVALID_DEVICE_LINK",
+            missing_evidence=("DEVICE_SQLITE_LINK_FAILED",))
+    fields_ok = (
+        roster.status == "STRUCTURAL_IDS_PRESENT_UNATTESTED"
+        and roster.worker_id_fields_structurally_complete
+        and roster.inspected_members == 6
+        and roster.checked_move_slots == 24
+        and not roster.missing_fields
+        and not roster.invalid_fields)
     # Only format/string coverage of own IDs; not game-derived mapping.
     species = roster.inspected_members if fields_ok else 0
     moves = roster.checked_move_slots if fields_ok else 0
     same_source = device.team_identity_cross_bound
-    synthetic = sum(m.synthetic_turn_status not in (
-        "NOT_RUN", "NOT_RUN_NO_COMPLETE_SYNTHETIC_BATTLE") for m in reports)
+    synthetic = sum(m.synthetic_turn_status == "MODEL_DIAGNOSTIC"
+                    for m in reports)
     assessed = sum(m.prep_assessed_pairs for m in reports)
     finished = sum(
         m.prep_status == "ASSESSED_18_CONDITIONAL_ONLY"

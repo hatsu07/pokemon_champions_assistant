@@ -113,6 +113,10 @@ def bind_registered_team_sources(
                 or manifest.get("team_file") != csv_path.name
                 or manifest.get("team_regulation") != regulation):
             return _no("REGISTERED_TEAM_MANIFEST_IDENTITY_MISMATCH")
+        if (sha256(csv_path.read_bytes()).hexdigest() != frozen_team_sha256
+                or TeamRepository(index_dir, catalog=None).get(team_id).sha256
+                   != record.sha256):
+            return _no("REGISTERED_TEAM_CHANGED_DURING_AUDIT")
         return RegisteredTeamSourceBinding(
             status="LOCAL_REGISTERED_SOURCES_CROSS_BOUND",
             reason="LOCAL_FILES_ONLY_NOT_GAME_CAPTURE_PROOF",
