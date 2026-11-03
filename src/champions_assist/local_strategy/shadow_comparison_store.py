@@ -11,15 +11,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+import os
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from .models import FrozenBattleState, action_digest, fingerprint
 from .observed_full_grid_diagnostic import ObservedFullGridDiagnostic
 
 _SCHEMA = "issue141-shadow-same-state-v2"
 _TABLE = "phase2_shadow_same_state_v2"
+_ACCEPTED_TABLE = "phase2_shadow_finalized_v1"
 _LOCAL_STATUSES = frozenset({"NO_RANKING", "MODEL_DIAGNOSTIC"})
 _GPT_STATUSES = frozenset({"GPT_ADVICE", "GPT_ABSTAIN", "GPT_UNVERIFIED"})
 
@@ -142,6 +144,134 @@ def _ensure_schema(db: sqlite3.Connection) -> None:
     )""")
 
 
+def _pending_lease_path(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> Path:
+    """Only a hashed identity goes into this diagnostic sidecar filename."""
+    if not isinstance(record, ShadowComparisonRecord):
+        raise ValueError("SHADOW_LEASE_REQUIRES_RECORD")
+    digest = sha256((
+        record.match_id + ":" + record.decision_window_id + ":" +
+        str(record.state_revision) + ":" + record.snapshot_sha256
+    ).encode("utf-8")).hexdigest()
+    path = Path(database_path)
+    return path.with_name(path.name + ".pending-" + digest)
+
+
+def begin_shadow_lease(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> None:
+    """Durable off-UI failure barrier before the FIRST SQLite write.
+
+    A crash or failed revocation can leave a finalized row, but its lease
+    remains and makes the entire postmatch software report fail closed.
+    No OCR/GPT/action/HP values are written to this marker.
+    """
+    path = _pending_lease_path(database_path, record)
+    if not path.parent.is_dir():
+        raise ValueError("SHADOW_LEASE_DIRECTORY_MISSING")
+    descriptor = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, b"PENDING\n")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def finish_shadow_lease(
+    database_path: str | Path, record: ShadowComparisonRecord,
+) -> None:
+    """Off-worker only. Clear the barrier AFTER success or confirmed revoke."""
+    # Both the worker and its serialized cleanup task can independently
+    # finish the SAME revocation. Removing the barrier must be idempotent.
+    _pending_lease_path(database_path, record).unlink(missing_ok=True)
+
+
+def pending_shadow_lease_count(database_path: str | Path) -> int:
+    """Fail closed on any unfinished write/revoke in the same SQLite corpus."""
+    path = Path(database_path)
+    return sum(1 for _ in path.parent.glob(path.name + ".pending-*"))
+
+
+def _record_fingerprint(record: ShadowComparisonRecord) -> str:
+    """Fingerprint all stored fields (not just a reused match/window ID)."""
+    fields = tuple(ShadowComparisonRecord.__dataclass_fields__)
+    return fingerprint([getattr(record, name) for name in fields])
+
+
+def _ensure_finalized_schema(db: sqlite3.Connection) -> None:
+    db.execute(f"""CREATE TABLE IF NOT EXISTS {_ACCEPTED_TABLE} (
+        match_id TEXT NOT NULL,
+        decision_window_id TEXT NOT NULL,
+        state_revision INTEGER NOT NULL,
+        snapshot_sha256 TEXT NOT NULL,
+        record_sha256 TEXT NOT NULL,
+        PRIMARY KEY(match_id, decision_window_id, state_revision)
+    )""")
+
+
+def finalize_shadow_comparison(
+    database_path: str | Path, record: ShadowComparisonRecord,
+    *, active_at_commit: Callable[[], bool] | None = None,
+) -> str:
+    """Durable proof that _finish accepted an *already committed* row.
+
+    This runs off the GUI thread only AFTER the session's in-memory commit
+    decision, which is serialized against OFF/new revision by the short lock.
+    A row whose cleanup fails or crashes before this separate acknowledgment
+    remains in raw SQLite, but cannot be counted by the software audit.
+    """
+    if not isinstance(record, ShadowComparisonRecord):
+        raise ValueError("FINALIZED_SHADOW_RECORD_REQUIRED")
+    if active_at_commit is not None:
+        if not callable(active_at_commit):
+            raise ValueError("INVALID_FINALIZATION_FENCE")
+        if active_at_commit() is not True:
+            raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_FINALIZATION")
+    path = Path(database_path)
+    if not path.is_file():
+        raise ValueError("UNCOMMITTED_SHADOW_DATABASE")
+    fields = tuple(ShadowComparisonRecord.__dataclass_fields__)
+    serialized = tuple(
+        int(value) if isinstance(value, bool) else value
+        for value in (getattr(record, name) for name in fields))
+    key = (record.match_id, record.decision_window_id, record.state_revision)
+    with closing(sqlite3.connect(path, timeout=3.0)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_TABLE,)).fetchone() is None:
+            raise ValueError("SHADOW_ROW_MISSING_AT_FINALIZATION")
+        row = db.execute(
+            "SELECT " + ",".join(fields) + " FROM " + _TABLE +
+            " WHERE match_id=? AND decision_window_id=? AND state_revision=?",
+            key).fetchone()
+        if row != serialized:
+            raise ValueError("SHADOW_ROW_CHANGED_BEFORE_FINALIZATION")
+        _ensure_finalized_schema(db)
+        digest = _record_fingerprint(record)
+        old = db.execute(
+            "SELECT snapshot_sha256,record_sha256 FROM " + _ACCEPTED_TABLE +
+            " WHERE match_id=? AND decision_window_id=? AND state_revision=?",
+            key).fetchone()
+        if old is not None:
+            if old != (record.snapshot_sha256, digest):
+                raise ValueError("CONFLICTING_SHADOW_FINALIZATION")
+            if active_at_commit is not None and active_at_commit() is not True:
+                raise ValueError("SHADOW_WINDOW_REVOKED_DURING_FINALIZATION")
+            return "ALREADY_FINALIZED"
+        db.execute(
+            "INSERT INTO " + _ACCEPTED_TABLE +
+            " (match_id,decision_window_id,state_revision,snapshot_sha256,"
+            "record_sha256) VALUES (?,?,?,?,?)",
+            (*key, record.snapshot_sha256, digest))
+        # Like append, run the revocation check while still inside
+        # BEGIN IMMEDIATE, so the transaction rolls back on cancellation.
+        if active_at_commit is not None and active_at_commit() is not True:
+            raise ValueError("SHADOW_WINDOW_REVOKED_DURING_FINALIZATION")
+    return "FINALIZED"
+
+
 def build_shadow_comparison(
     submitted: FrozenBattleState, current: FrozenBattleState,
     gpt: BoundGPTAdvice, local: ObservedFullGridDiagnostic | None,
@@ -239,15 +369,25 @@ def build_shadow_comparison(
 
 def append_shadow_comparison(
     database_path: str | Path, record: ShadowComparisonRecord,
+    *, active_at_commit: Callable[[], bool] | None = None,
 ) -> str:
     """Append exactly one atomic same-window record. Never overwrite evidence.
 
     Repeated identical inserts are idempotent. A different snapshot, verdict,
     timing or GPT result for an existing match/window/revision is rejected.
     Call only from an explicitly opted-in shadow/diagnostic task, not LIVE.
+
+    An optional revocation fence is checked INSIDE the SQLite write transaction
+    just before commit. The opt-in concurrent caller must additionally enqueue
+    a serialized off-GUI exact-window purge at invalidation, because the cancel
+    event can race with the micro-gap between the fence and SQLite commit.
     """
     if not isinstance(record, ShadowComparisonRecord):
         raise ValueError("INVALID_SHADOW_RECORD")
+    if active_at_commit is not None and not callable(active_at_commit):
+        raise ValueError("INVALID_SHADOW_REVOCATION_FENCE")
+    if active_at_commit is not None and active_at_commit() is not True:
+        raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_WRITE")
     path = Path(database_path)
     if not path.parent.is_dir():
         raise ValueError("DATABASE_DIRECTORY_MISSING")
@@ -314,30 +454,119 @@ def append_shadow_comparison(
         if old is not None:
             if tuple(old) != tuple(int(v) if isinstance(v, bool) else v for v in values):
                 raise ValueError("CONFLICTING_SAME_WINDOW_RECORD")
+            if active_at_commit is not None and active_at_commit() is not True:
+                raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_EXISTING_ROW")
             return "ALREADY_RECORDED"
         db.execute(
             "INSERT INTO " + _TABLE + "(schema," +
             ",".join(cols) + ") VALUES (" +
             ",".join("?" for _ in range(len(cols)+1)) + ")",
             (_SCHEMA, *(int(v) if isinstance(v, bool) else v for v in values)))
+        # A cancellation while waiting for SQLite BEGIN IMMEDIATE or during
+        # INSERT must roll back the entire transaction, not leave evidence.
+        if active_at_commit is not None and active_at_commit() is not True:
+            raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_COMMIT")
     return "RECORDED"
 
 
-def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparisonRecord, ...]:
-    """Read recorded aggregate facts only. No updates or action adoption."""
+def revoke_shadow_comparison(
+    database_path: str | Path, *,
+    match_id: str, decision_window_id: str, state_revision: int,
+    snapshot_sha256: str,
+) -> str:
+    """Remove a revoked in-flight result by *exact* identity off the UI.
+
+    Never touch another match/window/revision/snapshot. Called as the next
+    job on the SAME single-worker executor after any pending SQLite append;
+    this serialization is essential even if close() happened during commit.
+    Previous finished/accepted records are not revoked by session.close().
+    """
+    if (_SAFE_IDENTIFIER.fullmatch(match_id or "") is None
+            or _SAFE_IDENTIFIER.fullmatch(decision_window_id or "") is None
+            or type(state_revision) is not int or state_revision < 0
+            or not isinstance(snapshot_sha256, str)
+            or _HEX64.fullmatch(snapshot_sha256) is None):
+        raise ValueError("INVALID_SHADOW_REVOKE_IDENTITY")
     path = Path(database_path)
     if not path.is_file():
+        return "NO_ROW"
+    with closing(sqlite3.connect(path, timeout=3.0)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_TABLE,)).fetchone() is None:
+            return "NO_ROW"
+        identity = (match_id, decision_window_id, state_revision,
+                    snapshot_sha256)
+        deleted = db.execute(
+            "DELETE FROM " + _TABLE +
+            " WHERE match_id=? AND decision_window_id=? AND state_revision=?"
+            " AND snapshot_sha256=?", identity).rowcount
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_ACCEPTED_TABLE,)).fetchone() is not None:
+            db.execute(
+                "DELETE FROM " + _ACCEPTED_TABLE +
+                " WHERE match_id=? AND decision_window_id=? AND state_revision=?"
+                " AND snapshot_sha256=?", identity)
+    return "REVOKED" if deleted else "NO_ROW"
+
+
+def read_shadow_comparisons(
+    database_path: str | Path, *, finalized_only: bool = False,
+) -> tuple[ShadowComparisonRecord, ...]:
+    """Read raw rows, or only separately finalized software evidence.
+
+    Raw rows are NOT accepted-stage proof: a failed cleanup may leave a
+    revoked, never-finalized window in the same SQLite file.
+    """
+    path = Path(database_path)
+    if not path.is_file():
+        return ()
+    if finalized_only and pending_shadow_lease_count(path):
+        # A committed finalized receipt is NOT yet auditable while the
+        # finalizing future is still in progress or revocation is unresolved.
         return ()
     uri = "file:" + str(path.resolve()).replace("?", "%3F").replace("#", "%23") + "?mode=ro"
     # Same close guarantee on the read-only path. Otherwise Windows cannot
     # remove a database after a diagnostic read even when the SELECT ended.
     with closing(sqlite3.connect(uri, uri=True)) as db:
+        # A revoked transaction can roll back the *first CREATE TABLE*:
+        # SQLite file exists but has no committed schema. That means zero
+        # recorded evidence, not a successful or corrupted shadow row.
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_TABLE,)).fetchone() is None:
+            return ()
         cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
-        records = db.execute(
-            "SELECT " + ",".join(cols) +
-            " FROM " + _TABLE + " ORDER BY match_id,decision_window_id,state_revision"
-        ).fetchall()
-    return tuple(ShadowComparisonRecord(
+        query = ("SELECT " + ",".join(cols) + " FROM " + _TABLE +
+                 " ORDER BY match_id,decision_window_id,state_revision")
+        if finalized_only:
+            if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (_ACCEPTED_TABLE,)).fetchone() is None:
+                return ()
+            accepted = {
+                (match, window, revision): (snapshot, digest)
+                for match, window, revision, snapshot, digest in db.execute(
+                    "SELECT match_id,decision_window_id,state_revision,"
+                    "snapshot_sha256,record_sha256 FROM " + _ACCEPTED_TABLE)
+            }
+        else:
+            accepted = None
+        records = db.execute(query).fetchall()
+    results = tuple(ShadowComparisonRecord(
         *(bool(v) if name in ("gpt_action_verified_in_window", "input_deadline_met") else v
           for name, v in zip(cols, row)))
         for row in records)
+    if accepted is None:
+        return results
+    if pending_shadow_lease_count(path):
+        # Check again after the read in case an in-flight writer started
+        # while opening SQLite. Avoid accepting mixed-window snapshots.
+        return ()
+    return tuple(
+        record for record in results
+        if accepted.get((record.match_id, record.decision_window_id,
+                         record.state_revision)) ==
+           (record.snapshot_sha256, _record_fingerprint(record)))

@@ -70,6 +70,7 @@ def stage_prep18(
     opponents: tuple[str, str, str, str, str, str],
     *,
     reviewed_assessment: PrepResult | None = None,
+    cached_matrix_rows_six: tuple[str, ...] | None = None,
 ) -> Prep18Audit:
     """Extract six rows exactly once; evaluate lead6 then bench12 in order.
 
@@ -96,7 +97,20 @@ def stage_prep18(
         own = _own_matrix_names(assets)
         if not set(selected_three).issubset(own):
             return _no("SELECTED_TEAM_NOT_REGISTERED")
-        raw_rows = assets.matrix_rows_for(opponents)
+        if cached_matrix_rows_six is not None:
+            # Exact source-bound reuse from the preceding selector call.
+            # A supplied six-row cache must match the frozen matrix bytes;
+            # never trust a caller's edited matchup or arbitrary alias.
+            if (not isinstance(cached_matrix_rows_six, tuple)
+                    or len(cached_matrix_rows_six) != 6
+                    or any(type(row) is not str or
+                           row != assets.matrix_index.get(opponent)
+                           for opponent, row in zip(
+                               opponents, cached_matrix_rows_six))):
+                return _no("CACHED_MATRIX_SIX_NOT_SOURCE_BOUND")
+            raw_rows = cached_matrix_rows_six
+        else:
+            raw_rows = assets.matrix_rows_for(opponents)
         slots = {name: idx for idx, name in enumerate(own)}
         ordered = (lead, *(name for name in selected_three if name != lead))
         cells: list[Prep18Cell] = []
