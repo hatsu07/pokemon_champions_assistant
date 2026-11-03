@@ -52,7 +52,7 @@ class UiShadowDispatcherTests(unittest.TestCase):
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1", turn_epoch=1, state_revision=4,
                 status="ADVICE", advice_present=True, elapsed_ms=550,
-                fresh=True), "JOIN_SUBMITTED_NONACTIONABLE")
+                fresh=True,reported_screen="MOVE_MENU"), "JOIN_SUBMITTED_NONACTIONABLE")
             receipt = bridge.last_future.result(timeout=10)
             self.assertEqual(receipt.status,"RECORDED",receipt.reason)
             self.assertFalse(receipt.ready_for_live)
@@ -68,7 +68,7 @@ class UiShadowDispatcherTests(unittest.TestCase):
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1",turn_epoch=1,state_revision=4,
                 status="ADVICE",advice_present=True,elapsed_ms=550,
-                fresh=True), "DUPLICATE_OR_CLOSED")
+                fresh=True,reported_screen="MOVE_MENU"), "DUPLICATE_OR_CLOSED")
             bridge.invalidate()
 
     def test_revision_advance_and_new_window_refuse_old_gpt(self):
@@ -82,14 +82,14 @@ class UiShadowDispatcherTests(unittest.TestCase):
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1",turn_epoch=1,state_revision=4,
                 status="ADVICE",advice_present=True,elapsed_ms=500,
-                fresh=True), "NOT_RUNNING")
+                fresh=True,reported_screen="MOVE_MENU"), "NOT_RUNNING")
             self.assertFalse(database.exists())
             self.assertEqual(dispatch(bridge,request_id="req-2",
                                       state_revision=5), "RUNNING_UNVERIFIED")
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1",turn_epoch=1,state_revision=5,
                 status="ADVICE",advice_present=True,elapsed_ms=500,
-                fresh=True), "STALE_REFUSED")
+                fresh=True,reported_screen="MOVE_MENU"), "STALE_REFUSED")
             self.assertFalse(database.exists())
 
     def test_non_action_screen_and_cancelled_gpt_do_not_write(self):
@@ -103,7 +103,7 @@ class UiShadowDispatcherTests(unittest.TestCase):
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1",turn_epoch=1,state_revision=4,
                 status="CANCELLED",advice_present=False,elapsed_ms=100,
-                fresh=True), "GPT_RESPONSE_NOT_VERIFIED")
+                fresh=True,reported_screen="MOVE_MENU"), "GPT_RESPONSE_NOT_VERIFIED")
             self.assertFalse(database.exists())
 
     def test_invalidated_result_is_not_silent_success(self):
@@ -115,7 +115,7 @@ class UiShadowDispatcherTests(unittest.TestCase):
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1",turn_epoch=1,state_revision=4,
                 status="ADVICE",advice_present=True,elapsed_ms=100,
-                fresh=False), "STALE_REFUSED")
+                fresh=False,reported_screen="MOVE_MENU"), "STALE_REFUSED")
             self.assertFalse(database.exists())
 
 
