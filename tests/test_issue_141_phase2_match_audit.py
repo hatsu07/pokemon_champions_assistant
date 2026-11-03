@@ -224,6 +224,8 @@ class CrossPhaseOfflineAuditTests(unittest.TestCase):
              "PREP_OVER_SHARED_90_SECONDS"),
             (sel(s,started=100,committed=135,finished=189,first_lead=188),
              "PREP_AFTER_OPPONENT_LEAD"),
+            (sel(s,started=100,committed=110,finished=205,first_lead=190),
+             "PREP_AFTER_OPPONENT_LEAD"),
             (sel(s,started=100,committed=135,finished=134),
              "SELECTION_OR_PREP_TIME_REVERSED"),
             (sel(s,started=100,committed=99,finished=120),
@@ -262,6 +264,14 @@ class CrossPhaseOfflineAuditTests(unittest.TestCase):
                 sel(s,started=100,committed=110,finished=130,first_lead=125),
                 s,assets,gpt=gpt_for(s),current_snapshot=lambda:s,
                 database_path=Path(temp)/"lead.sqlite",
+                prep_assessment=full_prep())
+            self.assertEqual(report.prep_time_status,"PREP_AFTER_OPPONENT_LEAD")
+            self.assertEqual(report.prep_assessed_pairs,0)
+        with TemporaryDirectory() as temp:
+            report=audit_offline_phase2_match(
+                sel(s,started=100,committed=110,finished=205,first_lead=190),
+                s,assets,gpt=gpt_for(s),current_snapshot=lambda:s,
+                database_path=Path(temp)/"late_lead.sqlite",
                 prep_assessment=full_prep())
             self.assertEqual(report.prep_time_status,"PREP_AFTER_OPPONENT_LEAD")
             self.assertEqual(report.prep_assessed_pairs,0)

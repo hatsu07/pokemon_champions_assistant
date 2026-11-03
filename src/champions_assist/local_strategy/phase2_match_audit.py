@@ -117,17 +117,19 @@ def _prep_receipt_status(receipt: SelectionPrepReceipt,
     if (receipt.selection_committed_at < receipt.selection_started_at
             or end < receipt.selection_committed_at):
         return "SELECTION_OR_PREP_TIME_REVERSED"
-    # On-time measurement starts at TEAM_SELECTION, not when the player
-    # confirms three Pokémon. A 70-second selection leaves only 20 seconds.
-    # A late result is not a success, but still must not be killed by this
-    # audit timer while the PREP screen is genuinely active.
-    if end - receipt.selection_started_at > SELECTION_PREP_SHARED_SECONDS:
-        return "PREP_OVER_SHARED_90_SECONDS"
+    # A confirmed opponent lead supersedes PREP even when it was ALSO
+    # overtime: screen freshness outranks the advisory 90-second clock.
+    # Never accept a stale 18-pair result solely because it is marked late.
     if (receipt.opponent_lead_seen_at is not None and
             (type(receipt.opponent_lead_seen_at) not in (int, float)
              or not isfinite(receipt.opponent_lead_seen_at)
              or receipt.opponent_lead_seen_at <= end)):
         return "PREP_AFTER_OPPONENT_LEAD"
+    # On-time measurement starts at TEAM_SELECTION, not when the player
+    # confirms three Pokémon. A 70-second selection leaves only 20 seconds.
+    # Overtime is not an asynchronous AI kill switch while PREP stays active.
+    if end - receipt.selection_started_at > SELECTION_PREP_SHARED_SECONDS:
+        return "PREP_OVER_SHARED_90_SECONDS"
     return ("PREP_REPORTED_WITHIN_SHARED_90_SECONDS_UNVERIFIED"
             if assessed is not None else "NO_EVALUATED_PREP")
 
