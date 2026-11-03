@@ -200,6 +200,48 @@ class ParallelShadowSessionTests(unittest.TestCase):
         self._test_cancel_during_write(
             block_after_commit=True, use_revision_change=True)
 
+
+    def test_review_p2_2_cancel_inside_sqlite_transaction_rolls_back(self):
+        """Cancel after INSERT and before COMMIT; no transient audit row."""
+        entered, resume = Event(), Event()
+        snap = frozen()
+        with TemporaryDirectory() as directory:
+            db = Path(directory) / "shadow.sqlite"
+            session = ParallelShadowSession(
+                snap, VERIFIED_ASSETS, database_path=db,
+                current_snapshot=lambda: snap, preserve="ガブリアス",
+                stopper="ミミッキュ", enabled=True)
+            self.assertEqual(session.start(), "RUNNING")
+            def inside_transaction(path, record, **kwargs):
+                original = kwargs["active_at_commit"]
+                n = [0]
+                def pausing_fence():
+                    n[0] += 1
+                    if n[0] == 2:
+                        entered.set()
+                        if not resume.wait(timeout=10):
+                            raise AssertionError("COMMIT_FENCE_TIMEOUT")
+                    return original()
+                return real_append(path, record,
+                                   active_at_commit=pausing_fence)
+            with patch(
+                "champions_assist.local_strategy.parallel_shadow_session."
+                "append_shadow_comparison", side_effect=inside_transaction):
+                future = session.attach_gpt(
+                    BoundGPTAdvice(snap.snapshot_sha256, "GPT_ABSTAIN"))
+                try:
+                    self.assertTrue(entered.wait(timeout=10))
+                    started = monotonic()
+                    session.close()
+                    self.assertLess(monotonic() - started, 1.0)
+                finally:
+                    resume.set()
+                result = future.result(timeout=10)
+                self.assertEqual(result.status, "REFUSED")
+                self.assertIn(session.cleanup_future.result(timeout=10),
+                              ("NO_ROW","REVOKED"))
+                self.assertEqual(read_shadow_comparisons(db), ())
+
     def test_review_p2_2_off_after_completed_write_preserves_history(self):
         """A commit accepted while enabled must not be erased by later OFF."""
         snap = frozen()
