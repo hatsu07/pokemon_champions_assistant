@@ -393,6 +393,12 @@ class ParallelShadowSessionTests(unittest.TestCase):
                     self.assertEqual(
                         pending_shadow_lease_count(db), 1,
                         "Pending audit barrier must predate finalization")
+                    if pause_at == "after":
+                        # Even a committed finalization receipt cannot be
+                        # read as accepted before the in-memory success point.
+                        self.assertEqual(len(read_shadow_comparisons(db)), 1)
+                        self.assertEqual(
+                            read_shadow_comparisons(db, finalized_only=True), ())
                     t0 = monotonic()
                     if revision_change:
                         self.assertTrue(bridge.invalidate_if_changed(
