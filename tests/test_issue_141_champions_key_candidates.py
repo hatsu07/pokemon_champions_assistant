@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 import csv
+from hashlib import sha256
 from io import StringIO
 from pathlib import Path
 from types import MappingProxyType
 import unittest
 
-from champions_assist.preload import MasterPreloader, REQUIRED_MASTER_FILES
+from champions_assist.preload import MasterPreloader, REQUIRED_MASTER_FILES, _parse_team
 from champions_assist.local_strategy.champions_master_key_candidates import (
     audit_champions_master_key_candidates,
 )
@@ -96,6 +97,42 @@ class ChampionsKeyCandidateTests(unittest.TestCase):
         report = run(move=edited_csv(original, edit))
         self.assertEqual(report.status, "INVALID_SOURCE_OR_FROZEN_TEAM")
         self.assertEqual(report.reason, "MALFORMED_OR_AMBIGUOUS_CHAMPIONS_MASTER")
+        self.assertFalse(report.usable_in_live)
+
+    def test_bare_multiform_species_is_not_silently_chosen_by_source_order(self):
+        # The two Champions masters legitimately have six 'ロトム' rows.
+        # A registered team with bare ロトム gives NO exact form identity.
+        assets = MasterPreloader(MASTERS).load_for_new_match()
+        team_name = REQUIRED_MASTER_FILES[3]
+        source = assets.contents[team_name]
+        reader = csv.DictReader(StringIO(source))
+        columns = list(reader.fieldnames)
+        rows = list(reader)
+        member = next(r for r in rows if r.get("record") == "MON"
+                      and r.get("name") == "サーフゴー")
+        member["name"] = "ロトム"
+        out = StringIO()
+        writer = csv.DictWriter(out, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        modified = out.getvalue()
+        contents = dict(assets.contents)
+        contents[team_name] = modified
+        shas = dict(assets.sha256)
+        # Source file is UTF-8-SIG in repo; preserve its SHA contract.
+        shas[team_name] = sha256(b"\xef\xbb\xbf" +
+                                 modified.encode("utf-8")).hexdigest()
+        frozen = replace(
+            assets, contents=MappingProxyType(contents),
+            sha256=MappingProxyType(shas),
+            own_team=_parse_team(modified))
+        report = run(assets=frozen)
+        self.assertEqual(report.status, "SOURCE_CANDIDATES_INCOMPLETE")
+        self.assertIn("ロトム.LearnsetKey", report.unmapped_slots)
+        rotom = next(x for x in report.members if x.registered_name == "ロトム")
+        self.assertEqual(rotom.proposed_base_key, "")
+        self.assertNotIn(rotom.proposed_base_key,
+                         ("rotomwash", "rotomheat", "rotom"))
         self.assertFalse(report.usable_in_live)
 
     def test_unsupported_mega_form_remains_explicit_even_when_names_match(self):

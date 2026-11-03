@@ -68,27 +68,52 @@ def _invalid(reason: str) -> ChampionsKeyCandidateReport:
     return ChampionsKeyCandidateReport("INVALID_SOURCE_OR_FROZEN_TEAM", reason)
 
 
-def _read_master(raw: bytes, required: frozenset[str], name_key: str
-                 ) -> dict[str, dict[str, str]]:
+def _read_master(raw: bytes, required: frozenset[str], name_key: str,
+                 *, form_aware: bool = False
+                 ) -> dict[str, tuple[dict[str, str], ...]]:
+    """Never collapse distinct Champions forms sharing one display species.
+
+    Move names must be unique. Species masters legitimately contain multiple
+    rows named e.g. 'ロトム', differentiated by the 'フォーム/姿' column.
+    If such a form cannot be resolved from the registered team, it remains
+    AMBIGUOUS, never silently selected from source order.
+    """
     if not isinstance(raw, bytes) or not 1 <= len(raw) <= _LIMIT:
         raise ValueError("INVALID_MASTER_BYTES")
     body = raw.decode("utf-8-sig")
     reader = csv.DictReader(StringIO(body))
-    if not required.issubset(reader.fieldnames or ()):
+    needed = required | (frozenset({"フォーム/姿"}) if form_aware
+                         else frozenset())
+    if not needed.issubset(reader.fieldnames or ()):
         raise ValueError("REQUIRED_SOURCE_COLUMNS_MISSING")
-    mapped: dict[str, dict[str, str]] = {}
+    grouped: dict[str, list[dict[str, str]]] = {}
     for row in reader:
         label = row.get(name_key)
         if not isinstance(label, str) or not label or label != label.strip():
             raise ValueError("INVALID_OR_MISSING_SOURCE_NAME")
         normalized = label.translate(_DIGIT_WIDTH)
-        # A width alias must not collapse two independent move names.
-        if normalized in mapped:
-            raise ValueError("AMBIGUOUS_OR_DUPLICATE_SOURCE_NAME")
-        mapped[normalized] = row
-    if not mapped:
+        group = grouped.setdefault(normalized, [])
+        if group:
+            if not form_aware:
+                raise ValueError("DUPLICATE_MOVE_NAME")
+            form = row.get("フォーム/姿")
+            if (not isinstance(form, str) or not form
+                    or any(other.get("フォーム/姿") == form
+                           for other in group)
+                    or any(not other.get("フォーム/姿")
+                           for other in group)):
+                raise ValueError("AMBIGUOUS_FORM_LABEL")
+        group.append(row)
+    if not grouped:
         raise ValueError("EMPTY_SOURCE_CATALOG")
-    return mapped
+    return {name: tuple(rows) for name, rows in grouped.items()}
+
+
+def _one_species(catalog: dict[str, tuple[dict[str, str], ...]],
+                 name: str) -> dict[str, str] | None:
+    """Only unique exact Champions species names may populate a key field."""
+    rows = catalog.get(name, ())
+    return rows[0] if len(rows) == 1 else None
 
 
 def audit_champions_master_key_candidates(
@@ -112,9 +137,10 @@ def audit_champions_master_key_candidates(
         move_master = _read_master(move_master_bytes, frozenset({
             "MoveKey", "技名"}), "技名")
         learnsets = _read_master(learnsets_bytes, frozenset({
-            "ポケモン名", "LearnsetKey", "習得MoveKey一覧"}), "ポケモン名")
+            "ポケモン名", "LearnsetKey", "習得MoveKey一覧"}),
+            "ポケモン名", form_aware=True)
         usable = _read_master(usable_pokemon_bytes, frozenset({
-            "ポケモン名", "区分"}), "ポケモン名")
+            "ポケモン名", "区分"}), "ポケモン名", form_aware=True)
         origin = (
             ("team_csv", assets.sha256[REQUIRED_MASTER_FILES[3]]),
             ("champions_move_master", sha256(move_master_bytes).hexdigest()),
@@ -139,10 +165,10 @@ def audit_champions_master_key_candidates(
                     return _invalid("INVALID_REGISTERED_FORM_LABEL")
             else:
                 base, target = name, ""
-            base_rec = learnsets.get(base)
-            target_rec = learnsets.get(target) if target else None
-            base_usable = usable.get(base)
-            target_usable = usable.get(target) if target else None
+            base_rec = _one_species(learnsets, base)
+            target_rec = _one_species(learnsets, target) if target else None
+            base_usable = _one_species(usable, base)
+            target_usable = _one_species(usable, target) if target else None
             base_key = base_rec.get("LearnsetKey", "") if base_rec else ""
             base_ok = (bool(base_key) and _KEY.fullmatch(base_key) is not None
                        and base_usable is not None)
@@ -170,7 +196,9 @@ def audit_champions_master_key_candidates(
                 if not move_name:
                     continue
                 expected_slots += 1
-                source = move_master.get(move_name.translate(_DIGIT_WIDTH))
+                source_group = move_master.get(
+                    move_name.translate(_DIGIT_WIDTH), ())
+                source = source_group[0] if len(source_group) == 1 else None
                 key = source.get("MoveKey", "") if source else ""
                 valid_key = bool(key) and _KEY.fullmatch(key) is not None
                 membership = key in learned if valid_key else False
