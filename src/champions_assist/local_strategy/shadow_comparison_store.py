@@ -9,16 +9,70 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
 from .models import FrozenBattleState, action_digest, fingerprint
 from .observed_full_grid_diagnostic import ObservedFullGridDiagnostic
 
-_SCHEMA = "issue141-shadow-same-state-v1"
+_SCHEMA = "issue141-shadow-same-state-v2"
+_TABLE = "phase2_shadow_same_state_v2"
 _LOCAL_STATUSES = frozenset({"NO_RANKING", "MODEL_DIAGNOSTIC"})
 _GPT_STATUSES = frozenset({"GPT_ADVICE", "GPT_ABSTAIN", "GPT_UNVERIFIED"})
+
+# Only closed, non-sensitive labels are permitted in durable storage. Raw GPT
+# reason text, OCR snippets, unverified move strings and worker error details
+# remain caller-owned, in-memory data and MUST never cross the SQLite boundary.
+_GPT_REASON_CODES = frozenset({
+    "GPT_REGISTERED_ACTION", "GPT_UNREGISTERED_ACTION",
+    "GPT_ABSTAINED", "GPT_NOT_VERIFIED",
+})
+_LOCAL_REASON_CODES = frozenset({
+    "LOCAL_SYNTHETIC_DIAGNOSTIC", "LOCAL_NOT_RUN",
+    "LOCAL_WORKER_REFUSED", "LOCAL_STALE_OBSERVATION",
+    "LOCAL_DEADLINE", "LOCAL_SOURCE_REFUSED",
+    "LOCAL_READOUT_REFUSED", "LOCAL_P2_REFUSED",
+    "LOCAL_FULL_GRID_REFUSED", "LOCAL_INVALID_INPUT",
+    "LOCAL_OTHER_REFUSAL",
+})
+_LOCAL_REASON_BY_PREFIX = {
+    "SYNTHETIC_P2_OR_TURN_WORKER_UNAVAILABLE": "LOCAL_WORKER_REFUSED",
+    "OBSERVATION_REVISION_CHANGED": "LOCAL_STALE_OBSERVATION",
+    "OBSERVATION_CHANGED_OR_DEADLINE": "LOCAL_DEADLINE",
+    "FROZEN_BATTLE_PREFLIGHT_DEADLINE": "LOCAL_DEADLINE",
+    "PRE_REGISTERED_HYPOTHESES_OR_DEADLINE": "LOCAL_DEADLINE",
+    "SOURCE_BOUND_ACTION_FRONTIER_REFUSED": "LOCAL_SOURCE_REFUSED",
+    "JOINT_SOURCE_INVALID": "LOCAL_SOURCE_REFUSED",
+    "OBSERVED_SYNTHETIC_READOUT_REFUSED": "LOCAL_READOUT_REFUSED",
+    "INCOMPLETE_OR_UNBOUND_SYNTHETIC_P2_REQUEST": "LOCAL_P2_REFUSED",
+    "FROZEN_BATTLE_READOUT_SHA_MISMATCH": "LOCAL_P2_REFUSED",
+    "SYNTHETIC_FULL_GRID_REFUSED": "LOCAL_FULL_GRID_REFUSED",
+    "INVALID_CURRENT_OBSERVED_GRID_REQUEST": "LOCAL_INVALID_INPUT",
+    "INVALID_COMPLETE_SYNTHETIC_BATTLE": "LOCAL_INVALID_INPUT",
+    "SYNTHETIC_BATTLE_SIZE_LIMIT": "LOCAL_INVALID_INPUT",
+}
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,128}\Z")
+
+
+def _local_reason_code(status: str, reason: str) -> str:
+    if status == "MODEL_DIAGNOSTIC":
+        return "LOCAL_SYNTHETIC_DIAGNOSTIC"
+    if not reason:
+        return "LOCAL_NOT_RUN"
+    # Only the known machine-issued reason PREFIX is classified; arbitrary
+    # suffixes and attacker-controlled strings are NEVER stored or hashed.
+    prefix = reason.removeprefix("LOCAL_ABSTAIN:").split(":", 1)[0]
+    return _LOCAL_REASON_BY_PREFIX.get(prefix, "LOCAL_OTHER_REFUSAL")
+
+
+def _gpt_reason_code(status: str, verified: bool) -> str:
+    if status == "GPT_ADVICE":
+        return "GPT_REGISTERED_ACTION" if verified else "GPT_UNREGISTERED_ACTION"
+    return "GPT_ABSTAINED" if status == "GPT_ABSTAIN" else "GPT_NOT_VERIFIED"
 
 
 @dataclass(frozen=True)
@@ -42,12 +96,14 @@ class ShadowComparisonRecord:
     evidence_sha256: str
     allowed_action_digest: str
     gpt_status: str
-    gpt_action_id: str
+    # A digest is kept ONLY for a frozen-window verified action. Never store
+    # GPT-provided action text, even if it resembles a valid move.
+    gpt_action_sha256: str
     gpt_action_verified_in_window: bool
-    gpt_reason: str
+    gpt_reason_code: str
     gpt_elapsed_ms: int
     local_status: str
-    local_reason: str
+    local_reason_code: str
     local_elapsed_ms: int
     hypothetical_branch_count: int
     same_action_comparison: str
@@ -60,7 +116,7 @@ def _valid_time(value: Any) -> bool:
 
 
 def _ensure_schema(db: sqlite3.Connection) -> None:
-    db.execute("""CREATE TABLE IF NOT EXISTS phase2_shadow_same_state (
+    db.execute(f"""CREATE TABLE IF NOT EXISTS {_TABLE} (
         schema TEXT NOT NULL,
         match_id TEXT NOT NULL,
         decision_window_id TEXT NOT NULL,
@@ -71,12 +127,12 @@ def _ensure_schema(db: sqlite3.Connection) -> None:
         evidence_sha256 TEXT NOT NULL,
         allowed_action_digest TEXT NOT NULL,
         gpt_status TEXT NOT NULL,
-        gpt_action_id TEXT NOT NULL,
+        gpt_action_sha256 TEXT NOT NULL,
         gpt_action_verified_in_window INTEGER NOT NULL,
-        gpt_reason TEXT NOT NULL,
+        gpt_reason_code TEXT NOT NULL,
         gpt_elapsed_ms INTEGER NOT NULL,
         local_status TEXT NOT NULL,
-        local_reason TEXT NOT NULL,
+        local_reason_code TEXT NOT NULL,
         local_elapsed_ms INTEGER NOT NULL,
         hypothetical_branch_count INTEGER NOT NULL,
         same_action_comparison TEXT NOT NULL,
@@ -115,15 +171,13 @@ def build_shadow_comparison(
             or not _valid_time(remaining_ms_at_capture)
             or not isinstance(gpt.action_id, str)
             or not isinstance(gpt.reason, str)
-            or len(gpt.reason) > 256
-            or len(gpt.action_id) > 128):
+            ):
         raise ValueError("GPT_OR_TIMING_UNBOUND")
     if gpt.status != "GPT_ADVICE" and gpt.action_id:
         raise ValueError("ABSTAINED_GPT_HAS_ACTION")
     if gpt.status == "GPT_ADVICE" and not gpt.action_id:
         raise ValueError("GPT_ADVICE_MISSING_ACTION")
     if (not isinstance(local_refusal_reason, str)
-            or len(local_refusal_reason) > 256
             or (local is not None and local_refusal_reason)):
         raise ValueError("INVALID_LOCAL_REFUSAL_REASON")
     if local is not None and (
@@ -147,6 +201,16 @@ def build_shadow_comparison(
         raise ValueError("INVALID_LOCAL_STATUS")
     verified = (gpt.status == "GPT_ADVICE"
                 and gpt.action_id in submitted.verified_action_ids)
+    # Only a verified in-window action is hashed; all unverified action
+    # text is dropped completely. Even a direct SQLite record can store
+    # nothing but a 64-character hash in this column.
+    action_sha = sha256(
+        (submitted.snapshot_sha256 + ":" + gpt.action_id).encode("utf-8")
+    ).hexdigest() if verified else ""
+    gpt_reason_code = _gpt_reason_code(gpt.status, verified)
+    local_reason = _local_reason_code(
+        local_status,
+        local.reason if local is not None else local_refusal_reason)
     # This indicates membership in the frozen allowed-action *list*, not
     # proof that the GPT move was executed or strategically correct.
     comparison = ("NO_VERIFIED_LOCAL_ACTION"
@@ -166,10 +230,8 @@ def build_shadow_comparison(
         fingerprint(list(map(list, submitted.window.four_master_sha256))),
         fingerprint(submitted.observed_state_json),
         submitted.window.allowed_action_digest,
-        gpt.status, gpt.action_id, verified, gpt.reason,
-        gpt.elapsed_ms, local_status,
-        (local.reason if local else
-         (local_refusal_reason or "NO_LOCAL_DIAGNOSTIC")),
+        gpt.status, action_sha, verified, gpt_reason_code,
+        gpt.elapsed_ms, local_status, local_reason,
         local_elapsed_ms,
         (local.evaluated_branch_count if local_status == "MODEL_DIAGNOSTIC" else 0),
         comparison, remaining_ms_at_capture > 0, stamp)
@@ -191,23 +253,49 @@ def append_shadow_comparison(
         raise ValueError("DATABASE_DIRECTORY_MISSING")
     if (record.local_status not in _LOCAL_STATUSES
             or record.gpt_status not in _GPT_STATUSES
+            or record.gpt_reason_code not in _GPT_REASON_CODES
+            or record.local_reason_code not in _LOCAL_REASON_CODES
+            or type(record.gpt_action_verified_in_window) is not bool
+            or type(record.input_deadline_met) is not bool
+            or (record.gpt_reason_code != _gpt_reason_code(
+                record.gpt_status, record.gpt_action_verified_in_window))
+            or (bool(record.gpt_action_sha256) !=
+                record.gpt_action_verified_in_window)
+            or (bool(record.gpt_action_sha256) and
+                (not isinstance(record.gpt_action_sha256, str) or
+                 _HEX64.fullmatch(record.gpt_action_sha256) is None))
+            or (record.local_status == "MODEL_DIAGNOSTIC"
+                and record.local_reason_code != "LOCAL_SYNTHETIC_DIAGNOSTIC")
+            or (record.local_status == "NO_RANKING"
+                and record.local_reason_code == "LOCAL_SYNTHETIC_DIAGNOSTIC")
+            or not isinstance(record.match_id, str)
+            or not isinstance(record.decision_window_id, str)
+            or _SAFE_IDENTIFIER.fullmatch(record.match_id) is None
+            or _SAFE_IDENTIFIER.fullmatch(record.decision_window_id) is None
             or record.same_action_comparison not in (
                 "NO_VERIFIED_LOCAL_ACTION", "LOCAL_ABSTAINED")
             or record.gpt_action_verified_in_window not in (True, False)
             or record.input_deadline_met not in (True, False)
             or any(not _valid_time(v) for v in (
                 record.gpt_elapsed_ms, record.local_elapsed_ms))
-            or len(record.snapshot_sha256) != 64
-            or len(record.team_sha256) != 64
-            or len(record.evidence_sha256) != 64
-            or len(record.master_manifest_sha256) != 64
-            or len(record.allowed_action_digest) != 64
+            or any(not isinstance(value, str)
+                   or _HEX64.fullmatch(value) is None
+                   for value in (
+                       record.snapshot_sha256, record.team_sha256,
+                       record.evidence_sha256, record.master_manifest_sha256,
+                       record.allowed_action_digest))
             or record.hypothetical_branch_count < 0
             or (record.local_status == "NO_RANKING"
                 and record.hypothetical_branch_count != 0)
             or (record.local_status == "MODEL_DIAGNOSTIC"
                 and record.same_action_comparison != "NO_VERIFIED_LOCAL_ACTION")):
         raise ValueError("INVALID_NONACTIONABLE_SHADOW_RECORD")
+    try:
+        if (datetime.fromisoformat(record.recorded_at).utcoffset() is None
+                or len(record.recorded_at) > 64):
+            raise ValueError("INVALID_RECORDED_AT")
+    except (TypeError, ValueError):
+        raise ValueError("INVALID_NONACTIONABLE_SHADOW_RECORD") from None
     cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
     values = tuple(getattr(record, name) for name in cols)
     # sqlite3.Connection.__exit__ commits/rolls back but DOES NOT close the
@@ -221,14 +309,14 @@ def append_shadow_comparison(
         key = (record.match_id, record.decision_window_id, record.state_revision)
         old = db.execute(
             "SELECT " + ",".join(cols) +
-            " FROM phase2_shadow_same_state WHERE match_id=? AND decision_window_id=? AND state_revision=?",
+            " FROM " + _TABLE + " WHERE match_id=? AND decision_window_id=? AND state_revision=?",
             key).fetchone()
         if old is not None:
             if tuple(old) != tuple(int(v) if isinstance(v, bool) else v for v in values):
                 raise ValueError("CONFLICTING_SAME_WINDOW_RECORD")
             return "ALREADY_RECORDED"
         db.execute(
-            "INSERT INTO phase2_shadow_same_state(schema," +
+            "INSERT INTO " + _TABLE + "(schema," +
             ",".join(cols) + ") VALUES (" +
             ",".join("?" for _ in range(len(cols)+1)) + ")",
             (_SCHEMA, *(int(v) if isinstance(v, bool) else v for v in values)))
@@ -247,7 +335,7 @@ def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparison
         cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
         records = db.execute(
             "SELECT " + ",".join(cols) +
-            " FROM phase2_shadow_same_state ORDER BY match_id,decision_window_id,state_revision"
+            " FROM " + _TABLE + " ORDER BY match_id,decision_window_id,state_revision"
         ).fetchall()
     return tuple(ShadowComparisonRecord(
         *(bool(v) if name in ("gpt_action_verified_in_window", "input_deadline_met") else v

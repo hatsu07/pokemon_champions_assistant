@@ -51,14 +51,31 @@ approved production timing contract is required before runtime wiring.
   SQLite table. Same data repeats idempotently; any changed evidence/timing
   or GPT result for the same match/window/revision **fails rather than
   overwriting**. Read-only retrieval is separate.
-- No secrets, screenshots, raw OCR, full opponent sets, private model
-  reasoning or production GPT action changes are stored.
+- **Privacy boundary (schema v2):** `BoundGPTAdvice.reason` may be
+  arbitrary model/OCR-linked prose but is discarded before persistence.
+  `gpt_reason_code` is derived only from a closed GPT status / registered
+  action-membership enum. An unregistered GPT action is discarded entirely;
+  a registered in-window action is represented only by a SHA-256 digest
+  bound to the original frozen snapshot (never the raw action string).
+  Local refusal and worker error text are classified into a closed set of
+  `local_reason_code` labels; arbitrary suffixes and unrecognized text are
+  dropped, not persisted. The SQLite **append boundary** rejects directly
+  constructed records containing non-whitelisted reason text, unverified
+  actions or malformed hashes. No secrets, screenshots, raw OCR, full
+  opponent sets, private model reasoning or production GPT action changes
+  are intentionally stored.
+- The privacy-safe `phase2_shadow_same_state_v2` table is separate from
+  any developer database created with the prior (unmerged) v1 schema;
+  an existing experimental v1 file may contain raw text and should be
+  inspected/deleted separately. No automatic copying of its content
+  is performed by the new reader or writer.
 - `offline_shadow_capture.capture_offline_same_window` is an explicit,
   opt-in demonstration of the whole trace: it invokes the synthetic
   diagnostic, measures elapsed milliseconds using the local monotonic
   clock, rechecks the original snapshot revision and writes one SQLite
   record only after the full calculation. If the worker abstains, the
-  bound failure reason is logged as `NO_RANKING`; no successful prefix is
+  bound failure **category** is logged as `NO_RANKING`; raw error
+  messages never cross the storage boundary. No successful prefix is
   promoted. Direct, forged `LOCAL_VERIFIED` records are refused by the
   SQLite write boundary itself.
 - This is not yet a running LOCAL_SHADOW observer registered with the

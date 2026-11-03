@@ -189,7 +189,7 @@ class ShadowSameRevisionStoreTests(unittest.TestCase):
                 worker=worker2,preserve="ガブリアス",stopper="ミミッキュ",
                 current_snapshot=lambda:failed)
             self.assertEqual(decline.record.local_status,"NO_RANKING")
-            self.assertIn("LOCAL_ABSTAIN",decline.record.local_reason)
+            self.assertEqual(decline.record.local_reason_code,"LOCAL_P2_REFUSED")
             self.assertEqual(decline.record.hypothetical_branch_count,0)
             self.assertEqual(len(read_shadow_comparisons(db)),2)
             stale=with_state(snap,field="later_observation",value=True)
@@ -211,6 +211,78 @@ class ShadowSameRevisionStoreTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,"INVALID_NONACTIONABLE"):
                     append_shadow_comparison(db,fake)
             self.assertFalse(db.is_file())
+
+    def test_private_gpt_reason_unregistered_action_and_worker_text_never_persist(self):
+        """User-supplied GPT/OCR prose and unknown action must not reach SQLite.
+
+        These are invented sentinel values, NOT real credentials or OCR.
+        Test both the exposed record and actual SQLite bytes after close.
+        """
+        snap=frozen()
+        secret="TEST_ONLY_SENSITIVE_SENTINEL_9f0b8a"
+        ocr="TEST_ONLY_OCR_TEXT_ダミー相手残りHP"
+        reasoning="MODEL_LONG_PRIVATE_REASONING_"*100
+        unknown_action="not-a-registered-action:"+secret+ocr+reasoning
+        advice=BoundGPTAdvice(
+            snap.snapshot_sha256,"GPT_ADVICE",unknown_action,
+            reason=secret+ocr+reasoning,elapsed_ms=5)
+        record=build_shadow_comparison(
+            snap,snap,advice,None,local_elapsed_ms=11,
+            remaining_ms_at_capture=50,
+            local_refusal_reason="LOCAL_ABSTAIN:"+secret+ocr+reasoning)
+        self.assertEqual(record.gpt_reason_code,"GPT_UNREGISTERED_ACTION")
+        self.assertEqual(record.gpt_action_sha256,"")
+        self.assertFalse(record.gpt_action_verified_in_window)
+        self.assertEqual(record.local_reason_code,"LOCAL_OTHER_REFUSAL")
+        self.assertNotIn(secret,repr(record))
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"privacy.sqlite"
+            self.assertEqual(append_shadow_comparison(db,record),"RECORDED")
+            self.assertEqual(read_shadow_comparisons(db),(record,))
+            data=db.read_bytes()
+            for forbidden in (secret,ocr,reasoning,unknown_action):
+                self.assertNotIn(forbidden.encode("utf-8"),data)
+            self.assertNotIn(b"not-a-registered-action:",data)
+
+    def test_verified_action_is_digest_only_not_raw_id_or_free_reason(self):
+        snap=frozen()
+        valid_action=snap.verified_action_ids[0]
+        synthetic_secret="TEST_ONLY_PRIVATE_REASON_SENTINEL"
+        gpt=BoundGPTAdvice(snap.snapshot_sha256,"GPT_ADVICE",
+                           valid_action,reason=synthetic_secret)
+        row=build_shadow_comparison(
+            snap,snap,gpt,None,local_elapsed_ms=20,
+            remaining_ms_at_capture=1)
+        self.assertTrue(row.gpt_action_verified_in_window)
+        self.assertRegex(row.gpt_action_sha256,r"^[a-f0-9]{64}$")
+        self.assertEqual(row.gpt_reason_code,"GPT_REGISTERED_ACTION")
+        self.assertNotEqual(row.gpt_action_sha256,valid_action)
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"verified.sqlite"
+            append_shadow_comparison(db,row)
+            self.assertEqual(read_shadow_comparisons(db),(row,))
+            self.assertNotIn(synthetic_secret.encode("utf-8"),db.read_bytes())
+            self.assertNotIn(valid_action.encode("utf-8"),db.read_bytes())
+
+    def test_sqlite_boundary_rejects_direct_raw_reason_action_and_local_text(self):
+        row=compared()
+        secret="TEST_ONLY_FAKE_TOKEN_TEXT_DO_NOT_STORE"
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"strict.sqlite"
+            for fake in (
+                replace(row,gpt_reason_code=secret),
+                replace(row,gpt_reason_code="GPT_UNREGISTERED_ACTION"),
+                replace(row,gpt_action_sha256=secret),
+                replace(row,gpt_action_sha256="",gpt_action_verified_in_window=True),
+                replace(row,local_reason_code=secret),
+                replace(row,local_reason_code="LOCAL_NOT_RUN"),
+                replace(row,match_id=secret+" "+secret),
+            ):
+                with self.subTest(fake=fake):
+                    with self.assertRaisesRegex(ValueError,
+                                                "INVALID_NONACTIONABLE_SHADOW_RECORD"):
+                        append_shadow_comparison(db,fake)
+            self.assertFalse(db.exists(),"privacy rejection must precede DB open")
 
     def test_sqlite_handles_released_after_reads_early_return_and_exception(self):
         """Windows must be able to delete SQLite immediately after each path.
@@ -262,6 +334,8 @@ class ShadowSameRevisionStoreTests(unittest.TestCase):
                                     remaining_ms_at_capture=0,
                                     recorded_at="2026-11-03T10:30:00+09:00")
         self.assertFalse(row.gpt_action_verified_in_window)
+        self.assertEqual(row.gpt_action_sha256,"")
+        self.assertEqual(row.gpt_reason_code,"GPT_UNREGISTERED_ACTION")
         self.assertFalse(row.input_deadline_met)
         self.assertEqual(row.local_status,"NO_RANKING")
         with self.assertRaisesRegex(ValueError,"ABSTAINED_GPT_HAS_ACTION"):
