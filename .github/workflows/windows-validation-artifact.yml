@@ -50,7 +50,7 @@ jobs:
       - name: Run isolated Phase 1 Node worker protocol tests on native Windows
         shell: pwsh
         run: |
-          node --test local_simulator/test_worker.cjs local_simulator/test_p2_engine_choices.cjs local_simulator/test_observed_replay_audit.cjs
+          node --test local_simulator/test_worker.cjs local_simulator/test_p2_engine_choices.cjs local_simulator/test_observed_replay_audit.cjs local_simulator/test_pinned_champions_roster_lookup.cjs
           if ($LASTEXITCODE -ne 0) { throw "Phase 1 native Windows Node protocol test failed" }
       - name: Stage and verify pinned PP-OCRv6 small ONNX bundle
         shell: pwsh

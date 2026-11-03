@@ -7,6 +7,8 @@ on:
   pull_request:
     paths:
       - 'local_simulator/**'
+      - 'src/champions_assist/local_strategy/champions_master_key_candidates.py'
+      - 'scripts/report_phase2_champions_key_candidates.py'
       - 'src/champions_assist/local_strategy/engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_engine_replay_readout_bridge.py'
       - 'tests/test_issue_141_window_bound_readout_transport.py'
@@ -81,6 +83,23 @@ jobs:
           set -euo pipefail
           test -s "$READOUT_E2E_FIXTURE_PATH"
           python -m unittest -v tests.test_issue_141_real_worker_python_e2e
+      - name: Generate authentic Champions fixed-master key candidates
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}
+          CHAMPIONS_SOURCE_KEY_CANDIDATES_JSON: ${{ runner.temp }}/issue141-source-key-candidates.json
+        run: |
+          set -euo pipefail
+          python scripts/report_phase2_champions_key_candidates.py --masters-dir masters > "$CHAMPIONS_SOURCE_KEY_CANDIDATES_JSON"
+          python -m json.tool "$CHAMPIONS_SOURCE_KEY_CANDIDATES_JSON" > /dev/null
+      - name: Actual pinned Champions Dex ID existence for registered team
+        env:
+          SHOWDOWN_PINNED_BUILD_ROOT: ${{ github.workspace }}/pinned-showdown
+          CHAMPIONS_SOURCE_KEY_CANDIDATES_JSON: ${{ runner.temp }}/issue141-source-key-candidates.json
+        run: node --test local_simulator/test_real_pinned_champions_roster_lookup.cjs
+      - name: Metadata boundary and no LIVE promotion
+        if: always()
+        run: echo 'Dex entry existence is NOT Champions game compatibility, Mega-Z support, legality or LIVE ranking.' >> "$GITHUB_STEP_SUMMARY"
       - name: Explicit validity boundary
         if: always()
         shell: bash
