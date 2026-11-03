@@ -67,6 +67,7 @@ def build_conditional_prep_draft(
     selected_three: tuple[str, str, str],
     lead: str,
     opponents: tuple[str, str, str, str, str, str],
+    *, cached_matrix_rows_six: tuple[str, ...] | None = None,
 ) -> ConditionalPrepDraft:
     """Construct 18 *conditional* lines using one matrix-six fetch.
 
@@ -75,7 +76,9 @@ def build_conditional_prep_draft(
     real battle. Unknown opposing moves, PP, HP, weather, form and safety
     remain unverified; only the user/game evidence can upgrade those fields.
     """
-    conditional = stage_prep18(assets, selected_three, lead, opponents)
+    conditional = stage_prep18(
+        assets, selected_three, lead, opponents,
+        cached_matrix_rows_six=cached_matrix_rows_six)
     if conditional.status != "MATRIX_18_CONDITIONAL_ONLY":
         return ConditionalPrepDraft("BLOCKED", conditional.reason)
     own = {m["name"]: m for m in assets.own_team}
