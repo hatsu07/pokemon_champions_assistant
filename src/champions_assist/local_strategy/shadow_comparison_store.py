@@ -13,7 +13,7 @@ from hashlib import sha256
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from .models import FrozenBattleState, action_digest, fingerprint
 from .observed_full_grid_diagnostic import ObservedFullGridDiagnostic
@@ -239,15 +239,25 @@ def build_shadow_comparison(
 
 def append_shadow_comparison(
     database_path: str | Path, record: ShadowComparisonRecord,
+    *, active_at_commit: Callable[[], bool] | None = None,
 ) -> str:
     """Append exactly one atomic same-window record. Never overwrite evidence.
 
     Repeated identical inserts are idempotent. A different snapshot, verdict,
     timing or GPT result for an existing match/window/revision is rejected.
     Call only from an explicitly opted-in shadow/diagnostic task, not LIVE.
+
+    An optional revocation fence is checked INSIDE the SQLite write transaction
+    just before commit. The opt-in concurrent caller must additionally enqueue
+    a serialized off-GUI exact-window purge at invalidation, because the cancel
+    event can race with the micro-gap between the fence and SQLite commit.
     """
     if not isinstance(record, ShadowComparisonRecord):
         raise ValueError("INVALID_SHADOW_RECORD")
+    if active_at_commit is not None and not callable(active_at_commit):
+        raise ValueError("INVALID_SHADOW_REVOCATION_FENCE")
+    if active_at_commit is not None and active_at_commit() is not True:
+        raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_WRITE")
     path = Path(database_path)
     if not path.parent.is_dir():
         raise ValueError("DATABASE_DIRECTORY_MISSING")
@@ -314,13 +324,55 @@ def append_shadow_comparison(
         if old is not None:
             if tuple(old) != tuple(int(v) if isinstance(v, bool) else v for v in values):
                 raise ValueError("CONFLICTING_SAME_WINDOW_RECORD")
+            if active_at_commit is not None and active_at_commit() is not True:
+                raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_EXISTING_ROW")
             return "ALREADY_RECORDED"
         db.execute(
             "INSERT INTO " + _TABLE + "(schema," +
             ",".join(cols) + ") VALUES (" +
             ",".join("?" for _ in range(len(cols)+1)) + ")",
             (_SCHEMA, *(int(v) if isinstance(v, bool) else v for v in values)))
+        # A cancellation while waiting for SQLite BEGIN IMMEDIATE or during
+        # INSERT must roll back the entire transaction, not leave evidence.
+        if active_at_commit is not None and active_at_commit() is not True:
+            raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_COMMIT")
     return "RECORDED"
+
+
+def revoke_shadow_comparison(
+    database_path: str | Path, *,
+    match_id: str, decision_window_id: str, state_revision: int,
+    snapshot_sha256: str,
+) -> str:
+    """Remove a revoked in-flight result by *exact* identity off the UI.
+
+    Never touch another match/window/revision/snapshot. Called as the next
+    job on the SAME single-worker executor after any pending SQLite append;
+    this serialization is essential even if close() happened during commit.
+    Previous finished/accepted records are not revoked by session.close().
+    """
+    if (_SAFE_IDENTIFIER.fullmatch(match_id or "") is None
+            or _SAFE_IDENTIFIER.fullmatch(decision_window_id or "") is None
+            or type(state_revision) is not int or state_revision < 0
+            or not isinstance(snapshot_sha256, str)
+            or _HEX64.fullmatch(snapshot_sha256) is None):
+        raise ValueError("INVALID_SHADOW_REVOKE_IDENTITY")
+    path = Path(database_path)
+    if not path.is_file():
+        return "NO_ROW"
+    with closing(sqlite3.connect(path, timeout=3.0)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_TABLE,)).fetchone() is None:
+            return "NO_ROW"
+        deleted = db.execute(
+            "DELETE FROM " + _TABLE +
+            " WHERE match_id=? AND decision_window_id=? AND state_revision=?"
+            " AND snapshot_sha256=?",
+            (match_id, decision_window_id, state_revision,
+             snapshot_sha256)).rowcount
+    return "REVOKED" if deleted else "NO_ROW"
 
 
 def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparisonRecord, ...]:
