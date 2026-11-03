@@ -124,6 +124,22 @@ clock, a duplicate rendered advice, and `TEST_ONLY` results are refused,
 rather than treated as a timely actionable move. OCR revision retries with
 a new request ID are supported without treating any old reply as the result.
 
+**Postmatch P1 review fix:** The normal full-match GUI trace also contains
+post-battle GPT requests for confirming the victory/result screen. These
+requests use `RESULT_SCREEN_GPT_REQUEST` or
+`OCR_MATCH_RESULT_TEXT_AI_SENT` without an actionable turn's
+`AI_REQUEST_DISPATCH` and have no action-state revision. The GUI now
+emits an explicit `NON_TURN_RESULT_AI_COMPLETED` for their completion
+rather than `AI_RESULT_DISPLAYED`. Both the start and completion carry
+an opaque `match_id`, `request_id` and `turn_epoch`; the offline
+auditor requires an exactly matching postmatch job type and forbids
+unbound, repeated or cross-job completion. A stray `AI_RESULT_DISPLAYED`
+with no valid turn dispatch still causes refusal. Full-match regression
+fixtures cover selection → turn action → result-screen / text-only result
+verification, as well as unbound/stale turn-result negative cases.
+These are **telemetry-only** distinctions and have no effect on game
+result decisions or live advice.
+
 The emitting GUI also requires **battle phase, current active turn epoch,
 an actual action-menu screen and nonempty proposed action** before recording
 `ACTION_GUI_RENDERED`. In particular, a selection `PROVISIONAL_ADVICE`

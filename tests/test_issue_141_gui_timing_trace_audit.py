@@ -89,6 +89,103 @@ class GuiTimingTraceAuditTests(unittest.TestCase):
         self.assertEqual(audit_gui_timing_export(bad).status,
                          "GUI_TRACE_REFUSED")
 
+    def test_selection_action_then_each_postmatch_verification_works(self):
+        # Review P1: ordinary complete exports include selection and a
+        # result_screen or result verification AFTER the last action turn.
+        # Those postmatch requests do not emit AI_REQUEST_DISPATCH.
+        for start_event, job in (
+            ("RESULT_SCREEN_GPT_REQUEST", "result_screen"),
+            ("OCR_MATCH_RESULT_TEXT_AI_SENT", "result"),
+        ):
+            with self.subTest(job=job):
+                trace = scene(turns=1)
+                events = trace["timing_observations"]["events"]
+                for e in events:
+                    e["at_ms"] += 5000
+                events[:0] = [
+                    {"event": "AI_REQUEST_DISPATCH", "at_ms": 100,
+                     "request_id": "req-selection", "match_id":
+                     "capture-actual-opaque", "turn_epoch": 0,
+                     "state_revision": 0, "decision_window_id": "selection",
+                     "screen_label": "TEAM_SELECTION"},
+                    {"event": "AI_RESULT_DISPLAYED", "at_ms": 900,
+                     "request_id": "req-selection",
+                     "match_id": "capture-actual-opaque", "turn_epoch": 0,
+                     "state_revision": 0, "status": "OK"},
+                ]
+                events.extend((
+                    {"event": start_event, "at_ms": 10000,
+                     "request_id": "req-postmatch",
+                     "match_id": "capture-actual-opaque",
+                     "turn_epoch": 1},
+                    {"event": "NON_TURN_RESULT_AI_COMPLETED",
+                     "at_ms": 10300, "request_id": "req-postmatch",
+                     "match_id": "capture-actual-opaque",
+                     "turn_epoch": 1, "active_job": job,
+                     "status": "MATCH_END"},
+                ))
+                result = audit_gui_timing_export(trace)
+                self.assertEqual(result.status, "GUI_MONOTONIC_TIMING_ONLY",
+                                 result.reason)
+                self.assertEqual(result.complete_gpt_display_turns, 1)
+                self.assertEqual(result.p99_gpt_screen_ms, 3000)
+                self.assertFalse(result.phase2_accepted)
+
+    def test_real_turn_result_without_dispatch_is_not_ignored_as_postmatch(self):
+        trace = scene(turns=1)
+        events = trace["timing_observations"]["events"]
+        # No allowed matching postmatch start event; a forged or stale
+        # AI_RESULT_DISPLAYED must still be rejected, not blanket-skipped.
+        events.append({
+            "event": "AI_RESULT_DISPLAYED", "at_ms": 4100,
+            "request_id": "req-stale-unbound",
+            "match_id": "capture-actual-opaque", "turn_epoch": 1,
+            "state_revision": None, "status": "MATCH_END",
+        })
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.status, "GUI_TRACE_REFUSED")
+        self.assertFalse(got.phase2_accepted)
+
+    def test_unbound_duplicated_and_cross_job_postmatch_results_refused(self):
+        for bad in ("unbound", "duplicate", "wrong_job"):
+            with self.subTest(bad=bad):
+                trace = scene(turns=1)
+                events = trace["timing_observations"]["events"]
+                start = {
+                    "event": "RESULT_SCREEN_GPT_REQUEST", "at_ms": 4000,
+                    "request_id": "req-result",
+                    "match_id": "capture-actual-opaque", "turn_epoch": 1,
+                }
+                end = {
+                    "event": "NON_TURN_RESULT_AI_COMPLETED", "at_ms": 4100,
+                    "request_id": "req-result",
+                    "match_id": "capture-actual-opaque", "turn_epoch": 1,
+                    "active_job": "result_screen", "status": "MATCH_END",
+                }
+                if bad != "unbound":
+                    events.append(start)
+                if bad == "wrong_job":
+                    end["active_job"] = "result"
+                events.append(end)
+                if bad == "duplicate":
+                    events.append({**end, "at_ms": 4200})
+                got = audit_gui_timing_export(trace)
+                self.assertEqual(got.status, "GUI_TRACE_REFUSED")
+                self.assertFalse(got.phase2_accepted)
+
+    def test_postmatch_emitters_never_use_turn_action_result_event(self):
+        path = (Path(__file__).resolve().parents[1] / "src" /
+                "champions_assist" / "match_replay_dialog.py")
+        code = path.read_text(encoding="utf-8")
+        self.assertIn('if self._active_job in ("result_screen", "result")',
+                      code)
+        self.assertIn('"NON_TURN_RESULT_AI_COMPLETED"', code)
+        self.assertIn('"RESULT_SCREEN_GPT_REQUEST",images_sent=0', code)
+        self.assertIn('"OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0', code)
+        self.assertIn('request_id=self._active_request_id,\n'
+                      '                          match_id=self.match_id or ""',
+                      code)
+
     def test_cancelled_or_superseded_old_reply_is_never_a_valid_render(self):
         for explicit_cancel in (True, False):
             trace = scene(turns=1)

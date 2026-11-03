@@ -67,10 +67,16 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
     events = packet.get("events")
     if (not isinstance(events, list) or not 1 <= len(events) <= 3000):
         return _refuse("MISSING_OR_OVERSIZED_GUI_EVENTS")
+    postmatch_start_jobs = {
+        "RESULT_SCREEN_GPT_REQUEST": "result_screen",
+        "OCR_MATCH_RESULT_TEXT_AI_SENT": "result",
+    }
     allowed = frozenset({
         "TURN_SCREEN_OBSERVED", "AI_REQUEST_DISPATCH",
         "AI_RESULT_DISPLAYED", "ACTION_GUI_RENDERED",
-        "AI_REQUEST_LOGICALLY_CANCELLED"})
+        "AI_REQUEST_LOGICALLY_CANCELLED", "NON_TURN_RESULT_AI_COMPLETED",
+        *postmatch_start_jobs,
+    })
     turns: dict[int, int] = {}
     dispatches: dict[str, tuple[str, int, int, str, int]] = {}
     replies: dict[str, tuple[str, int, int, str, int, bool]] = {}
@@ -80,6 +86,12 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
     # Track those request IDs and their responses, not blanket-ignore events
     # lacking a turn epoch (which could hide a corrupt action dispatch).
     nonturn_requests: dict[str, str] = {}
+    # Match-end verification is not a battle action. The real GUI sends
+    # dedicated postmatch start events (not AI_REQUEST_DISPATCH), then a
+    # dedicated completion event. Bind exact IDs so arbitrary bad turn results
+    # cannot be silently skipped as "non-turn".
+    postmatch_requests: dict[str, tuple[str, int, str]] = {}
+    postmatch_completed: set[str] = set()
     current_turn_request: dict[int, str] = {}
     cancelled_requests: set[str] = set()
     last_ms = -1
@@ -97,6 +109,35 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
         if name not in allowed:
             continue
         request = event.get("request_id")
+        if name in postmatch_start_jobs:
+            match = event.get("match_id")
+            turn = event.get("turn_epoch")
+            if (not isinstance(request, str)
+                    or not 1 <= len(request) <= 128
+                    or not isinstance(match, str)
+                    or not 1 <= len(match) <= 128
+                    or type(turn) is not int or turn < 0
+                    or request in nonturn_requests
+                    or request in postmatch_requests
+                    or request in dispatches
+                    or (known_match is not None and known_match != match)):
+                return _refuse("INVALID_EXPLICIT_POSTMATCH_REQUEST")
+            postmatch_requests[request] = (
+                match, turn, postmatch_start_jobs[name])
+            continue
+        if name == "NON_TURN_RESULT_AI_COMPLETED":
+            match = event.get("match_id")
+            turn = event.get("turn_epoch")
+            started = (postmatch_requests.get(request)
+                       if isinstance(request, str) else None)
+            if (started is None
+                    or type(turn) is not int
+                    or (match, turn, event.get("active_job")) != started
+                    or request in postmatch_completed
+                    or not isinstance(event.get("status"), str)):
+                return _refuse("UNBOUND_OR_DUPLICATED_POSTMATCH_RESULT")
+            postmatch_completed.add(request)
+            continue
         if (name == "AI_REQUEST_DISPATCH"
                 and event.get("decision_window_id") == "selection"
                 and event.get("screen_label") not in _URGENT):
@@ -109,7 +150,8 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
                     or not 1 <= len(request) <= 128
                     or not isinstance(match, str) or len(match) > 128
                     or type(turn) is not int or turn < 0
-                    or request in nonturn_requests or request in dispatches):
+                    or request in nonturn_requests or request in dispatches
+                    or request in postmatch_requests):
                 return _refuse("INVALID_EXPLICIT_NON_ACTION_DISPATCH")
             nonturn_requests[request] = match
             continue
