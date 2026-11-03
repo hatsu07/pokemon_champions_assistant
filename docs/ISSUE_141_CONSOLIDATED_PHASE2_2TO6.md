@@ -90,6 +90,42 @@ yet a verified Champions↔Showdown battle/RNG translation, independently
 scored real-game 18 tactics, true same-revision GPT+LOCAL parallel capture,
 or real device video and adjudicated Goldens.
 
+## PR #202 review P2: disallow structural overcounts
+
+The source-bound device/SQLite auditor now carries **all** accepted v3
+`match_id → expected timeline.turns count` and (only when registered source
+identity is cross-bound) each exact SQLite match/window/revision/snapshot SHA,
+team CSV SHA, frozen-master manifest SHA, evidence digest, action digest,
+local diagnostic status and input-deadline flag. The consolidated report can
+count a separately supplied `Phase2MatchAudit` for ③/④ only if:
+
+- `status=OFFLINE_EVIDENCE_ONLY`, nonactionable ranking, source-linked
+  observation, exact selected-opponent-six boundary and valid **shared
+  selection+PREP 90-second** status;
+- `ASSESSED_18_CONDITIONAL_ONLY` and exactly 18 fields with no invalid
+  assessment/timing blockers; and
+- the match, decision window, revision and snapshot SHA match both that
+  audit's `shadow_record` and one of the *same batch's registered-source-
+  bound* SQLite records. Its team/master/evidence/action digests, local
+  status and input deadline flag must all match.
+
+Rejected, stale, unrelated, different-registered-team or malformed
+`Phase2MatchAudit` objects count **zero** ③/④ runs/pairs, with
+`REJECTED_OR_UNLINKED_PHASE2_MATCH_AUDIT` recorded as the missing source
+constraint. A match ID alone cannot satisfy this linkage. These remain
+structural, not actual Champions battle certification. The public CLI
+still **does not** fabricate/import `Phase2MatchAudit` objects from untrusted
+JSON, so ③/④ require separately validated off-match Python evidence.
+
+For ⑥ the report now requires each GUI export's total observed and
+displayed GPT turns to equal the **verified v3 packet's** turn count for
+that exact match. A one-turn GUI export alongside a two-turn device packet
+is incomplete, even if all five GUI exports internally report 100% coverage.
+The report includes `gpt_gui_missing_device_turns` and flags
+`GUI_DEVICE_TURN_COUNT_MISMATCH` and
+`INCOMPLETE_GUI_TIME_EVENTS_FOR_ALL_MATCHES`. These are locally submitted
+times/labels, **not** independent frame-aligned video evidence.
+
 ## Acceptance blockers that remain external to code
 
 The team ID source mismatch can now be closed for local files, but **not**

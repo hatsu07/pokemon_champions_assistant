@@ -15,6 +15,7 @@ from .roster_mapping_readiness import RosterMappingReadiness
 from .phase2_match_audit import Phase2MatchAudit
 from .device_shadow_evidence_link import DeviceShadowLinkAudit
 from .gui_timing_trace_audit import GuiTurnTraceAudit
+from .shadow_comparison_store import ShadowComparisonRecord
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,9 @@ class ConsolidatedPhase2Report:
     local_nonabstaining_diagnostic_windows: int = 0
     shadow_input_deadline_missed: int = 0
     gpt_gui_matched_matches: int = 0
+    # v3 device turn count minus the same-match GUI recorded display count.
+    # Not a video-verified same-frame match; never assert game truth.
+    gpt_gui_missing_device_turns: int = 0
     gpt_gui_late_displays: int = 0
     local_shadow_late_displays: int = 0
     golden_label_categories: int = 0
@@ -106,18 +110,84 @@ def consolidated_phase2_report(
     species = roster.inspected_members if fields_ok else 0
     moves = roster.checked_move_slots if fields_ok else 0
     same_source = device.team_identity_cross_bound
+    # A Phase2MatchAudit by itself is only a caller-owned result. Do NOT
+    # count ③/④ by shared match_id alone. Demand an existing local-source-
+    # cross-bound SQLite row from *this device batch*, exact frozen state,
+    # assessed/observed status and on-time PREP with observed opponent six.
+    window_ids = set(device.locally_bound_window_identities)
+    def qualifies(m: Phase2MatchAudit) -> bool:
+        rec = m.shadow_record
+        return (
+            same_source
+            and isinstance(rec, ShadowComparisonRecord)
+            and m.status == "OFFLINE_EVIDENCE_ONLY"
+            and m.reason == "NO_REAL_GAME_ACCEPTANCE_AUTHORITY"
+            and m.ranking_status == "NO_RANKING"
+            and m.phase2_accepted is False
+            and m.observed_stage_status ==
+                "PROVISIONAL_OBSERVED_BRANCH_CONSTRAINTS"
+            and m.opponent_preview_binding ==
+                "FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED"
+            and m.prep_time_status ==
+                "PREP_REPORTED_WITHIN_SHARED_90_SECONDS_UNVERIFIED"
+            and m.prep_status == "ASSESSED_18_CONDITIONAL_ONLY"
+            and m.prep_assessed_pairs == 18
+            and "PREP18_TACTICAL_FIELDS_NOT_ASSESSED"
+                not in m.missing_acceptance_evidence
+            and "SELECTION_PREP_SHARED_90_TIME_NOT_VERIFIED"
+                not in m.missing_acceptance_evidence
+            and m.shadow_store_status in ("RECORDED", "ALREADY_RECORDED")
+            and m.match_id == rec.match_id
+            and m.decision_window_id == rec.decision_window_id
+            and m.state_revision == rec.state_revision
+            and m.snapshot_sha256 == rec.snapshot_sha256
+            and m.synthetic_turn_status == rec.local_status
+            and (
+                rec.match_id, rec.decision_window_id, rec.state_revision,
+                rec.snapshot_sha256, rec.team_sha256,
+                rec.master_manifest_sha256, rec.evidence_sha256,
+                rec.allowed_action_digest, rec.local_status,
+                rec.input_deadline_met,
+            ) in window_ids
+        )
+    valid_reports = tuple(m for m in reports if qualifies(m))
     synthetic = sum(m.synthetic_turn_status == "MODEL_DIAGNOSTIC"
-                    for m in reports)
-    assessed = sum(m.prep_assessed_pairs for m in reports)
-    finished = sum(
-        m.prep_status == "ASSESSED_18_CONDITIONAL_ONLY"
-        and m.prep_assessed_pairs == 18 for m in reports)
+                    for m in valid_reports)
+    assessed = sum(m.prep_assessed_pairs for m in valid_reports)
+    finished = len(valid_reports)
+    # The device validator verifies *all* frame annotations against each
+    # actual submitted match timeline. Read its validated per-match turn
+    # counts here, not the GUI export's self-reported observed-turn count.
+    expected_pairs = device.expected_turns_by_match
+    try:
+        expected = dict(expected_pairs)
+        turns_bound = (
+            len(expected_pairs) == len(mids)
+            and len(expected) == len(mids)
+            and set(expected) == match_set
+            and all(type(count) is int and count > 0
+                    for count in expected.values())
+            and sum(expected.values()) == device.bound_turns
+        )
+    except (TypeError, ValueError):
+        expected, turns_bound = {}, False
+    clocks_by_match = {g.source_match_id: g for g in clocks}
     gui_complete = sum(
         g.status == "GUI_MONOTONIC_TIMING_ONLY"
-        and g.observed_turns > 0
-        and g.complete_gpt_display_turns == g.observed_turns
+        and g.observed_turns == expected[mid]
+        and g.complete_gpt_display_turns == expected[mid]
+        and g.missing_or_unmatched_turns == 0
         and g.late_gpt_display_turns == 0
-        for g in clocks)
+        for mid, g in clocks_by_match.items()
+        if turns_bound
+    )
+    missing_gui_device_turns = (
+        sum(max(0, count - max(
+            0, clocks_by_match[mid].complete_gpt_display_turns))
+            if mid in clocks_by_match else count
+            for mid, count in expected.items())
+        if turns_bound else 0
+    )
     reasons = [
         "CHAMPIONS_LEGAL_IDS_MOVES_FORMS_NOT_INDEPENDENTLY_ATTESTED",
         "REAL_CHAMPIONS_BATTLE_RNG_OPPONENT_POLICY_NOT_RECONSTRUCTED",
@@ -129,6 +199,8 @@ def consolidated_phase2_report(
         reasons.append("OWN_SIX_AND_24_MOVE_ID_FIELDS_NOT_PRESENT")
     if len(reports) != len(mids):
         reasons.append("MISSING_SAME_MATCH_ONE_TURN_PREP_REPORTS")
+    if len(valid_reports) != len(reports):
+        reasons.append("REJECTED_OR_UNLINKED_PHASE2_MATCH_AUDIT")
     if finished != len(mids):
         reasons.append("PREP18_NOT_STRUCTURALLY_ASSESSED_FOR_ALL_MATCHES")
     if not same_source:
@@ -139,8 +211,17 @@ def consolidated_phase2_report(
         reasons.append("SHADOW_INPUT_DEADLINE_MISSED")
     if device.late_shadow_displays:
         reasons.append("LOCAL_SHADOW_UI_DEADLINE_MISSED")
-    if len(clocks) != len(mids) or gui_complete != len(mids):
+    if not turns_bound:
+        reasons.append("DEVICE_EXPECTED_TURN_COUNTS_NOT_BOUND")
+    if (len(clocks) != len(mids)
+            or gui_complete != len(mids)
+            or missing_gui_device_turns):
         reasons.append("INCOMPLETE_GUI_TIME_EVENTS_FOR_ALL_MATCHES")
+    if turns_bound and any(
+            g.observed_turns != expected[mid]
+            or g.complete_gpt_display_turns != expected[mid]
+            for mid, g in clocks_by_match.items()):
+        reasons.append("GUI_DEVICE_TURN_COUNT_MISMATCH")
     if device.missing_golden_kinds or device.submitted_unsafe_claim_count:
         reasons.append("MISSING_OR_UNSAFE_GOLDEN_REVIEW_CATEGORIES")
     if device.nonabstaining_diagnostic_turns == 0:
@@ -170,6 +251,7 @@ def consolidated_phase2_report(
         shadow_input_deadline_missed=(
             device.shadow_input_deadline_missed_count),
         gpt_gui_matched_matches=gui_complete,
+        gpt_gui_missing_device_turns=missing_gui_device_turns,
         gpt_gui_late_displays=sum(g.late_gpt_display_turns for g in clocks),
         local_shadow_late_displays=device.late_shadow_displays,
         golden_label_categories=len(device.covered_golden_kinds),

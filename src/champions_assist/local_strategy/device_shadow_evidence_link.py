@@ -88,6 +88,14 @@ class DeviceShadowLinkAudit:
     game_capture_independently_authenticated: bool = False
     real_tactical_correctness_verified: bool = False
     phase2_accepted: bool = False
+    # Validated v3 packet turn count per distinct match; opaque labels only.
+    # This is not proof that each GUI callback depicts a real game screen.
+    expected_turns_by_match: tuple[tuple[str, int], ...] = ()
+    # Registered local source + exact SQLite row/window metadata; never a
+    # Champions legal-action or video authenticity attestation.
+    locally_bound_window_identities: tuple[
+        tuple[str, str, int, str, str, str, str, str, str, bool], ...
+    ] = ()
 
 
 def _blocked(reason: str) -> DeviceShadowLinkAudit:
@@ -303,4 +311,15 @@ def audit_offline_device_shadow_link(
         submitted_unsafe_claim_count=unsafe,
         shadow_input_deadline_missed_count=missed_input_deadlines,
         missing_evidence=tuple(blockers),
+        expected_turns_by_match=tuple(sorted(
+            (mid, len(match["turns"])) for mid, match in matches.items())),
+        locally_bound_window_identities=(
+            tuple(sorted((
+                row.match_id, row.decision_window_id, row.state_revision,
+                row.snapshot_sha256, row.team_sha256,
+                row.master_manifest_sha256, row.evidence_sha256,
+                row.allowed_action_digest, row.local_status,
+                row.input_deadline_met,
+            ) for row in rows)) if source_bound else ()
+        ),
     )

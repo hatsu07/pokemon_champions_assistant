@@ -262,6 +262,132 @@ class ConsolidatedPhase2Tests(unittest.TestCase):
             self.assertFalse(doc["phase2_2to6"]["phase2_accepted"])
             self.assertFalse(doc["device_and_shadow"]["phase2_accepted"])
 
+    def test_review_p2_1_blocked_wrong_window_or_team_not_counted(self):
+        from champions_assist.local_strategy.phase2_match_audit import (
+            Phase2MatchAudit)
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            registered, fp, team_sha, reg, csv, prepared = (
+                register_and_prepare(root))
+            packet, rows, frames, goldens = fixture(root)
+            packet.update(team_id=registered.team_id, team_fingerprint=fp)
+            rows = tuple(replace(row, team_sha256=team_sha) for row in rows)
+            linked = audit_offline_device_shadow_link(
+                packet, team_id=registered.team_id, team_fingerprint=fp,
+                frozen_team_sha256=team_sha, regulation=reg,
+                shadow_rows=rows, frames=frames, golden_claims=goldens,
+                source_context=RegisteredSourceContext(root, MASTER))
+            assets = MasterPreloader(
+                MASTER, team_source=csv, matrix_source=prepared.matrix_path,
+                lookup_source=prepared.lookup_path).load_for_new_match()
+            roster = audit_frozen_roster_mapping(assets)
+            rec = rows[0]
+            valid = Phase2MatchAudit(
+                status="OFFLINE_EVIDENCE_ONLY",
+                reason="NO_REAL_GAME_ACCEPTANCE_AUTHORITY",
+                match_id=rec.match_id,
+                decision_window_id=rec.decision_window_id,
+                state_revision=rec.state_revision,
+                snapshot_sha256=rec.snapshot_sha256,
+                observed_stage_status="PROVISIONAL_OBSERVED_BRANCH_CONSTRAINTS",
+                synthetic_turn_status=rec.local_status,
+                prep_status="ASSESSED_18_CONDITIONAL_ONLY",
+                prep_assessed_pairs=18,
+                prep_time_status="PREP_REPORTED_WITHIN_SHARED_90_SECONDS_UNVERIFIED",
+                shadow_store_status="RECORDED",
+                shadow_record=rec,
+                opponent_preview_binding="FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED",
+            )
+            def check(report):
+                return consolidated_phase2_report(
+                    roster=roster, device=linked,
+                    expected_match_ids=(p["match_id"] for p in packet["matches"]),
+                    matches=(report,))
+            structurally_linked = check(valid)
+            self.assertEqual(structurally_linked.synthetic_one_turn_runs, 1)
+            self.assertEqual(structurally_linked.prep18_structural_matches, 1)
+            self.assertEqual(structurally_linked.prep18_assessed_pairs, 18)
+            self.assertFalse(structurally_linked.phase2_accepted)
+            bad_cases = (
+                replace(valid, status="BLOCKED", reason="PREP_AFTER_OPPONENT_LEAD"),
+                replace(valid, opponent_preview_binding="NOT_VERIFIED"),
+                replace(valid, prep_time_status="PREP_AFTER_OPPONENT_LEAD"),
+                replace(valid, observed_stage_status="NOT_RUN"),
+                replace(valid, decision_window_id="different-window"),
+                replace(valid, state_revision=100),
+                replace(valid, snapshot_sha256="0" * 64),
+                replace(valid, shadow_record=replace(
+                    rec, team_sha256="f" * 64)),
+                replace(valid, shadow_record=replace(
+                    rec, master_manifest_sha256="f" * 64)),
+                replace(valid, shadow_record=rows[1]),
+                replace(valid, shadow_store_status="NOT_WRITTEN"),
+                replace(valid, missing_acceptance_evidence=(
+                    "PREP18_TACTICAL_FIELDS_NOT_ASSESSED",)),
+            )
+            for bad in bad_cases:
+                with self.subTest(reason=bad.reason,
+                                  window=bad.decision_window_id,
+                                  rev=bad.state_revision,
+                                  sha=bad.shadow_record.team_sha256 if
+                                      bad.shadow_record else "missing"):
+                    result = check(bad)
+                    self.assertEqual(result.synthetic_one_turn_runs, 0)
+                    self.assertEqual(result.prep18_structural_matches, 0)
+                    self.assertEqual(result.prep18_assessed_pairs, 0)
+                    self.assertIn("REJECTED_OR_UNLINKED_PHASE2_MATCH_AUDIT",
+                                  result.missing_evidence)
+                    self.assertFalse(result.phase2_accepted)
+            # Same labels without authoritative LOCAL roster sources cannot
+            # count an arbitrary Phase2MatchAudit as registered-team proof.
+            unbound = audit_offline_device_shadow_link(
+                packet, team_id=registered.team_id, team_fingerprint=fp,
+                frozen_team_sha256=team_sha, regulation=reg,
+                shadow_rows=rows, frames=frames, golden_claims=goldens)
+            self.assertEqual(consolidated_phase2_report(
+                roster=roster, device=unbound,
+                expected_match_ids=(p["match_id"] for p in packet["matches"]),
+                matches=(valid,)).synthetic_one_turn_runs, 0)
+
+    def test_review_p2_2_gui_one_of_two_device_turns_not_complete(self):
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            team, fp, team_sha, reg, _, _ = register_and_prepare(root)
+            packet, rows, frames, goldens = fixture(root)
+            packet.update(team_id=team.team_id, team_fingerprint=fp)
+            rows = tuple(replace(row, team_sha256=team_sha) for row in rows)
+            linked = audit_offline_device_shadow_link(
+                packet, team_id=team.team_id, team_fingerprint=fp,
+                frozen_team_sha256=team_sha, regulation=reg,
+                shadow_rows=rows, frames=frames, golden_claims=goldens,
+                source_context=RegisteredSourceContext(root, MASTER))
+            self.assertEqual(dict(linked.expected_turns_by_match),
+                             {f"SYNTHETIC-{i}": 2 for i in range(5)})
+            clocks = []
+            for i in range(5):
+                trace = scene(turns=1)
+                for event in trace["timing_observations"]["events"]:
+                    if event.get("match_id") == "capture-actual-opaque":
+                        event["match_id"] = f"SYNTHETIC-{i}"
+                gui = audit_gui_timing_export(trace)
+                self.assertEqual(gui.complete_gpt_display_turns, 1)
+                clocks.append(gui)
+            from champions_assist.local_strategy.roster_mapping_readiness import (
+                RosterMappingReadiness)
+            result = consolidated_phase2_report(
+                roster=RosterMappingReadiness(
+                    "MAPPING_FIELDS_INCOMPLETE", "UNKNOWN"),
+                device=linked,
+                expected_match_ids=(p["match_id"] for p in packet["matches"]),
+                gui_clocks=tuple(clocks))
+            self.assertEqual(result.gpt_gui_matched_matches, 0)
+            self.assertEqual(result.gpt_gui_missing_device_turns, 5)
+            self.assertIn("GUI_DEVICE_TURN_COUNT_MISMATCH",
+                          result.missing_evidence)
+            self.assertIn("INCOMPLETE_GUI_TIME_EVENTS_FOR_ALL_MATCHES",
+                          result.missing_evidence)
+            self.assertFalse(result.phase2_accepted)
+
     def test_incomplete_input_cannot_be_misreported_as_device_pass(self):
         from champions_assist.local_strategy.roster_mapping_readiness import (
             RosterMappingReadiness)
