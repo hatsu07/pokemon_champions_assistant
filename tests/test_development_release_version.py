@@ -171,8 +171,6 @@ class SemanticDevelopmentVersionTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn("startsWith(github.ref, 'refs/heads/')", workflow)
         self.assertIn("github.ref != 'refs/heads/master'", workflow)
-        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
-        self.assertIn("if: github.ref == 'refs/heads/master'", workflow)
         self.assertIn("actions/checkout@v4", workflow)
         self.assertIn("github.sha", workflow)
         self.assertIn("if: github.ref != 'refs/heads/master'", workflow)
