@@ -87,11 +87,23 @@ def _read_master(raw: bytes, required: frozenset[str], name_key: str,
     if not needed.issubset(reader.fieldnames or ()):
         raise ValueError("REQUIRED_SOURCE_COLUMNS_MISSING")
     grouped: dict[str, list[dict[str, str]]] = {}
+    # A unique move name is insufficient: two different Japanese moves can
+    # accidentally share a MoveKey, including when BOTH keys appear in the
+    # registered Pokémon's learnset. Check the *entire* source catalog,
+    # not just the six registered members' moves.
+    move_names_by_key: dict[str, str] = {}
     for row in reader:
         label = row.get(name_key)
         if not isinstance(label, str) or not label or label != label.strip():
             raise ValueError("INVALID_OR_MISSING_SOURCE_NAME")
         normalized = label.translate(_DIGIT_WIDTH)
+        if not form_aware and name_key == "技名":
+            key = row.get("MoveKey")
+            if isinstance(key, str) and key:
+                prior_name = move_names_by_key.get(key)
+                if prior_name is not None and prior_name != normalized:
+                    raise ValueError("COLLIDING_MOVE_KEY")
+                move_names_by_key[key] = normalized
         group = grouped.setdefault(normalized, [])
         if group:
             if not form_aware:

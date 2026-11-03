@@ -99,6 +99,52 @@ class ChampionsKeyCandidateTests(unittest.TestCase):
         self.assertEqual(report.reason, "MALFORMED_OR_AMBIGUOUS_CHAMPIONS_MASTER")
         self.assertFalse(report.usable_in_live)
 
+    def test_move_key_collision_rejects_entire_catalog_even_when_learned(self):
+        # Review P2 reproduction: Meowscarada learns both flowertrick and
+        # uturn, so checking only move name and learnset membership falsely
+        # accepted the altered Trick Flower -> uturn mapping as all 24 OK.
+        def replace_flowertrick(rows):
+            trick = next(r for r in rows if r["技名"] == "トリックフラワー")
+            pivot = next(r for r in rows if r["技名"] == "とんぼがえり")
+            self.assertEqual(trick["MoveKey"], "flowertrick")
+            self.assertEqual(pivot["MoveKey"], "uturn")
+            trick["MoveKey"] = pivot["MoveKey"]
+        edited = edited_csv(MOVES.read_bytes(), replace_flowertrick)
+        result = run(move=edited)
+        self.assertEqual(result.status, "INVALID_SOURCE_OR_FROZEN_TEAM")
+        self.assertEqual(result.reason,
+                         "MALFORMED_OR_AMBIGUOUS_CHAMPIONS_MASTER")
+        # Fail closed before publishing a misleading 6+24 candidate inventory.
+        self.assertEqual(result.candidate_move_keys, 0)
+        self.assertEqual(result.members, ())
+        self.assertFalse(result.showdown_mapping_verified)
+        self.assertFalse(result.usable_in_live)
+        # The unmodified fixed Champions master is not rewritten or tainted.
+        verified = run()
+        self.assertEqual(verified.status, "CHAMPIONS_KEY_CANDIDATES_ONLY")
+        self.assertEqual(verified.candidate_move_keys, 24)
+
+    def test_move_key_collision_outside_registered_team_still_rejects(self):
+        # Reverse uniqueness is a property of the whole move master, not
+        # merely the current team's 24 displayed move slots.
+        def collide_unselected_moves(rows):
+            registered = {
+                "トリックフラワー", "とんぼがえり", "１０まんボルト",
+            }
+            other = [row for row in rows
+                     if row["技名"] not in registered and row.get("MoveKey")]
+            source = other[-1]
+            target = next(row for row in other
+                          if row["MoveKey"] != source["MoveKey"])
+            target["MoveKey"] = source["MoveKey"]
+        result = run(move=edited_csv(MOVES.read_bytes(),
+                                     collide_unselected_moves))
+        self.assertEqual(result.status, "INVALID_SOURCE_OR_FROZEN_TEAM")
+        self.assertEqual(result.reason,
+                         "MALFORMED_OR_AMBIGUOUS_CHAMPIONS_MASTER")
+        self.assertEqual(result.candidate_species_keys, 0)
+        self.assertEqual(result.candidate_move_keys, 0)
+
     def test_bare_multiform_species_is_not_silently_chosen_by_source_order(self):
         # The two Champions masters legitimately have six 'ロトム' rows.
         # A registered team with bare ロトム gives NO exact form identity.

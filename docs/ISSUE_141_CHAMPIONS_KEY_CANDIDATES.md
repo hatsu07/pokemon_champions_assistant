@@ -21,6 +21,17 @@ digit equivalence. The result contains per-member and per-move candidates,
 membership in the **Champions linked learnset**, source byte SHA-256, and
 unmapped fields. It never writes into the registered team CSV.
 
+**Source-key integrity gate (PR #199 P2 review fix):** Across the *entire*
+Champions move master, require one-to-one mapping in both directions:
+digit-width-normalized Japanese move name → `MoveKey`, and
+`MoveKey` → normalized Japanese move name. A collision between two different
+move names with one key invalidates the complete source inventory before any
+6-member/24-move candidate coverage can be reported. For example, changing
+トリックフラワー from `flowertrick` to `uturn` must be rejected even
+when the registered マスカーニャ learnset contains both keys. A conflict in
+a move *outside* the current team is also rejected. The actual master
+source remains unchanged; a new test injects the bad mapping in memory.
+
 The present source files supply **six base-species LearnsetKey candidates**
 and **24 move MoveKey candidates**. Of particular interest:
 - `10まんボルト` in the registered CSV equals `１０まんボルト` in the
