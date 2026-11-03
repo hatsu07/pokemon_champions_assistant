@@ -227,12 +227,13 @@ class ParallelShadowSession:
             return ParallelShadowResult("REFUSED", "OFFPATH_STORAGE_FAILURE")
 
     def close(self) -> None:
-        # Set the event without any disk-lock acquisition: UI OFF/revision
-        # changes never wait for a sqlite BEGIN IMMEDIATE (up to 3 seconds).
-        self._revoked.set()
+        # The only lock shared with _finish is IN-MEMORY and never covers
+        # SQLite IO. It linearizes a successful receipt vs user OFF/revision;
+        # the Qt thread never waits for a disk transaction (up to 3 seconds).
         with self._lock:
             if self._closed:
                 return
+            self._revoked.set()
             self._closed = True
             if self._pool is not None:
                 if self._joined and not self._persisted:
