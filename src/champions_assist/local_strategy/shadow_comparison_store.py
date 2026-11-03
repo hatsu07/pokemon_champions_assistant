@@ -182,7 +182,9 @@ def finish_shadow_lease(
     database_path: str | Path, record: ShadowComparisonRecord,
 ) -> None:
     """Off-worker only. Clear the barrier AFTER success or confirmed revoke."""
-    _pending_lease_path(database_path, record).unlink()
+    # Both the worker and its serialized cleanup task can independently
+    # finish the SAME revocation. Removing the barrier must be idempotent.
+    _pending_lease_path(database_path, record).unlink(missing_ok=True)
 
 
 def pending_shadow_lease_count(database_path: str | Path) -> int:
