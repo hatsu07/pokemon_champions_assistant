@@ -28,6 +28,14 @@ class UiShadowDispatcher:
         self.revision: int | None = None
         self.last_future: Any | None = None
 
+    def prepare_storage(self) -> str:
+        """Only on explicit user opt-in, before dispatch; fail closed on IO."""
+        try:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            return "READY"
+        except (OSError, ValueError):
+            return "STORAGE_UNAVAILABLE"
+
     def invalidate(self) -> None:
         latch, session = self.latch, self.session
         self.latch = None
@@ -51,6 +59,8 @@ class UiShadowDispatcher:
         self.invalidate()
         if not enabled:
             return "DISABLED"
+        if not self.database_path.parent.is_dir():
+            return "REFUSED:STORAGE_NOT_PREPARED"
         if deadline_monotonic is None:
             return "NON_ACTION_WINDOW"
         captured = capture_gpt_dispatch_window(
