@@ -127,9 +127,23 @@ class Stage1SoftwareQualityTests(unittest.TestCase):
                 "event":"AI_REQUEST_LOGICALLY_CANCELLED",
                 "at_ms":events[-1]["at_ms"]+1,
                 "request_id":"req-1","turn_epoch":1,"reason":"NEW_TURN"})
-            report=stage1_software_shadow_report(rows,gui)
+            report=stage1_software_shadow_report(
+                rows, gui, acceptance_database_path=path)
             self.assertEqual(report["qt_gpt_pair_matched"],0)
             self.assertEqual(report["status"],"SOFTWARE_EVIDENCE_PARTIAL")
+
+    def test_raw_record_without_persistent_finalization_is_untrusted(self):
+        """Even a valid Qt render cannot upgrade a raw pending SQLite row."""
+        with TemporaryDirectory() as directory:
+            path=Path(directory)/"private"/"shadow.sqlite"
+            rows=receipt(path)
+            self.assertEqual(len(read_shadow_comparisons(
+                path, finalized_only=True)),1)
+            without_source=stage1_software_shadow_report(
+                rows,gui_for_one())
+            self.assertEqual(without_source["qt_gpt_pair_matched"],0)
+            self.assertEqual(without_source["sqlite_finalized_window_count"],0)
+            self.assertEqual(without_source["status"],"SOFTWARE_EVIDENCE_PARTIAL")
 
     def test_cli_saved_evidence_never_emits_phase2_true(self):
         with TemporaryDirectory() as d:
