@@ -112,16 +112,18 @@ class UiShadowDispatcher:
                 or elapsed_ms > 600000):
             self.invalidate()
             return "INVALID_GPT_TIMING"
-        if status in {"CANCELLED", "ERROR", "SUPERSEDED",
-                      "DEADLINE_EXCEEDED", "MATCH_END"}:
+        if status not in {"ADVICE", "PROVISIONAL_ADVICE"} or not advice_present:
+            # BLOCKED/NO_ACTION/TEST_ONLY are not evidence that a GPT
+            # response was actually produced. Never manufacture a GPT
+            # abstention from a failed OCR or a synthetic test-only reply.
             self.invalidate()
-            return "GPT_NOT_CURRENT"
+            return "GPT_RESPONSE_NOT_VERIFIED"
         try:
             # The GPT output occurred but no real Champions legal-command
             # attestation was supplied. Do not manufacture a hashed action.
             gpt = BoundGPTAdvice(
                 self.session.snapshot.snapshot_sha256,
-                "GPT_UNVERIFIED" if advice_present else "GPT_ABSTAIN",
+                "GPT_UNVERIFIED",
                 elapsed_ms=elapsed_ms)
             future = self.session.attach_gpt(gpt)
             if future is None:
