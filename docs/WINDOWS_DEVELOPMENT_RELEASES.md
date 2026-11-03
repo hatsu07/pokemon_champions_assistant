@@ -11,6 +11,21 @@
 
 リリース作成と定期削除は同一のconcurrency groupを使い、同時実行を避ける。リリース作成workflowだけが`contents: write`、PR検証は読み取りのみ。非公開リポジトリを公開設定へ変更しない。
 
+## 手動：任意のブランチから BRANCH_TEST_ONLY Windows ZIPを発行（Issue #203）
+
+通常の `master` pushによるDEVELOPMENTリリースは従来どおり自動作成する。**通常配布用マスターゲートは緩めない。** GitHub Actions画面からブランチを明示選択し、リポジトリオーナー本人がチェックした場合だけ、別の検証用プレリリースを作る。
+
+1. テスト対象ブランチに、この変更済み `.github/workflows/windows-development-release.yml` と `scripts/publish_windows_branch_test_release.ps1` が含まれていることを確認する。GitHubの手動実行画面は既存ワークフローがdefault branchにあるため表示されるが、**実行されるYAMLとソースは「Use workflow from」で選択したブランチのもの**。
+2. GitHubの **Actions → Windows DEVELOPMENT GitHub Release → Run workflow** を開く。
+3. **Use workflow from** で `integration/issue-138-showdown-local-engine` 等の対象ブランチを選ぶ。入力欄に別名を指定してcheckoutする方式ではない。
+4. `branch_test_release` にチェックを入れて **Run workflow** を実行する。ブランチがmasterでなければ、オーナー以外・チェックなし・手動実行以外はジョブを実行しない。
+5. 両EXEのビルドと実際の起動／OCR／GUIスモークに成功したら、[GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases) に `Windows BRANCH TEST <branch> @ <sha12> (run <id>)` が公開される。タグは `development-branch-windows-<sha12>-run<run_id>`。両ZIPの同梱 `BUILD_REVISION.txt` に `commit_sha`、`source_ref`、`artifact_type=BRANCH_TEST_ONLY` を記録する。
+6. Issue #203のWindows端末ではZIPを展開してEXEを実行するだけ。WindowsホストにPython/PyInstaller等は導入しない。利用したブランチとSHAはIssueに記録し、実キャプチャと本番GPTの動作は別途独立検証する。
+
+ブランチ版も通常と同じ2種類のZIPとWindowsスモークを実行するが、**masterへの統合／master配布／PR全CI成功／実ゲーム合格**を意味しない。公開時に指定したSHAと、実際のGitタグ参照先が一致しなければ失敗する。再実行は同一run_idとSHAの成果物のみ受理する。ブランチ版タグは通常の `development-windows-v...-dev.N` とは異なり、既存の14日クリーンアップ対象**外**。不要になった検証用リリースは、参照中でないことを確認して個別に整理すること。スクリーンショット・ユーザーログ・認証情報は配布しない。
+
+`master` を選び `branch_test_release=false` で実行する場合は従来と同じマスター用PR照合ゲートおよび公開スクリプトが使われる。
+
 ## 取得するもの
 
 [GitHub Releases](https://github.com/hatsu07/pokemon_champions_assistant/releases) のプレリリースから、それぞれ次のZIPをダウンロード：
