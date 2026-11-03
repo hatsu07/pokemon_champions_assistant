@@ -384,6 +384,13 @@ def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparison
     # Same close guarantee on the read-only path. Otherwise Windows cannot
     # remove a database after a diagnostic read even when the SELECT ended.
     with closing(sqlite3.connect(uri, uri=True)) as db:
+        # A revoked transaction can roll back the *first CREATE TABLE*:
+        # SQLite file exists but has no committed schema. That means zero
+        # recorded evidence, not a successful or corrupted shadow row.
+        if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (_TABLE,)).fetchone() is None:
+            return ()
         cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
         records = db.execute(
             "SELECT " + ",".join(cols) +
