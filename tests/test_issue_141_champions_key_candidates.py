@@ -112,7 +112,8 @@ class ChampionsKeyCandidateTests(unittest.TestCase):
                       and r.get("name") == "サーフゴー")
         member["name"] = "ロトム"
         out = StringIO()
-        writer = csv.DictWriter(out, fieldnames=columns,\n                                extrasaction="ignore", lineterminator="\n")
+        writer = csv.DictWriter(out, fieldnames=columns,
+                                extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
         modified = out.getvalue()
