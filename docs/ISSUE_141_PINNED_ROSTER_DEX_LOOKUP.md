@@ -59,9 +59,5 @@ captures. Build ③ safe one-turn choices, ④ tactical 18 PREP judgments,
 independent golden, safe/late/abstain metrics with real Windows timings.
 Passing source metadata alone may not mark any of ②〜⑥ complete.
 
-User-approved timer remains selection + PREP **shared 90 seconds** with
-no independent 40-second PREP cutoff. An observed opponent lead immediately
-supersedes PREP.
-
 Keep [Issue #141](https://github.com/hatsu07/pokemon_champions_assistant/issues/141)
 Open and Phase 3 #142 disabled until all real-game acceptance evidence exists.
