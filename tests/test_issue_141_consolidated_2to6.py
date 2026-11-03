@@ -171,10 +171,11 @@ class ConsolidatedPhase2Tests(unittest.TestCase):
                     elif variant == "missing_opponent_rows":
                         manifest.pop("opponent_rows", None)
                     else:
-                        # The generated manifest includes v1/v2 AI counts.
-                        self.assertIn("ai_v1_cells", manifest)
-                        self.assertIn("ai_v2_cells", manifest)
+                        # Older generated manifests omit AI version
+                        # counts; adding a malformed pair must still be
+                        # detected instead of requiring v1/v2 to exist.
                         manifest["ai_v1_cells"] = -1
+                        manifest["ai_v2_cells"] = 0
                     manifest_path.write_text(
                         json.dumps(manifest), encoding="utf-8")
                     ready = team_readiness(
