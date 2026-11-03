@@ -6,6 +6,7 @@ Only hashes/labels and timing are stored; no screenshot, token or raw OCR.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -209,7 +210,12 @@ def append_shadow_comparison(
         raise ValueError("INVALID_NONACTIONABLE_SHADOW_RECORD")
     cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
     values = tuple(getattr(record, name) for name in cols)
-    with sqlite3.connect(path, timeout=3.0) as db:
+    # sqlite3.Connection.__exit__ commits/rolls back but DOES NOT close the
+    # handle. A leaked handle locks the database on Windows (WinError 32)
+    # when the owning temporary directory is removed. The outer closing()
+    # must run after the inner transaction context, including on early return
+    # (idempotent record) and exception (conflicting record).
+    with closing(sqlite3.connect(path, timeout=3.0)) as db, db:
         db.execute("BEGIN IMMEDIATE")
         _ensure_schema(db)
         key = (record.match_id, record.decision_window_id, record.state_revision)
@@ -235,7 +241,9 @@ def read_shadow_comparisons(database_path: str | Path) -> tuple[ShadowComparison
     if not path.is_file():
         return ()
     uri = "file:" + str(path.resolve()).replace("?", "%3F").replace("#", "%23") + "?mode=ro"
-    with sqlite3.connect(uri, uri=True) as db:
+    # Same close guarantee on the read-only path. Otherwise Windows cannot
+    # remove a database after a diagnostic read even when the SELECT ended.
+    with closing(sqlite3.connect(uri, uri=True)) as db:
         cols = tuple(ShadowComparisonRecord.__dataclass_fields__)
         records = db.execute(
             "SELECT " + ",".join(cols) +

@@ -212,6 +212,28 @@ class ShadowSameRevisionStoreTests(unittest.TestCase):
                     append_shadow_comparison(db,fake)
             self.assertFalse(db.is_file())
 
+    def test_sqlite_handles_released_after_reads_early_return_and_exception(self):
+        """Windows must be able to delete SQLite immediately after each path.
+
+        sqlite3's transaction context commits/rolls back but does NOT close.
+        This test catches WinError 32 rather than silently relying on CPython
+        GC to release a connection after the test has already returned.
+        """
+        row=compared()
+        with TemporaryDirectory() as tmp:
+            db=Path(tmp)/"release.sqlite"
+            self.assertEqual(append_shadow_comparison(db,row),"RECORDED")
+            self.assertEqual(read_shadow_comparisons(db),(row,))
+            self.assertEqual(append_shadow_comparison(db,row),"ALREADY_RECORDED")
+            with self.assertRaisesRegex(ValueError,"CONFLICTING_SAME_WINDOW_RECORD"):
+                append_shadow_comparison(db,replace(row,local_elapsed_ms=999))
+            self.assertEqual(read_shadow_comparisons(db),(row,))
+            db.unlink()  # Must succeed on Windows with no SQLite file lock.
+            self.assertFalse(db.exists())
+            self.assertEqual(append_shadow_comparison(db,row),"RECORDED")
+            self.assertEqual(read_shadow_comparisons(db),(row,))
+            db.unlink()
+
     def test_stale_gpt_and_local_window_rejected_before_db(self):
         snap=frozen()
         changed=frozen(decision_window_id="new-window")
