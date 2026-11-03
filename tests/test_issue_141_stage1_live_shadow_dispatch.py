@@ -61,6 +61,10 @@ class LiveShadowDispatchTests(unittest.TestCase):
             {"observed_state":{"selected_three":["A"]}},
             {"state_revision":-1}, {"match_id":""},
             {"turn_epoch":True}, {"deadline_monotonic":"not a time"},
+            {"deadline_monotonic":float("nan")},
+            {"deadline_monotonic":float("inf")},
+            {"match_id":"../private?"}, {"request_id":"x"*200},
+            {"observed_state":{"our_active":"A"*400}},
         ):
             with self.subTest(kwargs=kwargs):
                 result = capture(**kwargs)
