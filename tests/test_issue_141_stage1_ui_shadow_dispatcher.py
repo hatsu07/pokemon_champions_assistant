@@ -103,7 +103,7 @@ class UiShadowDispatcherTests(unittest.TestCase):
             self.assertEqual(bridge.attach_gpt(
                 request_id="req-1",turn_epoch=1,state_revision=4,
                 status="CANCELLED",advice_present=False,elapsed_ms=100,
-                fresh=True), "GPT_NOT_CURRENT")
+                fresh=True), "GPT_RESPONSE_NOT_VERIFIED")
             self.assertFalse(database.exists())
 
     def test_invalidated_result_is_not_silent_success(self):
