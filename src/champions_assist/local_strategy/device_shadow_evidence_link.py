@@ -18,6 +18,9 @@ from ..real_battle_validation import (
     SCHEMA as DEVICE_SCHEMA, TURN_LIMIT_MS, validate_real_battle_packet,
 )
 from .shadow_comparison_store import ShadowComparisonRecord
+from .registered_team_source_binding import (
+    RegisteredSourceContext, bind_registered_team_sources,
+)
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _GOLDENS = frozenset({
@@ -103,6 +106,7 @@ def audit_offline_device_shadow_link(
     shadow_rows: Iterable[ShadowComparisonRecord],
     frames: Iterable[CapturedTurnLink],
     golden_claims: Iterable[GoldenReviewClaim] = (),
+    source_context: RegisteredSourceContext | None = None,
 ) -> DeviceShadowLinkAudit:
     """Read-only, game-agnostic evidence pairing. Synthetic tests can run it.
 
@@ -124,6 +128,20 @@ def audit_offline_device_shadow_link(
         return _blocked("INVALID_DEVICE_CAPTURE_OR_TIMELINE")
     if not device["device_evidence_passed"]:
         return _blocked("DEVICE_FIVE_MATCHES_OR_90_90_45_DEADLINES_FAILED")
+
+    source_bound = False
+    if source_context is not None:
+        # Never take a preconstructed 'verified' dataclass from the caller.
+        # The named source context must be re-checked independently from the
+        # registered team index/CSV and CURRENT generated LIVE asset bytes.
+        bound = bind_registered_team_sources(
+            source_context, team_id=team_id,
+            team_fingerprint=team_fingerprint,
+            frozen_team_sha256=frozen_team_sha256,
+            regulation=regulation)
+        if not bound.source_identity_cross_bound:
+            return _blocked("REGISTERED_SOURCE_IDENTITY:" + bound.reason)
+        source_bound = True
 
     try:
         rows = tuple(shadow_rows)
@@ -245,13 +263,14 @@ def audit_offline_device_shadow_link(
         # There is no authoritative registered-team manifest binding all
         # three values. Even an exact snapshot SHA does NOT prove this is the
         # same registered team (it can be supplied by both sides).
-        "TEAM_IDENTITY_NOT_CROSS_BOUND",
         "GAME_CAPTURE_TRUTH_NOT_CRYPTOGRAPHICALLY_ATTESTABLE",
         "INDEPENDENT_CHAMPIONS_MOVE_DAMAGE_LEGALITY_NOT_ADJUDICATED",
         "LOCAL_MODEL_DIAGNOSTIC_NOT_ACTIONABLE",
         "THREE_POKEMON_TACTICAL_18_NOT_INDEPENDENTLY_CONFIRMED",
         "TRUE_GPT_LOCAL_LIVE_PARALLELISM_NOT_ATTESTED",
     ]
+    if not source_bound:
+        blockers.append("TEAM_IDENTITY_NOT_CROSS_BOUND")
     if missing: blockers.append("REQUIRED_GOLDEN_CATEGORIES_NOT_LABELLED")
     if unsafe: blockers.append("KNOWN_UNSAFE_GOLDEN_CLAIMS_PRESENT")
     if not nonabstaining: blockers.append("ALL_LOCAL_SHADOW_ABSTAINED")
@@ -265,9 +284,11 @@ def audit_offline_device_shadow_link(
         reason="EXTERNAL_DEVICE_REVIEW_PACKET_IS_NOT_INDEPENDENT_GAME_PROOF",
         match_count=len(matches),
         bound_turns=len(links),
-        same_revision_shadow_turns=0,  # Not verified SAME REGISTERED TEAM.
-        unverified_aligned_shadow_rows=len(rows),
-        team_identity_cross_bound=False,
+        # These values attest LOCAL source identity only, NOT that the game
+        # video or a real-time local worker used the registered team.
+        same_revision_shadow_turns=len(rows) if source_bound else 0,
+        unverified_aligned_shadow_rows=0 if source_bound else len(rows),
+        team_identity_cross_bound=source_bound,
         nonabstaining_diagnostic_turns=nonabstaining,
         timed_shadow_displays=len(durations),
         late_shadow_displays=late,
