@@ -1,0 +1,419 @@
+"""#141⑥ Qt event clock regression tests: all events synthetic.
+
+None of these trace entries are independent game video or proof that the
+reported GPT move was legal/correct; no LOCAL_SHADOW GUI result is simulated.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+import unittest
+
+from champions_assist.local_strategy.gui_timing_trace_audit import (
+    SCHEMA, SOURCE, audit_gui_timing_export,
+)
+
+
+def scene(turns=2, delay=3000):
+    rows = []
+    for i in range(1, turns + 1):
+        start = (i - 1) * 50000
+        rows.extend((
+            {"event": "TURN_SCREEN_OBSERVED", "at_ms": start,
+             "turn_epoch": i, "screen_label": "TURN_ACTION"},
+            {"event": "AI_REQUEST_DISPATCH", "at_ms": start + 400,
+             "turn_epoch": i, "screen_label": "TURN_ACTION",
+             "match_id": "capture-actual-opaque", "request_id": "req-" + str(i),
+             "decision_window_id": "turn-" + str(i), "state_revision": i},
+            {"event": "AI_RESULT_DISPLAYED", "at_ms": start + delay - 100,
+             "turn_epoch": i, "match_id": "capture-actual-opaque",
+             "request_id": "req-" + str(i), "state_revision": i,
+             "status": "ADVICE", "recommendation_present": True},
+            {"event": "ACTION_GUI_RENDERED", "at_ms": start + delay,
+             "turn_epoch": i, "match_id": "capture-actual-opaque",
+             "request_id": "req-" + str(i),
+             "decision_window_id": "turn-" + str(i), "state_revision": i,
+             "status": "ADVICE", "recommendation_present": True},
+        ))
+    return {"timing_observations": {
+        "schema": SCHEMA,
+        "source": SOURCE,
+        "automatically_certified": False,
+        "events": rows,
+    }}
+
+
+class GuiTimingTraceAuditTests(unittest.TestCase):
+    def test_two_complete_qt_turn_chains_still_never_verify_game_or_shadow(self):
+        result = audit_gui_timing_export(scene())
+        self.assertEqual(result.status, "GUI_MONOTONIC_TIMING_ONLY")
+        self.assertEqual(result.observed_turns, 2)
+        self.assertEqual(result.complete_gpt_display_turns, 2)
+        self.assertEqual(result.late_gpt_display_turns, 0)
+        self.assertEqual(result.missing_or_unmatched_turns, 0)
+        self.assertEqual((result.p50_gpt_screen_ms, result.p95_gpt_screen_ms,
+                          result.p99_gpt_screen_ms), (3000, 3000, 3000))
+        self.assertFalse(result.actual_device_video_aligned)
+        self.assertFalse(result.local_shadow_ui_display_verified)
+        self.assertFalse(result.actionable_champions_advice_verified)
+        self.assertFalse(result.phase2_accepted)
+
+    def test_actual_selection_then_turns_export_excludes_only_nonturn(self):
+        # Real GUI _turn_epoch=0 during selection; the same exported trace
+        # contains a selection dispatch and its result before TURN_SCREEN.
+        trace = scene(turns=2)
+        events = trace["timing_observations"]["events"]
+        for event in events:
+            event["at_ms"] += 15000
+        selection = [
+            {"event": "AI_REQUEST_DISPATCH", "at_ms": 1000,
+             "turn_epoch": 0, "screen_label": "TEAM_SELECTION",
+             "decision_window_id": "selection",
+             "match_id": "capture-actual-opaque", "request_id": "req-select",
+             "state_revision": 0},
+            {"event": "AI_RESULT_DISPLAYED", "at_ms": 8000,
+             "turn_epoch": 0, "match_id": "capture-actual-opaque",
+             "request_id": "req-select", "state_revision": 0,
+             "status": "OK", "recommendation_present": True},
+        ]
+        events[:0] = selection
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.status, "GUI_MONOTONIC_TIMING_ONLY",
+                         got.reason)
+        self.assertEqual(got.complete_gpt_display_turns, 2)
+        self.assertEqual(got.p99_gpt_screen_ms, 3000)
+        # A malformed true TURN_ACTION cannot be hidden by labelling
+        # its window as "selection".
+        bad = deepcopy(trace)
+        bad["timing_observations"]["events"][0]["screen_label"] = "TURN_ACTION"
+        self.assertEqual(audit_gui_timing_export(bad).status,
+                         "GUI_TRACE_REFUSED")
+
+    def test_selection_action_then_each_postmatch_verification_works(self):
+        # Review P1: ordinary complete exports include selection and a
+        # result_screen or result verification AFTER the last action turn.
+        # Those postmatch requests do not emit AI_REQUEST_DISPATCH.
+        for start_event, job in (
+            ("RESULT_SCREEN_GPT_REQUEST", "result_screen"),
+            ("OCR_MATCH_RESULT_TEXT_AI_SENT", "result"),
+        ):
+            with self.subTest(job=job):
+                trace = scene(turns=1)
+                events = trace["timing_observations"]["events"]
+                for e in events:
+                    e["at_ms"] += 5000
+                events[:0] = [
+                    {"event": "AI_REQUEST_DISPATCH", "at_ms": 100,
+                     "request_id": "req-selection", "match_id":
+                     "capture-actual-opaque", "turn_epoch": 0,
+                     "state_revision": 0, "decision_window_id": "selection",
+                     "screen_label": "TEAM_SELECTION"},
+                    {"event": "AI_RESULT_DISPLAYED", "at_ms": 900,
+                     "request_id": "req-selection",
+                     "match_id": "capture-actual-opaque", "turn_epoch": 0,
+                     "state_revision": 0, "status": "OK"},
+                ]
+                events.extend((
+                    {"event": start_event, "at_ms": 10000,
+                     "request_id": "req-postmatch",
+                     "match_id": "capture-actual-opaque",
+                     "turn_epoch": 1},
+                    {"event": "NON_TURN_RESULT_AI_COMPLETED",
+                     "at_ms": 10300, "request_id": "req-postmatch",
+                     "match_id": "capture-actual-opaque",
+                     "turn_epoch": 1, "active_job": job,
+                     "status": "MATCH_END"},
+                ))
+                result = audit_gui_timing_export(trace)
+                self.assertEqual(result.status, "GUI_MONOTONIC_TIMING_ONLY",
+                                 result.reason)
+                self.assertEqual(result.complete_gpt_display_turns, 1)
+                self.assertEqual(result.p99_gpt_screen_ms, 3000)
+                self.assertFalse(result.phase2_accepted)
+
+    def test_real_turn_result_without_dispatch_is_not_ignored_as_postmatch(self):
+        trace = scene(turns=1)
+        events = trace["timing_observations"]["events"]
+        # No allowed matching postmatch start event; a forged or stale
+        # AI_RESULT_DISPLAYED must still be rejected, not blanket-skipped.
+        events.append({
+            "event": "AI_RESULT_DISPLAYED", "at_ms": 4100,
+            "request_id": "req-stale-unbound",
+            "match_id": "capture-actual-opaque", "turn_epoch": 1,
+            "state_revision": None, "status": "MATCH_END",
+        })
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.status, "GUI_TRACE_REFUSED")
+        self.assertFalse(got.phase2_accepted)
+
+    def test_unbound_duplicated_and_cross_job_postmatch_results_refused(self):
+        for bad in ("unbound", "duplicate", "wrong_job"):
+            with self.subTest(bad=bad):
+                trace = scene(turns=1)
+                events = trace["timing_observations"]["events"]
+                start = {
+                    "event": "RESULT_SCREEN_GPT_REQUEST", "at_ms": 4000,
+                    "request_id": "req-result",
+                    "match_id": "capture-actual-opaque", "turn_epoch": 1,
+                }
+                end = {
+                    "event": "NON_TURN_RESULT_AI_COMPLETED", "at_ms": 4100,
+                    "request_id": "req-result",
+                    "match_id": "capture-actual-opaque", "turn_epoch": 1,
+                    "active_job": "result_screen", "status": "MATCH_END",
+                }
+                if bad != "unbound":
+                    events.append(start)
+                if bad == "wrong_job":
+                    end["active_job"] = "result"
+                events.append(end)
+                if bad == "duplicate":
+                    events.append({**end, "at_ms": 4200})
+                got = audit_gui_timing_export(trace)
+                self.assertEqual(got.status, "GUI_TRACE_REFUSED")
+                self.assertFalse(got.phase2_accepted)
+
+    def test_postmatch_switch_cancel_none_turn_both_directions(self):
+        # An existing result-screen/ocr-result worker can be retired before
+        # the other postmatch request. Real cancellation uses the OLD request
+        # id with _active_turn_epoch=None. Do not let this poison valid turns.
+        for old_start, new_start, old_job, new_job in (
+            ("RESULT_SCREEN_GPT_REQUEST", "OCR_MATCH_RESULT_TEXT_AI_SENT",
+             "result_screen", "result"),
+            ("OCR_MATCH_RESULT_TEXT_AI_SENT", "RESULT_SCREEN_GPT_REQUEST",
+             "result", "result_screen"),
+        ):
+            for old_epoch in (None, 1):
+                with self.subTest(old_job=old_job, old_epoch=old_epoch):
+                    trace = scene(turns=1)
+                    events = trace["timing_observations"]["events"]
+                    events.extend((
+                        {"event": old_start, "at_ms": 4000,
+                         "request_id": "req-old-result",
+                         "match_id": "capture-actual-opaque",
+                         "turn_epoch": 1},
+                        {"event": "AI_REQUEST_LOGICALLY_CANCELLED",
+                         "at_ms": 4100, "request_id": "req-old-result",
+                         "turn_epoch": old_epoch,
+                         "reason": "RESULT_SCREEN_VERIFICATION"},
+                        {"event": new_start, "at_ms": 4200,
+                         "request_id": "req-new-result",
+                         "match_id": "capture-actual-opaque",
+                         "turn_epoch": 1},
+                        {"event": "NON_TURN_RESULT_AI_COMPLETED",
+                         "at_ms": 4300, "request_id": "req-new-result",
+                         "match_id": "capture-actual-opaque",
+                         "turn_epoch": 1, "active_job": new_job,
+                         "status": "MATCH_END"},
+                    ))
+                    result = audit_gui_timing_export(trace)
+                    self.assertEqual(
+                        result.status, "GUI_MONOTONIC_TIMING_ONLY",
+                        result.reason)
+                    self.assertEqual(result.complete_gpt_display_turns, 1)
+                    self.assertEqual(result.p99_gpt_screen_ms, 3000)
+                    self.assertFalse(result.phase2_accepted)
+
+    def test_postmatch_cancelled_completion_duplicate_and_wrong_identity_fail(self):
+        for alteration in ("old_completed", "duplicate_cancel",
+                           "wrong_match", "wrong_job", "missing_reason"):
+            with self.subTest(alteration=alteration):
+                trace = scene(turns=1)
+                events = trace["timing_observations"]["events"]
+                start = {
+                    "event": "OCR_MATCH_RESULT_TEXT_AI_SENT",
+                    "at_ms": 4000, "request_id": "req-post",
+                    "match_id": "capture-actual-opaque", "turn_epoch": 1,
+                }
+                cancelled = {
+                    "event": "AI_REQUEST_LOGICALLY_CANCELLED",
+                    "at_ms": 4100, "request_id": "req-post",
+                    "turn_epoch": None,
+                    "reason": "RESULT_SCREEN_VERIFICATION",
+                }
+                events.append(start)
+                if alteration == "wrong_match":
+                    cancelled["match_id"] = "another-match"
+                elif alteration == "wrong_job":
+                    cancelled["active_job"] = "result_screen"
+                elif alteration == "missing_reason":
+                    cancelled.pop("reason")
+                events.append(cancelled)
+                if alteration == "old_completed":
+                    events.append({
+                        "event": "NON_TURN_RESULT_AI_COMPLETED",
+                        "at_ms": 4200, "request_id": "req-post",
+                        "match_id": "capture-actual-opaque",
+                        "turn_epoch": 1, "active_job": "result",
+                        "status": "MATCH_END",
+                    })
+                elif alteration == "duplicate_cancel":
+                    events.append({**cancelled, "at_ms": 4200})
+                got = audit_gui_timing_export(trace)
+                self.assertEqual(got.status, "GUI_TRACE_REFUSED")
+                self.assertFalse(got.phase2_accepted)
+
+    def test_unbound_none_epoch_cancel_remains_rejected(self):
+        trace = scene(turns=1)
+        trace["timing_observations"]["events"].append({
+            "event": "AI_REQUEST_LOGICALLY_CANCELLED",
+            "at_ms": 4100, "request_id": "req-not-registered",
+            "turn_epoch": None, "reason": "RESULT_SCREEN_VERIFICATION",
+        })
+        report = audit_gui_timing_export(trace)
+        self.assertEqual(report.status, "GUI_TRACE_REFUSED")
+        self.assertEqual(report.reason, "INVALID_GUI_TURN_EPOCH")
+
+    def test_postmatch_emitters_never_use_turn_action_result_event(self):
+        path = (Path(__file__).resolve().parents[1] / "src" /
+                "champions_assist" / "match_replay_dialog.py")
+        code = path.read_text(encoding="utf-8")
+        self.assertIn('if self._active_job in ("result_screen", "result")',
+                      code)
+        self.assertIn('"NON_TURN_RESULT_AI_COMPLETED"', code)
+        self.assertIn('"RESULT_SCREEN_GPT_REQUEST",images_sent=0', code)
+        self.assertIn('"OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0', code)
+        self.assertIn('request_id=self._active_request_id,\n'
+                      '                          match_id=getattr(self, "match_id", None) or ""',
+                      code)
+
+    def test_cancelled_or_superseded_old_reply_is_never_a_valid_render(self):
+        for explicit_cancel in (True, False):
+            trace = scene(turns=1)
+            e = trace["timing_observations"]["events"]
+            old_dispatch = deepcopy(e[1])
+            old_dispatch["request_id"] = "req-old"
+            old_dispatch["at_ms"] = 180
+            e.insert(1, old_dispatch)
+            if explicit_cancel:
+                e.insert(2, {"event": "AI_REQUEST_LOGICALLY_CANCELLED",
+                             "at_ms": 260, "turn_epoch": 1,
+                             "request_id": "req-old",
+                             "reason": "NEW_AI_REQUEST_DISPATCH"})
+            # Old request is answered after a newer req was dispatched.
+            e[-2]["request_id"] = "req-old"
+            e[-1]["request_id"] = "req-old"
+            got = audit_gui_timing_export(trace)
+            self.assertEqual(got.status, "GUI_TRACE_REFUSED",
+                             (explicit_cancel, got))
+            self.assertFalse(got.phase2_accepted)
+
+    def test_cancelled_old_request_followed_by_current_result_is_valid(self):
+        trace = scene(turns=1)
+        e = trace["timing_observations"]["events"]
+        old_dispatch = deepcopy(e[1])
+        old_dispatch["request_id"] = "req-old"
+        old_dispatch["at_ms"] = 180
+        e[1:1] = [
+            old_dispatch,
+            {"event": "AI_REQUEST_LOGICALLY_CANCELLED",
+             "at_ms": 260, "turn_epoch": 1,
+             "request_id": "req-old",
+             "reason": "NEW_AI_REQUEST_DISPATCH"},
+        ]
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.complete_gpt_display_turns, 1)
+        self.assertEqual(got.status, "GUI_MONOTONIC_TIMING_ONLY")
+
+    def test_render_timestamp_emitted_after_actual_widget_text_updates(self):
+        # Source-order contract for Qt integration; synthetic clock tests
+        # by themselves could not detect an early "rendered" event.
+        path = (Path(__file__).resolve().parents[1] / "src" /
+                "champions_assist" / "match_replay_dialog.py")
+        code = path.read_text(encoding="utf-8")
+        render = code.split("    def _render(self, report):", 1)[1].split(
+            "    def _export(self):", 1)[0]
+        self.assertLess(render.index("self.action_banner.setText(displayed)"),
+                        render.index("self.output.setPlainText("))
+        self.assertLess(render.index("self.output.setPlainText("),
+                        render.index('self._trace_event("ACTION_GUI_RENDERED"'))
+        self.assertIn('state.get("phase") == "BATTLE"', render)
+        self.assertIn('self._active_turn_epoch == self._turn_epoch', render)
+        self.assertIn('report.get("screen") in', render)
+        # The selected-team PREP banner is never a turn-action render event.
+        self.assertLess(render.index('state.get("phase") == "BATTLE"'),
+                        render.index('self._trace_event("ACTION_GUI_RENDERED"'))
+
+    def test_display_past_45_seconds_is_measured_not_promoted(self):
+        trace = scene(turns=1, delay=45001)
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.status, "GUI_MONOTONIC_TIMING_ONLY")
+        self.assertEqual(got.late_gpt_display_turns, 1)
+        self.assertEqual(got.p99_gpt_screen_ms, 45001)
+        self.assertFalse(got.phase2_accepted)
+
+    def test_missing_display_is_incomplete_not_success(self):
+        trace = scene()
+        trace["timing_observations"]["events"].pop()
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.complete_gpt_display_turns, 1)
+        self.assertEqual(got.missing_or_unmatched_turns, 1)
+        self.assertFalse(got.phase2_accepted)
+
+    def test_ocr_retry_same_turn_and_old_result_do_not_count_as_current(self):
+        trace = scene(turns=1)
+        e = trace["timing_observations"]["events"]
+        old = deepcopy(e[1])
+        old["request_id"] = "req-old"
+        old["at_ms"] = 100
+        e.insert(1, old)
+        got = audit_gui_timing_export(trace)
+        self.assertEqual(got.complete_gpt_display_turns, 1)
+        self.assertFalse(got.phase2_accepted)
+
+    def test_mismatched_revision_request_and_out_of_order_refuse(self):
+        cases = [
+            (2, "state_revision", 99),
+            (3, "request_id", "req-OTHER"),
+            (3, "decision_window_id", "turn-OTHER"),
+            (3, "match_id", "other-match"),
+            (3, "recommendation_present", False),
+            (0, "at_ms", 9000),
+            (1, "turn_epoch", 99),
+        ]
+        for index, key, replacement in cases:
+            case = scene(turns=1)
+            case["timing_observations"]["events"][index][key] = replacement
+            with self.subTest(index=index, key=key):
+                report = audit_gui_timing_export(case)
+                self.assertEqual(report.status, "GUI_TRACE_REFUSED")
+                self.assertFalse(report.phase2_accepted)
+
+    def test_test_only_not_treated_as_verified_or_displayed_advice(self):
+        trace = scene(turns=1)
+        trace["timing_observations"]["events"][2]["status"] = "TEST_ONLY"
+        trace["timing_observations"]["events"][3]["status"] = "TEST_ONLY"
+        result = audit_gui_timing_export(trace)
+        self.assertEqual(result.status, "GUI_TRACE_REFUSED")
+        self.assertFalse(result.phase2_accepted)
+
+    def test_duplicate_render_and_legacy_unbound_render_fail_closed(self):
+        for legacy in (False, True):
+            trace = scene(turns=1)
+            events = trace["timing_observations"]["events"]
+            if legacy:
+                events[3].pop("request_id")
+            else:
+                duplicate = deepcopy(events[3])
+                duplicate["at_ms"] += 1
+                events.append(duplicate)
+            report = audit_gui_timing_export(trace)
+            self.assertEqual(report.status, "GUI_TRACE_REFUSED")
+            self.assertFalse(report.phase2_accepted)
+
+    def test_reject_forged_certification_bad_schema_and_empty(self):
+        for edit in (
+            lambda p: p.update(automatically_certified=True),
+            lambda p: p.update(schema="OLD"),
+            lambda p: p.update(source="VIDEO_VERIFIED"),
+            lambda p: p.update(events=[]),
+            lambda p: p["events"][1].update(at_ms=100.2),
+        ):
+            trace = scene(turns=1)
+            edit(trace["timing_observations"])
+            self.assertEqual(audit_gui_timing_export(trace).status,
+                             "GUI_TRACE_REFUSED")
+
+
+if __name__ == "__main__":
+    unittest.main()

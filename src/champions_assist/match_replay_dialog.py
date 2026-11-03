@@ -2602,18 +2602,30 @@ class MatchReplayDialog(QDialog):
             speed_note=(" / 選出時モデル推論: "+str(effort)) if effort else ""
             self._set_ai_status(f"AI応答受信 / {report.get('status','UNKNOWN')}"+speed_note)
         if not superseded:
-            self._trace_event("AI_RESULT_DISPLAYED",
-                              request_id=self._active_request_id or "",
-                              match_id=self.match_id or "",
-                              state_revision=self._active_state_revision,
-                              status=report.get("status","UNKNOWN"),
-                              ui=report.get("screen","UNKNOWN"),
-                              ai_request_attempt=self._ai_request_attempts,
-                              turn_epoch=self._turn_epoch,
-                              queue_elapsed_ms=report.get("queue_elapsed_ms",0),
-                              reason=report.get("reason","UNKNOWN"),
-                              recommendation_present=bool(report.get("recommendation")),
-                              selection_present=bool(report.get("selected_three")))
+            if self._active_job in ("result_screen", "result"):
+                # Post-match verification has NO action-window dispatch and
+                # NO active action state_revision. Do not emit an unbound
+                # AI_RESULT_DISPLAYED and poison full-match turn audits.
+                # This is passive telemetry; it does not change the result.
+                self._trace_event("NON_TURN_RESULT_AI_COMPLETED",
+                                  request_id=self._active_request_id or "",
+                                  match_id=self.match_id or "",
+                                  active_job=self._active_job,
+                                  status=report.get("status","UNKNOWN"),
+                                  turn_epoch=self._turn_epoch)
+            else:
+                self._trace_event("AI_RESULT_DISPLAYED",
+                                  request_id=self._active_request_id or "",
+                                  match_id=self.match_id or "",
+                                  state_revision=self._active_state_revision,
+                                  status=report.get("status","UNKNOWN"),
+                                  ui=report.get("screen","UNKNOWN"),
+                                  ai_request_attempt=self._ai_request_attempts,
+                                  turn_epoch=self._turn_epoch,
+                                  queue_elapsed_ms=report.get("queue_elapsed_ms",0),
+                                  reason=report.get("reason","UNKNOWN"),
+                                  recommendation_present=bool(report.get("recommendation")),
+                                  selection_present=bool(report.get("selected_three")))
         entry={"step":len(self.entries)+1,**report}
         self.entries.append(entry)
         prefill_selection_prep=False
@@ -2940,6 +2952,9 @@ class MatchReplayDialog(QDialog):
         self._active_request_id="req-"+str(self._ai_request_attempts)
         self._trace_event("RESULT_SCREEN_GPT_REQUEST",images_sent=0,
                           frame_id=candidate["frame"],
+                          request_id=self._active_request_id,
+                          match_id=getattr(self, "match_id", None) or "",
+                          turn_epoch=getattr(self, "_turn_epoch", 0),
                           ocr_candidate_count=len(evidence),
                           pending_prior_ocr=0)
         self._thread=QThread(self)
@@ -2976,6 +2991,9 @@ class MatchReplayDialog(QDialog):
         self._ai_request_attempts+=1
         self._active_request_id="req-"+str(self._ai_request_attempts)
         self._trace_event("OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0,
+                          request_id=self._active_request_id,
+                          match_id=getattr(self, "match_id", None) or "",
+                          turn_epoch=getattr(self, "_turn_epoch", 0),
                           message_count=len(messages))
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
@@ -3496,14 +3514,6 @@ class MatchReplayDialog(QDialog):
                 "our_active":state.get("our_active"),
                 "opponent_active":state.get("opponent_active"),
                 "state_revision":state.get("_live_state_revision",0)})
-        if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"):
-            self._trace_event("ACTION_GUI_RENDERED",
-                status=report.get("status"),
-                target_own=state.get("our_active",""),
-                target_opponent=state.get("opponent_active",""),
-                turn_epoch=self._turn_epoch,
-                state_revision=state.get("_live_state_revision",0),
-                recommendation_present=bool(report.get("recommendation")))
         report["display_phase"]=display_phase
         self._refresh_live_status()
         rec=report.get("recommendation","") or report.get("message","")
@@ -3516,6 +3526,31 @@ class MatchReplayDialog(QDialog):
             line+json.dumps({"latest":report,"replay_state":state,
                              "timeline":self.entries},ensure_ascii=False,indent=2))
         self.output.verticalScrollBar().setValue(0)
+        # Qt action/output widget text has now been applied. The trace
+        # timestamp is a post-setPlainText *callback* measurement; actual
+        # physical screen paint and the game clock still require video proof.
+        if (state.get("phase") == "BATTLE"
+                and self._active_turn_epoch == self._turn_epoch
+                and self._turn_epoch > 0
+                and report.get("screen") in
+                    ("COMMAND_MENU", "MOVE_MENU", "PARTY_MENU")
+                and report.get("status") in
+                    ("ADVICE", "PROVISIONAL_ADVICE", "TEST_ONLY")
+                and report.get("recommendation")):
+            # Selection/PREP/result-screen rendering is not a turn action.
+            # Do not export it as a turn-action display event.
+            self._trace_event("ACTION_GUI_RENDERED",
+                status=report.get("status"),
+                # Opaque source-window identity for OFFLINE trace comparison.
+                # No raw OCR/prompt, local simulator or IO is introduced here.
+                match_id=self.match_id or "",
+                request_id=self._active_request_id or "",
+                decision_window_id=f"turn-{self._turn_epoch}",
+                target_own=state.get("our_active",""),
+                target_opponent=state.get("opponent_active",""),
+                turn_epoch=self._turn_epoch,
+                state_revision=state.get("_live_state_revision",0),
+                recommendation_present=bool(report.get("recommendation")))
         if self._debug_log is not None:
             self._debug_log.report(report)
         # Only observed UI reports; no hidden controller state is inferred.
