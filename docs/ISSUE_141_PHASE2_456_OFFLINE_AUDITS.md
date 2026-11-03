@@ -27,12 +27,16 @@ prevent claiming Phase 2④〜⑥ completion for actual ranked play.
   A structural pass is `ASSESSED_18_CONDITIONAL_ONLY`, **not** proof of
   damage, safe switch or 18 game-verified matchups.
 
-**Timing conflict requiring separate decision:** #141 and existing
-#99/#133 code use a 90 s shared selection+PREP clock with no independent
-40 s hard stop, whereas current project user instructions specify 40 s
-mandatory post-selection PREP. This change introduces no new timer and
-does not silently choose between the incompatible authorities. A single
-approved production timing contract is required before runtime wiring.
+**Latest timing decision (2026-11-03):** user explicitly abolished
+the independent 40-second mandatory PREP deadline. Selection and PREP share
+one **90-second window measured from the beginning of the selection screen**.
+For example, selection 10/35/70 seconds leaves PREP 80/55/20 seconds.
+The 90-second elapsed threshold determines whether the result was on-time,
+not whether an otherwise current AI task must be killed. A confirmed
+opponent lead/battle screen supersedes PREP immediately; a late old PREP
+response must not be adopted after that transition. See
+`phase2_match_audit.py` for the opt-in offline timeline audit and
+`docs/ISSUE_141_PHASE2_MATCH_AUDIT.md` for limitations.
 
 ## ⑤ Same-revision GPT / local diagnostic SQLite record
 
