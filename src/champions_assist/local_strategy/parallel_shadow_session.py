@@ -213,9 +213,15 @@ class ParallelShadowSession:
             # across the SQLite transaction or block the Qt thread for IO.
             self._current()
             with self._lock:
-                if self._closed or self._revoked.is_set():
-                    return ParallelShadowResult("REFUSED", "REVOKED_DURING_WRITE")
-                self._persisted = True
+                revoked = self._closed or self._revoked.is_set()
+                if not revoked:
+                    self._persisted = True
+            if revoked:
+                # A future may complete BEFORE the queued cleanup job;
+                # proactively remove any row so future.result() cannot be
+                # interpreted as successful old-window evidence.
+                self._revoke_unfinished()
+                return ParallelShadowResult("REFUSED", "REVOKED_DURING_WRITE")
             return ParallelShadowResult(status, "NONACTIONABLE_DIAGNOSTIC", record)
         except (ValueError, TypeError, AttributeError, OSError):
             if written:
