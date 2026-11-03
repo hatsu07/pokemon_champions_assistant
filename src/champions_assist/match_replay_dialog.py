@@ -3496,6 +3496,21 @@ class MatchReplayDialog(QDialog):
                 "our_active":state.get("our_active"),
                 "opponent_active":state.get("opponent_active"),
                 "state_revision":state.get("_live_state_revision",0)})
+        report["display_phase"]=display_phase
+        self._refresh_live_status()
+        rec=report.get("recommendation","") or report.get("message","")
+        if report.get("status")=="TEST_ONLY":
+            rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
+        elif report.get("status")=="PROVISIONAL_ADVICE" and not rec.startswith("【暫定"):
+            rec="【暫定AI推奨・対面未認証】"+rec
+        line=(rec+"\n\n") if rec else ""
+        self.output.setPlainText(
+            line+json.dumps({"latest":report,"replay_state":state,
+                             "timeline":self.entries},ensure_ascii=False,indent=2))
+        self.output.verticalScrollBar().setValue(0)
+        # Qt action/output widget text has now been applied. The trace
+        # timestamp is a post-setPlainText *callback* measurement; actual
+        # physical screen paint and the game clock still require video proof.
         if report.get("status") in ("ADVICE","PROVISIONAL_ADVICE","TEST_ONLY"):
             self._trace_event("ACTION_GUI_RENDERED",
                 status=report.get("status"),
@@ -3509,18 +3524,6 @@ class MatchReplayDialog(QDialog):
                 turn_epoch=self._turn_epoch,
                 state_revision=state.get("_live_state_revision",0),
                 recommendation_present=bool(report.get("recommendation")))
-        report["display_phase"]=display_phase
-        self._refresh_live_status()
-        rec=report.get("recommendation","") or report.get("message","")
-        if report.get("status")=="TEST_ONLY":
-            rec="【機能試験のみ・戦術的な妥当性未検証】"+rec
-        elif report.get("status")=="PROVISIONAL_ADVICE" and not rec.startswith("【暫定"):
-            rec="【暫定AI推奨・対面未認証】"+rec
-        line=(rec+"\n\n") if rec else ""
-        self.output.setPlainText(
-            line+json.dumps({"latest":report,"replay_state":state,
-                             "timeline":self.entries},ensure_ascii=False,indent=2))
-        self.output.verticalScrollBar().setValue(0)
         if self._debug_log is not None:
             self._debug_log.report(report)
         # Only observed UI reports; no hidden controller state is inferred.

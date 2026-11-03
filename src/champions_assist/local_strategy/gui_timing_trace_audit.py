@@ -69,11 +69,19 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
         return _refuse("MISSING_OR_OVERSIZED_GUI_EVENTS")
     allowed = frozenset({
         "TURN_SCREEN_OBSERVED", "AI_REQUEST_DISPATCH",
-        "AI_RESULT_DISPLAYED", "ACTION_GUI_RENDERED"})
+        "AI_RESULT_DISPLAYED", "ACTION_GUI_RENDERED",
+        "AI_REQUEST_LOGICALLY_CANCELLED"})
     turns: dict[int, int] = {}
     dispatches: dict[str, tuple[str, int, int, str, int]] = {}
     replies: dict[str, tuple[str, int, int, str, int, bool]] = {}
     displays: dict[int, int] = {}
+    # Selection, result-screen and other nonurgent requests use the explicit
+    # "selection" decision-window label in the real GUI's event exporter.
+    # Track those request IDs and their responses, not blanket-ignore events
+    # lacking a turn epoch (which could hide a corrupt action dispatch).
+    nonturn_requests: dict[str, str] = {}
+    current_turn_request: dict[int, str] = {}
+    cancelled_requests: set[str] = set()
     last_ms = -1
     known_match: str | None = None
     for event in events:
@@ -88,6 +96,29 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
             return _refuse("INVALID_GUI_EVENT_NAME")
         if name not in allowed:
             continue
+        request = event.get("request_id")
+        if (name == "AI_REQUEST_DISPATCH"
+                and event.get("decision_window_id") == "selection"
+                and event.get("screen_label") not in _URGENT):
+            # Explicit non-turn dispatch (selection/PREP/result screen).
+            # A TURN_ACTION with a bogus "selection" window is NOT skipped.
+            match = event.get("match_id")
+            turn = event.get("turn_epoch")
+            if (not isinstance(event.get("screen_label"), str)
+                    or not isinstance(request, str)
+                    or not 1 <= len(request) <= 128
+                    or not isinstance(match, str) or len(match) > 128
+                    or type(turn) is not int or turn < 0
+                    or request in nonturn_requests or request in dispatches):
+                return _refuse("INVALID_EXPLICIT_NON_ACTION_DISPATCH")
+            nonturn_requests[request] = match
+            continue
+        if name in ("AI_RESULT_DISPLAYED", "AI_REQUEST_LOGICALLY_CANCELLED"):
+            if isinstance(request, str) and request in nonturn_requests:
+                if (name == "AI_RESULT_DISPLAYED"
+                        and event.get("match_id") != nonturn_requests[request]):
+                    return _refuse("NON_ACTION_RESPONSE_MATCH_MISMATCH")
+                continue
         turn = event.get("turn_epoch")
         if type(turn) is not int or turn <= 0:
             return _refuse("INVALID_GUI_TURN_EPOCH")
@@ -98,7 +129,18 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
             continue
         if turn not in turns or now < turns[turn]:
             return _refuse("GUI_EVENT_WITHOUT_OBSERVED_TURN")
-        request = event.get("request_id")
+        # The GUI emits this when a worker is retired. It has request and
+        # turn_epoch but intentionally no match/window/revision fields.
+        if name == "AI_REQUEST_LOGICALLY_CANCELLED":
+            if (not isinstance(request, str)
+                    or request not in dispatches
+                    or dispatches[request][1] != turn
+                    or request in cancelled_requests):
+                return _refuse("INVALID_GPT_CANCELLED_REQUEST")
+            cancelled_requests.add(request)
+            if current_turn_request.get(turn) == request:
+                current_turn_request.pop(turn)
+            continue
         match = event.get("match_id")
         rev = event.get("state_revision")
         window = event.get("decision_window_id")
@@ -113,15 +155,24 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
         elif known_match != match:
             return _refuse("MULTIPLE_MATCHES_IN_ONE_GUI_TIMING_EXPORT")
         if name == "AI_REQUEST_DISPATCH":
-            if request in dispatches or event.get("screen_label") not in _URGENT:
+            if (request in dispatches or request in nonturn_requests
+                    or event.get("screen_label") not in _URGENT):
                 return _refuse("DUPLICATED_OR_NONURGENT_GPT_DISPATCH")
+            # An old request must not count after a new dispatch for this
+            # same observed game turn, even without explicit cancel telemetry.
+            previous = current_turn_request.get(turn)
+            if previous is not None:
+                cancelled_requests.add(previous)
             dispatches[request] = (match, turn, rev, window, now)
+            current_turn_request[turn] = request
         elif name == "AI_RESULT_DISPLAYED":
             dispatched = dispatches.get(request)
             if (dispatched is None
                     or dispatched[:3] != (match, turn, rev)
                     or now < dispatched[4]
-                    or request in replies):
+                    or request in replies
+                    or request in cancelled_requests
+                    or current_turn_request.get(turn) != request):
                 return _refuse("UNMATCHED_OR_DUPLICATED_GPT_RESULT")
             status = event.get("status")
             if not isinstance(status, str):
@@ -135,6 +186,8 @@ def audit_gui_timing_export(export: Any) -> GuiTurnTraceAudit:
             if (dispatched is None or replied is None
                     or dispatched[:4] != (match, turn, rev, window)
                     or replied[:3] != (match, turn, rev)
+                    or request in cancelled_requests
+                    or current_turn_request.get(turn) != request
                     or now < replied[4]
                     or event.get("status") not in _DISPLAYED
                     or replied[3] != event.get("status")

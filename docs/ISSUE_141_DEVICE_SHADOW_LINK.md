@@ -110,10 +110,26 @@ turn screen, plus 45-second late/missing turn counts and P50/P95/P99:
 python scripts/audit_phase2_gui_timing_export.py path/to/exported-match.json
 ```
 
+Nonurgent selection/PREP/result-screen dispatches use the explicitly
+labelled `decision_window_id="selection"` and are excluded **only when**
+their `screen_label` is not an actionable `TURN_ACTION` or
+`SWITCH_SELECTION`. Their corresponding AI results are excluded by exact
+request ID. An invalid action event must not be hidden by mislabelling its
+window. Active-turn `AI_REQUEST_LOGICALLY_CANCELLED` and replacement
+dispatches mark earlier request IDs unusable; a canceled or superseded
+request's result/render never counts.
+
 Missing/unbound request IDs, a stale revision, a different match, an invalid
 clock, a duplicate rendered advice, and `TEST_ONLY` results are refused,
 rather than treated as a timely actionable move. OCR revision retries with
 a new request ID are supported without treating any old reply as the result.
+
+`ACTION_GUI_RENDERED` is now timestamped **after** both the action banner
+text and full output text have been applied using `setPlainText`. This
+measures the Qt callback's post-widget-update time, **not the OS paint
+completion or verified screen-video arrival**; independent video alignment
+remains mandatory. A source-order integration assertion guards against
+regressing to a timestamp that precedes the text update.
 The exported JSON is manually saved by the user **after** a session, so
 this audit runs no code during time-limited gameplay.
 
