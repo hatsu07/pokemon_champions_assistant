@@ -427,6 +427,7 @@ class MatchReplayDialog(QDialog):
         self.store_root=Path(store_root) if store_root else default_app_root()
         self._shadow_dispatcher=UiShadowDispatcher(
             self.store_root/"phase2-shadow"/"comparison-v2.sqlite")
+        self._shadow_prep_draft=None
         self.capture_config=capture_config
         self._capture_gate=FrameChangeGate()
         self._turn_buffer=TurnCaptureBuffer()
@@ -1310,6 +1311,7 @@ class MatchReplayDialog(QDialog):
 
     def _stop_auto(self):
         self._shadow_dispatcher.invalidate()
+        self._shadow_prep_draft=None
         self._trace_event("AUTO_STOP_REQUESTED",
                           active_job=self._active_job or "NONE",
                           active_thread=self._thread is not None,
@@ -2726,6 +2728,7 @@ class MatchReplayDialog(QDialog):
         # Surface 3 + lead BEFORE even the local frozen-cache PREP step.
         self._render(entry)
         if prefill_selection_prep:
+            self._capture_shadow_prep_draft()
             self._prefill_cached_prep(
                 roles={key:report.get(key) for key in (
                     "preserve","stopper","closer")})
@@ -2800,6 +2803,48 @@ class MatchReplayDialog(QDialog):
             QMessageBox.StandardButton.No,
         )!=QMessageBox.StandardButton.Yes:return
         self._start_prep_auto()
+
+    def _capture_shadow_prep_draft(self):
+        """Opt-in, never-actionable 18-pair source-based local PREP.
+
+        The six matrix rows are retrieved by direct frozen-index lookup,
+        without a second six-row query, disk access or extra GPT request.
+        A conditional row is NOT a verified KO, safe switch or COMPLETE PREP.
+        """
+        self._shadow_prep_draft=None
+        if (not self.shadow_capture_check.isChecked()
+                or self.assets is None or self.state is None
+                or self.state.get("phase")!="PREP"
+                or self.state.get("visual_unknown_opponents")):
+            return
+        opponents=tuple(self.state.get("opponent_six") or ())
+        selected=tuple(self.state.get("selected_three") or ())
+        lead=self.state.get("lead")
+        if (len(opponents)!=6 or len(set(opponents))!=6
+                or len(selected)!=3 or len(set(selected))!=3
+                or lead not in selected):
+            return
+        try:
+            cached=tuple(self.assets.matrix_index.get(name) for name in opponents)
+            if any(not isinstance(row,str) for row in cached):
+                return
+            from .local_strategy.conditional_prep_builder import (
+                build_conditional_prep_draft,
+            )
+            result=build_conditional_prep_draft(
+                self.assets,selected,lead,opponents,
+                cached_matrix_rows_six=cached)
+            self._shadow_prep_draft=result
+            self._trace_event(
+                "LOCAL_SHADOW_PREP_DRAFT",
+                status=result.status,
+                pairs=result.proposed_pairs,
+                selection_assumed=bool(self.state.get("selection_assumed")),
+                ready_for_game=False,
+                verified_ko=0,
+                verified_safe_switch=0)
+        except (TypeError,ValueError,KeyError,AttributeError):
+            self._trace_event("LOCAL_SHADOW_PREP_DRAFT",status="REFUSED")
 
     def _prefill_cached_prep(self, *, roles=None):
         """Immediate 18-pair cache + win roles from the SELECTION model call.
