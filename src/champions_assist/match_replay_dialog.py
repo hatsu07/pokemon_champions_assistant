@@ -2954,7 +2954,7 @@ class MatchReplayDialog(QDialog):
                           frame_id=candidate["frame"],
                           request_id=self._active_request_id,
                           match_id=getattr(self, "match_id", None) or "",
-                          turn_epoch=self._turn_epoch,
+                          turn_epoch=getattr(self, "_turn_epoch", 0),
                           ocr_candidate_count=len(evidence),
                           pending_prior_ocr=0)
         self._thread=QThread(self)
@@ -2993,7 +2993,7 @@ class MatchReplayDialog(QDialog):
         self._trace_event("OCR_MATCH_RESULT_TEXT_AI_SENT",images_sent=0,
                           request_id=self._active_request_id,
                           match_id=getattr(self, "match_id", None) or "",
-                          turn_epoch=self._turn_epoch,
+                          turn_epoch=getattr(self, "_turn_epoch", 0),
                           message_count=len(messages))
         self._thread=QThread(self)
         self._worker=_ReplayWorker(
