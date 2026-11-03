@@ -20,6 +20,12 @@ from ..team_live_assets import GENERATED_VERSION
 
 _ID = re.compile(r"[a-f0-9]{32}\Z")
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
+# team_readiness sets matrix/lookup/team_match=True BEFORE checking the
+# candidate's counts and AI cell invariants. Only its *final* successful
+# integrity states can establish current local source identity.
+_CURRENT_ASSET_INTEGRITY_STATUSES = frozenset({
+    "評価検証済み", "条件付き準備", "対面データ未評価",
+})
 
 
 @dataclass(frozen=True)
@@ -99,7 +105,8 @@ def bind_registered_team_sources(
                 or not ready.get("matrix")
                 or not ready.get("lookup")
                 or ready.get("stale_reasons")
-                or ready.get("status") == "再準備が必要"):
+                or ready.get("status") not in
+                    _CURRENT_ASSET_INTEGRITY_STATUSES):
             return _no("SOURCE_ASSET_MANIFEST_NOT_CURRENT_OR_MATCHED")
         path = root / "live-team-assets" / team_id / team_fingerprint / "manifest.json"
         if not path.is_file() or not 1 <= path.stat().st_size <= 2_000_000:

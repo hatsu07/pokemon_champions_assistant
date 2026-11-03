@@ -21,6 +21,20 @@ master/review/environment version requirements. An index redirected to another
 team CSV, changed file bytes, a stale fingerprint or mismatched regulation
 fails closed.
 
+**Integrity gate hardening (PR #202 review P2):** A matrix/lookup file
+SHA match is not enough to certify the current LIVE assets: the existing
+`team_readiness` helper sets those per-file flags before checking the
+generated catalog's total matchup count and AI cell totals. Source binding
+therefore accepts **only** final `team_readiness.status` values
+`評価検証済み`, `条件付き準備`, or `対面データ未評価`, while still
+requiring exact team fingerprint, all source hashes and no stale reasons.
+`生成物不整合`, `生成物確認不可`, `未準備` and any unknown status
+fail closed even when early `team_match/matrix/lookup` flags are true.
+Regression tests mutate only the generated manifest's opponent row count
+(negative, malformed, absent) or AI v1 cell count. All cases must refuse
+registered source identity and contribute **zero** matched device/SQLite
+windows. This remains local source integrity, never game truth.
+
 Only with this **optional, source-revalidated context** does the offline
 SQLite/device link set `team_identity_cross_bound=true`, transfer its exact
 same-window/revision records into `same_revision_shadow_turns`, and clear

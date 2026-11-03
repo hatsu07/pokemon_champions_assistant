@@ -128,6 +128,84 @@ class ConsolidatedPhase2Tests(unittest.TestCase):
                 frozen_team_sha256=digest, regulation=reg
             ).source_identity_cross_bound)
 
+    def test_review_p2_corrupt_live_manifest_counts_never_cross_bind(self):
+        # team_readiness verifies file hashes before checking manifest count
+        # invariants. The initial true team_match/matrix/lookup flags must
+        # NOT override its final "生成物不整合" / "生成物確認不可" status.
+        from champions_assist.team_prep_readiness import team_readiness
+
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            record, fp, digest, reg, csv, prepared = register_and_prepare(root)
+            source = RegisteredSourceContext(root, MASTER)
+            manifest_path = prepared.manifest_path
+            pristine = json.loads(manifest_path.read_text(encoding="utf-8"))
+            packet, rows, frames, goldens = fixture(root)
+            packet["team_id"] = record.team_id
+            packet["team_fingerprint"] = fp
+            rows = tuple(replace(r, team_sha256=digest) for r in rows)
+
+            def source_audit():
+                return bind_registered_team_sources(
+                    source, team_id=record.team_id, team_fingerprint=fp,
+                    frozen_team_sha256=digest, regulation=reg)
+
+            def device_audit():
+                return audit_offline_device_shadow_link(
+                    packet, team_id=record.team_id, team_fingerprint=fp,
+                    frozen_team_sha256=digest, regulation=reg,
+                    shadow_rows=rows, frames=frames, golden_claims=goldens,
+                    source_context=source)
+
+            self.assertTrue(source_audit().source_identity_cross_bound)
+            self.assertEqual(device_audit().same_revision_shadow_turns, 10)
+            for variant in ("negative_opponent_rows",
+                            "nonnumeric_opponent_rows",
+                            "missing_opponent_rows", "invalid_ai_counts"):
+                with self.subTest(variant=variant):
+                    manifest = json.loads(json.dumps(pristine))
+                    if variant == "negative_opponent_rows":
+                        manifest["opponent_rows"] = -1
+                    elif variant == "nonnumeric_opponent_rows":
+                        manifest["opponent_rows"] = "not-a-number"
+                    elif variant == "missing_opponent_rows":
+                        manifest.pop("opponent_rows", None)
+                    else:
+                        # The generated manifest includes v1/v2 AI counts.
+                        self.assertIn("ai_v1_cells", manifest)
+                        self.assertIn("ai_v2_cells", manifest)
+                        manifest["ai_v1_cells"] = -1
+                    manifest_path.write_text(
+                        json.dumps(manifest), encoding="utf-8")
+                    ready = team_readiness(
+                        root, record.team_id, csv, master_dir=MASTER)
+                    self.assertIn(
+                        ready["status"],
+                        ("生成物不整合", "生成物確認不可"))
+                    # The exploit is strongest when the early per-file flags
+                    # already signal true; those flags alone prove too little.
+                    self.assertTrue(ready["team_match"])
+                    self.assertTrue(ready["matrix"])
+                    self.assertTrue(ready["lookup"])
+                    self.assertEqual(ready["stale_reasons"], [])
+
+                    bound = source_audit()
+                    self.assertEqual(
+                        bound.reason,
+                        "SOURCE_ASSET_MANIFEST_NOT_CURRENT_OR_MATCHED")
+                    self.assertFalse(bound.source_identity_cross_bound)
+                    self.assertFalse(bound.phase2_accepted)
+                    device = device_audit()
+                    self.assertEqual(device.status, "EVIDENCE_LINK_REFUSED")
+                    self.assertIn(
+                        "SOURCE_ASSET_MANIFEST_NOT_CURRENT_OR_MATCHED",
+                        device.reason)
+                    self.assertFalse(device.team_identity_cross_bound)
+                    self.assertEqual(device.same_revision_shadow_turns, 0)
+                    self.assertFalse(device.phase2_accepted)
+            manifest_path.write_text(json.dumps(pristine), encoding="utf-8")
+            self.assertTrue(source_audit().source_identity_cross_bound)
+
     def test_registered_source_binding_prevents_cross_team_false_verified_rows(self):
         with TemporaryDirectory() as d:
             root = Path(d)
