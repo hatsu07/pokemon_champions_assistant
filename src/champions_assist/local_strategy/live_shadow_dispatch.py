@@ -20,7 +20,7 @@ from .models import (
     DecisionWindow, FrozenBattleState, WindowKind, action_digest,
 )
 
-_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,96}\\Z")
+_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,96}\Z")
 
 
 @dataclass(frozen=True)
