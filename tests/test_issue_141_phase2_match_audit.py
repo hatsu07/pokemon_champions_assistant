@@ -10,6 +10,7 @@ from types import MappingProxyType
 import unittest
 
 from champions_assist.preload import REQUIRED_MASTER_FILES
+from champions_assist.local_strategy.models import canonical_json
 from champions_assist.prep import PrepMatchup, PrepResult
 from champions_assist.local_strategy.phase2_match_audit import (
     SELECTION_PREP_SHARED_SECONDS, SelectionPrepReceipt,
@@ -24,8 +25,10 @@ from tests.test_issue_141_observed_synthetic_replay_bridge import cases
 from tests.test_issue_141_observed_full_grid_diagnostic import FullGridFakeWorker
 from tests.test_issue_141_observed_id_bridge import with_state
 
+# Match the independent fixture's frozen opponent_six exactly. The old
+# positive fixture had three *different* opponents and masked review P2.
 OPPONENTS = ("カイリュー", "サーフゴー", "ドドゲザン",
-             "ゲンガー", "ボーマンダ", "リザードン")
+             "ウルガモス", "ロトム", "ミミッキュ")
 
 
 def with_matrix():
@@ -116,6 +119,8 @@ class CrossPhaseOfflineAuditTests(unittest.TestCase):
             self.assertEqual(report.observed_stage_status,
                              "PROVISIONAL_OBSERVED_BRANCH_CONSTRAINTS")
             self.assertEqual(report.observed_case_count,2)
+            self.assertEqual(report.opponent_preview_binding,
+                             "FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED")
             self.assertEqual(report.synthetic_turn_status,"MODEL_DIAGNOSTIC")
             self.assertEqual(report.prep_status,"ASSESSED_18_CONDITIONAL_ONLY")
             self.assertEqual(report.prep_assessed_pairs,18)
@@ -153,6 +158,89 @@ class CrossPhaseOfflineAuditTests(unittest.TestCase):
                           report.missing_acceptance_evidence)
             self.assertEqual(read_shadow_comparisons(record_path),
                              (report.shadow_record,))
+
+    def test_one_wrong_or_missing_opponent_never_starts_worker_or_sqlite(self):
+        """A single wrong opponent invalidates *all* 18 PREP assessments.
+
+        This binds evidence across two independently frozen decision windows;
+        same own team and match ID alone never establish a common enemy six.
+        """
+        assets,turn=with_matrix()
+
+        def changed(edit):
+            state=turn.state
+            edit(state)
+            return replace(turn,observed_state_json=canonical_json(state))
+
+        altered=(
+            (changed(lambda d: d["opponent_six"].__setitem__(4,"ゲンガー")),
+             "CROSS_PHASE_OPPONENT_SIX_MISMATCH"),
+            (changed(lambda d: d.pop("opponent_six")),
+             "TURN_OPPONENT_PREVIEW_NOT_OBSERVED"),
+            (changed(lambda d: d.__setitem__("opponent_six",
+                                              d["opponent_six"][:5])),
+             "INCOMPLETE_OR_INVALID_OPPONENT_PREVIEW_SIX"),
+            (changed(lambda d: d.__setitem__("opponent_six",
+                                              "カイリュー,サーフゴー")),
+             "INCOMPLETE_OR_INVALID_OPPONENT_PREVIEW_SIX"),
+            (changed(lambda d: d["opponent_six"].__setitem__(5,"カイリュー")),
+             "MALFORMED_OR_DUPLICATED_OPPONENT_PREVIEW"),
+            (changed(lambda d: d["opponent_six"].__setitem__(2,None)),
+             "MALFORMED_OR_DUPLICATED_OPPONENT_PREVIEW"),
+            (changed(lambda d: d["opponent_six"].__setitem__(1,"未判明")),
+             "MALFORMED_OR_DUPLICATED_OPPONENT_PREVIEW"),
+            (changed(lambda d: d.__setitem__("opponent_active","ゲンガー")),
+             "OPPONENT_ACTIVE_NOT_IN_SELECTION_SIX"),
+            (turn,"MALFORMED_OR_DUPLICATED_OPPONENT_PREVIEW"),
+        )
+        for ix,(observed,reason) in enumerate(altered):
+            with self.subTest(index=ix,reason=reason):
+                selection=(replace(sel(observed),
+                                   opponent_preview_six=(
+                                       OPPONENTS[:-1]+(OPPONENTS[0],)))
+                           if ix==len(altered)-1 else sel(observed))
+                with TemporaryDirectory() as temp:
+                    worker=FullGridFakeWorker()
+                    db=Path(temp)/"must-not-exist.sqlite"
+                    result=audit_offline_phase2_match(
+                        selection,observed,assets,gpt=gpt_for(observed),
+                        current_snapshot=lambda s=observed:s,
+                        database_path=db,joint_candidates=sourced(),
+                        complete_branches=cases(),worker=worker,
+                        preserve="ガブリアス",stopper="ミミッキュ",
+                        prep_assessment=full_prep())
+                    self.assertEqual(result.status,"BLOCKED",result.reason)
+                    self.assertEqual(result.reason,reason)
+                    self.assertEqual(result.prep_assessed_pairs,0)
+                    self.assertEqual(result.prep_status,"NOT_RUN")
+                    self.assertEqual(result.ranking_status,"NO_RANKING")
+                    self.assertFalse(result.phase2_accepted)
+                    self.assertEqual(worker.calls,[])
+                    self.assertEqual(worker.enumerated,[])
+                    self.assertEqual(worker.simulator.calls,[])
+                    self.assertFalse(db.exists())
+
+    def test_opponent_preview_order_is_irrelevant_but_not_game_authenticated(self):
+        assets,turn=with_matrix()
+        state=turn.state
+        state["opponent_six"]=list(reversed(state["opponent_six"]))
+        observed=replace(turn,observed_state_json=canonical_json(state))
+        with TemporaryDirectory() as temp:
+            db=Path(temp)/"permutation.sqlite"
+            report=audit_offline_phase2_match(
+                sel(observed),observed,assets,gpt=gpt_for(observed),
+                current_snapshot=lambda:observed,
+                database_path=db,joint_candidates=sourced(),
+                prep_assessment=full_prep())
+            self.assertEqual(report.status,"OFFLINE_EVIDENCE_ONLY",report.reason)
+            self.assertEqual(report.opponent_preview_binding,
+                             "FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED")
+            self.assertEqual(report.prep_status,"ASSESSED_18_CONDITIONAL_ONLY")
+            self.assertEqual(report.prep_assessed_pairs,18)
+            self.assertFalse(report.phase2_accepted)
+            self.assertEqual(report.ranking_status,"NO_RANKING")
+            self.assertEqual(len(read_shadow_comparisons(db)),1)
+
 
     def test_stale_or_cross_match_never_starts_worker_or_database(self):
         assets,turn=with_matrix()

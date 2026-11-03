@@ -33,7 +33,16 @@ callback. `NO_RANKING` and `phase2_accepted=False` are mandatory.
 1. Accepts an explicit, frozen **selection** receipt tied to the same match,
    own team SHA and four master SHA as a later frozen **turn**. These are
    different decision windows, so matching their revision numbers is neither
-   required nor a guarantee.
+   required nor a guarantee. **P2 review fix:** before PREP/worker/SQLite,
+   require the six selected-opponent preview names to match the frozen turn's
+   `opponent_six` exactly as an unordered set of six distinct species.
+   Normalize only through the packaged, approved Champions species aliases;
+   no fuzzy/speculative OCR completion. A missing/partial/duplicate/unknown
+   turn preview, one changed species, or a currently observed opposing active
+   Pokémon outside the selected six blocks the entire audit. Display order
+   alone does not invalidate a verified six. Even a matching frozen pair is
+   labeled `FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED`, **not** independent
+   proof that the capture really came from that in-game opponent team.
 2. Runs the existing **②** observed partial-constraint / linked OCR source
    gate. Invalid joint source, stale state, changed team or provenance refuses
    the batch before invoking the synthetic model or SQLite writer.

@@ -19,6 +19,8 @@ from typing import Any, Callable
 
 from ..preload import FrozenMatchAssets, REQUIRED_MASTER_FILES
 from ..prep import PrepResult
+from ..species_name_aliases import selection_base_name
+from ..terminology import mapped_name
 from .joint_set_intake import SourcedJointSetCandidate
 from .models import FrozenBattleState, action_digest
 from .observed_safe_branch_gate import stage_safe_observed_branches
@@ -76,6 +78,8 @@ class Phase2MatchAudit:
     missing_acceptance_evidence: tuple[str, ...] = ()
     ranking_status: str = "NO_RANKING"
     phase2_accepted: bool = False
+    # Frozen state equality is NOT independent provenance of Champions images.
+    opponent_preview_binding: str = "NOT_VERIFIED"
 
 
 _ALWAYS_BLOCKERS = (
@@ -101,6 +105,70 @@ def _unchanged(snapshot: FrozenBattleState,
                 and live.snapshot_sha256 == snapshot.snapshot_sha256)
     except Exception:
         return False
+
+
+def _preview_six_binding(selection: SelectionPrepReceipt,
+                         state: dict[str, Any]) -> str:
+    """Conservatively bind PREP preview to a later frozen turn's opponents.
+
+    An exact six-member cross-window match prevents unrelated 18-matchup
+    evidence from being logged as a matched match. No OCR truth, opponent
+    set completeness or in-game legal policy is authenticated here.
+
+    An absent/partial turn preview is NOT a compatible match; failing
+    closed is preferable to assigning a complete PREP to an unknown team.
+    Name normalization uses ONLY our established Champions species alias
+    boundary, never fuzzy matching or inferred unseen party members.
+    """
+    expected = selection.opponent_preview_six
+    actual = state.get("opponent_six")
+    if actual is None:
+        return "TURN_OPPONENT_PREVIEW_NOT_OBSERVED"
+    if (not isinstance(expected, tuple)
+            or not isinstance(actual, (list, tuple))
+            or len(expected) != 6 or len(actual) != 6):
+        return "INCOMPLETE_OR_INVALID_OPPONENT_PREVIEW_SIX"
+
+    def names(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        normalized = []
+        for name in values:
+            if (not isinstance(name, str) or not name
+                    or name != name.strip() or len(name) > 96
+                    or name.upper() in ("UNKNOWN", "NONE", "?")):
+                raise ValueError("INVALID_OPPONENT_NAME")
+            # The stable Champions alias catalogue is the ONLY accepted
+            # normalizer. Unknown OCR text/nicknames are not inferred as a
+            # real species merely because the same spelling occurs twice.
+            base = name.split("→", 1)[0]
+            if not mapped_name("pokemon", base):
+                raise ValueError("UNREGISTERED_OPPONENT_SPECIES")
+            canonical = selection_base_name(name)
+            if (not canonical or len(canonical) > 96
+                    or canonical.upper() in ("UNKNOWN", "NONE", "?")):
+                raise ValueError("UNVERIFIED_OPPONENT_NAME")
+            normalized.append(canonical)
+        if len(set(normalized)) != 6:
+            raise ValueError("DUPLICATE_OPPONENT_SPECIES")
+        return tuple(normalized)
+
+    try:
+        selected = names(expected)
+        observed = names(actual)
+        if set(selected) != set(observed):
+            return "CROSS_PHASE_OPPONENT_SIX_MISMATCH"
+        active = state.get("opponent_active")
+        if active is not None and active != "":
+            if (not isinstance(active, str)
+                    or not mapped_name("pokemon", active.split("→", 1)[0])):
+                return "MALFORMED_OPPONENT_ACTIVE"
+            # A recognized Mega/form label resolves only to the same base
+            # species; no full form or battle type is inferred.
+            active_base = selection_base_name(active)
+            if active_base not in selected:
+                return "OPPONENT_ACTIVE_NOT_IN_SELECTION_SIX"
+    except (ValueError, TypeError, AttributeError):
+        return "MALFORMED_OR_DUPLICATED_OPPONENT_PREVIEW"
+    return "FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED"
 
 
 def _prep_receipt_status(receipt: SelectionPrepReceipt,
@@ -174,7 +242,8 @@ def audit_offline_phase2_match(
     try:
         manifest = tuple((name, assets.sha256[name])
                          for name in REQUIRED_MASTER_FILES)
-        selected = tuple(turn.state.get("selected_three", ()))
+        state = turn.state
+        selected = tuple(state.get("selected_three", ()))
         if (selection.match_id != turn.window.match_id
                 or selection.team_sha256 != turn.window.team_sha256
                 or selection.team_sha256 != assets.sha256[REQUIRED_MASTER_FILES[3]]
@@ -187,6 +256,11 @@ def audit_offline_phase2_match(
             return _stop("CROSS_PHASE_MATCH_OR_FROZEN_TEAM_MISMATCH")
     except (KeyError, TypeError, ValueError, AttributeError):
         return _stop("CROSS_PHASE_MATCH_OR_FROZEN_TEAM_MISMATCH")
+    preview_binding = _preview_six_binding(selection, state)
+    if preview_binding != "FROZEN_SIX_MATCHED_NOT_GAME_AUTHENTICATED":
+        # Before PREP, synthetic worker or SQLite: no successful prefix
+        # and no inferred opponent roster when the observed six are absent.
+        return _stop(preview_binding)
     # Stage ② uses the independently linked observation source, if present.
     # Failing an OCR provenance check forbids worker execution and DB writes.
     observed = stage_safe_observed_branches(
@@ -282,4 +356,5 @@ def audit_offline_phase2_match(
         turn.window.state_revision, turn.snapshot_sha256,
         observed.status, len(observed.branches), local_status,
         prep_status, tactical.assessed_pairs, prep_time, store_status, record,
-        quality, tuple(missing))
+        quality, tuple(missing),
+        opponent_preview_binding=preview_binding)
