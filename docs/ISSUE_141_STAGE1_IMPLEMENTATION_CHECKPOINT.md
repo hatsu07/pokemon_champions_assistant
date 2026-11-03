@@ -46,6 +46,13 @@ python scripts/report_phase2_static_move_compat.py --masters-dir masters
 python scripts/report_phase2_shadow_software.py --shadow-sqlite path/to/phase2-shadow/comparison-v2.sqlite --gui-export path/to/gui-timing-export.json
 ```
 
+## PR #204 レビュー P2 対応（実ゲーム証拠ではない）
+
+- **P2-1 GUI表示監査の誤昇格**：`AI_RESULT_DISPLAYED` は受信イベントであり、表示の証拠にしない。`scripts/report_phase2_shadow_software.py` は `audit_gui_timing_export` の厳密な要求順序・キャンセル判定を利用し、同一 `match_id/request_id/turn_epoch/state_revision/decision_window_id` の `ACTION_GUI_RENDERED` まで存在し、未表示turnが0のときに限り `SOFTWARE_QT_PAIR_COMPLETE_NOT_GAME_CERTIFIED` とする。描画欠落・別request・旧turn/revision・キャンセルを負例に追加。
+- **P2-2 Shadow失効とSQLite書込の競合**：同一pool上のwrite taskと取消タスクを直列化し、トランザクション内のrevocation fenceを追加。UIのOFF/revision更新はSQLite完了を待たず、短いメモリlockだけで失効を宣言する。書込途中の取消が最終チェック後に割り込んでも、非同期の完全一致キー削除が直後に走り、失効行を監査成功として残さない。UI側はディスク完了待ちをしないため、`cleanup_future` を完了した後でのみオフライン監査の最終状態を確認する。正常に完了済みの過去行は後日のOFFで削除しない。
+- SQLiteのディスク障害で取消が失敗した場合、`cleanup_future` は `REVOKE_STORAGE_FAILED` を返す。失効中のin-flight記録を当たり前に有効な証拠として扱ってはならない。
+- 固定Showdownとの静的比較では24枠中23枠一致、ミミッキュ「かげうち」のPP不一致が観測されている（2026-11-03 PR #204レビュー）。`PINNED_STATIC_FIELDS_DIFFER` は**対応範囲の不一致**であり、元データを推測で上書きしない。CI成功はエンジンとの完全互換性を意味しない。
+
 ## **合格と未達を混同しない**
 
 - 本PRの追加コードは「未確認の状態では棄権する条件付き実装」であり、実ゲームで1ターンを正しく計算した、すべての18対面を戦術的に評価した、LOCALの適用率が正であるという証拠ではない。
