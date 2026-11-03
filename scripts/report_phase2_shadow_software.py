@@ -174,7 +174,9 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False))
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    # A revoked or not-yet-finalized SQLite row is never acceptable as a
+    # completed software audit. Signal that contract to CI/shell callers.
+    return 1 if result["sqlite_unfinalized_or_revoked_count"] else 0
 
 
 if __name__ == "__main__":
