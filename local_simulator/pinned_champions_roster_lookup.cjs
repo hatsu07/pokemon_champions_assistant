@@ -38,6 +38,7 @@ function canonicalRosterFromFrozenSources(repoRoot) {
       ...process.env,
       PYTHONPATH: [path.join(repoRoot, "src"), repoRoot,
                    process.env.PYTHONPATH || ""].join(path.delimiter),
+      PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1",
     };
     const json = cp.execFileSync(
       "python",

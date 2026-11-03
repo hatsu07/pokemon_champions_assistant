@@ -23,7 +23,8 @@ function fakeReport() {
     {cwd: root,
      env: {...process.env,
        PYTHONPATH: [path.join(root, "src"), root,
-                    process.env.PYTHONPATH || ""].join(path.delimiter)},
+                    process.env.PYTHONPATH || ""].join(path.delimiter),
+       PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1"},
      encoding: "utf8", timeout: 20_000, maxBuffer: 500_000});
   return JSON.parse(json);
 }
