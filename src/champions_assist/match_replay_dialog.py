@@ -662,7 +662,8 @@ class MatchReplayDialog(QDialog):
         self.shadow_capture_check.setChecked(False)
         self.shadow_capture_check.toggled.connect(
             lambda enabled: (
-                None if enabled else self._shadow_dispatcher.invalidate()))
+                self._shadow_dispatcher.prepare_storage() if enabled
+                else self._shadow_dispatcher.invalidate()))
         panel.addWidget(self.shadow_capture_check)
         panel.addWidget(QLabel(
             "試験機能：未確認の技・PP・HP・Battle/RNGは補完せず棄権。"
