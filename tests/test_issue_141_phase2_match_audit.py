@@ -5,6 +5,7 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from types import MappingProxyType
 import unittest
 
@@ -98,13 +99,19 @@ class CrossPhaseOfflineAuditTests(unittest.TestCase):
         assets,turn=with_matrix()
         with TemporaryDirectory() as temp:
             worker=FullGridFakeWorker()
-            report=audit_offline_phase2_match(
-                sel(turn),turn,assets,gpt=gpt_for(turn),
-                current_snapshot=lambda:turn,
-                database_path=Path(temp)/"evidence.sqlite",
-                joint_candidates=sourced(),complete_branches=cases(),
-                worker=worker,preserve="ガブリアス",stopper="ミミッキュ",
-                prep_assessment=full_prep())
+            # The inherited fake readout fixture otherwise hardcodes its
+            # original four-master SHA. Bind it to the same truly frozen
+            # matrix/team used by this cross-phase test, never bypass the
+            # production SHA/roster verification.
+            with patch("tests.test_issue_141_replay_projection_audit.VERIFIED_ASSETS",
+                       assets):
+                report=audit_offline_phase2_match(
+                    sel(turn),turn,assets,gpt=gpt_for(turn),
+                    current_snapshot=lambda:turn,
+                    database_path=Path(temp)/"evidence.sqlite",
+                    joint_candidates=sourced(),complete_branches=cases(),
+                    worker=worker,preserve="ガブリアス",stopper="ミミッキュ",
+                    prep_assessment=full_prep())
             self.assertEqual(report.status,"OFFLINE_EVIDENCE_ONLY",report.reason)
             self.assertEqual(report.observed_stage_status,
                              "PROVISIONAL_OBSERVED_BRANCH_CONSTRAINTS")
