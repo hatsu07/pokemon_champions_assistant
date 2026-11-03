@@ -36,7 +36,7 @@ def receipt(path):
     assert bridge.attach_gpt(
         request_id="req-1", turn_epoch=1, state_revision=4,
         status="ADVICE", advice_present=True, elapsed_ms=75,
-        fresh=True)=="JOIN_SUBMITTED_NONACTIONABLE"
+        fresh=True,reported_screen="MOVE_MENU")=="JOIN_SUBMITTED_NONACTIONABLE"
     result=bridge.last_future.result(timeout=10)
     assert result.status=="RECORDED", result.reason
     bridge.invalidate()
