@@ -162,6 +162,7 @@ def _ensure_finalized_schema(db: sqlite3.Connection) -> None:
 
 def finalize_shadow_comparison(
     database_path: str | Path, record: ShadowComparisonRecord,
+    *, active_at_commit: Callable[[], bool] | None = None,
 ) -> str:
     """Durable proof that _finish accepted an *already committed* row.
 
@@ -172,6 +173,11 @@ def finalize_shadow_comparison(
     """
     if not isinstance(record, ShadowComparisonRecord):
         raise ValueError("FINALIZED_SHADOW_RECORD_REQUIRED")
+    if active_at_commit is not None:
+        if not callable(active_at_commit):
+            raise ValueError("INVALID_FINALIZATION_FENCE")
+        if active_at_commit() is not True:
+            raise ValueError("SHADOW_WINDOW_REVOKED_BEFORE_FINALIZATION")
     path = Path(database_path)
     if not path.is_file():
         raise ValueError("UNCOMMITTED_SHADOW_DATABASE")
@@ -201,12 +207,18 @@ def finalize_shadow_comparison(
         if old is not None:
             if old != (record.snapshot_sha256, digest):
                 raise ValueError("CONFLICTING_SHADOW_FINALIZATION")
+            if active_at_commit is not None and active_at_commit() is not True:
+                raise ValueError("SHADOW_WINDOW_REVOKED_DURING_FINALIZATION")
             return "ALREADY_FINALIZED"
         db.execute(
             "INSERT INTO " + _ACCEPTED_TABLE +
             " (match_id,decision_window_id,state_revision,snapshot_sha256,"
             "record_sha256) VALUES (?,?,?,?,?)",
             (*key, record.snapshot_sha256, digest))
+        # Like append, run the revocation check while still inside
+        # BEGIN IMMEDIATE, so the transaction rolls back on cancellation.
+        if active_at_commit is not None and active_at_commit() is not True:
+            raise ValueError("SHADOW_WINDOW_REVOKED_DURING_FINALIZATION")
     return "FINALIZED"
 
 
