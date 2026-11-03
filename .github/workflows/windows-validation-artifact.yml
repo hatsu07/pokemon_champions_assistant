@@ -88,13 +88,18 @@ jobs:
       - name: Validate PowerShell prerelease publisher syntax
         shell: pwsh
         run: |
-          $tokens = $null
-          $syntaxErrors = $null
-          $source = (Resolve-Path './scripts/publish_windows_development_release.ps1').Path
-          $null = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$syntaxErrors)
-          if ($syntaxErrors.Count -gt 0) {
-            $syntaxErrors | ForEach-Object { Write-Host $_.ToString() }
-            throw 'Versioned DEVELOPMENT release publisher has invalid PowerShell syntax'
+          foreach ($file in @(
+            './scripts/publish_windows_development_release.ps1',
+            './scripts/publish_windows_branch_test_release.ps1'
+          )) {
+            $tokens = $null
+            $syntaxErrors = $null
+            $source = (Resolve-Path $file).Path
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$syntaxErrors)
+            if ($syntaxErrors.Count -gt 0) {
+              $syntaxErrors | ForEach-Object { Write-Host $_.ToString() }
+              throw "Windows release publisher has invalid PowerShell syntax: $file"
+            }
           }
       - name: Test legacy Actions artifact cleanup script offline
         shell: bash
